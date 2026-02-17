@@ -65,6 +65,38 @@ class SystemSettingsSeeder extends Seeder
                 'label' => 'Permitir Post-Autorizacion',
                 'description' => 'Permitir crear autorizaciones despues del evento (horas extra detectadas)',
             ],
+            [
+                'key' => 'velada_detection_start_hour',
+                'value' => '0',
+                'type' => 'integer',
+                'group' => 'attendance',
+                'label' => 'Hora Inicio Deteccion Velada',
+                'description' => 'Hora (0-23) a partir de la cual se considera velada (trabajo nocturno despues de medianoche)',
+            ],
+            [
+                'key' => 'velada_detection_end_hour',
+                'value' => '6',
+                'type' => 'integer',
+                'group' => 'attendance',
+                'label' => 'Hora Fin Deteccion Velada',
+                'description' => 'Hora (0-23) hasta la cual se considera velada',
+            ],
+            [
+                'key' => 'lunch_max_deviation_minutes',
+                'value' => '15',
+                'type' => 'integer',
+                'group' => 'attendance',
+                'label' => 'Desviacion Maxima Comida (minutos)',
+                'description' => 'Minutos extra de comida permitidos antes de generar anomalia',
+            ],
+            [
+                'key' => 'lunch_required',
+                'value' => 'true',
+                'type' => 'boolean',
+                'group' => 'attendance',
+                'label' => 'Comida Requerida',
+                'description' => 'Si se requiere que los empleados registren checada de comida',
+            ],
 
             // Payroll Settings
             [
@@ -130,6 +162,14 @@ class SystemSettingsSeeder extends Seeder
                 'group' => 'payroll',
                 'label' => 'Bono por Velada (MXN)',
                 'description' => 'Monto adicional por turno nocturno/velada',
+            ],
+            [
+                'key' => 'velada_rate_multiplier',
+                'value' => '2.0',
+                'type' => 'float',
+                'group' => 'payroll',
+                'label' => 'Multiplicador Velada',
+                'description' => 'Multiplicador para horas de velada (trabajo nocturno despues de medianoche)',
             ],
 
             // General Settings

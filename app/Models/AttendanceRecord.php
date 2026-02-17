@@ -6,6 +6,7 @@ use App\Traits\Auditable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
  * AttendanceRecord model for tracking employee attendance.
@@ -48,6 +49,12 @@ class AttendanceRecord extends Model
         'notes',
         'raw_punches',
         'authorization_id',
+        'velada_hours',
+        'overtime_authorized_hours',
+        'velada_authorized_hours',
+        'has_anomalies',
+        'anomaly_count',
+        'lunch_deviation_minutes',
     ];
 
     protected $casts = [
@@ -64,6 +71,12 @@ class AttendanceRecord extends Model
         'qualifies_for_night_shift_bonus' => 'boolean',
         'requires_review' => 'boolean',
         'raw_punches' => 'array',
+        'velada_hours' => 'decimal:2',
+        'overtime_authorized_hours' => 'decimal:2',
+        'velada_authorized_hours' => 'decimal:2',
+        'has_anomalies' => 'boolean',
+        'anomaly_count' => 'integer',
+        'lunch_deviation_minutes' => 'integer',
     ];
 
     /**
@@ -80,6 +93,14 @@ class AttendanceRecord extends Model
     public function authorization(): BelongsTo
     {
         return $this->belongsTo(Authorization::class);
+    }
+
+    /**
+     * Get the anomalies for this record.
+     */
+    public function anomalies(): HasMany
+    {
+        return $this->hasMany(AttendanceAnomaly::class);
     }
 
     /**

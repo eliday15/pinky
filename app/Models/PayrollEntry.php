@@ -53,6 +53,11 @@ class PayrollEntry extends Model
         'weekly_bonus',
         'monthly_bonus',
         'bonuses',
+        'velada_hours',
+        'velada_authorized_hours',
+        'velada_multiplier',
+        'velada_pay',
+        'overtime_authorized_hours',
         'deductions',
         'gross_pay',
         'net_pay',
@@ -82,6 +87,11 @@ class PayrollEntry extends Model
         'deductions' => 'decimal:2',
         'gross_pay' => 'decimal:2',
         'net_pay' => 'decimal:2',
+        'velada_hours' => 'decimal:2',
+        'velada_authorized_hours' => 'decimal:2',
+        'velada_multiplier' => 'decimal:2',
+        'velada_pay' => 'decimal:2',
+        'overtime_authorized_hours' => 'decimal:2',
         'calculation_breakdown' => 'array',
     ];
 

@@ -1,7 +1,8 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { Head, Link, router } from '@inertiajs/vue3';
-import { ref } from 'vue';
+import TwoFactorModal from '@/Components/TwoFactorModal.vue';
+import { Head, Link, router, usePage } from '@inertiajs/vue3';
+import { ref, computed } from 'vue';
 
 const props = defineProps({
     period: Object,
@@ -9,6 +10,10 @@ const props = defineProps({
     summary: Object,
     can: Object,
 });
+
+const hasTwoFactor = computed(() => usePage().props.auth.has_two_factor);
+const showApproveModal = ref(false);
+const showMarkPaidModal = ref(false);
 
 const search = ref('');
 const showExportMenu = ref(false);
@@ -60,13 +65,17 @@ const calculatePayroll = () => {
 };
 
 const approvePayroll = () => {
-    if (confirm('¿Aprobar esta nomina? Una vez aprobada no se podra recalcular.')) {
+    if (hasTwoFactor.value) {
+        showApproveModal.value = true;
+    } else if (confirm('¿Aprobar esta nomina? Una vez aprobada no se podra recalcular.')) {
         router.post(route('payroll.approve', props.period.id));
     }
 };
 
 const markPaid = () => {
-    if (confirm('¿Marcar esta nomina como pagada?')) {
+    if (hasTwoFactor.value) {
+        showMarkPaidModal.value = true;
+    } else if (confirm('¿Marcar esta nomina como pagada?')) {
         router.post(route('payroll.markPaid', props.period.id));
     }
 };
@@ -309,5 +318,25 @@ const markPaid = () => {
                 </div>
             </div>
         </div>
+
+        <!-- Approve 2FA Modal -->
+        <TwoFactorModal
+            :show="showApproveModal"
+            :action="route('payroll.approve', period.id)"
+            method="post"
+            title="Aprobar Nomina"
+            message="Ingresa tu codigo de verificacion para aprobar esta nomina. Una vez aprobada no se podra recalcular."
+            @close="showApproveModal = false"
+        />
+
+        <!-- Mark Paid 2FA Modal -->
+        <TwoFactorModal
+            :show="showMarkPaidModal"
+            :action="route('payroll.markPaid', period.id)"
+            method="post"
+            title="Marcar como Pagada"
+            message="Ingresa tu codigo de verificacion para marcar esta nomina como pagada."
+            @close="showMarkPaidModal = false"
+        />
     </AppLayout>
 </template>

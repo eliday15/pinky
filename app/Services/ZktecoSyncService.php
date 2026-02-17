@@ -14,6 +14,8 @@ use App\Models\Position;
 use App\Models\Schedule;
 use App\Models\SyncLog;
 use App\Models\SystemSetting;
+use App\Services\AnomalyDetectorService;
+use App\Services\VeladaCalculatorService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -37,9 +39,19 @@ class ZktecoSyncService
      */
     public function syncEmployees(int $inactivityDays = 60): array
     {
-        // Get unique users from ZKTeco users table (group by user_id to avoid duplicates across devices)
+        // Get unique users from ZKTeco users table with the BEST name available
+        // Priority: longest name that is not a placeholder (NN-XX or just numbers)
         $zktecoUsers = DB::table('users')
-            ->select('user_id', DB::raw('MAX(name) as name'), DB::raw('MAX(privilege) as privilege'), DB::raw('MAX(group_id) as group_id'))
+            ->select('user_id', DB::raw("
+                (SELECT u2.name FROM users u2
+                 WHERE u2.user_id = users.user_id
+                 AND u2.name IS NOT NULL
+                 AND u2.name != ''
+                 AND u2.name NOT LIKE 'NN-%'
+                 AND u2.name NOT REGEXP '^[0-9]+$'
+                 ORDER BY LENGTH(u2.name) DESC
+                 LIMIT 1) as name
+            "), DB::raw('MAX(privilege) as privilege'), DB::raw('MAX(group_id) as group_id'))
             ->whereNotNull('user_id')
             ->groupBy('user_id')
             ->orderBy('user_id')
@@ -244,6 +256,12 @@ class ZktecoSyncService
             Log::info("ZKTeco Sync: Syncing attendance from {$fromDate}...");
             $attendanceStats = $this->syncAttendance($fromDate);
             Log::info("ZKTeco Sync: Attendance - Fetched: {$attendanceStats['fetched']}, Processed: {$attendanceStats['processed']}, Created: {$attendanceStats['created']}");
+
+            // Step 3: Detect anomalies
+            Log::info("ZKTeco Sync: Detecting anomalies...");
+            $anomalyDetector = app(AnomalyDetectorService::class);
+            $anomalyCount = $anomalyDetector->detectForDateRange($fromDate, Carbon::now());
+            Log::info("ZKTeco Sync: Detected {$anomalyCount} new anomalies.");
 
             $log->update([
                 'completed_at' => now(),
@@ -575,8 +593,10 @@ class ZktecoSyncService
 
         $checkInTime = $this->extractTime($attendance->check_in);
         $checkOutTime = $this->extractTime($attendance->check_out);
-        $entryTime = $this->extractTime($schedule->entry_time);
-        $exitTime = $this->extractTime($schedule->exit_time);
+        $dayName = strtolower($workDate->format('l'));
+        $daySchedule = $schedule->getScheduleForDay($dayName);
+        $entryTime = $this->extractTime($daySchedule->entry_time);
+        $exitTime = $this->extractTime($daySchedule->exit_time);
         $isNightShift = $attendance->is_night_shift ?? $this->isNightShiftSchedule($schedule);
 
         if (!$checkInTime || !$entryTime) {
@@ -655,15 +675,25 @@ class ZktecoSyncService
                 // No lunch data - only deduct break if worked full day (> 5 hours)
                 $totalMinutes = $checkIn->diffInMinutes($checkOut);
                 if ($totalMinutes > 300) {
-                    $workedMinutes -= ($schedule->break_minutes ?? 60);
+                    $workedMinutes -= ($daySchedule->break_minutes ?? 60);
                 }
             }
         }
 
+        // Calculate lunch deviation
+        $lunchDeviationMinutes = 0;
+        if ($attendance->actual_break_minutes > 0 && $daySchedule->break_minutes > 0) {
+            $lunchDeviationMinutes = max(0, $attendance->actual_break_minutes - $daySchedule->break_minutes);
+        }
+
         $workedHours = max(0, $workedMinutes / 60);
-        $dailyHours = $schedule->daily_work_hours ?? 8;
+        $dailyHours = $daySchedule->daily_work_hours ?? 8;
         $regularHours = min($workedHours, $dailyHours);
         $overtimeHours = max(0, $workedHours - $dailyHours);
+
+        // Calculate velada split
+        $veladaCalculator = app(VeladaCalculatorService::class);
+        $veladaSplit = $veladaCalculator->calculate($attendance, $employee);
 
         // Check for approved authorizations
         $permissionHours = 0;
@@ -713,10 +743,14 @@ class ZktecoSyncService
         $attendance->update([
             'worked_hours' => round($regularHours, 2),
             'overtime_hours' => round($overtimeHours, 2),
+            'velada_hours' => $veladaSplit['velada_hours'] ?? 0,
+            'overtime_authorized_hours' => $veladaSplit['overtime_authorized'] ?? 0,
+            'velada_authorized_hours' => $veladaSplit['velada_authorized'] ?? 0,
             'permission_hours' => round($permissionHours, 2),
             'total_payroll_hours' => round($totalPayrollHours, 2),
             'late_minutes' => $lateMinutes,
             'early_departure_minutes' => $earlyDepartureMinutes,
+            'lunch_deviation_minutes' => $lunchDeviationMinutes,
             'qualifies_for_punctuality_bonus' => $qualifiesForPunctualityBonus,
             'qualifies_for_night_shift_bonus' => $qualifiesForNightShiftBonus,
             'is_night_shift' => $isNightShift,

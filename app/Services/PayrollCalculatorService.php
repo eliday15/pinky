@@ -88,9 +88,15 @@ class PayrollCalculatorService
         // FASE 3.3: Calculate night shifts and dinner allowances
         $nightShiftMetrics = $this->calculateNightShiftMetrics($employee, $startDate, $endDate);
 
-        // Calculate pay
+        // FASE 2/3: Calculate velada metrics from attendance records
+        $veladaMetrics = $this->calculateVeladaMetrics($attendance);
+        $veladaMultiplier = (float) SystemSetting::get('velada_rate_multiplier', 2.0);
+
+        // Calculate pay - only authorized overtime/velada hours get paid
         $regularPay = $metrics['regular_hours'] * $hourlyRate;
-        $overtimePay = $metrics['overtime_hours'] * $hourlyRate * $overtimeMultiplier;
+        $authorizedOvertimeHours = $veladaMetrics['overtime_authorized_hours'];
+        $overtimePay = $authorizedOvertimeHours * $hourlyRate * $overtimeMultiplier;
+        $veladaPay = $veladaMetrics['velada_authorized_hours'] * $hourlyRate * $veladaMultiplier;
         $holidayPay = $metrics['holiday_hours'] * $hourlyRate * $holidayMultiplier;
         $weekendPay = $metrics['weekend_hours'] * $hourlyRate * $overtimeMultiplier;
         $vacationPay = $incidentMetrics['vacation_days'] * ($hourlyRate * 8);
@@ -104,7 +110,7 @@ class PayrollCalculatorService
         $totalAbsences = $incidentMetrics['unpaid_days'] + $lateAbsencesGenerated;
         $deductions = $totalAbsences * ($hourlyRate * 8);
 
-        $grossPay = $regularPay + $overtimePay + $holidayPay + $weekendPay + $vacationPay + $totalBonuses;
+        $grossPay = $regularPay + $overtimePay + $veladaPay + $holidayPay + $weekendPay + $vacationPay + $totalBonuses;
         $netPay = $grossPay - $deductions;
 
         // Build calculation breakdown for transparency
@@ -133,6 +139,13 @@ class PayrollCalculatorService
                 'bonus' => $nightShiftMetrics['night_shift_bonus'],
                 'dinner_allowance' => $nightShiftMetrics['dinner_allowance'],
             ],
+            'velada' => [
+                'total_hours' => $veladaMetrics['velada_hours'],
+                'authorized_hours' => $veladaMetrics['velada_authorized_hours'],
+                'overtime_authorized_hours' => $veladaMetrics['overtime_authorized_hours'],
+                'multiplier' => $veladaMultiplier,
+                'pay' => $veladaPay,
+            ],
             'bonuses' => [
                 'punctuality' => $punctualityBonus,
                 'weekly' => $weeklyBonus,
@@ -147,6 +160,7 @@ class PayrollCalculatorService
             'calculations' => [
                 'regular_pay' => $regularPay,
                 'overtime_pay' => $overtimePay,
+                'velada_pay' => $veladaPay,
                 'holiday_pay' => $holidayPay,
                 'weekend_pay' => $weekendPay,
                 'vacation_pay' => $vacationPay,
@@ -168,6 +182,11 @@ class PayrollCalculatorService
                 'holiday_multiplier' => $holidayMultiplier,
                 'regular_hours' => $metrics['regular_hours'],
                 'overtime_hours' => $metrics['overtime_hours'],
+                'overtime_authorized_hours' => $veladaMetrics['overtime_authorized_hours'],
+                'velada_hours' => $veladaMetrics['velada_hours'],
+                'velada_authorized_hours' => $veladaMetrics['velada_authorized_hours'],
+                'velada_multiplier' => $veladaMultiplier,
+                'velada_pay' => $veladaPay,
                 'holiday_hours' => $metrics['holiday_hours'],
                 'weekend_hours' => $metrics['weekend_hours'],
                 'night_shift_hours' => $nightShiftMetrics['night_shift_hours'],
@@ -318,6 +337,31 @@ class PayrollCalculatorService
             'night_shift_days' => $nightShiftDays,
             'night_shift_bonus' => $nightShiftDays * $nightShiftBonus,
             'dinner_allowance' => $nightShiftDays * $dinnerAllowanceAmount,
+        ];
+    }
+
+    /**
+     * Calculate velada metrics from attendance records.
+     *
+     * Aggregates velada and authorized overtime/velada hours from
+     * the attendance records (which are calculated by VeladaCalculatorService).
+     */
+    private function calculateVeladaMetrics(Collection $attendance): array
+    {
+        $veladaHours = 0;
+        $veladaAuthorizedHours = 0;
+        $overtimeAuthorizedHours = 0;
+
+        foreach ($attendance as $record) {
+            $veladaHours += (float) ($record->velada_hours ?? 0);
+            $veladaAuthorizedHours += (float) ($record->velada_authorized_hours ?? 0);
+            $overtimeAuthorizedHours += (float) ($record->overtime_authorized_hours ?? 0);
+        }
+
+        return [
+            'velada_hours' => round($veladaHours, 2),
+            'velada_authorized_hours' => round($veladaAuthorizedHours, 2),
+            'overtime_authorized_hours' => round($overtimeAuthorizedHours, 2),
         ];
     }
 

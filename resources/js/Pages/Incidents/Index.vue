@@ -1,7 +1,8 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { Head, Link, router } from '@inertiajs/vue3';
-import { ref, watch } from 'vue';
+import TwoFactorModal from '@/Components/TwoFactorModal.vue';
+import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
+import { ref, computed, watch } from 'vue';
 import debounce from 'lodash/debounce';
 
 const props = defineProps({
@@ -32,6 +33,17 @@ const applyFilters = debounce(() => {
 
 watch([status, type, employee, search], applyFilters);
 
+const hasTwoFactor = computed(() => usePage().props.auth.has_two_factor);
+const showApproveModal = ref(false);
+const approveIncidentId = ref(null);
+const showRejectModal = ref(false);
+const selectedIncident = ref(null);
+
+const rejectForm = useForm({
+    rejection_reason: '',
+    two_factor_code: '',
+});
+
 const statusColors = {
     pending: 'bg-yellow-100 text-yellow-800',
     approved: 'bg-green-100 text-green-800',
@@ -49,18 +61,29 @@ const formatDate = (date) => {
 };
 
 const approveIncident = (incident) => {
-    if (confirm('¿Aprobar esta incidencia?')) {
+    if (hasTwoFactor.value) {
+        approveIncidentId.value = incident.id;
+        showApproveModal.value = true;
+    } else if (confirm('¿Aprobar esta incidencia?')) {
         router.post(route('incidents.approve', incident.id));
     }
 };
 
-const rejectIncident = (incident) => {
-    const reason = prompt('Motivo del rechazo:');
-    if (reason) {
-        router.post(route('incidents.reject', incident.id), {
-            rejection_reason: reason,
-        });
-    }
+const openRejectModal = (incident) => {
+    selectedIncident.value = incident;
+    rejectForm.rejection_reason = '';
+    rejectForm.two_factor_code = '';
+    rejectForm.clearErrors();
+    showRejectModal.value = true;
+};
+
+const submitReject = () => {
+    rejectForm.post(route('incidents.reject', selectedIncident.value.id), {
+        onSuccess: () => {
+            showRejectModal.value = false;
+            selectedIncident.value = null;
+        },
+    });
 };
 
 const deleteIncident = (incident) => {
@@ -209,7 +232,7 @@ const deleteIncident = (incident) => {
                                     Aprobar
                                 </button>
                                 <button
-                                    @click="rejectIncident(incident)"
+                                    @click="openRejectModal(incident)"
                                     class="text-red-600 hover:text-red-900"
                                 >
                                     Rechazar
@@ -255,6 +278,79 @@ const deleteIncident = (incident) => {
                             v-html="link.label"
                         />
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Approve 2FA Modal -->
+        <TwoFactorModal
+            v-if="approveIncidentId"
+            :show="showApproveModal"
+            :action="route('incidents.approve', approveIncidentId)"
+            method="post"
+            title="Aprobar Incidencia"
+            message="Ingresa tu codigo de verificacion para aprobar esta incidencia."
+            @close="showApproveModal = false; approveIncidentId = null;"
+        />
+
+        <!-- Reject Modal -->
+        <div v-if="showRejectModal" class="fixed inset-0 z-50 overflow-y-auto">
+            <div class="flex items-center justify-center min-h-screen px-4">
+                <div class="fixed inset-0 bg-gray-500 bg-opacity-75" @click="showRejectModal = false"></div>
+                <div class="relative bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">
+                        Rechazar Incidencia
+                    </h3>
+                    <form @submit.prevent="submitReject">
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                Motivo del rechazo *
+                            </label>
+                            <textarea
+                                v-model="rejectForm.rejection_reason"
+                                rows="3"
+                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                required
+                                placeholder="Indica el motivo por el cual se rechaza esta incidencia..."
+                            ></textarea>
+                            <p v-if="rejectForm.errors.rejection_reason" class="mt-1 text-sm text-red-600">
+                                {{ rejectForm.errors.rejection_reason }}
+                            </p>
+                        </div>
+                        <div v-if="hasTwoFactor" class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                Codigo de verificacion *
+                            </label>
+                            <input
+                                v-model="rejectForm.two_factor_code"
+                                type="text"
+                                inputmode="numeric"
+                                autocomplete="one-time-code"
+                                maxlength="6"
+                                class="w-full text-center text-lg tracking-widest rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                placeholder="000000"
+                            />
+                            <p v-if="rejectForm.errors.two_factor_code" class="mt-1 text-sm text-red-600">
+                                {{ rejectForm.errors.two_factor_code }}
+                            </p>
+                        </div>
+                        <div class="flex justify-end space-x-3">
+                            <button
+                                type="button"
+                                @click="showRejectModal = false"
+                                class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                type="submit"
+                                :disabled="rejectForm.processing"
+                                class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+                            >
+                                {{ rejectForm.processing ? 'Rechazando...' : 'Rechazar' }}
+                            </button>
+                        </div>
+                    </form>
                 </div>
             </div>
         </div>

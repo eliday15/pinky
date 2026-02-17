@@ -71,6 +71,10 @@ class Authorization extends Model
         'approved_at',
         'is_pre_authorization',
         'attendance_record_id',
+        'department_head_id',
+        'department_head_signed_at',
+        'is_bulk_generated',
+        'bulk_group_id',
     ];
 
     protected $casts = [
@@ -80,6 +84,8 @@ class Authorization extends Model
         'hours' => 'decimal:2',
         'approved_at' => 'datetime',
         'is_pre_authorization' => 'boolean',
+        'department_head_signed_at' => 'datetime',
+        'is_bulk_generated' => 'boolean',
     ];
 
     /**
@@ -104,6 +110,14 @@ class Authorization extends Model
     public function approvedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'approved_by');
+    }
+
+    /**
+     * Get the department head who signed this authorization.
+     */
+    public function departmentHead(): BelongsTo
+    {
+        return $this->belongsTo(Employee::class, 'department_head_id');
     }
 
     /**

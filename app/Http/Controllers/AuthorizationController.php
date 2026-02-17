@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Traits\VerifiesTwoFactor;
+use App\Models\AttendanceAnomaly;
 use App\Models\AttendanceRecord;
 use App\Models\Authorization;
 use App\Models\Employee;
@@ -19,6 +21,8 @@ use Inertia\Response;
  */
 class AuthorizationController extends Controller
 {
+    use VerifiesTwoFactor;
+
     /**
      * Display a listing of authorizations.
      *
@@ -234,6 +238,11 @@ class AuthorizationController extends Controller
         return Inertia::render('Authorizations/CreateBulk', [
             'employees' => $employeesQuery->get(['id', 'full_name', 'employee_number', 'department_id']),
             'types' => $this->getAuthorizationTypes(),
+            'departments' => \App\Models\Department::active()->get(['id', 'name']),
+            'departmentHeads' => Employee::active()
+                ->whereHas('position', fn($q) => $q->whereNotNull('supervisor_position_id'))
+                ->orderBy('full_name')
+                ->get(['id', 'full_name', 'department_id']),
         ]);
     }
 
@@ -261,6 +270,7 @@ class AuthorizationController extends Controller
             'end_time' => ['nullable', 'date_format:H:i'],
             'hours' => ['nullable', 'numeric', 'min:0', 'max:24'],
             'reason' => ['required', 'string', 'max:1000'],
+            'department_head_id' => ['nullable', 'exists:employees,id'],
         ]);
 
         // Calculate hours if start and end time provided
@@ -274,6 +284,8 @@ class AuthorizationController extends Controller
         $isPreAuthorization = Carbon::parse($validated['date'])->isFuture()
             || Carbon::parse($validated['date'])->isToday();
 
+        $bulkGroupId = 'bulk_' . now()->format('YmdHis') . '_' . Auth::id();
+
         $count = 0;
         foreach ($validated['employee_ids'] as $employeeId) {
             Authorization::create([
@@ -286,6 +298,9 @@ class AuthorizationController extends Controller
                 'hours' => $hours,
                 'reason' => $validated['reason'],
                 'is_pre_authorization' => $isPreAuthorization,
+                'department_head_id' => $validated['department_head_id'] ?? null,
+                'is_bulk_generated' => true,
+                'bulk_group_id' => $bulkGroupId,
             ]);
             $count++;
         }
@@ -393,9 +408,10 @@ class AuthorizationController extends Controller
     /**
      * Approve an authorization.
      */
-    public function approve(Authorization $authorization, ZktecoSyncService $syncService): RedirectResponse
+    public function approve(Request $request, Authorization $authorization, ZktecoSyncService $syncService): RedirectResponse
     {
         $this->authorize('approve', $authorization);
+        $this->verifyTwoFactorCode($request);
 
         if (! $authorization->isPending()) {
             return redirect()->back()->with('error', 'Esta autorizacion ya fue procesada.');
@@ -417,7 +433,38 @@ class AuthorizationController extends Controller
             }
         }
 
+        // Auto-resolve related anomalies
+        $this->autoResolveAnomalies($authorization);
+
         return redirect()->back()->with('success', 'Autorizacion aprobada.');
+    }
+
+    /**
+     * Auto-resolve anomalies that match an approved authorization.
+     */
+    private function autoResolveAnomalies(Authorization $authorization): void
+    {
+        $typeMap = [
+            Authorization::TYPE_OVERTIME => 'unauthorized_overtime',
+            Authorization::TYPE_NIGHT_SHIFT => 'unauthorized_velada',
+            Authorization::TYPE_EXIT_PERMISSION => 'early_departure',
+            Authorization::TYPE_ENTRY_PERMISSION => 'late_arrival',
+        ];
+
+        $anomalyType = $typeMap[$authorization->type] ?? null;
+        if (!$anomalyType) {
+            return;
+        }
+
+        $anomalies = AttendanceAnomaly::where('employee_id', $authorization->employee_id)
+            ->where('work_date', $authorization->date)
+            ->where('anomaly_type', $anomalyType)
+            ->where('status', 'open')
+            ->get();
+
+        foreach ($anomalies as $anomaly) {
+            $anomaly->linkToAuthorization($authorization);
+        }
     }
 
     /**
@@ -426,6 +473,7 @@ class AuthorizationController extends Controller
     public function reject(Request $request, Authorization $authorization): RedirectResponse
     {
         $this->authorize('reject', $authorization);
+        $this->verifyTwoFactorCode($request);
 
         if (! $authorization->isPending()) {
             return redirect()->back()->with('error', 'Esta autorizacion ya fue procesada.');
@@ -443,9 +491,10 @@ class AuthorizationController extends Controller
     /**
      * Mark an authorization as paid.
      */
-    public function markPaid(Authorization $authorization): RedirectResponse
+    public function markPaid(Request $request, Authorization $authorization): RedirectResponse
     {
         $this->authorize('approve', $authorization);
+        $this->verifyTwoFactorCode($request);
 
         if (! $authorization->isApproved()) {
             return redirect()->back()->with('error', 'Solo se pueden marcar como pagadas las autorizaciones aprobadas.');

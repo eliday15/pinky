@@ -1,16 +1,20 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { Head, Link, router, useForm } from '@inertiajs/vue3';
-import { ref } from 'vue';
+import TwoFactorModal from '@/Components/TwoFactorModal.vue';
+import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
+import { ref, computed } from 'vue';
 
 const props = defineProps({
     incident: Object,
     can: Object,
 });
 
+const hasTwoFactor = computed(() => usePage().props.auth.has_two_factor);
+const showApproveModal = ref(false);
 const showRejectModal = ref(false);
 const rejectForm = useForm({
     rejection_reason: '',
+    two_factor_code: '',
 });
 
 const statusColors = {
@@ -46,13 +50,16 @@ const formatDateTime = (date) => {
 };
 
 const approveIncident = () => {
-    if (confirm('¿Aprobar esta incidencia?')) {
+    if (hasTwoFactor.value) {
+        showApproveModal.value = true;
+    } else if (confirm('¿Aprobar esta incidencia?')) {
         router.post(route('incidents.approve', props.incident.id));
     }
 };
 
 const submitReject = () => {
     rejectForm.post(route('incidents.reject', props.incident.id), {
+        preserveScroll: true,
         onSuccess: () => {
             showRejectModal.value = false;
             rejectForm.reset();
@@ -255,6 +262,16 @@ const deleteIncident = () => {
             </div>
         </div>
 
+        <!-- Approve 2FA Modal -->
+        <TwoFactorModal
+            :show="showApproveModal"
+            :action="route('incidents.approve', incident.id)"
+            method="post"
+            title="Aprobar Incidencia"
+            message="Ingresa tu codigo de verificacion para aprobar esta incidencia."
+            @close="showApproveModal = false"
+        />
+
         <!-- Reject Modal -->
         <div v-if="showRejectModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div class="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
@@ -262,20 +279,39 @@ const deleteIncident = () => {
                     <h3 class="text-lg font-semibold text-gray-900">Rechazar Incidencia</h3>
                 </div>
                 <form @submit.prevent="submitReject">
-                    <div class="px-6 py-4">
-                        <label class="block text-sm font-medium text-gray-700 mb-2">
-                            Motivo del rechazo *
-                        </label>
-                        <textarea
-                            v-model="rejectForm.rejection_reason"
-                            rows="4"
-                            required
-                            class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                            placeholder="Indica el motivo por el cual se rechaza esta incidencia..."
-                        ></textarea>
-                        <p v-if="rejectForm.errors.rejection_reason" class="mt-1 text-sm text-red-600">
-                            {{ rejectForm.errors.rejection_reason }}
-                        </p>
+                    <div class="px-6 py-4 space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">
+                                Motivo del rechazo *
+                            </label>
+                            <textarea
+                                v-model="rejectForm.rejection_reason"
+                                rows="4"
+                                required
+                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                placeholder="Indica el motivo por el cual se rechaza esta incidencia..."
+                            ></textarea>
+                            <p v-if="rejectForm.errors.rejection_reason" class="mt-1 text-sm text-red-600">
+                                {{ rejectForm.errors.rejection_reason }}
+                            </p>
+                        </div>
+                        <div v-if="hasTwoFactor">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                Codigo de verificacion *
+                            </label>
+                            <input
+                                v-model="rejectForm.two_factor_code"
+                                type="text"
+                                inputmode="numeric"
+                                autocomplete="one-time-code"
+                                maxlength="6"
+                                class="w-full text-center text-lg tracking-widest rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                placeholder="000000"
+                            />
+                            <p v-if="rejectForm.errors.two_factor_code" class="mt-1 text-sm text-red-600">
+                                {{ rejectForm.errors.two_factor_code }}
+                            </p>
+                        </div>
                     </div>
                     <div class="px-6 py-4 border-t border-gray-200 flex justify-end gap-2">
                         <button

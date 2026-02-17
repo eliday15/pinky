@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Traits\VerifiesTwoFactor;
 use App\Models\Employee;
 use App\Models\Holiday;
 use App\Models\Incident;
@@ -16,6 +17,8 @@ use Inertia\Response;
 
 class IncidentController extends Controller
 {
+    use VerifiesTwoFactor;
+
     /**
      * Display a listing of incidents.
      *
@@ -419,9 +422,10 @@ class IncidentController extends Controller
     /**
      * Approve an incident.
      */
-    public function approve(Incident $incident): RedirectResponse
+    public function approve(Request $request, Incident $incident): RedirectResponse
     {
         $this->authorize('approve', $incident);
+        $this->verifyTwoFactorCode($request);
 
         if ($incident->status !== 'pending') {
             return redirect()->back()->with('error', 'Esta incidencia ya fue procesada.');
@@ -457,6 +461,7 @@ class IncidentController extends Controller
     public function reject(Request $request, Incident $incident): RedirectResponse
     {
         $this->authorize('reject', $incident);
+        $this->verifyTwoFactorCode($request);
 
         if ($incident->status !== 'pending') {
             return redirect()->back()->with('error', 'Esta incidencia ya fue procesada.');

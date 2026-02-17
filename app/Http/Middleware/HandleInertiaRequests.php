@@ -37,6 +37,7 @@ class HandleInertiaRequests extends Middleware
                 'user' => $user,
                 'permissions' => $user?->getAllPermissions()->pluck('name')->toArray() ?? [],
                 'roles' => $user?->getRoleNames()->toArray() ?? [],
+                'has_two_factor' => $user?->hasTwoFactorEnabled() ?? false,
             ],
             'flash' => [
                 'success' => fn () => $request->session()->get('success'),

@@ -42,5 +42,8 @@ build/
 *.db
 database/database.sqlite
 
+# E2E test screenshots
+tests/e2e/screenshots/*.png
+
 # Claude
 .claude/

@@ -3,17 +3,24 @@
 namespace App\Http\Controllers;
 
 use App\Models\AuditLog;
+use App\Models\CompensationType;
 use App\Models\Department;
 use App\Models\Employee;
 use App\Models\Position;
 use App\Models\Schedule;
+use App\Models\VacationTable;
+use App\Services\SupervisorResolutionService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 use Inertia\Response;
 
+/**
+ * Controller for managing employees.
+ */
 class EmployeeController extends Controller
 {
     /**
@@ -34,7 +41,6 @@ class EmployeeController extends Controller
         // Apply permission-based filtering
         if (! $user->hasPermissionTo('employees.view_all')) {
             if ($user->hasPermissionTo('employees.view_team')) {
-                // Supervisor: view department employees or direct reports
                 $userEmployee = $user->employee;
                 if ($userEmployee) {
                     $query->where(function ($q) use ($userEmployee) {
@@ -42,14 +48,11 @@ class EmployeeController extends Controller
                             ->orWhere('supervisor_id', $userEmployee->id);
                     });
                 } else {
-                    // No employee linked, show nothing
                     $query->whereRaw('1 = 0');
                 }
             } elseif ($user->hasPermissionTo('employees.view_own')) {
-                // Employee: view only own record
                 $query->where('id', $user->employee?->id);
             } else {
-                // No view permissions
                 $query->whereRaw('1 = 0');
             }
         }
@@ -65,7 +68,6 @@ class EmployeeController extends Controller
             ->when($request->department, function ($q, $department) {
                 $q->where('department_id', $department);
             })
-            // FASE 5.1: Additional filters
             ->when($request->position, function ($q, $position) {
                 $q->where('position_id', $position);
             })
@@ -75,13 +77,14 @@ class EmployeeController extends Controller
             ->when($request->supervisor, function ($q, $supervisor) {
                 $q->where('supervisor_id', $supervisor);
             })
+            ->when($request->has('is_minimum_wage') && $request->is_minimum_wage !== '', function ($q) use ($request) {
+                $q->where('is_minimum_wage', $request->is_minimum_wage === 'yes');
+            })
             ->when($request->has('status'), function ($q) use ($request) {
-                // Si se especifica status, filtrar por ese valor (incluyendo 'all' para ver todos)
                 if ($request->status !== 'all') {
                     $q->where('status', $request->status);
                 }
             }, function ($q) {
-                // Por defecto, solo mostrar empleados activos
                 $q->where('status', 'active');
             });
 
@@ -90,13 +93,13 @@ class EmployeeController extends Controller
         return Inertia::render('Employees/Index', [
             'employees' => $employees,
             'departments' => Department::active()->get(['id', 'name']),
-            // FASE 5.1: Additional data for filters
             'positions' => Position::active()->get(['id', 'name']),
             'schedules' => Schedule::active()->get(['id', 'name']),
-            'supervisors' => Employee::active()->whereNotNull('supervisor_id')->orWhere(function ($q) {
-                $q->whereIn('id', Employee::whereNotNull('supervisor_id')->pluck('supervisor_id'));
+            'supervisors' => Employee::active()->where(function ($q) {
+                $q->whereNotNull('supervisor_id')
+                    ->orWhereIn('id', Employee::whereNotNull('supervisor_id')->pluck('supervisor_id'));
             })->get(['id', 'full_name']),
-            'filters' => $request->only(['search', 'department', 'position', 'schedule', 'supervisor', 'status']),
+            'filters' => $request->only(['search', 'department', 'position', 'schedule', 'supervisor', 'status', 'is_minimum_wage']),
             'can' => [
                 'create' => $user->can('create', Employee::class),
                 'bulkEdit' => $user->hasPermissionTo('employees.bulk_edit'),
@@ -112,10 +115,19 @@ class EmployeeController extends Controller
         $this->authorize('create', Employee::class);
 
         return Inertia::render('Employees/Create', [
-            'departments' => Department::active()->get(['id', 'name', 'code']),
-            'positions' => Position::active()->get(['id', 'name', 'code', 'position_type', 'base_hourly_rate']),
-            'schedules' => Schedule::active()->get(['id', 'name', 'code', 'entry_time', 'exit_time', 'is_flexible']),
-            'employees' => Employee::active()->get(['id', 'full_name']), // For supervisor selection
+            'departments' => Department::active()->with('compensationTypes')->get(['id', 'name', 'code']),
+            'positions' => Position::active()
+                ->with([
+                    'defaultSchedule:id,name',
+                    'compensationTypes',
+                    'supervisorPosition:id,name',
+                    'department:id,name',
+                ])
+                ->get(),
+            'schedules' => Schedule::active()->get(['id', 'name', 'code', 'entry_time', 'exit_time', 'break_minutes', 'daily_work_hours', 'late_tolerance_minutes', 'is_flexible', 'working_days']),
+            'employees' => Employee::active()->get(['id', 'full_name', 'position_id']),
+            'compensationTypes' => CompensationType::active()->get(),
+            'vacationTable' => VacationTable::orderBy('years_of_service')->get(),
         ]);
     }
 
@@ -134,28 +146,92 @@ class EmployeeController extends Controller
             'last_name' => ['required', 'string', 'max:100'],
             'email' => ['nullable', 'email', 'max:255'],
             'phone' => ['nullable', 'string', 'max:20'],
+            'address_street' => ['nullable', 'string', 'max:255'],
+            'address_city' => ['nullable', 'string', 'max:100'],
+            'address_state' => ['nullable', 'string', 'max:100'],
+            'address_zip' => ['nullable', 'string', 'max:10'],
+            'photo' => ['nullable', 'image', 'mimes:jpg,jpeg,png', 'max:5120'],
+            'emergency_phone' => ['nullable', 'string', 'max:20'],
+            'credential_type' => ['nullable', 'string', 'max:50'],
+            'credential_number' => ['nullable', 'string', 'max:100'],
             'hire_date' => ['required', 'date'],
             'termination_date' => ['nullable', 'date', 'after:hire_date'],
             'department_id' => ['required', 'exists:departments,id'],
             'position_id' => ['required', 'exists:positions,id'],
             'schedule_id' => ['required', 'exists:schedules,id'],
+            'schedule_overrides' => ['nullable', 'array'],
+            'schedule_overrides.entry_time' => ['nullable', 'date_format:H:i'],
+            'schedule_overrides.exit_time' => ['nullable', 'date_format:H:i'],
+            'schedule_overrides.break_minutes' => ['nullable', 'integer', 'min:0', 'max:480'],
+            'schedule_overrides.daily_work_hours' => ['nullable', 'numeric', 'min:0', 'max:24'],
+            'schedule_overrides.late_tolerance_minutes' => ['nullable', 'integer', 'min:0', 'max:120'],
+            'schedule_overrides.working_days' => ['nullable', 'array'],
+            'schedule_overrides.day_schedules' => ['nullable', 'array'],
+            'schedule_overrides.day_schedules.*' => ['nullable', 'array'],
+            'schedule_overrides.day_schedules.*.entry_time' => ['nullable', 'date_format:H:i'],
+            'schedule_overrides.day_schedules.*.exit_time' => ['nullable', 'date_format:H:i'],
+            'schedule_overrides.day_schedules.*.break_minutes' => ['nullable', 'integer', 'min:0', 'max:480'],
+            'schedule_overrides.day_schedules.*.daily_work_hours' => ['nullable', 'numeric', 'min:0', 'max:24'],
             'supervisor_id' => ['nullable', 'exists:employees,id'],
             'hourly_rate' => ['required', 'numeric', 'min:0'],
-            'overtime_rate' => ['nullable', 'numeric', 'min:1'],
-            'holiday_rate' => ['nullable', 'numeric', 'min:1'],
+            'is_minimum_wage' => ['boolean'],
+            'is_trial_period' => ['boolean'],
+            'trial_period_end_date' => ['nullable', 'date', 'after_or_equal:hire_date'],
+            'imss_number' => ['nullable', 'string', 'max:50'],
+            'daily_salary' => ['nullable', 'numeric', 'min:0'],
+            'monthly_bonus_type' => ['nullable', 'string', Rule::in(['none', 'fixed', 'variable'])],
+            'monthly_bonus_amount' => ['nullable', 'numeric', 'min:0'],
             'vacation_days_entitled' => ['nullable', 'integer', 'min:0'],
             'vacation_days_used' => ['nullable', 'integer', 'min:0'],
+            'vacation_days_reserved' => ['nullable', 'integer', 'min:0'],
+            'vacation_premium_percentage' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'status' => ['nullable', Rule::in(['active', 'inactive', 'terminated'])],
+            'compensation_type_ids' => ['nullable', 'array'],
+            'compensation_type_ids.*' => ['exists:compensation_types,id'],
+            'compensation_type_overrides' => ['nullable', 'array'],
         ]);
 
         $validated['full_name'] = $validated['first_name'] . ' ' . $validated['last_name'];
-        $validated['overtime_rate'] = $validated['overtime_rate'] ?? 1.5;
-        $validated['holiday_rate'] = $validated['holiday_rate'] ?? 2.0;
         $validated['vacation_days_entitled'] = $validated['vacation_days_entitled'] ?? 6;
         $validated['vacation_days_used'] = $validated['vacation_days_used'] ?? 0;
+        $validated['vacation_days_reserved'] = $validated['vacation_days_reserved'] ?? 0;
+        $validated['vacation_premium_percentage'] = $validated['vacation_premium_percentage'] ?? 25.00;
         $validated['status'] = $validated['status'] ?? 'active';
+        $validated['is_minimum_wage'] = $validated['is_minimum_wage'] ?? false;
+        $validated['is_trial_period'] = $validated['is_trial_period'] ?? false;
+        $validated['monthly_bonus_type'] = $validated['monthly_bonus_type'] ?? 'none';
+        $validated['monthly_bonus_amount'] = $validated['monthly_bonus_amount'] ?? 0;
 
-        Employee::create($validated);
+        // Handle photo upload
+        if ($request->hasFile('photo')) {
+            $validated['photo_path'] = $request->file('photo')->store('employees/photos', 'public');
+        }
+        unset($validated['photo']);
+
+        // Clean schedule_overrides: only keep values that differ from the base schedule
+        $validated['schedule_overrides'] = $this->cleanScheduleOverrides(
+            $validated['schedule_overrides'] ?? [],
+            $validated['schedule_id']
+        );
+
+        $employeeData = collect($validated)->except(['compensation_type_ids', 'compensation_type_overrides'])->toArray();
+        $employee = Employee::create($employeeData);
+
+        // Sync compensation types
+        if ($request->has('compensation_type_ids') && ! empty($request->compensation_type_ids)) {
+            $syncData = [];
+            foreach ($request->compensation_type_ids as $typeId) {
+                $syncData[$typeId] = [
+                    'custom_percentage' => $request->compensation_type_overrides[$typeId] ?? null,
+                ];
+            }
+            $employee->compensationTypes()->sync($syncData);
+        }
+
+        // Auto-resolve supervisor from position hierarchy
+        if (! $employee->supervisor_id) {
+            app(SupervisorResolutionService::class)->resolveAndAssign($employee);
+        }
 
         return redirect()->route('employees.index')
             ->with('success', 'Empleado creado exitosamente.');
@@ -169,13 +245,20 @@ class EmployeeController extends Controller
         $this->authorize('view', $employee);
 
         $user = Auth::user();
-        $employee->load(['department', 'position', 'schedule', 'supervisor', 'attendanceRecords' => function ($q) {
-            $q->orderBy('work_date', 'desc')->limit(30);
-        }, 'incidents' => function ($q) {
-            $q->with('incidentType')->orderBy('start_date', 'desc')->limit(10);
-        }]);
+        $employee->load([
+            'department',
+            'position',
+            'schedule',
+            'supervisor',
+            'compensationTypes',
+            'attendanceRecords' => function ($q) {
+                $q->orderBy('work_date', 'desc')->limit(30);
+            },
+            'incidents' => function ($q) {
+                $q->with('incidentType')->orderBy('start_date', 'desc')->limit(10);
+            },
+        ]);
 
-        // FASE 5.2: Get audit history for this employee
         $auditHistory = AuditLog::where('auditable_type', Employee::class)
             ->where('auditable_id', $employee->id)
             ->with('user')
@@ -213,11 +296,20 @@ class EmployeeController extends Controller
         $this->authorize('update', $employee);
 
         return Inertia::render('Employees/Edit', [
-            'employee' => $employee->load('supervisor'),
-            'departments' => Department::active()->get(['id', 'name', 'code']),
-            'positions' => Position::active()->get(['id', 'name', 'code', 'position_type', 'base_hourly_rate']),
-            'schedules' => Schedule::active()->get(['id', 'name', 'code', 'entry_time', 'exit_time', 'is_flexible']),
-            'employees' => Employee::active()->where('id', '!=', $employee->id)->get(['id', 'full_name']), // For supervisor selection
+            'employee' => $employee->load(['supervisor', 'compensationTypes']),
+            'departments' => Department::active()->with('compensationTypes')->get(['id', 'name', 'code']),
+            'positions' => Position::active()
+                ->with([
+                    'defaultSchedule:id,name',
+                    'compensationTypes',
+                    'supervisorPosition:id,name',
+                    'department:id,name',
+                ])
+                ->get(),
+            'schedules' => Schedule::active()->get(['id', 'name', 'code', 'entry_time', 'exit_time', 'break_minutes', 'daily_work_hours', 'late_tolerance_minutes', 'is_flexible', 'working_days']),
+            'employees' => Employee::active()->where('id', '!=', $employee->id)->get(['id', 'full_name', 'position_id']),
+            'compensationTypes' => CompensationType::active()->get(),
+            'vacationTable' => VacationTable::orderBy('years_of_service')->get(),
         ]);
     }
 
@@ -228,7 +320,6 @@ class EmployeeController extends Controller
     {
         $this->authorize('update', $employee);
 
-        // Check if schedule is being changed
         $scheduleChanging = $request->schedule_id != $employee->schedule_id;
 
         $rules = [
@@ -239,21 +330,51 @@ class EmployeeController extends Controller
             'last_name' => ['required', 'string', 'max:100'],
             'email' => ['nullable', 'email', 'max:255'],
             'phone' => ['nullable', 'string', 'max:20'],
+            'address_street' => ['nullable', 'string', 'max:255'],
+            'address_city' => ['nullable', 'string', 'max:100'],
+            'address_state' => ['nullable', 'string', 'max:100'],
+            'address_zip' => ['nullable', 'string', 'max:10'],
+            'photo' => ['nullable', 'image', 'mimes:jpg,jpeg,png', 'max:5120'],
+            'emergency_phone' => ['nullable', 'string', 'max:20'],
+            'credential_type' => ['nullable', 'string', 'max:50'],
+            'credential_number' => ['nullable', 'string', 'max:100'],
             'hire_date' => ['required', 'date'],
             'termination_date' => ['nullable', 'date', 'after:hire_date'],
             'department_id' => ['required', 'exists:departments,id'],
             'position_id' => ['required', 'exists:positions,id'],
             'schedule_id' => ['required', 'exists:schedules,id'],
+            'schedule_overrides' => ['nullable', 'array'],
+            'schedule_overrides.entry_time' => ['nullable', 'date_format:H:i'],
+            'schedule_overrides.exit_time' => ['nullable', 'date_format:H:i'],
+            'schedule_overrides.break_minutes' => ['nullable', 'integer', 'min:0', 'max:480'],
+            'schedule_overrides.daily_work_hours' => ['nullable', 'numeric', 'min:0', 'max:24'],
+            'schedule_overrides.late_tolerance_minutes' => ['nullable', 'integer', 'min:0', 'max:120'],
+            'schedule_overrides.working_days' => ['nullable', 'array'],
+            'schedule_overrides.day_schedules' => ['nullable', 'array'],
+            'schedule_overrides.day_schedules.*' => ['nullable', 'array'],
+            'schedule_overrides.day_schedules.*.entry_time' => ['nullable', 'date_format:H:i'],
+            'schedule_overrides.day_schedules.*.exit_time' => ['nullable', 'date_format:H:i'],
+            'schedule_overrides.day_schedules.*.break_minutes' => ['nullable', 'integer', 'min:0', 'max:480'],
+            'schedule_overrides.day_schedules.*.daily_work_hours' => ['nullable', 'numeric', 'min:0', 'max:24'],
             'supervisor_id' => ['nullable', 'exists:employees,id', Rule::notIn([$employee->id])],
             'hourly_rate' => ['required', 'numeric', 'min:0'],
-            'overtime_rate' => ['required', 'numeric', 'min:1'],
-            'holiday_rate' => ['required', 'numeric', 'min:1'],
+            'is_minimum_wage' => ['boolean'],
+            'is_trial_period' => ['boolean'],
+            'trial_period_end_date' => ['nullable', 'date', 'after_or_equal:hire_date'],
+            'imss_number' => ['nullable', 'string', 'max:50'],
+            'daily_salary' => ['nullable', 'numeric', 'min:0'],
+            'monthly_bonus_type' => ['nullable', 'string', Rule::in(['none', 'fixed', 'variable'])],
+            'monthly_bonus_amount' => ['nullable', 'numeric', 'min:0'],
             'vacation_days_entitled' => ['required', 'integer', 'min:0'],
             'vacation_days_used' => ['required', 'integer', 'min:0'],
+            'vacation_days_reserved' => ['nullable', 'integer', 'min:0'],
+            'vacation_premium_percentage' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'status' => ['required', Rule::in(['active', 'inactive', 'terminated'])],
+            'compensation_type_ids' => ['nullable', 'array'],
+            'compensation_type_ids.*' => ['exists:compensation_types,id'],
+            'compensation_type_overrides' => ['nullable', 'array'],
         ];
 
-        // Require evidence when changing schedule
         if ($scheduleChanging) {
             $rules['schedule_change_evidence'] = ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'];
         }
@@ -265,7 +386,6 @@ class EmployeeController extends Controller
         // Handle evidence file upload
         if ($scheduleChanging && $request->hasFile('schedule_change_evidence')) {
             $path = $request->file('schedule_change_evidence')->store('schedule-changes', 'public');
-            // Log the schedule change with evidence
             AuditLog::create([
                 'user_id' => Auth::id(),
                 'auditable_type' => Employee::class,
@@ -280,9 +400,53 @@ class EmployeeController extends Controller
         }
 
         $validated['full_name'] = $validated['first_name'] . ' ' . $validated['last_name'];
-        unset($validated['schedule_change_evidence']); // Don't save this to employee
+        $validated['is_minimum_wage'] = $validated['is_minimum_wage'] ?? false;
+        $validated['is_trial_period'] = $validated['is_trial_period'] ?? false;
+        $validated['monthly_bonus_type'] = $validated['monthly_bonus_type'] ?? 'none';
+        $validated['monthly_bonus_amount'] = $validated['monthly_bonus_amount'] ?? 0;
+        $validated['vacation_days_reserved'] = $validated['vacation_days_reserved'] ?? 0;
+        $validated['vacation_premium_percentage'] = $validated['vacation_premium_percentage'] ?? 25.00;
+        unset($validated['schedule_change_evidence']);
 
-        $employee->update($validated);
+        // Handle photo upload
+        if ($request->hasFile('photo')) {
+            // Delete old photo if exists
+            if ($employee->photo_path) {
+                Storage::disk('public')->delete($employee->photo_path);
+            }
+            $validated['photo_path'] = $request->file('photo')->store('employees/photos', 'public');
+        }
+        unset($validated['photo']);
+
+        // Clean schedule_overrides: only keep values that differ from the base schedule
+        $validated['schedule_overrides'] = $this->cleanScheduleOverrides(
+            $validated['schedule_overrides'] ?? [],
+            $validated['schedule_id']
+        );
+
+        $positionChanged = $request->position_id != $employee->position_id;
+
+        $employeeData = collect($validated)->except(['compensation_type_ids', 'compensation_type_overrides'])->toArray();
+        $employee->update($employeeData);
+
+        // Sync compensation types
+        if ($request->has('compensation_type_ids')) {
+            $syncData = [];
+            foreach ($request->compensation_type_ids as $typeId) {
+                $syncData[$typeId] = [
+                    'custom_percentage' => $request->compensation_type_overrides[$typeId] ?? null,
+                ];
+            }
+            $employee->compensationTypes()->sync($syncData);
+        } else {
+            $employee->compensationTypes()->detach();
+        }
+
+        // Re-resolve supervisor if position changed and no manual override
+        if ($positionChanged && ! $request->has('supervisor_override')) {
+            $employee->update(['supervisor_id' => null]);
+            app(SupervisorResolutionService::class)->resolveAndAssign($employee->fresh());
+        }
 
         return redirect()->route('employees.index')
             ->with('success', 'Empleado actualizado exitosamente.');
@@ -309,20 +473,95 @@ class EmployeeController extends Controller
         $user = Auth::user();
 
         if (! $user->hasPermissionTo('employees.bulk_edit')) {
-            abort(403, 'No tienes permiso para edición masiva.');
+            abort(403, 'No tienes permiso para edicion masiva.');
         }
 
         $validated = $request->validate([
             'employee_ids' => ['required', 'array', 'min:1'],
             'employee_ids.*' => ['exists:employees,id'],
-            'field' => ['required', 'string', Rule::in(['department_id', 'position_id', 'schedule_id', 'supervisor_id', 'status'])],
-            'value' => ['required'],
+            'operation_type' => ['required', 'string', Rule::in(['set_field', 'adjust_compensation'])],
+            // For set_field
+            'field' => ['required_if:operation_type,set_field', 'string', Rule::in(['department_id', 'position_id', 'schedule_id', 'supervisor_id', 'status', 'is_minimum_wage'])],
+            'value' => ['required_if:operation_type,set_field'],
+            // For adjust_compensation
+            'compensation_field' => ['required_if:operation_type,adjust_compensation', 'string', Rule::in(['hourly_rate', 'overtime_rate', 'holiday_rate'])],
+            'adjustment_type' => ['required_if:operation_type,adjust_compensation', 'string', Rule::in(['fixed', 'percentage'])],
+            'adjustment_value' => ['required_if:operation_type,adjust_compensation', 'numeric'],
         ]);
 
-        Employee::whereIn('id', $validated['employee_ids'])
-            ->update([$validated['field'] => $validated['value']]);
+        if ($validated['operation_type'] === 'set_field') {
+            Employee::whereIn('id', $validated['employee_ids'])
+                ->update([$validated['field'] => $validated['value']]);
+        } elseif ($validated['operation_type'] === 'adjust_compensation') {
+            $employees = Employee::whereIn('id', $validated['employee_ids'])->get();
+            $field = $validated['compensation_field'];
+
+            foreach ($employees as $employee) {
+                $currentValue = (float) $employee->$field;
+
+                if ($validated['adjustment_type'] === 'fixed') {
+                    $newValue = $currentValue + $validated['adjustment_value'];
+                } else {
+                    $newValue = $currentValue * (1 + $validated['adjustment_value'] / 100);
+                }
+
+                $employee->update([$field => max(0, round($newValue, 2))]);
+            }
+        }
 
         return redirect()->route('employees.index')
             ->with('success', count($validated['employee_ids']) . ' empleados actualizados exitosamente.');
+    }
+
+    /**
+     * Remove override values that match the base schedule (no real override).
+     *
+     * Returns null if no overrides remain, otherwise the cleaned array.
+     */
+    private function cleanScheduleOverrides(array $overrides, int $scheduleId): ?array
+    {
+        if (empty($overrides)) {
+            return null;
+        }
+
+        $schedule = Schedule::find($scheduleId);
+        if (! $schedule) {
+            return null;
+        }
+
+        $cleaned = [];
+        $fields = ['entry_time', 'exit_time', 'break_minutes', 'daily_work_hours', 'late_tolerance_minutes', 'working_days'];
+
+        foreach ($fields as $field) {
+            if (! isset($overrides[$field]) || $overrides[$field] === '' || $overrides[$field] === null) {
+                continue;
+            }
+
+            $baseValue = $schedule->{$field};
+
+            // Normalize for comparison
+            if (in_array($field, ['entry_time', 'exit_time'])) {
+                // Compare HH:MM format (strip seconds from base if present)
+                $baseShort = substr($baseValue ?? '', 0, 5);
+                $overrideShort = substr($overrides[$field], 0, 5);
+                if ($overrideShort !== $baseShort) {
+                    $cleaned[$field] = $overrides[$field];
+                }
+            } elseif ($field === 'working_days') {
+                $baseDays = is_array($baseValue) ? $baseValue : [];
+                $overrideDays = is_array($overrides[$field]) ? $overrides[$field] : [];
+                sort($baseDays);
+                sort($overrideDays);
+                if ($baseDays !== $overrideDays) {
+                    $cleaned[$field] = $overrides[$field];
+                }
+            } else {
+                if ((float) $overrides[$field] !== (float) $baseValue) {
+                    $cleaned[$field] = $overrides[$field];
+                }
+            }
+        }
+
+        return empty($cleaned) ? null : $cleaned;
     }
 }

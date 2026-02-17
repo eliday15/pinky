@@ -1,16 +1,23 @@
 <?php
 
+use App\Http\Controllers\AnomalyResolutionController;
 use App\Http\Controllers\AttendanceController;
 use App\Http\Controllers\AuditLogController;
 use App\Http\Controllers\AuthorizationController;
+use App\Http\Controllers\CompensationTypeController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\DepartmentController;
+use App\Http\Controllers\EmployeeBulkController;
 use App\Http\Controllers\EmployeeController;
 use App\Http\Controllers\IncidentController;
 use App\Http\Controllers\PayrollController;
+use App\Http\Controllers\PositionController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\ReportExportController;
+use App\Http\Controllers\ScheduleController;
 use App\Http\Controllers\SettingsController;
+use App\Http\Controllers\VacationTableController;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
@@ -22,8 +29,30 @@ Route::get('/', function () {
     return redirect()->route('login');
 });
 
-Route::middleware(['auth', 'verified'])->group(function () {
+Route::middleware(['auth', 'verified', 'two-factor-setup'])->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
+
+    // Schedules
+    Route::resource('schedules', ScheduleController::class);
+
+    // Departments
+    Route::resource('departments', DepartmentController::class);
+
+    // Positions
+    Route::resource('positions', PositionController::class);
+
+    // Compensation Types
+    Route::resource('compensation-types', CompensationTypeController::class)->except(['show']);
+
+    // Vacation Table
+    Route::get('/settings/vacation-table', [VacationTableController::class, 'index'])->name('settings.vacation-table');
+    Route::put('/settings/vacation-table', [VacationTableController::class, 'update'])->name('settings.vacation-table.update');
+
+    // Employee Bulk Excel Import/Export (MUST be before resource route)
+    Route::get('/employees/export', [EmployeeBulkController::class, 'export'])->name('employees.export');
+    Route::get('/employees/import', [EmployeeBulkController::class, 'showImport'])->name('employees.import');
+    Route::post('/employees/import/preview', [EmployeeBulkController::class, 'preview'])->name('employees.import.preview');
+    Route::post('/employees/import/confirm', [EmployeeBulkController::class, 'confirm'])->name('employees.import.confirm');
 
     // Employees
     Route::resource('employees', EmployeeController::class);
@@ -101,6 +130,15 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('/settings/general', [SettingsController::class, 'general'])->name('settings.general');
     Route::put('/settings', [SettingsController::class, 'update'])->name('settings.update');
     Route::put('/settings/single', [SettingsController::class, 'updateSingle'])->name('settings.updateSingle');
+
+    // Anomalies
+    Route::get('/anomalies', [AnomalyResolutionController::class, 'index'])->name('anomalies.index');
+    Route::post('/anomalies/bulk-resolve', [AnomalyResolutionController::class, 'bulkResolve'])->name('anomalies.bulk-resolve');
+    Route::post('/anomalies/bulk-dismiss', [AnomalyResolutionController::class, 'bulkDismiss'])->name('anomalies.bulk-dismiss');
+    Route::get('/anomalies/{anomaly}', [AnomalyResolutionController::class, 'show'])->name('anomalies.show');
+    Route::post('/anomalies/{anomaly}/resolve', [AnomalyResolutionController::class, 'resolve'])->name('anomalies.resolve');
+    Route::post('/anomalies/{anomaly}/dismiss', [AnomalyResolutionController::class, 'dismiss'])->name('anomalies.dismiss');
+    Route::post('/anomalies/{anomaly}/link-authorization', [AnomalyResolutionController::class, 'linkAuthorization'])->name('anomalies.linkAuthorization');
 
     // Audit Logs
     Route::get('/audit-logs', [AuditLogController::class, 'index'])->name('audit-logs.index');

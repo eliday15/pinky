@@ -5,6 +5,7 @@ import { Head, Link } from '@inertiajs/vue3';
 const props = defineProps({
     employee: Object,
     auditHistory: Array,
+    can: Object,
 });
 
 const statusColors = {
@@ -46,6 +47,11 @@ const formatCurrency = (amount) => {
         currency: 'MXN',
     }).format(amount);
 };
+
+/**
+ * Determine if the supervisor was auto-resolved via position or set manually.
+ */
+const supervisorIsAutoResolved = props.employee.position?.supervisor_position_id && props.employee.supervisor?.position_id === props.employee.position?.supervisor_position_id;
 </script>
 
 <template>
@@ -64,6 +70,7 @@ const formatCurrency = (amount) => {
                 &larr; Volver a empleados
             </Link>
             <Link
+                v-if="can?.edit"
                 :href="route('employees.edit', employee.id)"
                 class="px-4 py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700 transition-colors"
             >
@@ -77,16 +84,23 @@ const formatCurrency = (amount) => {
                 <!-- Employee Header -->
                 <div class="bg-white rounded-lg shadow p-6">
                     <div class="flex items-start">
-                        <div class="w-20 h-20 rounded-full bg-pink-100 flex items-center justify-center">
-                            <span class="text-3xl text-pink-600 font-bold">
+                        <div class="w-20 h-20 rounded-full bg-pink-100 flex items-center justify-center overflow-hidden">
+                            <img v-if="employee.photo_path" :src="`/storage/${employee.photo_path}`" class="w-full h-full object-cover" />
+                            <span v-else class="text-3xl text-pink-600 font-bold">
                                 {{ employee.full_name?.charAt(0)?.toUpperCase() || '?' }}
                             </span>
                         </div>
                         <div class="ml-6 flex-1">
-                            <div class="flex items-center">
+                            <div class="flex items-center flex-wrap gap-2">
                                 <h1 class="text-2xl font-bold text-gray-800">{{ employee.full_name }}</h1>
-                                <span :class="[statusColors[employee.status], 'ml-3 px-3 py-1 text-sm font-medium rounded-full']">
+                                <span :class="[statusColors[employee.status], 'px-3 py-1 text-sm font-medium rounded-full']">
                                     {{ statusLabels[employee.status] }}
+                                </span>
+                                <span v-if="employee.is_minimum_wage" class="px-3 py-1 text-sm font-medium rounded-full bg-orange-100 text-orange-800">
+                                    Salario Minimo
+                                </span>
+                                <span v-if="employee.is_trial_period" class="px-3 py-1 text-sm font-medium rounded-full bg-amber-100 text-amber-800">
+                                    En Prueba
                                 </span>
                             </div>
                             <p class="text-gray-500 mt-1">{{ employee.position?.name }} - {{ employee.department?.name }}</p>
@@ -126,7 +140,24 @@ const formatCurrency = (amount) => {
                                 </div>
                                 <div>
                                     <p class="text-gray-500">Jefe Directo</p>
-                                    <p class="font-medium">{{ employee.supervisor?.full_name || 'Sin asignar' }}</p>
+                                    <p class="font-medium">
+                                        {{ employee.supervisor?.full_name || 'Sin asignar' }}
+                                        <span v-if="employee.supervisor" class="text-xs text-gray-400">
+                                            ({{ supervisorIsAutoResolved ? 'Auto via puesto' : 'Manual' }})
+                                        </span>
+                                    </p>
+                                </div>
+                                <div v-if="employee.imss_number">
+                                    <p class="text-gray-500">IMSS</p>
+                                    <p class="font-medium">{{ employee.imss_number }}</p>
+                                </div>
+                                <div v-if="employee.credential_type">
+                                    <p class="text-gray-500">{{ employee.credential_type }}</p>
+                                    <p class="font-medium">{{ employee.credential_number || '-' }}</p>
+                                </div>
+                                <div v-if="employee.is_trial_period">
+                                    <p class="text-gray-500">Fin Periodo Prueba</p>
+                                    <p class="font-medium text-amber-600">{{ employee.trial_period_end_date ? formatDate(employee.trial_period_end_date) : 'Sin fecha' }}</p>
                                 </div>
                             </div>
                         </div>
@@ -150,6 +181,17 @@ const formatCurrency = (amount) => {
                                 </svg>
                                 <span>{{ employee.phone || 'Sin telefono' }}</span>
                             </div>
+                            <div v-if="employee.emergency_phone" class="flex items-center">
+                                <svg class="w-5 h-5 text-gray-400 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 5.636l-3.536 3.536m0 5.656l3.536 3.536M9.172 9.172L5.636 5.636m3.536 9.192l-3.536 3.536M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-5 0a4 4 0 11-8 0 4 4 0 018 0z" />
+                                </svg>
+                                <span>{{ employee.emergency_phone }}</span>
+                            </div>
+                            <div v-if="employee.address_street" class="text-sm text-gray-600 mt-2 pt-2 border-t border-gray-100">
+                                <p class="font-medium text-gray-700 mb-1">Domicilio</p>
+                                <p>{{ employee.address_street }}</p>
+                                <p v-if="employee.address_city || employee.address_state">{{ [employee.address_city, employee.address_state].filter(Boolean).join(', ') }} {{ employee.address_zip }}</p>
+                            </div>
                         </div>
                     </div>
 
@@ -160,14 +202,40 @@ const formatCurrency = (amount) => {
                                 <span class="text-gray-500">Tarifa por hora</span>
                                 <span class="font-medium">{{ formatCurrency(employee.hourly_rate) }}</span>
                             </div>
-                            <div class="flex justify-between">
-                                <span class="text-gray-500">Mult. horas extra</span>
-                                <span class="font-medium">x{{ employee.overtime_rate }}</span>
+                            <div v-if="employee.daily_salary" class="flex justify-between">
+                                <span class="text-gray-500">Salario diario integrado</span>
+                                <span class="font-medium">{{ formatCurrency(employee.daily_salary) }}</span>
                             </div>
-                            <div class="flex justify-between">
-                                <span class="text-gray-500">Mult. festivos</span>
-                                <span class="font-medium">x{{ employee.holiday_rate }}</span>
+                            <div v-if="employee.is_minimum_wage" class="flex justify-between">
+                                <span class="text-gray-500">Salario Minimo</span>
+                                <span class="font-medium text-orange-600">Si</span>
                             </div>
+                            <div v-if="employee.monthly_bonus_type !== 'none'" class="flex justify-between">
+                                <span class="text-gray-500">Bono mensual ({{ employee.monthly_bonus_type === 'fixed' ? 'Fijo' : 'Variable' }})</span>
+                                <span class="font-medium">{{ formatCurrency(employee.monthly_bonus_amount) }}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Compensation Types -->
+                <div v-if="employee.compensation_types?.length" class="bg-white rounded-lg shadow p-6">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">Conceptos de Compensacion</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div
+                            v-for="ct in employee.compensation_types"
+                            :key="ct.id"
+                            class="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
+                        >
+                            <span class="text-sm font-medium text-gray-700">{{ ct.name }}</span>
+                            <span class="text-sm text-gray-500">
+                                <template v-if="ct.calculation_type === 'fixed'">
+                                    Monto: ${{ Number(ct.pivot?.custom_fixed_amount || ct.fixed_amount || 0).toFixed(2) }}
+                                </template>
+                                <template v-else>
+                                    Porcentaje: {{ ct.pivot?.custom_percentage || ct.percentage_value || 0 }}%
+                                </template>
+                            </span>
                         </div>
                     </div>
                 </div>
@@ -218,18 +286,26 @@ const formatCurrency = (amount) => {
                     <h3 class="text-lg font-semibold text-gray-800 mb-4">Vacaciones</h3>
                     <div class="text-center">
                         <div class="text-4xl font-bold text-pink-600">
-                            {{ employee.vacation_days_entitled - employee.vacation_days_used }}
+                            {{ Math.max(0, employee.vacation_days_entitled - employee.vacation_days_used - (employee.vacation_days_reserved || 0)) }}
                         </div>
                         <p class="text-gray-500 mt-1">dias disponibles</p>
                     </div>
-                    <div class="mt-4 pt-4 border-t border-gray-200">
+                    <div class="mt-4 pt-4 border-t border-gray-200 space-y-2">
                         <div class="flex justify-between text-sm">
                             <span class="text-gray-500">Asignados</span>
                             <span>{{ employee.vacation_days_entitled }} dias</span>
                         </div>
-                        <div class="flex justify-between text-sm mt-2">
+                        <div class="flex justify-between text-sm">
                             <span class="text-gray-500">Usados</span>
                             <span>{{ employee.vacation_days_used }} dias</span>
+                        </div>
+                        <div v-if="employee.vacation_days_reserved" class="flex justify-between text-sm">
+                            <span class="text-gray-500">Apartados</span>
+                            <span>{{ employee.vacation_days_reserved }} dias</span>
+                        </div>
+                        <div class="flex justify-between text-sm">
+                            <span class="text-gray-500">Prima vacacional</span>
+                            <span>{{ employee.vacation_premium_percentage ?? 25 }}%</span>
                         </div>
                     </div>
                 </div>

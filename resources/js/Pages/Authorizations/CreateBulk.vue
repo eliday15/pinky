@@ -1,11 +1,13 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 
 const props = defineProps({
     employees: Array,
     types: Array,
+    departments: Array,
+    departmentHeads: Array,
 });
 
 const form = useForm({
@@ -16,18 +18,31 @@ const form = useForm({
     end_time: '',
     hours: '',
     reason: '',
+    department_head_id: '',
 });
 
 const searchQuery = ref('');
 const selectAll = ref(false);
+const departmentFilter = ref('');
 
 const filteredEmployees = computed(() => {
-    if (!searchQuery.value) return props.employees;
-    const query = searchQuery.value.toLowerCase();
-    return props.employees.filter(emp =>
-        emp.full_name.toLowerCase().includes(query) ||
-        emp.employee_number.toLowerCase().includes(query)
-    );
+    let employees = props.employees;
+
+    // Filter by department
+    if (departmentFilter.value) {
+        employees = employees.filter(emp => emp.department_id == departmentFilter.value);
+    }
+
+    // Filter by search query
+    if (searchQuery.value) {
+        const query = searchQuery.value.toLowerCase();
+        employees = employees.filter(emp =>
+            emp.full_name.toLowerCase().includes(query) ||
+            emp.employee_number.toLowerCase().includes(query)
+        );
+    }
+
+    return employees;
 });
 
 const toggleSelectAll = () => {
@@ -45,10 +60,36 @@ const toggleEmployee = (empId) => {
     } else {
         form.employee_ids.push(empId);
     }
-    selectAll.value = form.employee_ids.length === filteredEmployees.value.length;
+    selectAll.value = form.employee_ids.length === filteredEmployees.value.length && filteredEmployees.value.length > 0;
 };
 
 const isSelected = (empId) => form.employee_ids.includes(empId);
+
+/** Select all employees from a specific department. */
+const selectDepartment = () => {
+    if (!departmentFilter.value) return;
+    form.employee_ids = filteredEmployees.value.map(e => e.id);
+    selectAll.value = true;
+};
+
+/** Pre-set night shift defaults when type changes. */
+watch(() => form.type, (newType) => {
+    if (newType === 'night_shift' && !form.start_time && !form.end_time) {
+        form.start_time = '22:00';
+        form.end_time = '06:00';
+    }
+});
+
+/** Reset select-all when department filter changes. */
+watch(departmentFilter, () => {
+    selectAll.value = false;
+});
+
+/** Filtered department heads based on selected department. */
+const filteredDepartmentHeads = computed(() => {
+    if (!departmentFilter.value) return props.departmentHeads;
+    return props.departmentHeads.filter(dh => dh.department_id == departmentFilter.value);
+});
 
 const submit = () => {
     form.post(route('authorizations.storeBulk'));
@@ -62,6 +103,11 @@ const typeDescriptions = {
     schedule_change: 'Cambio temporal en el horario de trabajo',
     holiday_worked: 'Trabajo realizado en dia festivo oficial',
     special: 'Autorizacion especial que no encaja en otras categorias',
+};
+
+const getDepartmentName = (deptId) => {
+    const dept = props.departments?.find(d => d.id == deptId);
+    return dept ? dept.name : '';
 };
 </script>
 
@@ -86,19 +132,39 @@ const typeDescriptions = {
             <form @submit.prevent="submit" class="space-y-6">
                 <!-- Employee Selection -->
                 <div class="bg-white rounded-lg shadow p-6">
-                    <div class="flex justify-between items-center mb-4">
+                    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-3">
                         <h3 class="text-lg font-semibold text-gray-800">
                             Seleccionar Empleados
                             <span class="text-sm font-normal text-gray-500 ml-2">
                                 ({{ form.employee_ids.length }} seleccionados)
                             </span>
                         </h3>
-                        <input
-                            v-model="searchQuery"
-                            type="text"
-                            placeholder="Buscar empleado..."
-                            class="w-64 rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 text-sm"
-                        />
+                        <div class="flex items-center gap-3">
+                            <!-- Department Filter -->
+                            <select
+                                v-model="departmentFilter"
+                                class="rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 text-sm"
+                            >
+                                <option value="">Todos los departamentos</option>
+                                <option v-for="dept in departments" :key="dept.id" :value="dept.id">
+                                    {{ dept.name }}
+                                </option>
+                            </select>
+                            <button
+                                v-if="departmentFilter"
+                                type="button"
+                                @click="selectDepartment"
+                                class="px-3 py-2 text-xs bg-pink-100 text-pink-700 rounded-lg hover:bg-pink-200 whitespace-nowrap"
+                            >
+                                Seleccionar depto
+                            </button>
+                            <input
+                                v-model="searchQuery"
+                                type="text"
+                                placeholder="Buscar empleado..."
+                                class="w-48 rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 text-sm"
+                            />
+                        </div>
                     </div>
 
                     <div class="border rounded-lg overflow-hidden">
@@ -111,6 +177,9 @@ const typeDescriptions = {
                                 class="rounded border-gray-300 text-pink-600 focus:ring-pink-500"
                             />
                             <span class="ml-3 text-sm font-medium text-gray-700">Seleccionar todos</span>
+                            <span v-if="departmentFilter" class="ml-2 text-xs text-gray-500">
+                                ({{ filteredEmployees.length }} en este depto)
+                            </span>
                         </div>
 
                         <!-- Employee List -->
@@ -130,6 +199,9 @@ const typeDescriptions = {
                                 />
                                 <span class="ml-3 text-sm text-gray-900">{{ emp.full_name }}</span>
                                 <span class="ml-2 text-xs text-gray-500">({{ emp.employee_number }})</span>
+                                <span v-if="!departmentFilter && emp.department_id" class="ml-auto text-xs text-gray-400">
+                                    {{ getDepartmentName(emp.department_id) }}
+                                </span>
                             </div>
                             <div v-if="filteredEmployees.length === 0" class="px-4 py-8 text-center text-gray-500">
                                 No se encontraron empleados
@@ -161,6 +233,14 @@ const typeDescriptions = {
                         </p>
                         <p v-if="form.errors.type" class="mt-1 text-sm text-red-600">
                             {{ form.errors.type }}
+                        </p>
+                    </div>
+
+                    <!-- Night shift info banner -->
+                    <div v-if="form.type === 'night_shift'" class="mt-4 bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+                        <p class="text-sm text-indigo-800">
+                            <strong>Velada:</strong> Las horas de inicio y fin se han pre-configurado para turno nocturno (22:00 - 06:00).
+                            Puede ajustarlos si es necesario.
                         </p>
                     </div>
                 </div>
@@ -224,6 +304,31 @@ const typeDescriptions = {
                     </div>
                 </div>
 
+                <!-- Department Head -->
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">Jefe de Departamento</h3>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">
+                            Firmado por (opcional)
+                        </label>
+                        <select
+                            v-model="form.department_head_id"
+                            class="w-full md:w-1/2 rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                        >
+                            <option value="">Sin firma de jefe de departamento</option>
+                            <option v-for="head in filteredDepartmentHeads" :key="head.id" :value="head.id">
+                                {{ head.full_name }}
+                            </option>
+                        </select>
+                        <p class="mt-1 text-xs text-gray-500">
+                            Seleccione el jefe de departamento que autoriza esta operacion masiva
+                        </p>
+                        <p v-if="form.errors.department_head_id" class="mt-1 text-sm text-red-600">
+                            {{ form.errors.department_head_id }}
+                        </p>
+                    </div>
+                </div>
+
                 <!-- Reason -->
                 <div class="bg-white rounded-lg shadow p-6">
                     <h3 class="text-lg font-semibold text-gray-800 mb-4">Justificacion</h3>
@@ -250,6 +355,7 @@ const typeDescriptions = {
                         Se crearan <strong>{{ form.employee_ids.length }}</strong> autorizaciones
                         <span v-if="form.type"> de tipo <strong>{{ types.find(t => t.value === form.type)?.label }}</strong></span>
                         <span v-if="form.date"> para el <strong>{{ form.date }}</strong></span>
+                        <span v-if="form.department_head_id"> firmadas por <strong>{{ filteredDepartmentHeads.find(h => h.id == form.department_head_id)?.full_name }}</strong></span>
                     </p>
                 </div>
 

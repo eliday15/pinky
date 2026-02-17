@@ -1,7 +1,8 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { Head, Link, router, useForm } from '@inertiajs/vue3';
-import { ref } from 'vue';
+import TwoFactorModal from '@/Components/TwoFactorModal.vue';
+import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
+import { ref, computed } from 'vue';
 
 const props = defineProps({
     authorizations: Object,
@@ -11,6 +12,10 @@ const props = defineProps({
     types: Array,
     can: Object,
 });
+
+const hasTwoFactor = computed(() => usePage().props.auth.has_two_factor);
+const showApproveModal = ref(false);
+const approveAuthId = ref(null);
 
 const filters = ref({
     status: props.filters.status || '',
@@ -33,14 +38,26 @@ const clearFilters = () => {
 
 const rejectForm = useForm({
     rejection_reason: '',
+    two_factor_code: '',
 });
 
 const showRejectModal = ref(false);
 const selectedAuthorization = ref(null);
 
+const handleApprove = (auth) => {
+    if (hasTwoFactor.value) {
+        approveAuthId.value = auth.id;
+        showApproveModal.value = true;
+    } else {
+        router.post(route('authorizations.approve', auth.id));
+    }
+};
+
 const openRejectModal = (auth) => {
     selectedAuthorization.value = auth;
     rejectForm.rejection_reason = '';
+    rejectForm.two_factor_code = '';
+    rejectForm.clearErrors();
     showRejectModal.value = true;
 };
 
@@ -245,15 +262,13 @@ const typeLabels = {
                                 Ver
                             </Link>
                             <template v-if="auth.status === 'pending'">
-                                <Link
+                                <button
                                     v-if="can.approve"
-                                    :href="route('authorizations.approve', auth.id)"
-                                    method="post"
-                                    as="button"
+                                    @click="handleApprove(auth)"
                                     class="text-green-600 hover:text-green-900"
                                 >
                                     Aprobar
-                                </Link>
+                                </button>
                                 <button
                                     v-if="can.reject"
                                     @click="openRejectModal(auth)"
@@ -302,6 +317,17 @@ const typeLabels = {
             </div>
         </div>
 
+        <!-- Approve 2FA Modal -->
+        <TwoFactorModal
+            v-if="approveAuthId"
+            :show="showApproveModal"
+            :action="route('authorizations.approve', approveAuthId)"
+            method="post"
+            title="Aprobar Autorizacion"
+            message="Ingresa tu codigo de verificacion para aprobar esta autorizacion."
+            @close="showApproveModal = false; approveAuthId = null;"
+        />
+
         <!-- Reject Modal -->
         <div v-if="showRejectModal" class="fixed inset-0 z-50 overflow-y-auto">
             <div class="flex items-center justify-center min-h-screen px-4">
@@ -323,6 +349,23 @@ const typeLabels = {
                             ></textarea>
                             <p v-if="rejectForm.errors.rejection_reason" class="mt-1 text-sm text-red-600">
                                 {{ rejectForm.errors.rejection_reason }}
+                            </p>
+                        </div>
+                        <div v-if="hasTwoFactor" class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                Codigo de verificacion *
+                            </label>
+                            <input
+                                v-model="rejectForm.two_factor_code"
+                                type="text"
+                                inputmode="numeric"
+                                autocomplete="one-time-code"
+                                maxlength="6"
+                                class="w-full text-center text-lg tracking-widest rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                placeholder="000000"
+                            />
+                            <p v-if="rejectForm.errors.two_factor_code" class="mt-1 text-sm text-red-600">
+                                {{ rejectForm.errors.two_factor_code }}
                             </p>
                         </div>
                         <div class="flex justify-end space-x-3">

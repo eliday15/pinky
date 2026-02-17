@@ -1,12 +1,16 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { Head, Link, useForm } from '@inertiajs/vue3';
-import { ref } from 'vue';
+import TwoFactorModal from '@/Components/TwoFactorModal.vue';
+import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
+import { ref, computed } from 'vue';
 
 const props = defineProps({
     authorization: Object,
     can: Object,
 });
+
+const hasTwoFactor = computed(() => usePage().props.auth.has_two_factor);
+const showApproveModal = ref(false);
 
 const statusColors = {
     pending: 'bg-yellow-100 text-yellow-800 border-yellow-300',
@@ -31,14 +35,24 @@ const typeLabels = {
 
 const rejectForm = useForm({
     rejection_reason: '',
+    two_factor_code: '',
 });
 
 const showRejectModal = ref(false);
+
+const handleApprove = () => {
+    if (hasTwoFactor.value) {
+        showApproveModal.value = true;
+    } else {
+        router.post(route('authorizations.approve', props.authorization.id));
+    }
+};
 
 const submitReject = () => {
     rejectForm.post(route('authorizations.reject', props.authorization.id), {
         onSuccess: () => {
             showRejectModal.value = false;
+            rejectForm.reset();
         },
     });
 };
@@ -193,15 +207,13 @@ const submitReject = () => {
                         </Link>
                     </div>
                     <div v-if="authorization.status === 'pending'" class="space-x-2">
-                        <Link
+                        <button
                             v-if="can.approve"
-                            :href="route('authorizations.approve', authorization.id)"
-                            method="post"
-                            as="button"
+                            @click="handleApprove"
                             class="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
                         >
                             Aprobar
-                        </Link>
+                        </button>
                         <button
                             v-if="can.reject"
                             @click="showRejectModal = true"
@@ -213,6 +225,16 @@ const submitReject = () => {
                 </div>
             </div>
         </div>
+
+        <!-- Approve 2FA Modal -->
+        <TwoFactorModal
+            :show="showApproveModal"
+            :action="route('authorizations.approve', authorization.id)"
+            method="post"
+            title="Aprobar Autorizacion"
+            message="Ingresa tu codigo de verificacion para aprobar esta autorizacion."
+            @close="showApproveModal = false"
+        />
 
         <!-- Reject Modal -->
         <div v-if="showRejectModal" class="fixed inset-0 z-50 overflow-y-auto">
@@ -235,6 +257,23 @@ const submitReject = () => {
                             ></textarea>
                             <p v-if="rejectForm.errors.rejection_reason" class="mt-1 text-sm text-red-600">
                                 {{ rejectForm.errors.rejection_reason }}
+                            </p>
+                        </div>
+                        <div v-if="hasTwoFactor" class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                Codigo de verificacion *
+                            </label>
+                            <input
+                                v-model="rejectForm.two_factor_code"
+                                type="text"
+                                inputmode="numeric"
+                                autocomplete="one-time-code"
+                                maxlength="6"
+                                class="w-full text-center text-lg tracking-widest rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                placeholder="000000"
+                            />
+                            <p v-if="rejectForm.errors.two_factor_code" class="mt-1 text-sm text-red-600">
+                                {{ rejectForm.errors.two_factor_code }}
                             </p>
                         </div>
                         <div class="flex justify-end space-x-3">

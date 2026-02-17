@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Exports\ContpaqiPrenominaExport;
+use App\Http\Traits\VerifiesTwoFactor;
 use App\Models\PayrollEntry;
 use App\Models\PayrollPeriod;
 use App\Services\PayrollCalculatorService;
@@ -16,6 +17,8 @@ use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class PayrollController extends Controller
 {
+    use VerifiesTwoFactor;
+
     public function __construct(
         private PayrollCalculatorService $calculator
     ) {}
@@ -150,8 +153,10 @@ class PayrollController extends Controller
     /**
      * Approve a payroll period.
      */
-    public function approve(PayrollPeriod $payroll): RedirectResponse
+    public function approve(Request $request, PayrollPeriod $payroll): RedirectResponse
     {
+        $this->verifyTwoFactorCode($request);
+
         if ($payroll->status !== 'review') {
             return redirect()->back()
                 ->with('error', 'Solo se pueden aprobar nominas en revision.');
@@ -169,8 +174,10 @@ class PayrollController extends Controller
     /**
      * Mark payroll as paid.
      */
-    public function markPaid(PayrollPeriod $payroll): RedirectResponse
+    public function markPaid(Request $request, PayrollPeriod $payroll): RedirectResponse
     {
+        $this->verifyTwoFactorCode($request);
+
         if ($payroll->status !== 'approved') {
             return redirect()->back()
                 ->with('error', 'Solo se pueden marcar como pagadas nominas aprobadas.');

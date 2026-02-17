@@ -16,6 +16,8 @@ class DatabaseSeeder extends Seeder
             DepartmentsSeeder::class,
             PositionsSeeder::class,
             SchedulesSeeder::class,
+            CompensationTypesSeeder::class,
+            VacationTableSeeder::class,
             IncidentTypesSeeder::class,
             HolidaysSeeder::class,
             AdminUserSeeder::class,

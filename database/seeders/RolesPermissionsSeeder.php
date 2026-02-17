@@ -79,6 +79,8 @@ class RolesPermissionsSeeder extends Seeder
             'settings.edit',
             'schedules.manage',
             'departments.manage',
+            'positions.manage',
+            'compensation_types.manage',
             'holidays.manage',
 
             // Logs/Auditoría
@@ -130,6 +132,9 @@ class RolesPermissionsSeeder extends Seeder
             'reports.view_all',
             // Config - limited
             'schedules.manage',
+            'departments.manage',
+            'positions.manage',
+            'compensation_types.manage',
             'holidays.manage',
             // Logs
             'logs.view',

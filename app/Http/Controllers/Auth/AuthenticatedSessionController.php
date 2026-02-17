@@ -26,10 +26,26 @@ class AuthenticatedSessionController extends Controller
 
     /**
      * Handle an incoming authentication request.
+     *
+     * If the user has 2FA enabled, credentials are verified but the user is
+     * logged out immediately. Their ID is stored in session and they are
+     * redirected to the 2FA challenge page.
      */
     public function store(LoginRequest $request): RedirectResponse
     {
         $request->authenticate();
+
+        $user = Auth::user();
+
+        // If user has 2FA enabled, redirect to challenge
+        if ($user->hasTwoFactorEnabled()) {
+            Auth::guard('web')->logout();
+
+            $request->session()->put('two_factor_user_id', $user->id);
+            $request->session()->put('two_factor_remember', $request->boolean('remember'));
+
+            return redirect()->route('two-factor.challenge');
+        }
 
         $request->session()->regenerate();
 
