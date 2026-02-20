@@ -139,14 +139,18 @@ def run_device_sync() -> Dict[str, Any]:
 class SyncAgentApp:
     """Minimal GUI for the Pinky Sync Agent."""
 
-    COLOR_BG = "#1e1e2e"
-    COLOR_CARD = "#2a2a3e"
-    COLOR_TEXT = "#ffffff"
-    COLOR_DIM = "#888899"
+    COLOR_BG = "#111827"
+    COLOR_CARD = "#1f2937"
+    COLOR_CARD_BORDER = "#374151"
+    COLOR_TEXT = "#f9fafb"
+    COLOR_DIM = "#9ca3af"
+    COLOR_LABEL = "#d1d5db"
     COLOR_GREEN = "#22c55e"
     COLOR_RED = "#ef4444"
-    COLOR_YELLOW = "#eab308"
+    COLOR_YELLOW = "#facc15"
     COLOR_BLUE = "#3b82f6"
+    COLOR_LOG_BG = "#0f172a"
+    COLOR_LOG_TEXT = "#e2e8f0"
 
     def __init__(self) -> None:
         """Initialize the GUI."""
@@ -156,7 +160,7 @@ class SyncAgentApp:
         self.root.resizable(False, False)
 
         # Center window
-        w, h = 520, 560
+        w, h = 520, 600
         x = (self.root.winfo_screenwidth() // 2) - (w // 2)
         y = (self.root.winfo_screenheight() // 2) - (h // 2)
         self.root.geometry(f"{w}x{h}+{x}+{y}")
@@ -172,120 +176,138 @@ class SyncAgentApp:
 
     def _build_ui(self) -> None:
         """Build the user interface."""
-        pad = {"padx": 16, "pady": 4}
-
         # --- Title ---
         tk.Label(
             self.root,
             text="Pinky Sync Agent",
-            font=("Segoe UI", 18, "bold"),
+            font=("Helvetica", 20, "bold"),
             bg=self.COLOR_BG,
             fg=self.COLOR_TEXT,
-        ).pack(pady=(16, 4))
+        ).pack(pady=(20, 2))
 
         tk.Label(
             self.root,
             text="Sincronizacion de dispositivos ZKTeco",
-            font=("Segoe UI", 10),
+            font=("Helvetica", 11),
             bg=self.COLOR_BG,
             fg=self.COLOR_DIM,
-        ).pack(pady=(0, 12))
+        ).pack(pady=(0, 16))
 
         # --- Status card ---
-        status_frame = tk.Frame(self.root, bg=self.COLOR_CARD, highlightthickness=0)
-        status_frame.pack(fill="x", **pad)
+        status_border = tk.Frame(
+            self.root, bg=self.COLOR_CARD_BORDER,
+        )
+        status_border.pack(fill="x", padx=20, pady=4)
+
+        status_frame = tk.Frame(status_border, bg=self.COLOR_CARD)
+        status_frame.pack(fill="x", padx=1, pady=1)
 
         inner = tk.Frame(status_frame, bg=self.COLOR_CARD)
-        inner.pack(fill="x", padx=16, pady=12)
+        inner.pack(fill="x", padx=16, pady=14)
 
         # Status indicator
         status_row = tk.Frame(inner, bg=self.COLOR_CARD)
         status_row.pack(fill="x")
 
         self._status_dot = tk.Label(
-            status_row, text="\u25cf", font=("Segoe UI", 16),
+            status_row, text="\u25cf", font=("Helvetica", 18),
             bg=self.COLOR_CARD, fg=self.COLOR_RED,
         )
         self._status_dot.pack(side="left")
 
         self._status_label = tk.Label(
-            status_row, text="  Detenido", font=("Segoe UI", 13, "bold"),
+            status_row, text="  Detenido", font=("Helvetica", 14, "bold"),
             bg=self.COLOR_CARD, fg=self.COLOR_TEXT,
         )
         self._status_label.pack(side="left")
 
         # Server
         self._server_label = tk.Label(
-            inner, text=f"Servidor: {API_URL}", font=("Segoe UI", 9),
-            bg=self.COLOR_CARD, fg=self.COLOR_DIM, anchor="w",
+            inner, text=f"Servidor: {API_URL}", font=("Helvetica", 10),
+            bg=self.COLOR_CARD, fg=self.COLOR_LABEL, anchor="w",
         )
-        self._server_label.pack(fill="x", pady=(6, 0))
+        self._server_label.pack(fill="x", pady=(8, 0))
 
         # --- Stats card ---
-        stats_frame = tk.Frame(self.root, bg=self.COLOR_CARD)
-        stats_frame.pack(fill="x", padx=16, pady=(8, 4))
+        stats_border = tk.Frame(self.root, bg=self.COLOR_CARD_BORDER)
+        stats_border.pack(fill="x", padx=20, pady=6)
+
+        stats_frame = tk.Frame(stats_border, bg=self.COLOR_CARD)
+        stats_frame.pack(fill="x", padx=1, pady=1)
 
         stats_inner = tk.Frame(stats_frame, bg=self.COLOR_CARD)
-        stats_inner.pack(fill="x", padx=16, pady=12)
+        stats_inner.pack(fill="x", padx=16, pady=14)
 
         tk.Label(
-            stats_inner, text="Ultima sincronizacion", font=("Segoe UI", 10, "bold"),
-            bg=self.COLOR_CARD, fg=self.COLOR_DIM, anchor="w",
+            stats_inner, text="Ultima sincronizacion",
+            font=("Helvetica", 10, "bold"),
+            bg=self.COLOR_CARD, fg=self.COLOR_LABEL, anchor="w",
         ).pack(fill="x")
 
         self._last_sync_label = tk.Label(
-            stats_inner, text="Ninguna aun", font=("Segoe UI", 11),
+            stats_inner, text="Ninguna aun", font=("Helvetica", 12),
             bg=self.COLOR_CARD, fg=self.COLOR_TEXT, anchor="w",
         )
         self._last_sync_label.pack(fill="x", pady=(4, 0))
 
         self._last_result_label = tk.Label(
-            stats_inner, text="", font=("Segoe UI", 10),
+            stats_inner, text="", font=("Helvetica", 10),
             bg=self.COLOR_CARD, fg=self.COLOR_DIM, anchor="w",
         )
         self._last_result_label.pack(fill="x")
 
         self._sync_count_label = tk.Label(
-            stats_inner, text="Sincronizaciones hoy: 0", font=("Segoe UI", 9),
-            bg=self.COLOR_CARD, fg=self.COLOR_DIM, anchor="w",
+            stats_inner, text="Sincronizaciones hoy: 0",
+            font=("Helvetica", 10),
+            bg=self.COLOR_CARD, fg=self.COLOR_LABEL, anchor="w",
         )
-        self._sync_count_label.pack(fill="x", pady=(6, 0))
+        self._sync_count_label.pack(fill="x", pady=(8, 0))
 
         # --- Log area ---
-        log_frame = tk.Frame(self.root, bg=self.COLOR_CARD)
-        log_frame.pack(fill="both", expand=True, padx=16, pady=(8, 4))
+        log_border = tk.Frame(self.root, bg=self.COLOR_CARD_BORDER)
+        log_border.pack(fill="both", expand=True, padx=20, pady=6)
+
+        log_frame = tk.Frame(log_border, bg=self.COLOR_CARD)
+        log_frame.pack(fill="both", expand=True, padx=1, pady=1)
 
         tk.Label(
-            log_frame, text=" Registro de actividad", font=("Segoe UI", 9, "bold"),
-            bg=self.COLOR_CARD, fg=self.COLOR_DIM, anchor="w",
-        ).pack(fill="x", padx=12, pady=(8, 0))
+            log_frame, text="Registro de actividad",
+            font=("Helvetica", 10, "bold"),
+            bg=self.COLOR_CARD, fg=self.COLOR_LABEL, anchor="w",
+        ).pack(fill="x", padx=14, pady=(10, 0))
 
         self._log_text = tk.Text(
-            log_frame, height=6, font=("Consolas", 9),
-            bg="#1a1a2a", fg="#ccccdd", insertbackground="#ccccdd",
+            log_frame, height=6, font=("Menlo", 10),
+            bg=self.COLOR_LOG_BG, fg=self.COLOR_LOG_TEXT,
+            insertbackground=self.COLOR_LOG_TEXT,
             relief="flat", wrap="word", state="disabled",
             highlightthickness=0, borderwidth=0,
         )
-        self._log_text.pack(fill="both", expand=True, padx=12, pady=(4, 12))
+        self._log_text.pack(fill="both", expand=True, padx=14, pady=(6, 14))
 
         # --- Buttons ---
         btn_frame = tk.Frame(self.root, bg=self.COLOR_BG)
-        btn_frame.pack(fill="x", padx=16, pady=(4, 16))
+        btn_frame.pack(fill="x", padx=20, pady=(8, 20))
 
         self._start_btn = tk.Button(
-            btn_frame, text="  Iniciar Agente  ", font=("Segoe UI", 11, "bold"),
-            bg=self.COLOR_GREEN, fg="white", activebackground="#16a34a",
+            btn_frame, text="  Iniciar Agente  ",
+            font=("Helvetica", 12, "bold"),
+            bg=self.COLOR_GREEN, fg="#052e16",
+            activebackground="#16a34a", activeforeground="#052e16",
             relief="flat", cursor="hand2", command=self._toggle_agent,
         )
-        self._start_btn.pack(side="left", ipady=4)
+        self._start_btn.pack(side="left", ipady=6, ipadx=4)
 
         self._sync_btn = tk.Button(
-            btn_frame, text="  Sync Ahora  ", font=("Segoe UI", 11),
-            bg=self.COLOR_BLUE, fg="white", activebackground="#2563eb",
+            btn_frame, text="  Sync Ahora  ",
+            font=("Helvetica", 12, "bold"),
+            bg=self.COLOR_BLUE, fg="white",
+            activebackground="#2563eb", activeforeground="white",
             relief="flat", cursor="hand2", command=self._manual_sync,
+            disabledforeground="#4b5563",
             state="disabled",
         )
-        self._sync_btn.pack(side="left", padx=(8, 0), ipady=4)
+        self._sync_btn.pack(side="left", padx=(10, 0), ipady=6, ipadx=4)
 
     def _setup_logging(self) -> None:
         """Configure logging to write to the GUI log area and file."""
@@ -337,7 +359,10 @@ class SyncAgentApp:
         self._running = True
         self._stop_event.clear()
 
-        self._start_btn.configure(text="  Detener Agente  ", bg=self.COLOR_RED, activebackground="#dc2626")
+        self._start_btn.configure(
+            text="  Detener Agente  ", bg=self.COLOR_RED, fg="white",
+            activebackground="#dc2626", activeforeground="white",
+        )
         self._sync_btn.configure(state="normal")
         self._set_status("Conectado — esperando", self.COLOR_GREEN)
 
@@ -353,7 +378,10 @@ class SyncAgentApp:
         self._running = False
         self._stop_event.set()
 
-        self._start_btn.configure(text="  Iniciar Agente  ", bg=self.COLOR_GREEN, activebackground="#16a34a")
+        self._start_btn.configure(
+            text="  Iniciar Agente  ", bg=self.COLOR_GREEN, fg="#052e16",
+            activebackground="#16a34a", activeforeground="#052e16",
+        )
         self._sync_btn.configure(state="disabled")
         self._set_status("Detenido", self.COLOR_RED)
         logger.info("Agente detenido")

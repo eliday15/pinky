@@ -20,7 +20,7 @@
 - Write code following KISS, YAGNI, and DRY principles.
 - When in doubt follow proven best practices for implementation.
 - Do not commit to git without user approval.
-- Do not run any servers, rather tell the user to run servers for testing.
+- You may run servers and development tools when asked by the user.
 - Always consider industry standard libraries/frameworks first over custom implementations.
 - Never mock anything. Never use placeholders. Never omit code.
 - Apply SOLID principles where relevant. Use modern framework features rather than reinventing solutions.

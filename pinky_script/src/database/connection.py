@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 import mysql.connector
 from mysql.connector import Error, MySQLConnection
@@ -23,9 +23,9 @@ class DatabaseConnection:
             config: MySQL configuration object.
         """
         self.config = config
-        self._connection: Optional[MySQLConnection | PooledMySQLConnection] = None
+        self._connection: Optional[Union[MySQLConnection, PooledMySQLConnection]] = None
 
-    def connect(self) -> MySQLConnection | PooledMySQLConnection:
+    def connect(self) -> Union[MySQLConnection, PooledMySQLConnection]:
         """Establish connection to MySQL database.
 
         Returns:

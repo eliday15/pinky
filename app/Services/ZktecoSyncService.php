@@ -40,7 +40,8 @@ class ZktecoSyncService
     public function syncEmployees(int $inactivityDays = 60): array
     {
         // Get unique users from ZKTeco users table with the BEST name available
-        // Priority: longest name that is not a placeholder (NN-XX or just numbers)
+        // Priority: prefer names > 8 chars (ZK6 devices truncate to 8 bytes),
+        // then most recently updated, then longest as tiebreaker
         $zktecoUsers = DB::table('users')
             ->select('user_id', DB::raw("
                 (SELECT u2.name FROM users u2
@@ -49,7 +50,9 @@ class ZktecoSyncService
                  AND u2.name != ''
                  AND u2.name NOT LIKE 'NN-%'
                  AND u2.name NOT REGEXP '^[0-9]+$'
-                 ORDER BY LENGTH(u2.name) DESC
+                 ORDER BY CASE WHEN LENGTH(u2.name) <= 8 THEN 1 ELSE 0 END ASC,
+                          u2.updated_at DESC,
+                          LENGTH(u2.name) DESC
                  LIMIT 1) as name
             "), DB::raw('MAX(privilege) as privilege'), DB::raw('MAX(group_id) as group_id'))
             ->whereNotNull('user_id')
@@ -122,17 +125,24 @@ class ZktecoSyncService
                     $updates['status'] = $status;
                 }
 
-                // Update name if ZKTeco has a better name (not placeholder)
-                // and current name is a placeholder
-                $isCurrentNamePlaceholder = preg_match('/^Empleado \d+$/', $existingEmployee->full_name);
+                // Update name if ZKTeco has a real name that differs from current
                 $isZktecoNameReal = !empty($name) && !preg_match('/^NN-\d+$/', $name) && !preg_match('/^\d+$/', $name);
 
-                if ($isCurrentNamePlaceholder && $isZktecoNameReal) {
+                if ($isZktecoNameReal) {
                     $nameParts = $this->parseName($name, $userId);
-                    $updates['first_name'] = $nameParts['first_name'];
-                    $updates['last_name'] = $nameParts['last_name'];
-                    $updates['full_name'] = $nameParts['full_name'];
-                    Log::info("Updated employee {$userId} name from '{$existingEmployee->full_name}' to '{$nameParts['full_name']}'");
+                    $currentName = $existingEmployee->full_name;
+                    $newName = $nameParts['full_name'];
+
+                    // Skip if names match or if ZKTeco name is a truncated version of current
+                    $isTruncation = mb_strlen($newName) < mb_strlen($currentName)
+                        && str_starts_with(mb_strtolower($currentName), mb_strtolower($newName));
+
+                    if ($currentName !== $newName && !$isTruncation) {
+                        $updates['first_name'] = $nameParts['first_name'];
+                        $updates['last_name'] = $nameParts['last_name'];
+                        $updates['full_name'] = $nameParts['full_name'];
+                        Log::info("Updated employee {$userId} name from '{$currentName}' to '{$newName}'");
+                    }
                 }
 
                 if (!empty($updates)) {

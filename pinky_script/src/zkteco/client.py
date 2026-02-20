@@ -262,9 +262,16 @@ class ZKTecoClient:
                     except (ValueError, TypeError):
                         group_id = 0
 
+                # pyzk returns user_id as string; convert to int
+                try:
+                    raw_user_id = u.user_id if hasattr(u, "user_id") else str(u.uid)
+                    parsed_user_id = int(raw_user_id)
+                except (ValueError, TypeError):
+                    parsed_user_id = int(u.uid)
+
                 users.append(
                     User(
-                        user_id=u.user_id if hasattr(u, "user_id") else int(u.uid),
+                        user_id=parsed_user_id,
                         name=u.name or "",
                         privilege=u.privilege if hasattr(u, "privilege") else 0,
                         password=u.password or "",
