@@ -37,15 +37,15 @@ class AuthenticatedSessionController extends Controller
 
         $user = Auth::user();
 
-        // If user has 2FA enabled, redirect to challenge
-        if ($user->hasTwoFactorEnabled()) {
-            Auth::guard('web')->logout();
-
-            $request->session()->put('two_factor_user_id', $user->id);
-            $request->session()->put('two_factor_remember', $request->boolean('remember'));
-
-            return redirect()->route('two-factor.challenge');
-        }
+        // TODO: Re-enable 2FA challenge after initial setup
+        // if ($user->hasTwoFactorEnabled()) {
+        //     Auth::guard('web')->logout();
+        //
+        //     $request->session()->put('two_factor_user_id', $user->id);
+        //     $request->session()->put('two_factor_remember', $request->boolean('remember'));
+        //
+        //     return redirect()->route('two-factor.challenge');
+        // }
 
         $request->session()->regenerate();
 

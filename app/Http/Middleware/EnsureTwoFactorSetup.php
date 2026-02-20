@@ -31,10 +31,11 @@ class EnsureTwoFactorSetup
             return $next($request);
         }
 
-        if ($user->requiresTwoFactor() && !$user->hasTwoFactorEnabled()) {
-            return redirect()->route('two-factor.setup')
-                ->with('warning', 'Debes configurar la autenticacion de dos pasos para continuar.');
-        }
+        // TODO: Re-enable 2FA requirement after initial setup
+        // if ($user->requiresTwoFactor() && !$user->hasTwoFactorEnabled()) {
+        //     return redirect()->route('two-factor.setup')
+        //         ->with('warning', 'Debes configurar la autenticacion de dos pasos para continuar.');
+        // }
 
         return $next($request);
     }
