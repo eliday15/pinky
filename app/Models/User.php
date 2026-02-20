@@ -26,6 +26,9 @@ class User extends Authenticatable
         'email',
         'password',
         'must_change_password',
+        'two_factor_secret',
+        'two_factor_confirmed_at',
+        'two_factor_recovery_codes',
     ];
 
     /**

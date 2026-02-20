@@ -46,7 +46,7 @@ const submit = () => {
 };
 
 const resetPassword = () => {
-    if (!confirm('¿Estas seguro? El usuario debera cambiar su contraseña en el proximo inicio de sesion.')) {
+    if (!confirm('¿Estas seguro? Se reseteara la contraseña y el 2FA. El usuario debera reconfigurar ambos en su proximo inicio de sesion.')) {
         return;
     }
     passwordForm.post(route('users.reset-password', props.editUser.id), {
@@ -172,9 +172,9 @@ const resetPassword = () => {
 
             <!-- Reset Password Section -->
             <div v-if="can.resetPassword" class="bg-white rounded-lg shadow p-6">
-                <h3 class="text-lg font-medium text-gray-900 mb-2">Resetear Contraseña</h3>
+                <h3 class="text-lg font-medium text-gray-900 mb-2">Resetear Contraseña y 2FA</h3>
                 <p class="text-sm text-gray-500 mb-4">
-                    Genera una nueva contraseña temporal. El usuario debera cambiarla en su proximo inicio de sesion.
+                    Genera una nueva contraseña temporal. El usuario debera cambiar su contraseña y reconfigurar la autenticacion de dos factores (2FA) en su proximo inicio de sesion.
                 </p>
 
                 <div class="space-y-4">
@@ -223,7 +223,7 @@ const resetPassword = () => {
                                     : 'bg-orange-600 hover:bg-orange-700'
                             ]"
                         >
-                            Resetear Contraseña
+                            Resetear Contraseña y 2FA
                         </button>
                     </div>
                 </div>

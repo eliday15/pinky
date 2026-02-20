@@ -254,7 +254,7 @@ class UserController extends Controller
     }
 
     /**
-     * Reset a user's password and force them to change it on next login.
+     * Reset a user's password, clear 2FA, and force full re-setup on next login.
      */
     public function resetPassword(Request $request, User $user): RedirectResponse
     {
@@ -270,8 +270,11 @@ class UserController extends Controller
         $user->update([
             'password' => $validated['password'],
             'must_change_password' => true,
+            'two_factor_secret' => null,
+            'two_factor_confirmed_at' => null,
+            'two_factor_recovery_codes' => null,
         ]);
 
-        return back()->with('success', 'Contraseña reseteada exitosamente. El usuario debera cambiarla en su proximo inicio de sesion.');
+        return back()->with('success', 'Contraseña y 2FA reseteados. El usuario debera cambiar su contraseña y reconfigurar 2FA en su proximo inicio de sesion.');
     }
 }
