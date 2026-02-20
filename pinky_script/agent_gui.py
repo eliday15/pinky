@@ -156,7 +156,7 @@ class SyncAgentApp:
         self.root.resizable(False, False)
 
         # Center window
-        w, h = 520, 480
+        w, h = 520, 560
         x = (self.root.winfo_screenwidth() // 2) - (w // 2)
         y = (self.root.winfo_screenheight() // 2) - (h // 2)
         self.root.geometry(f"{w}x{h}+{x}+{y}")
