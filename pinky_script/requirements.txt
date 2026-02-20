@@ -1,3 +1,4 @@
 pyzk
 mysql-connector-python
 python-dotenv
+requests

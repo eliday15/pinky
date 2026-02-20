@@ -1,0 +1,68 @@
+name: Build Pinky Sync Agent (.exe)
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'agent-v*'
+
+jobs:
+  build:
+    name: Build Windows .exe
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        working-directory: pinky_script
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build .exe with PyInstaller
+        working-directory: pinky_script
+        run: pyinstaller agent.spec
+
+      - name: Prepare release package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path release -Force
+          Copy-Item pinky_script/dist/PinkySyncAgent.exe release/
+          Copy-Item pinky_script/install_agent.bat release/
+
+      - name: Generate .env from secrets
+        shell: pwsh
+        run: |
+          @"
+          # Pinky Sync Agent - Production Configuration
+          PINKY_API_URL=${{ secrets.AGENT_API_URL }}
+          PINKY_AGENT_KEY=${{ secrets.AGENT_KEY }}
+          PINKY_POLL_INTERVAL=30
+          PINKY_HEARTBEAT_INTERVAL=300
+          PINKY_AUTO_SYNC_HOUR=6
+          MYSQL_HOST=${{ secrets.AGENT_MYSQL_HOST }}
+          MYSQL_PORT=${{ secrets.AGENT_MYSQL_PORT }}
+          MYSQL_USER=${{ secrets.AGENT_MYSQL_USER }}
+          MYSQL_PASSWORD=${{ secrets.AGENT_MYSQL_PASSWORD }}
+          MYSQL_DATABASE=${{ secrets.AGENT_MYSQL_DATABASE }}
+          ZKTECO_DEVICES=192.168.1.11,192.168.1.12,192.168.1.13,192.168.1.14
+          ZKTECO_PORT=4370
+          ZKTECO_TIMEOUT=60
+          ZKTECO_FORCE_UDP=true
+          ZKTECO_OMMIT_PING=true
+          "@ | Set-Content -Path release/.env -Encoding UTF8
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PinkySyncAgent
+          path: release/
+          retention-days: 90
