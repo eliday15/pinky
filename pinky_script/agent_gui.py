@@ -516,8 +516,25 @@ class _GUILogHandler(logging.Handler):
 # ---------------------------------------------------------------------------
 def main() -> None:
     """Launch the GUI agent."""
-    app = SyncAgentApp()
-    app.run()
+    try:
+        app = SyncAgentApp()
+        app.run()
+    except Exception as e:
+        # Show error in a messagebox so pythonw users can see it
+        import traceback
+        error_msg = traceback.format_exc()
+        try:
+            from tkinter import messagebox
+            root = tk.Tk()
+            root.withdraw()
+            messagebox.showerror(
+                "Pinky Sync Agent - Error",
+                f"Error al iniciar:\n\n{error_msg}",
+            )
+            root.destroy()
+        except Exception:
+            # Last resort: write to a file
+            Path("error.log").write_text(error_msg, encoding="utf-8")
 
 
 if __name__ == "__main__":

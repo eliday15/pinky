@@ -58,11 +58,21 @@ if not exist ".env" (
     exit /b 1
 )
 
-REM --- Launch GUI ---
+REM --- Launch GUI (with console visible so errors are shown) ---
 echo  Abriendo interfaz...
-venv\Scripts\pythonw agent_gui.py
+echo  (No cierres esta ventana negra mientras uses el programa)
+echo.
+venv\Scripts\python agent_gui.py
+
+REM --- If GUI exits/crashes, show error and wait ---
+echo.
+echo  =============================================
 if errorlevel 1 (
-    echo  ERROR al abrir la interfaz. Intentando modo consola...
-    venv\Scripts\python agent.py
-    pause
+    echo  La interfaz se cerro con un error.
+    echo  Revisa el archivo error.log si existe.
+) else (
+    echo  Programa cerrado correctamente.
 )
+echo  =============================================
+echo.
+pause
