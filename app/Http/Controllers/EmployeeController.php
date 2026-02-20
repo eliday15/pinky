@@ -8,6 +8,7 @@ use App\Models\Department;
 use App\Models\Employee;
 use App\Models\Position;
 use App\Models\Schedule;
+use App\Models\User;
 use App\Models\VacationTable;
 use App\Services\SupervisorResolutionService;
 use Illuminate\Http\RedirectResponse;
@@ -312,8 +313,19 @@ class EmployeeController extends Controller
     {
         $this->authorize('update', $employee);
 
+        $employee->load(['supervisor', 'compensationTypes', 'emergencyContacts', 'user.roles']);
+
+        // Compute 2FA status for linked user (two_factor_secret is hidden)
+        $linkedUser = null;
+        if ($employee->user) {
+            $linkedUser = $employee->user;
+            $linkedUser->two_factor_enabled = $linkedUser->hasTwoFactorEnabled();
+        }
+
+        $currentUser = Auth::user();
+
         return Inertia::render('Employees/Edit', [
-            'employee' => $employee->load(['supervisor', 'compensationTypes', 'emergencyContacts']),
+            'employee' => $employee,
             'departments' => Department::active()->with('compensationTypes')->get(['id', 'name', 'code']),
             'positions' => Position::active()
                 ->with([
@@ -327,6 +339,8 @@ class EmployeeController extends Controller
             'employees' => Employee::active()->where('id', '!=', $employee->id)->get(['id', 'full_name', 'position_id']),
             'compensationTypes' => CompensationType::active()->get(),
             'vacationTable' => VacationTable::orderBy('years_of_service')->get(),
+            'roles' => $currentUser->hasPermissionTo('users.create') ? \Spatie\Permission\Models\Role::orderBy('name')->pluck('name') : [],
+            'canCreateUser' => $currentUser->hasPermissionTo('users.create'),
         ]);
     }
 

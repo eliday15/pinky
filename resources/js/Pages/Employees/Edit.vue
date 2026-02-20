@@ -1,5 +1,6 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
+import InputError from '@/Components/InputError.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
 import { computed, ref, watch } from 'vue';
 
@@ -11,7 +12,40 @@ const props = defineProps({
     employees: Array,
     compensationTypes: Array,
     vacationTable: Array,
+    roles: Array,
+    canCreateUser: Boolean,
 });
+
+// User account creation form
+const userForm = useForm({
+    name: props.employee.full_name || '',
+    email: props.employee.email || '',
+    password: '',
+    role: '',
+    employee_id: props.employee.id,
+});
+
+const showUserPassword = ref(false);
+
+const generateUserPassword = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%';
+    let password = '';
+    for (let i = 0; i < 12; i++) {
+        password += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    userForm.password = password;
+    showUserPassword.value = true;
+};
+
+const copyUserPassword = () => {
+    navigator.clipboard.writeText(userForm.password);
+};
+
+const createUserAccount = () => {
+    userForm.post(route('users.store'), {
+        preserveScroll: true,
+    });
+};
 
 const originalScheduleId = props.employee.schedule_id;
 const originalPositionId = props.employee.position_id;
@@ -1139,6 +1173,161 @@ watch(() => form.hire_date, onHireDateChange);
                     </button>
                 </div>
             </form>
+        </div>
+
+        <!-- User Account Section -->
+        <div v-if="canCreateUser" class="bg-white rounded-lg shadow p-6 mt-6">
+            <h3 class="text-lg font-semibold text-gray-800 mb-4">Cuenta de Usuario del Sistema</h3>
+
+            <!-- Employee already has a linked user -->
+            <div v-if="employee.user">
+                <div class="flex items-center gap-4 p-4 bg-gray-50 rounded-lg">
+                    <div class="w-10 h-10 rounded-full bg-pink-100 flex items-center justify-center">
+                        <span class="text-pink-600 font-semibold">
+                            {{ employee.user.name.charAt(0).toUpperCase() }}
+                        </span>
+                    </div>
+                    <div class="flex-1">
+                        <div class="font-medium text-gray-900">{{ employee.user.name }}</div>
+                        <div class="text-sm text-gray-500">{{ employee.user.email }}</div>
+                    </div>
+                    <div class="flex gap-2">
+                        <span
+                            v-for="r in employee.user.roles"
+                            :key="r.id"
+                            :class="[
+                                'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium',
+                                r.name === 'admin' ? 'bg-purple-100 text-purple-800' :
+                                r.name === 'rrhh' ? 'bg-blue-100 text-blue-800' :
+                                r.name === 'supervisor' ? 'bg-yellow-100 text-yellow-800' :
+                                'bg-gray-100 text-gray-800'
+                            ]"
+                        >
+                            {{ r.name.charAt(0).toUpperCase() + r.name.slice(1) }}
+                        </span>
+                        <span
+                            :class="[
+                                'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium',
+                                employee.user.two_factor_enabled ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-500'
+                            ]"
+                        >
+                            2FA: {{ employee.user.two_factor_enabled ? 'Activo' : 'Inactivo' }}
+                        </span>
+                    </div>
+                    <Link
+                        :href="route('users.edit', employee.user.id)"
+                        class="text-pink-600 hover:text-pink-900 text-sm font-medium"
+                    >
+                        Editar Usuario
+                    </Link>
+                </div>
+            </div>
+
+            <!-- No user linked — show create form -->
+            <div v-else>
+                <p class="text-sm text-gray-500 mb-4">
+                    Este empleado no tiene cuenta de usuario. Crea una para que pueda acceder al sistema.
+                </p>
+
+                <form @submit.prevent="createUserAccount" class="space-y-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <!-- Name -->
+                        <div>
+                            <label for="user_name" class="block text-sm font-medium text-gray-700">Nombre</label>
+                            <input
+                                id="user_name"
+                                type="text"
+                                v-model="userForm.name"
+                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 text-sm"
+                                required
+                            />
+                            <InputError class="mt-1" :message="userForm.errors.name" />
+                        </div>
+
+                        <!-- Email -->
+                        <div>
+                            <label for="user_email" class="block text-sm font-medium text-gray-700">Correo Electronico</label>
+                            <input
+                                id="user_email"
+                                type="email"
+                                v-model="userForm.email"
+                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 text-sm"
+                                required
+                            />
+                            <InputError class="mt-1" :message="userForm.errors.email" />
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <!-- Password -->
+                        <div>
+                            <label for="user_password" class="block text-sm font-medium text-gray-700">Contraseña Temporal</label>
+                            <div class="mt-1 flex gap-2">
+                                <input
+                                    id="user_password"
+                                    :type="showUserPassword ? 'text' : 'password'"
+                                    v-model="userForm.password"
+                                    class="block w-full rounded-md border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 text-sm"
+                                    required
+                                />
+                                <button
+                                    type="button"
+                                    @click="generateUserPassword"
+                                    class="inline-flex items-center px-3 py-2 border border-gray-300 rounded-md text-xs font-medium text-gray-700 bg-white hover:bg-gray-50"
+                                >
+                                    Generar
+                                </button>
+                                <button
+                                    v-if="userForm.password && showUserPassword"
+                                    type="button"
+                                    @click="copyUserPassword"
+                                    class="inline-flex items-center px-3 py-2 border border-gray-300 rounded-md text-xs font-medium text-gray-700 bg-white hover:bg-gray-50"
+                                >
+                                    Copiar
+                                </button>
+                            </div>
+                            <div v-if="userForm.password && showUserPassword" class="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-800">
+                                <strong>Contraseña:</strong> {{ userForm.password }}
+                            </div>
+                            <InputError class="mt-1" :message="userForm.errors.password" />
+                        </div>
+
+                        <!-- Role -->
+                        <div>
+                            <label for="user_role" class="block text-sm font-medium text-gray-700">Rol</label>
+                            <select
+                                id="user_role"
+                                v-model="userForm.role"
+                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 text-sm"
+                                required
+                            >
+                                <option value="" disabled>Seleccionar rol...</option>
+                                <option v-for="r in roles" :key="r" :value="r">
+                                    {{ r.charAt(0).toUpperCase() + r.slice(1) }}
+                                </option>
+                            </select>
+                            <InputError class="mt-1" :message="userForm.errors.role" />
+                        </div>
+                    </div>
+
+                    <div class="p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-700">
+                        El usuario debera cambiar su contraseña en el primer inicio de sesion.
+                        <span v-if="['admin', 'rrhh', 'supervisor'].includes(userForm.role)">
+                            Ademas, debera configurar la autenticacion de dos factores (2FA).
+                        </span>
+                    </div>
+
+                    <div class="flex justify-end">
+                        <button
+                            type="submit"
+                            :disabled="userForm.processing"
+                            class="px-4 py-2 bg-pink-600 text-white rounded-md text-sm font-semibold hover:bg-pink-700 transition disabled:opacity-50"
+                        >
+                            {{ userForm.processing ? 'Creando...' : 'Crear Cuenta de Usuario' }}
+                        </button>
+                    </div>
+                </form>
+            </div>
         </div>
     </AppLayout>
 </template>
