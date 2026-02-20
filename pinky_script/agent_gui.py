@@ -223,7 +223,7 @@ class SyncAgentApp:
 
         # --- Stats card ---
         stats_frame = tk.Frame(self.root, bg=self.COLOR_CARD)
-        stats_frame.pack(fill="x", **pad, pady=(8, 4))
+        stats_frame.pack(fill="x", padx=16, pady=(8, 4))
 
         stats_inner = tk.Frame(stats_frame, bg=self.COLOR_CARD)
         stats_inner.pack(fill="x", padx=16, pady=12)
@@ -253,7 +253,7 @@ class SyncAgentApp:
 
         # --- Log area ---
         log_frame = tk.Frame(self.root, bg=self.COLOR_CARD)
-        log_frame.pack(fill="both", expand=True, **pad, pady=(8, 4))
+        log_frame.pack(fill="both", expand=True, padx=16, pady=(8, 4))
 
         tk.Label(
             log_frame, text=" Registro de actividad", font=("Segoe UI", 9, "bold"),
