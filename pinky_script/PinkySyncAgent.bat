@@ -58,16 +58,11 @@ if not exist ".env" (
     exit /b 1
 )
 
-REM --- Run the agent ---
-echo  Iniciando sincronizacion con dispositivos ZKTeco...
-echo  (Deja esta ventana abierta para que siga funcionando)
-echo  Para detener: cierra esta ventana o presiona Ctrl+C
-echo.
-echo  =============================================
-echo.
-venv\Scripts\python agent.py
-
-REM --- If agent exits, pause so user sees any errors ---
-echo.
-echo  El agente se detuvo.
-pause
+REM --- Launch GUI ---
+echo  Abriendo interfaz...
+venv\Scripts\pythonw agent_gui.py
+if errorlevel 1 (
+    echo  ERROR al abrir la interfaz. Intentando modo consola...
+    venv\Scripts\python agent.py
+    pause
+)
