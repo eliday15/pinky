@@ -1,6 +1,5 @@
 # Stage 1: Install PHP dependencies (needed for Ziggy during Vite build)
-FROM php:8.2-cli AS composer
-COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+FROM composer:2 AS composer
 WORKDIR /app
 COPY composer.json composer.lock ./
 RUN composer install --no-dev --optimize-autoloader --no-scripts --no-interaction
@@ -17,7 +16,7 @@ COPY --from=composer /app/vendor vendor/
 RUN npm run build
 
 # Stage 3: PHP application
-FROM php:8.2-apache
+FROM php:8.4-apache
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
