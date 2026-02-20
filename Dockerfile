@@ -65,7 +65,7 @@ RUN chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cac
     && chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
 
 # Create startup script
-RUN printf '#!/bin/bash\nphp artisan config:cache\nphp artisan route:cache\nphp artisan view:cache\nphp artisan migrate --force\napache2-foreground\n' > /usr/local/bin/start.sh \
+RUN printf '#!/bin/bash\nset -e\necho "=== Starting Pinky ==="\nphp artisan storage:link 2>/dev/null || true\nphp artisan migrate --force 2>&1 || echo "Migration failed but continuing..."\nphp artisan config:cache\nphp artisan route:cache\nphp artisan view:cache\necho "=== Ready ==="\napache2-foreground\n' > /usr/local/bin/start.sh \
     && chmod +x /usr/local/bin/start.sh
 
 EXPOSE 80
