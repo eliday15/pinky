@@ -98,14 +98,32 @@ class Synchronizer:
                 result.users_synced = len(users)
 
             if attendance:
-                self.models.upsert_attendance(device_id, attendance)
+                inserted = self.models.upsert_attendance(device_id, attendance)
                 result.attendance_synced = len(attendance)
+                logger.info(
+                    "Device %s: %d attendance records fetched, %d new inserted to DB",
+                    ip_address,
+                    len(attendance),
+                    inserted,
+                )
+            else:
+                logger.warning(
+                    "Device %s: ZERO attendance records fetched!", ip_address
+                )
 
             if fingerprints:
                 self.models.upsert_fingerprints(device_id, fingerprints)
                 result.fingerprints_synced = len(fingerprints)
 
             self.models.update_device_last_sync(device_id)
+
+            # Verify by checking DB count for this device
+            db_count = self.models.get_attendance_count(device_id)
+            logger.info(
+                "Device %s: Total attendance records in DB: %d",
+                ip_address,
+                db_count,
+            )
 
             result.success = True
             logger.info(

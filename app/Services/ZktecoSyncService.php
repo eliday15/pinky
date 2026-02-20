@@ -234,16 +234,22 @@ class ZktecoSyncService
      *
      * @param Carbon|null $fromDate Start date for attendance sync
      * @param int|null $triggeredBy User ID who triggered the sync
+     * @param int|null $syncLogId Existing SyncLog ID to reuse (remote agent mode)
      * @return SyncLog
      */
-    public function sync(?Carbon $fromDate = null, ?int $triggeredBy = null): SyncLog
+    public function sync(?Carbon $fromDate = null, ?int $triggeredBy = null, ?int $syncLogId = null): SyncLog
     {
-        $log = SyncLog::create([
-            'type' => 'zkteco',
-            'started_at' => now(),
-            'status' => 'running',
-            'triggered_by' => $triggeredBy,
-        ]);
+        if ($syncLogId) {
+            $log = SyncLog::findOrFail($syncLogId);
+            $log->update(['status' => 'running', 'started_at' => now()]);
+        } else {
+            $log = SyncLog::create([
+                'type' => 'zkteco',
+                'started_at' => now(),
+                'status' => 'running',
+                'triggered_by' => $triggeredBy,
+            ]);
+        }
 
         try {
             // Step 1: Sync employees
@@ -616,12 +622,14 @@ class ZktecoSyncService
             // If check-in is at night (after 18:00) and entry time is also night, compare directly
             if ($checkInHour >= 18 || $checkInHour < 6) {
                 if ($actualEntry->gt($expectedEntry->copy()->addMinutes($tolerance))) {
-                    $lateMinutes = max(0, $actualEntry->diffInMinutes($expectedEntry) - $tolerance);
+                    $lateMinutes = max(0, (int) abs($actualEntry->diffInMinutes($expectedEntry)) - $tolerance);
                 }
             }
         } else {
-            if ($actualEntry->gt($expectedEntry->copy()->addMinutes($tolerance))) {
-                $lateMinutes = max(0, $actualEntry->diffInMinutes($expectedEntry) - $tolerance);
+            // Don't count as late if check-in is after scheduled exit (overtime/different shift)
+            $scheduledExit = Carbon::parse($dateStr . ' ' . $exitTime);
+            if ($actualEntry->gt($expectedEntry->copy()->addMinutes($tolerance)) && $actualEntry->lt($scheduledExit)) {
+                $lateMinutes = max(0, (int) abs($actualEntry->diffInMinutes($expectedEntry)) - $tolerance);
             }
         }
 
@@ -641,7 +649,7 @@ class ZktecoSyncService
             }
 
             if ($actualExit->lt($expectedExit)) {
-                $earlyDepartureMinutes = $expectedExit->diffInMinutes($actualExit);
+                $earlyDepartureMinutes = (int) abs($expectedExit->diffInMinutes($actualExit));
             }
         }
 
@@ -668,17 +676,21 @@ class ZktecoSyncService
                 $lunchOutTime = $this->extractTime($attendance->lunch_out);
                 $lunchInTime = $this->extractTime($attendance->lunch_in);
                 if ($lunchOutTime && $lunchInTime) {
-                    $breakMinutes = Carbon::parse($lunchInTime)->diffInMinutes(Carbon::parse($lunchOutTime));
+                    $breakMinutes = (int) abs(Carbon::parse($lunchInTime)->diffInMinutes(Carbon::parse($lunchOutTime)));
                     $workedMinutes -= $breakMinutes;
                 }
             } else {
                 // No lunch data - only deduct break if worked full day (> 5 hours)
+                // Fallback: schedule break -> department break -> 60
                 $totalMinutes = $checkIn->diffInMinutes($checkOut);
                 if ($totalMinutes > 300) {
-                    $workedMinutes -= ($daySchedule->break_minutes ?? 60);
+                    $departmentBreak = $employee->department?->default_break_minutes;
+                    $workedMinutes -= ($daySchedule->break_minutes ?? $departmentBreak ?? 60);
                 }
             }
         }
+
+        $workedMinutes = max(0, $workedMinutes);
 
         // Calculate lunch deviation
         $lunchDeviationMinutes = 0;
@@ -719,8 +731,14 @@ class ZktecoSyncService
 
         // Determine status
         $status = 'present';
+        $maxLateBeforeAbsence = (int) SystemSetting::get('max_late_minutes_before_absence', 60);
         if ($lateMinutes > 0 && !$hasApprovedEntryPermission) {
-            $status = 'late';
+            if ($lateMinutes >= $maxLateBeforeAbsence) {
+                $status = 'absent';
+                $qualifiesForPunctualityBonus = false;
+            } else {
+                $status = 'late';
+            }
         }
         if ($workedHours < 4 && $workedHours > 0) {
             $status = 'partial';

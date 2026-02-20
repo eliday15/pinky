@@ -26,6 +26,10 @@ def setup_logging(verbose: bool = False) -> None:
     level = logging.DEBUG if verbose else logging.INFO
     format_str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
+    # Ensure logs directory exists
+    from pathlib import Path
+    Path("logs").mkdir(exist_ok=True)
+
     logging.basicConfig(
         level=level,
         format=format_str,

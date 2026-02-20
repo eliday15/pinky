@@ -7,6 +7,8 @@ use App\Models\Employee;
 use App\Models\Incident;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Routing\Controllers\HasMiddleware;
+use Illuminate\Routing\Controllers\Middleware;
 use Illuminate\Support\Facades\Response;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -15,8 +17,26 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
  *
  * Provides export functionality for various attendance reports.
  */
-class ReportExportController extends Controller
+class ReportExportController extends Controller implements HasMiddleware
 {
+    /**
+     * Get the middleware that should be assigned to the controller.
+     */
+    public static function middleware(): array
+    {
+        return [
+            new Middleware(function ($request, $next) {
+                $user = $request->user();
+                if (!$user->hasPermissionTo('reports.view_all')
+                    && !$user->hasPermissionTo('reports.view_team')
+                    && !$user->hasPermissionTo('reports.view_own')) {
+                    abort(403);
+                }
+                return $next($request);
+            }),
+        ];
+    }
+
     /**
      * Export daily report to CSV.
      */

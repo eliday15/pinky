@@ -12,6 +12,7 @@ const form = useForm({
     check_out: props.record.check_out?.substring(0, 5) || '',
     status: props.record.status,
     notes: props.record.notes || '',
+    manual_edit_reason: '',
 });
 
 const submit = () => {
@@ -177,6 +178,33 @@ const overtimeHours = computed(() => {
                         <option value="sick_leave">Incapacidad</option>
                         <option value="permission">Permiso</option>
                     </select>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">
+                        Motivo de Edicion Manual *
+                    </label>
+                    <textarea
+                        v-model="form.manual_edit_reason"
+                        rows="2"
+                        class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                        :class="{ 'border-red-500': form.errors.manual_edit_reason }"
+                        placeholder="Explique el motivo de esta edicion manual (minimo 5 caracteres)..."
+                        required
+                    ></textarea>
+                    <p v-if="form.errors.manual_edit_reason" class="mt-1 text-sm text-red-600">
+                        {{ form.errors.manual_edit_reason }}
+                    </p>
+                </div>
+
+                <!-- Previous Manual Edit Info -->
+                <div v-if="record.manually_edited_at" class="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                    <h4 class="text-sm font-medium text-yellow-800 mb-2">Edicion Manual Anterior</h4>
+                    <div class="text-sm text-yellow-700 space-y-1">
+                        <p><span class="font-medium">Editado por:</span> {{ record.manually_edited_by?.name || 'Desconocido' }}</p>
+                        <p><span class="font-medium">Fecha:</span> {{ new Date(record.manually_edited_at).toLocaleString('es-MX') }}</p>
+                        <p><span class="font-medium">Motivo:</span> {{ record.manual_edit_reason }}</p>
+                    </div>
                 </div>
 
                 <div>

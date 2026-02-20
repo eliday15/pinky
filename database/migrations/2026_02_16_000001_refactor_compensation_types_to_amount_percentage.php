@@ -44,7 +44,9 @@ return new class extends Migration
             DB::statement('ALTER TABLE compensation_types DROP COLUMN calculation_type');
             DB::statement('ALTER TABLE compensation_types RENAME COLUMN calculation_type_new TO calculation_type');
         } else {
-            // MySQL: update values then modify the ENUM definition
+            // MySQL: first expand ENUM to include 'percentage', then update values, then shrink
+            DB::statement("ALTER TABLE compensation_types MODIFY calculation_type ENUM('multiplier', 'fixed', 'percentage') NOT NULL DEFAULT 'multiplier'");
+
             DB::table('compensation_types')
                 ->where('calculation_type', 'multiplier')
                 ->update(['calculation_type' => 'percentage']);

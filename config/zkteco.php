@@ -28,6 +28,13 @@ return [
     */
 
     'sync' => [
+        // When true, the Python sync runs on a local office PC (agent mode)
+        // instead of being invoked by Laravel directly.
+        'remote_python' => env('ZKTECO_REMOTE_PYTHON', false),
+
+        // Shared secret the Python agent uses to authenticate with the API
+        'agent_key' => env('ZKTECO_AGENT_KEY', ''),
+
         // Sync interval in hours
         'interval_hours' => 4,
 

@@ -106,22 +106,42 @@ class AnomalyDetectorService
     /**
      * Detect missing checkout.
      *
+     * Skips detection if the employee has an approved night shift authorization
+     * for that date or the record already has velada_hours, since velada workers
+     * may check out past midnight (handled by a different record).
+     *
      * @param AttendanceRecord $record The attendance record
      * @param mixed $schedule The employee's schedule
      * @return array List of anomaly data arrays
      */
     private function detectMissingCheckout(AttendanceRecord $record, $schedule): array
     {
-        if ($record->check_in && !$record->check_out && $record->status !== 'absent') {
-            return [[
-                'anomaly_type' => 'missing_checkout',
-                'severity' => 'warning',
-                'description' => 'El empleado registro entrada pero no registro salida.',
-                'expected_value' => $schedule->exit_time,
-                'actual_value' => null,
-            ]];
+        if (!$record->check_in || $record->check_out || $record->status === 'absent') {
+            return [];
         }
-        return [];
+
+        // Skip for velada workers - they may check out past midnight
+        if (($record->velada_hours ?? 0) > 0) {
+            return [];
+        }
+
+        $hasNightShiftAuth = Authorization::where('employee_id', $record->employee_id)
+            ->where('date', $record->work_date)
+            ->where('type', Authorization::TYPE_NIGHT_SHIFT)
+            ->whereIn('status', [Authorization::STATUS_APPROVED, Authorization::STATUS_PAID])
+            ->exists();
+
+        if ($hasNightShiftAuth) {
+            return [];
+        }
+
+        return [[
+            'anomaly_type' => 'missing_checkout',
+            'severity' => 'warning',
+            'description' => 'El empleado registro entrada pero no registro salida.',
+            'expected_value' => $schedule->exit_time,
+            'actual_value' => null,
+        ]];
     }
 
     /**
@@ -178,7 +198,11 @@ class AnomalyDetectorService
     }
 
     /**
-     * Detect unauthorized velada (night work after midnight without authorization).
+     * Detect unauthorized velada and missing post-midnight confirmation.
+     *
+     * Two checks:
+     * 1. Velada without authorization -> unauthorized_velada (existing)
+     * 2. Velada with authorization but no punch in confirmation window -> velada_missing_confirmation (new)
      *
      * @param AttendanceRecord $record The attendance record
      * @param Employee $employee The employee
@@ -206,7 +230,53 @@ class AnomalyDetectorService
                 'deviation_minutes' => (int) ($record->velada_hours * 60),
             ]];
         }
+
+        // Has authorization - check for post-midnight confirmation punch
+        if (!$this->hasPostMidnightPunch($record)) {
+            $confirmStart = (int) SystemSetting::get('velada_confirmation_start_hour', 0);
+            $confirmEnd = (int) SystemSetting::get('velada_confirmation_end_hour', 1);
+
+            return [[
+                'anomaly_type' => AttendanceAnomaly::TYPE_VELADA_MISSING_CONFIRMATION,
+                'severity' => 'warning',
+                'description' => "Velada autorizada pero sin checada de confirmacion entre {$confirmStart}:00 y {$confirmEnd}:00.",
+                'expected_value' => "{$confirmStart}:00-{$confirmEnd}:00",
+                'actual_value' => null,
+            ]];
+        }
+
         return [];
+    }
+
+    /**
+     * Check if a record has a raw punch in the post-midnight confirmation window.
+     *
+     * @param AttendanceRecord $record The attendance record
+     * @return bool True if a punch exists in the confirmation window
+     */
+    private function hasPostMidnightPunch(AttendanceRecord $record): bool
+    {
+        $rawPunches = $record->raw_punches ?? [];
+        if (empty($rawPunches)) {
+            return false;
+        }
+
+        $confirmStart = (int) SystemSetting::get('velada_confirmation_start_hour', 0);
+        $confirmEnd = (int) SystemSetting::get('velada_confirmation_end_hour', 1);
+
+        foreach ($rawPunches as $punch) {
+            $punchTime = $punch['time'] ?? null;
+            if (!$punchTime) {
+                continue;
+            }
+
+            $hour = (int) Carbon::parse($punchTime)->format('H');
+            if ($hour >= $confirmStart && $hour < $confirmEnd) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

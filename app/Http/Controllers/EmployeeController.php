@@ -95,6 +95,7 @@ class EmployeeController extends Controller
             'departments' => Department::active()->get(['id', 'name']),
             'positions' => Position::active()->get(['id', 'name']),
             'schedules' => Schedule::active()->get(['id', 'name']),
+            'compensationTypes' => CompensationType::active()->get(['id', 'name', 'code', 'calculation_type']),
             'supervisors' => Employee::active()->where(function ($q) {
                 $q->whereNotNull('supervisor_id')
                     ->orWhereIn('id', Employee::whereNotNull('supervisor_id')->pluck('supervisor_id'));
@@ -122,6 +123,7 @@ class EmployeeController extends Controller
                     'compensationTypes',
                     'supervisorPosition:id,name',
                     'department:id,name',
+                    'anchorEmployee.compensationTypes',
                 ])
                 ->get(),
             'schedules' => Schedule::active()->get(['id', 'name', 'code', 'entry_time', 'exit_time', 'break_minutes', 'daily_work_hours', 'late_tolerance_minutes', 'is_flexible', 'working_days']),
@@ -189,6 +191,12 @@ class EmployeeController extends Controller
             'compensation_type_ids' => ['nullable', 'array'],
             'compensation_type_ids.*' => ['exists:compensation_types,id'],
             'compensation_type_overrides' => ['nullable', 'array'],
+            'emergency_contacts' => ['required', 'array', 'min:1'],
+            'emergency_contacts.*.name' => ['required', 'string', 'max:100'],
+            'emergency_contacts.*.phone' => ['required', 'string', 'max:20'],
+            'emergency_contacts.*.email' => ['nullable', 'email', 'max:255'],
+            'emergency_contacts.*.relationship' => ['required', 'string', 'max:50'],
+            'emergency_contacts.*.address' => ['nullable', 'string', 'max:255'],
         ]);
 
         $validated['full_name'] = $validated['first_name'] . ' ' . $validated['last_name'];
@@ -214,15 +222,23 @@ class EmployeeController extends Controller
             $validated['schedule_id']
         );
 
-        $employeeData = collect($validated)->except(['compensation_type_ids', 'compensation_type_overrides'])->toArray();
+        $emergencyContacts = $validated['emergency_contacts'];
+        $employeeData = collect($validated)->except(['compensation_type_ids', 'compensation_type_overrides', 'emergency_contacts'])->toArray();
         $employee = Employee::create($employeeData);
+
+        // Create emergency contacts
+        $employee->emergencyContacts()->createMany($emergencyContacts);
 
         // Sync compensation types
         if ($request->has('compensation_type_ids') && ! empty($request->compensation_type_ids)) {
+            $ctTypes = CompensationType::whereIn('id', $request->compensation_type_ids)
+                ->pluck('calculation_type', 'id');
             $syncData = [];
             foreach ($request->compensation_type_ids as $typeId) {
+                $override = $request->compensation_type_overrides[$typeId] ?? null;
                 $syncData[$typeId] = [
-                    'custom_percentage' => $request->compensation_type_overrides[$typeId] ?? null,
+                    'custom_percentage' => ($ctTypes[$typeId] ?? '') === 'percentage' ? $override : null,
+                    'custom_fixed_amount' => ($ctTypes[$typeId] ?? '') === 'fixed' ? $override : null,
                 ];
             }
             $employee->compensationTypes()->sync($syncData);
@@ -251,6 +267,7 @@ class EmployeeController extends Controller
             'schedule',
             'supervisor',
             'compensationTypes',
+            'emergencyContacts',
             'attendanceRecords' => function ($q) {
                 $q->orderBy('work_date', 'desc')->limit(30);
             },
@@ -296,7 +313,7 @@ class EmployeeController extends Controller
         $this->authorize('update', $employee);
 
         return Inertia::render('Employees/Edit', [
-            'employee' => $employee->load(['supervisor', 'compensationTypes']),
+            'employee' => $employee->load(['supervisor', 'compensationTypes', 'emergencyContacts']),
             'departments' => Department::active()->with('compensationTypes')->get(['id', 'name', 'code']),
             'positions' => Position::active()
                 ->with([
@@ -373,6 +390,12 @@ class EmployeeController extends Controller
             'compensation_type_ids' => ['nullable', 'array'],
             'compensation_type_ids.*' => ['exists:compensation_types,id'],
             'compensation_type_overrides' => ['nullable', 'array'],
+            'emergency_contacts' => ['required', 'array', 'min:1'],
+            'emergency_contacts.*.name' => ['required', 'string', 'max:100'],
+            'emergency_contacts.*.phone' => ['required', 'string', 'max:20'],
+            'emergency_contacts.*.email' => ['nullable', 'email', 'max:255'],
+            'emergency_contacts.*.relationship' => ['required', 'string', 'max:50'],
+            'emergency_contacts.*.address' => ['nullable', 'string', 'max:255'],
         ];
 
         if ($scheduleChanging) {
@@ -426,15 +449,24 @@ class EmployeeController extends Controller
 
         $positionChanged = $request->position_id != $employee->position_id;
 
-        $employeeData = collect($validated)->except(['compensation_type_ids', 'compensation_type_overrides'])->toArray();
+        $emergencyContacts = $validated['emergency_contacts'];
+        $employeeData = collect($validated)->except(['compensation_type_ids', 'compensation_type_overrides', 'emergency_contacts'])->toArray();
         $employee->update($employeeData);
+
+        // Sync emergency contacts (delete + recreate)
+        $employee->emergencyContacts()->delete();
+        $employee->emergencyContacts()->createMany($emergencyContacts);
 
         // Sync compensation types
         if ($request->has('compensation_type_ids')) {
+            $ctTypes = CompensationType::whereIn('id', $request->compensation_type_ids)
+                ->pluck('calculation_type', 'id');
             $syncData = [];
             foreach ($request->compensation_type_ids as $typeId) {
+                $override = $request->compensation_type_overrides[$typeId] ?? null;
                 $syncData[$typeId] = [
-                    'custom_percentage' => $request->compensation_type_overrides[$typeId] ?? null,
+                    'custom_percentage' => ($ctTypes[$typeId] ?? '') === 'percentage' ? $override : null,
+                    'custom_fixed_amount' => ($ctTypes[$typeId] ?? '') === 'fixed' ? $override : null,
                 ];
             }
             $employee->compensationTypes()->sync($syncData);
@@ -467,6 +499,11 @@ class EmployeeController extends Controller
 
     /**
      * Bulk update employees.
+     *
+     * Supports:
+     * - set_field: Set a specific field to a value for all selected employees
+     * - adjust_compensation: Adjust hourly_rate or compensation_types by fixed/percentage
+     * - is_minimum_wage_filter: Pre-filter employee_ids by minimum wage status
      */
     public function bulkUpdate(Request $request): RedirectResponse
     {
@@ -480,37 +517,98 @@ class EmployeeController extends Controller
             'employee_ids' => ['required', 'array', 'min:1'],
             'employee_ids.*' => ['exists:employees,id'],
             'operation_type' => ['required', 'string', Rule::in(['set_field', 'adjust_compensation'])],
+            // Minimum wage filter (Fix 7)
+            'is_minimum_wage_filter' => ['nullable', 'string', Rule::in(['all', 'only_minimum', 'above_minimum'])],
             // For set_field
             'field' => ['required_if:operation_type,set_field', 'string', Rule::in(['department_id', 'position_id', 'schedule_id', 'supervisor_id', 'status', 'is_minimum_wage'])],
             'value' => ['required_if:operation_type,set_field'],
             // For adjust_compensation
-            'compensation_field' => ['required_if:operation_type,adjust_compensation', 'string', Rule::in(['hourly_rate', 'overtime_rate', 'holiday_rate'])],
+            'compensation_field' => ['required_if:operation_type,adjust_compensation', 'string', Rule::in(['hourly_rate', 'overtime_rate', 'holiday_rate', 'compensation_types'])],
             'adjustment_type' => ['required_if:operation_type,adjust_compensation', 'string', Rule::in(['fixed', 'percentage'])],
             'adjustment_value' => ['required_if:operation_type,adjust_compensation', 'numeric'],
+            // For compensation_types adjustment (Fix 8)
+            'compensation_type_ids' => ['nullable', 'array'],
+            'compensation_type_ids.*' => ['exists:compensation_types,id'],
         ]);
 
+        // Apply minimum wage filter (Fix 7)
+        $employeeIds = $validated['employee_ids'];
+        $wageFilter = $validated['is_minimum_wage_filter'] ?? 'all';
+        if ($wageFilter === 'only_minimum') {
+            $employeeIds = Employee::whereIn('id', $employeeIds)
+                ->where('is_minimum_wage', true)
+                ->pluck('id')
+                ->toArray();
+        } elseif ($wageFilter === 'above_minimum') {
+            $employeeIds = Employee::whereIn('id', $employeeIds)
+                ->where('is_minimum_wage', false)
+                ->pluck('id')
+                ->toArray();
+        }
+
+        if (empty($employeeIds)) {
+            return redirect()->route('employees.index')
+                ->with('warning', 'Ningun empleado coincide con el filtro de salario seleccionado.');
+        }
+
         if ($validated['operation_type'] === 'set_field') {
-            Employee::whereIn('id', $validated['employee_ids'])
+            Employee::whereIn('id', $employeeIds)
                 ->update([$validated['field'] => $validated['value']]);
         } elseif ($validated['operation_type'] === 'adjust_compensation') {
-            $employees = Employee::whereIn('id', $validated['employee_ids'])->get();
             $field = $validated['compensation_field'];
 
-            foreach ($employees as $employee) {
-                $currentValue = (float) $employee->$field;
-
-                if ($validated['adjustment_type'] === 'fixed') {
-                    $newValue = $currentValue + $validated['adjustment_value'];
-                } else {
-                    $newValue = $currentValue * (1 + $validated['adjustment_value'] / 100);
+            // Fix 8: Compensation types adjustment
+            if ($field === 'compensation_types') {
+                $typeIds = $validated['compensation_type_ids'] ?? [];
+                if (! empty($typeIds)) {
+                    $employees = Employee::whereIn('id', $employeeIds)->with('compensationTypes')->get();
+                    foreach ($employees as $employee) {
+                        $existingPivots = $employee->compensationTypes->keyBy('id');
+                        $syncData = [];
+                        foreach ($employee->compensationTypes as $ct) {
+                            $pivotData = ['custom_percentage' => $ct->pivot->custom_percentage, 'custom_fixed_amount' => $ct->pivot->custom_fixed_amount];
+                            if (in_array($ct->id, $typeIds)) {
+                                // Adjust this compensation type
+                                if ($ct->calculation_type === 'fixed') {
+                                    $current = (float) ($ct->pivot->custom_fixed_amount ?? $ct->fixed_amount ?? 0);
+                                    if ($validated['adjustment_type'] === 'fixed') {
+                                        $pivotData['custom_fixed_amount'] = max(0, round($current + $validated['adjustment_value'], 2));
+                                    } else {
+                                        $pivotData['custom_fixed_amount'] = max(0, round($current * (1 + $validated['adjustment_value'] / 100), 2));
+                                    }
+                                } else {
+                                    $current = (float) ($ct->pivot->custom_percentage ?? $ct->percentage_value ?? 0);
+                                    if ($validated['adjustment_type'] === 'fixed') {
+                                        $pivotData['custom_percentage'] = max(0, round($current + $validated['adjustment_value'], 2));
+                                    } else {
+                                        $pivotData['custom_percentage'] = max(0, round($current * (1 + $validated['adjustment_value'] / 100), 2));
+                                    }
+                                }
+                            }
+                            $syncData[$ct->id] = $pivotData;
+                        }
+                        $employee->compensationTypes()->sync($syncData);
+                    }
                 }
+            } else {
+                // Standard field adjustment (hourly_rate, overtime_rate, holiday_rate)
+                $employees = Employee::whereIn('id', $employeeIds)->get();
+                foreach ($employees as $employee) {
+                    $currentValue = (float) $employee->$field;
 
-                $employee->update([$field => max(0, round($newValue, 2))]);
+                    if ($validated['adjustment_type'] === 'fixed') {
+                        $newValue = $currentValue + $validated['adjustment_value'];
+                    } else {
+                        $newValue = $currentValue * (1 + $validated['adjustment_value'] / 100);
+                    }
+
+                    $employee->update([$field => max(0, round($newValue, 2))]);
+                }
             }
         }
 
         return redirect()->route('employees.index')
-            ->with('success', count($validated['employee_ids']) . ' empleados actualizados exitosamente.');
+            ->with('success', count($employeeIds) . ' empleados actualizados exitosamente.');
     }
 
     /**

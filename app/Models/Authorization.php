@@ -181,11 +181,18 @@ class Authorization extends Model
      */
     public function approve(User $approver): void
     {
-        $this->update([
+        $data = [
             'status' => self::STATUS_APPROVED,
             'approved_by' => $approver->id,
             'approved_at' => now(),
-        ]);
+        ];
+
+        // Auto-sign department head timestamp if department_head_id is set
+        if ($this->department_head_id) {
+            $data['department_head_signed_at'] = now();
+        }
+
+        $this->update($data);
     }
 
     /**

@@ -36,7 +36,7 @@ class ZKTecoConfig:
     )
     port: int = field(default_factory=lambda: int(os.getenv("ZKTECO_PORT", "4370")))
     timeout: int = field(
-        default_factory=lambda: int(os.getenv("ZKTECO_TIMEOUT", "15"))
+        default_factory=lambda: int(os.getenv("ZKTECO_TIMEOUT", "60"))
     )
     force_udp: bool = field(
         default_factory=lambda: os.getenv("ZKTECO_FORCE_UDP", "false").lower() == "true"

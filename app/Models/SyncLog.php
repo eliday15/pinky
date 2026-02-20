@@ -48,6 +48,14 @@ class SyncLog extends Model
     }
 
     /**
+     * Scope for requested syncs (awaiting agent pickup).
+     */
+    public function scopeRequested($query)
+    {
+        return $query->where('status', 'requested');
+    }
+
+    /**
      * Scope for completed syncs.
      */
     public function scopeCompleted($query)

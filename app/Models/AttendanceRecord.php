@@ -55,6 +55,9 @@ class AttendanceRecord extends Model
         'has_anomalies',
         'anomaly_count',
         'lunch_deviation_minutes',
+        'manually_edited_by',
+        'manually_edited_at',
+        'manual_edit_reason',
     ];
 
     protected $casts = [
@@ -77,6 +80,7 @@ class AttendanceRecord extends Model
         'has_anomalies' => 'boolean',
         'anomaly_count' => 'integer',
         'lunch_deviation_minutes' => 'integer',
+        'manually_edited_at' => 'datetime',
     ];
 
     /**
@@ -93,6 +97,14 @@ class AttendanceRecord extends Model
     public function authorization(): BelongsTo
     {
         return $this->belongsTo(Authorization::class);
+    }
+
+    /**
+     * Get the user who manually edited this record.
+     */
+    public function manuallyEditedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'manually_edited_by');
     }
 
     /**

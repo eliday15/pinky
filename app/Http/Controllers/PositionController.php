@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\CompensationType;
 use App\Models\Department;
+use App\Models\Employee;
 use App\Models\Position;
 use App\Models\Schedule;
 use App\Services\SupervisorResolutionService;
@@ -73,6 +74,7 @@ class PositionController extends Controller
             'schedules' => Schedule::active()->get(['id', 'name', 'code']),
             'positions' => Position::active()->get(['id', 'name', 'code']),
             'compensationTypes' => CompensationType::active()->get(),
+            'employees' => Employee::active()->orderBy('full_name')->get(['id', 'full_name', 'employee_number']),
         ]);
     }
 
@@ -97,6 +99,7 @@ class PositionController extends Controller
             'department_id' => ['nullable', 'exists:departments,id'],
             'supervisor_position_id' => ['nullable', 'exists:positions,id'],
             'default_schedule_id' => ['nullable', 'exists:schedules,id'],
+            'anchor_employee_id' => ['nullable', 'exists:employees,id'],
             'compensation_type_ids' => ['nullable', 'array'],
             'compensation_type_ids.*' => ['exists:compensation_types,id'],
             'compensation_type_percentages' => ['nullable', 'array'],
@@ -165,7 +168,7 @@ class PositionController extends Controller
             abort(403);
         }
 
-        $position->load('compensationTypes');
+        $position->load(['compensationTypes', 'anchorEmployee']);
 
         return Inertia::render('Positions/Edit', [
             'position' => $position,
@@ -173,6 +176,7 @@ class PositionController extends Controller
             'schedules' => Schedule::active()->get(['id', 'name', 'code']),
             'positions' => Position::active()->where('id', '!=', $position->id)->get(['id', 'name', 'code']),
             'compensationTypes' => CompensationType::active()->get(),
+            'employees' => Employee::active()->orderBy('full_name')->get(['id', 'full_name', 'employee_number']),
         ]);
     }
 
@@ -197,6 +201,7 @@ class PositionController extends Controller
             'department_id' => ['nullable', 'exists:departments,id'],
             'supervisor_position_id' => ['nullable', 'exists:positions,id', Rule::notIn([$position->id])],
             'default_schedule_id' => ['nullable', 'exists:schedules,id'],
+            'anchor_employee_id' => ['nullable', 'exists:employees,id'],
             'compensation_type_ids' => ['nullable', 'array'],
             'compensation_type_ids.*' => ['exists:compensation_types,id'],
             'compensation_type_percentages' => ['nullable', 'array'],

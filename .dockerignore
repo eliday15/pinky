@@ -1,0 +1,15 @@
+node_modules
+vendor
+.env
+.env.testing
+.git
+storage/logs/*
+storage/framework/cache/*
+storage/framework/sessions/*
+storage/framework/views/*
+bootstrap/cache/*
+pinky_script/
+tests/
+docs/
+*.md
+!README.md

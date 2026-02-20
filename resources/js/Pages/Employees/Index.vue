@@ -10,6 +10,7 @@ const props = defineProps({
     positions: Array,
     schedules: Array,
     supervisors: Array,
+    compensationTypes: Array,
     filters: Object,
     can: Object,
 });
@@ -31,6 +32,8 @@ const bulkValue = ref('');
 const compensationField = ref('');
 const adjustmentType = ref('fixed');
 const adjustmentValue = ref('');
+const isMinimumWageFilter = ref('');
+const compensationTypeIds = ref([]);
 
 const toggleSelectAll = (event) => {
     if (event.target.checked) {
@@ -60,8 +63,18 @@ const applyBulkEdit = () => {
         return;
     }
 
-    if (operationType.value === 'adjust_compensation' && (!compensationField.value || !adjustmentValue.value)) {
-        alert('Selecciona campo de compensacion y valor de ajuste');
+    if (operationType.value === 'adjust_compensation' && !compensationField.value) {
+        alert('Selecciona campo de compensacion');
+        return;
+    }
+
+    if (operationType.value === 'adjust_compensation' && compensationField.value === 'compensation_types' && compensationTypeIds.value.length === 0) {
+        alert('Selecciona al menos un concepto de compensacion');
+        return;
+    }
+
+    if (operationType.value === 'adjust_compensation' && !adjustmentValue.value) {
+        alert('Ingresa el valor de ajuste');
         return;
     }
 
@@ -74,6 +87,8 @@ const applyBulkEdit = () => {
             compensation_field: compensationField.value,
             adjustment_type: adjustmentType.value,
             adjustment_value: adjustmentValue.value,
+            is_minimum_wage_filter: isMinimumWageFilter.value || undefined,
+            compensation_type_ids: compensationField.value === 'compensation_types' ? compensationTypeIds.value : undefined,
         }, {
             onSuccess: () => {
                 selectedEmployees.value = [];
@@ -84,6 +99,8 @@ const applyBulkEdit = () => {
                 compensationField.value = '';
                 adjustmentType.value = 'fixed';
                 adjustmentValue.value = '';
+                isMinimumWageFilter.value = '';
+                compensationTypeIds.value = [];
             }
         });
     }
@@ -98,6 +115,8 @@ const cancelBulkEdit = () => {
     compensationField.value = '';
     adjustmentType.value = 'fixed';
     adjustmentValue.value = '';
+    isMinimumWageFilter.value = '';
+    compensationTypeIds.value = [];
 };
 
 const applyFilters = debounce(() => {
@@ -246,6 +265,18 @@ const exportUrl = computed(() => {
                         </select>
                     </div>
 
+                    <div>
+                        <label class="block text-xs font-medium text-blue-700 mb-1">Filtro salario</label>
+                        <select
+                            v-model="isMinimumWageFilter"
+                            class="rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
+                        >
+                            <option value="">Todos</option>
+                            <option value="only_minimum">Solo Salario Minimo</option>
+                            <option value="above_minimum">Solo Arriba del Minimo</option>
+                        </select>
+                    </div>
+
                     <!-- Set Field Options -->
                     <template v-if="operationType === 'set_field'">
                         <div>
@@ -313,6 +344,7 @@ const exportUrl = computed(() => {
                             >
                                 <option value="">Seleccionar...</option>
                                 <option value="hourly_rate">Tarifa por hora</option>
+                                <option value="compensation_types">Conceptos de compensacion</option>
                             </select>
                         </div>
                         <div>
@@ -338,6 +370,28 @@ const exportUrl = computed(() => {
                             />
                         </div>
                     </template>
+
+                    <!-- Compensation Type Checkboxes (Fix 8) -->
+                    <div v-if="operationType === 'adjust_compensation' && compensationField === 'compensation_types' && compensationTypes?.length > 0" class="w-full">
+                        <label class="block text-xs font-medium text-blue-700 mb-2">Conceptos a ajustar</label>
+                        <div class="flex flex-wrap gap-3">
+                            <label
+                                v-for="ct in compensationTypes"
+                                :key="ct.id"
+                                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm cursor-pointer transition-colors"
+                                :class="compensationTypeIds.includes(ct.id) ? 'border-blue-400 bg-blue-50 text-blue-800' : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'"
+                            >
+                                <input
+                                    type="checkbox"
+                                    :value="ct.id"
+                                    v-model="compensationTypeIds"
+                                    class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                />
+                                {{ ct.name }}
+                                <span class="text-xs text-gray-500">({{ ct.code }})</span>
+                            </label>
+                        </div>
+                    </div>
 
                     <div class="flex items-end">
                         <button

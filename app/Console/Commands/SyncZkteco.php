@@ -4,18 +4,25 @@ namespace App\Console\Commands;
 
 use App\Services\ZktecoSyncService;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Process;
 
 class SyncZkteco extends Command
 {
-    protected $signature = 'zkteco:sync {--days=7 : Number of days to sync}';
-    protected $description = 'Sync employees and attendance from ZKTeco database';
+    protected $signature = 'zkteco:sync {--days=7 : Number of days to sync} {--skip-python : Skip Python device sync}';
+    protected $description = 'Fetch data from ZKTeco devices and sync attendance records';
 
     public function handle(ZktecoSyncService $syncService): int
     {
         $days = (int) $this->option('days');
         $fromDate = now()->subDays($days);
 
-        $this->info("Syncing ZKTeco data from {$fromDate->toDateString()}...");
+        // Step 1: Run Python script to pull from devices
+        if (!$this->option('skip-python')) {
+            $this->runPythonSync();
+        }
+
+        // Step 2: Process raw data into attendance_records
+        $this->info("Processing attendance records from {$fromDate->toDateString()}...");
 
         try {
             $log = $syncService->sync($fromDate);
@@ -47,6 +54,38 @@ class SyncZkteco extends Command
         } catch (\Exception $e) {
             $this->error("Sync failed: " . $e->getMessage());
             return Command::FAILURE;
+        }
+    }
+
+    /**
+     * Run the Python ZKTeco sync script to pull data from devices.
+     */
+    private function runPythonSync(): void
+    {
+        $scriptPath = base_path('pinky_script');
+        $pythonBin = $scriptPath . '/venv/bin/python';
+        $mainScript = $scriptPath . '/main.py';
+
+        if (!file_exists($pythonBin) || !file_exists($mainScript)) {
+            $this->warn('Python script not found, skipping device sync.');
+            return;
+        }
+
+        $this->info('Fetching data from ZKTeco devices...');
+
+        $result = Process::path($scriptPath)
+            ->timeout(300)
+            ->run([$pythonBin, $mainScript, '--sync']);
+
+        if ($result->successful()) {
+            $this->info('Device sync completed.');
+            // Show summary from Python output
+            $output = $result->output();
+            if (preg_match('/Attendance records: (\d+)/', $output, $matches)) {
+                $this->info("  Records fetched from devices: {$matches[1]}");
+            }
+        } else {
+            $this->error('Python device sync failed: ' . $result->errorOutput());
         }
     }
 }

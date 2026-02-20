@@ -216,7 +216,7 @@ class AttendanceController extends Controller
     {
         $this->authorize('update', $attendance);
 
-        $attendance->load(['employee.schedule']);
+        $attendance->load(['employee.schedule', 'manuallyEditedBy']);
 
         return Inertia::render('Attendance/Edit', [
             'record' => $attendance,
@@ -225,6 +225,8 @@ class AttendanceController extends Controller
 
     /**
      * Update an attendance record.
+     *
+     * Requires a manual_edit_reason and records who edited the record and when.
      */
     public function update(Request $request, AttendanceRecord $attendance): RedirectResponse
     {
@@ -235,27 +237,45 @@ class AttendanceController extends Controller
             'check_out' => ['nullable', 'date_format:H:i'],
             'status' => ['required', 'in:present,late,absent,partial,holiday,vacation,sick_leave,permission'],
             'notes' => ['nullable', 'string', 'max:500'],
+            'manual_edit_reason' => ['required', 'string', 'min:5', 'max:500'],
         ]);
 
         // Recalculate hours if times changed
         if (isset($validated['check_in']) && isset($validated['check_out'])) {
             $schedule = $attendance->employee->schedule;
-            $checkIn = Carbon::parse($validated['check_in']);
-            $checkOut = Carbon::parse($validated['check_out']);
+            $dateStr = $attendance->work_date->toDateString();
+            $checkIn = Carbon::parse($dateStr . ' ' . $validated['check_in']);
+            $checkOut = Carbon::parse($dateStr . ' ' . $validated['check_out']);
 
-            $workedMinutes = $checkOut->diffInMinutes($checkIn);
-            if ($schedule) {
-                $workedMinutes -= $schedule->break_minutes;
+            // Handle midnight crossing
+            if ($checkOut->lt($checkIn)) {
+                $checkOut->addDay();
             }
 
-            $workedHours = max(0, $workedMinutes / 60);
-            $dailyHours = $schedule ? $schedule->daily_work_hours : 8;
+            $workedMinutes = abs($checkIn->diffInMinutes($checkOut));
+
+            if ($schedule) {
+                $dayName = strtolower($attendance->work_date->format('l'));
+                $daySchedule = $schedule->getScheduleForDay($dayName);
+                $departmentBreak = $attendance->employee->department?->default_break_minutes;
+                $breakMinutes = $daySchedule->break_minutes ?? $departmentBreak ?? 60;
+
+                if ($workedMinutes > 300) {
+                    $workedMinutes -= $breakMinutes;
+                }
+            }
+
+            $workedMinutes = max(0, $workedMinutes);
+            $workedHours = $workedMinutes / 60;
+            $dailyHours = $schedule ? ($daySchedule->daily_work_hours ?? 8) : 8;
 
             $validated['worked_hours'] = min($workedHours, $dailyHours);
             $validated['overtime_hours'] = max(0, $workedHours - $dailyHours);
         }
 
         $validated['requires_review'] = false;
+        $validated['manually_edited_by'] = Auth::id();
+        $validated['manually_edited_at'] = now();
 
         $attendance->update($validated);
 
@@ -277,8 +297,8 @@ class AttendanceController extends Controller
             abort(403, 'No tienes permiso para sincronizar asistencia.');
         }
 
-        // Check if there's already a sync in progress (started within last 30 minutes)
-        $runningSync = SyncLog::where('status', 'running')
+        // Check if there's already a sync in progress or requested (started within last 30 minutes)
+        $runningSync = SyncLog::whereIn('status', ['running', 'requested'])
             ->where('started_at', '>', now()->subMinutes(30))
             ->exists();
 
@@ -286,8 +306,8 @@ class AttendanceController extends Controller
             return redirect()->back()->with('warning', 'Ya hay una sincronizacion en progreso. Por favor espera a que termine.');
         }
 
-        // Clean up stuck syncs (running for more than 30 minutes)
-        SyncLog::where('status', 'running')
+        // Clean up stuck syncs (running or requested for more than 30 minutes)
+        SyncLog::whereIn('status', ['running', 'requested'])
             ->where('started_at', '<', now()->subMinutes(30))
             ->update([
                 'status' => 'failed',
@@ -295,9 +315,21 @@ class AttendanceController extends Controller
                 'errors' => json_encode(['message' => 'Timeout - proceso excedio 30 minutos']),
             ]);
 
+        // Remote mode: create a request for the local Python agent to pick up
+        if (config('zkteco.sync.remote_python')) {
+            SyncLog::create([
+                'type' => 'zkteco',
+                'status' => 'requested',
+                'triggered_by' => auth()->id(),
+                'started_at' => now(),
+            ]);
+
+            return redirect()->back()->with('success', 'Sincronización solicitada. Los dispositivos se sincronizarán en breve.');
+        }
+
         $fromDate = $request->from_date ? Carbon::parse($request->from_date) : null;
 
-        // Dispatch background job
+        // Local mode: dispatch job directly
         SyncZktecoJob::dispatch($fromDate, auth()->id());
 
         return redirect()->back()->with('success', 'Sincronizacion iniciada. Los datos se actualizaran en unos minutos.');

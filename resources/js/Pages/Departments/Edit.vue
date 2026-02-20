@@ -10,6 +10,7 @@ const form = useForm({
     name: props.department.name,
     code: props.department.code,
     description: props.department.description || '',
+    default_break_minutes: props.department.default_break_minutes,
 });
 
 const submit = () => {
@@ -69,6 +70,27 @@ const submit = () => {
                             />
                             <p v-if="form.errors.code" class="mt-1 text-sm text-red-600">
                                 {{ form.errors.code }}
+                            </p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                Minutos de Comida por Defecto
+                            </label>
+                            <input
+                                v-model="form.default_break_minutes"
+                                type="number"
+                                min="0"
+                                max="480"
+                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                :class="{ 'border-red-500': form.errors.default_break_minutes }"
+                                placeholder="Ej: 60"
+                            />
+                            <p class="mt-1 text-sm text-gray-500">
+                                Se usa como fallback cuando el horario no define tiempo de comida
+                            </p>
+                            <p v-if="form.errors.default_break_minutes" class="mt-1 text-sm text-red-600">
+                                {{ form.errors.default_break_minutes }}
                             </p>
                         </div>
 

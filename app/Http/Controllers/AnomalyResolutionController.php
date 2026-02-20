@@ -196,6 +196,12 @@ class AnomalyResolutionController extends Controller
         ]);
 
         $authorization = Authorization::findOrFail($validated['authorization_id']);
+
+        // Verify authorization belongs to the same employee as the anomaly
+        if ($authorization->employee_id !== $anomaly->employee_id) {
+            return redirect()->back()->with('error', 'La autorizacion pertenece a otro empleado.');
+        }
+
         $anomaly->linkToAuthorization($authorization);
 
         $this->updateRecordAnomalyCount($anomaly->attendance_record_id);
@@ -221,21 +227,35 @@ class AnomalyResolutionController extends Controller
             'resolution_notes' => ['nullable', 'string', 'max:1000'],
         ]);
 
+        // Scope anomalies to user's team if not view_all
+        $allowedEmployeeIds = null;
+        if (!$user->hasPermissionTo('anomalies.view_all')) {
+            $userEmployee = $user->employee;
+            $allowedEmployeeIds = $userEmployee
+                ? Employee::where('supervisor_id', $userEmployee->id)->pluck('id')->toArray()
+                : [];
+        }
+
         $recordIds = [];
+        $resolved = 0;
         foreach ($validated['anomaly_ids'] as $id) {
             $anomaly = AttendanceAnomaly::find($id);
-            if ($anomaly && $anomaly->status === 'open') {
-                $anomaly->resolve($user, $validated['resolution_notes'] ?? null);
-                $recordIds[] = $anomaly->attendance_record_id;
+            if (!$anomaly || $anomaly->status !== 'open') {
+                continue;
             }
+            if ($allowedEmployeeIds !== null && !in_array($anomaly->employee_id, $allowedEmployeeIds)) {
+                continue;
+            }
+            $anomaly->resolve($user, $validated['resolution_notes'] ?? null);
+            $recordIds[] = $anomaly->attendance_record_id;
+            $resolved++;
         }
 
         foreach (array_unique(array_filter($recordIds)) as $recordId) {
             $this->updateRecordAnomalyCount($recordId);
         }
 
-        $count = count($validated['anomaly_ids']);
-        return redirect()->back()->with('success', "{$count} anomalias resueltas.");
+        return redirect()->back()->with('success', "{$resolved} anomalias resueltas.");
     }
 
     /**
@@ -256,21 +276,35 @@ class AnomalyResolutionController extends Controller
             'resolution_notes' => ['nullable', 'string', 'max:1000'],
         ]);
 
+        // Scope anomalies to user's team if not view_all
+        $allowedEmployeeIds = null;
+        if (!$user->hasPermissionTo('anomalies.view_all')) {
+            $userEmployee = $user->employee;
+            $allowedEmployeeIds = $userEmployee
+                ? Employee::where('supervisor_id', $userEmployee->id)->pluck('id')->toArray()
+                : [];
+        }
+
         $recordIds = [];
+        $dismissed = 0;
         foreach ($validated['anomaly_ids'] as $id) {
             $anomaly = AttendanceAnomaly::find($id);
-            if ($anomaly && $anomaly->status === 'open') {
-                $anomaly->dismiss($user, $validated['resolution_notes'] ?? null);
-                $recordIds[] = $anomaly->attendance_record_id;
+            if (!$anomaly || $anomaly->status !== 'open') {
+                continue;
             }
+            if ($allowedEmployeeIds !== null && !in_array($anomaly->employee_id, $allowedEmployeeIds)) {
+                continue;
+            }
+            $anomaly->dismiss($user, $validated['resolution_notes'] ?? null);
+            $recordIds[] = $anomaly->attendance_record_id;
+            $dismissed++;
         }
 
         foreach (array_unique(array_filter($recordIds)) as $recordId) {
             $this->updateRecordAnomalyCount($recordId);
         }
 
-        $count = count($validated['anomaly_ids']);
-        return redirect()->back()->with('success', "{$count} anomalias descartadas.");
+        return redirect()->back()->with('success', "{$dismissed} anomalias descartadas.");
     }
 
     /**
@@ -300,6 +334,7 @@ class AnomalyResolutionController extends Controller
             ['value' => 'missing_checkin', 'label' => 'Entrada no registrada'],
             ['value' => 'unauthorized_overtime', 'label' => 'Horas extra sin autorizar'],
             ['value' => 'unauthorized_velada', 'label' => 'Velada sin autorizar'],
+            ['value' => 'velada_missing_confirmation', 'label' => 'Velada sin confirmacion post-medianoche'],
             ['value' => 'excessive_break', 'label' => 'Comida excesiva'],
             ['value' => 'missing_lunch', 'label' => 'Sin checada de comida'],
             ['value' => 'late_arrival', 'label' => 'Retardo significativo'],

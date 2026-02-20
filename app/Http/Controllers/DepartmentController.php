@@ -78,6 +78,7 @@ class DepartmentController extends Controller
             'name' => ['required', 'string', 'max:100'],
             'code' => ['required', 'string', 'max:50', 'unique:departments'],
             'description' => ['nullable', 'string', 'max:500'],
+            'default_break_minutes' => ['nullable', 'integer', 'min:0', 'max:480'],
         ]);
 
         Department::create($validated);
@@ -142,6 +143,7 @@ class DepartmentController extends Controller
             'name' => ['required', 'string', 'max:100'],
             'code' => ['required', 'string', 'max:50', Rule::unique('departments')->ignore($department->id)],
             'description' => ['nullable', 'string', 'max:500'],
+            'default_break_minutes' => ['nullable', 'integer', 'min:0', 'max:480'],
         ]);
 
         $department->update($validated);

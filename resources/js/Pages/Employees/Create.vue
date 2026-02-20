@@ -25,7 +25,7 @@ const form = useForm({
     address_state: '',
     address_zip: '',
     photo: null,
-    emergency_phone: '',
+    emergency_contacts: [{ name: '', phone: '', email: '', relationship: '', address: '' }],
     credential_type: '',
     credential_number: '',
     hire_date: new Date().toISOString().split('T')[0],
@@ -273,6 +273,7 @@ const onPositionChange = () => {
     if (!position) return;
 
     const filled = {};
+    const anchor = position.anchor_employee;
 
     if (position.department_id) {
         form.department_id = position.department_id;
@@ -282,13 +283,35 @@ const onPositionChange = () => {
         form.schedule_id = position.default_schedule_id;
         filled.schedule_id = true;
     }
-    if (position.base_hourly_rate) {
+
+    // Pre-fill hourly rate: anchor employee > position template
+    if (anchor?.hourly_rate) {
+        form.hourly_rate = anchor.hourly_rate;
+        filled.hourly_rate = true;
+    } else if (position.base_hourly_rate) {
         form.hourly_rate = position.base_hourly_rate;
         filled.hourly_rate = true;
     }
 
-    // Auto-fill compensation types from position template
-    if (position.compensation_types?.length) {
+    // Pre-fill is_minimum_wage from anchor
+    if (anchor && anchor.is_minimum_wage !== undefined) {
+        form.is_minimum_wage = anchor.is_minimum_wage;
+    }
+
+    // Auto-fill compensation types: anchor employee > position template
+    if (anchor?.compensation_types?.length) {
+        form.compensation_type_ids = anchor.compensation_types.map(ct => ct.id);
+        const overrides = {};
+        anchor.compensation_types.forEach(ct => {
+            if (ct.pivot?.custom_percentage) {
+                overrides[ct.id] = ct.pivot.custom_percentage;
+            } else if (ct.pivot?.custom_fixed_amount) {
+                overrides[ct.id] = ct.pivot.custom_fixed_amount;
+            }
+        });
+        form.compensation_type_overrides = overrides;
+        filled.compensation_type_ids = true;
+    } else if (position.compensation_types?.length) {
         form.compensation_type_ids = position.compensation_types.map(ct => ct.id);
         const overrides = {};
         position.compensation_types.forEach(ct => {
@@ -356,6 +379,24 @@ const toggleCompensationType = (ctId) => {
         form.compensation_type_ids.push(ctId);
     }
 };
+
+const addEmergencyContact = () => {
+    form.emergency_contacts.push({ name: '', phone: '', email: '', relationship: '', address: '' });
+};
+
+const removeEmergencyContact = (index) => {
+    if (form.emergency_contacts.length > 1) {
+        form.emergency_contacts.splice(index, 1);
+    }
+};
+
+const relationshipOptions = [
+    'Padre/Madre',
+    'Esposo/a',
+    'Hijo/a',
+    'Hermano/a',
+    'Otro',
+];
 
 const submit = () => {
     form.post(route('employees.store'));
@@ -488,17 +529,6 @@ watch(() => form.hire_date, onHireDateChange);
 
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">
-                                Telefono de Emergencia
-                            </label>
-                            <input
-                                v-model="form.emergency_phone"
-                                type="text"
-                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                            />
-                        </div>
-
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">
                                 Fecha de Ingreso *
                             </label>
                             <input
@@ -546,6 +576,91 @@ watch(() => form.hire_date, onHireDateChange);
                             </div>
                             <p class="mt-1 text-sm text-gray-500">JPG o PNG, max 5MB</p>
                             <p v-if="form.errors.photo" class="mt-1 text-sm text-red-600">{{ form.errors.photo }}</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Emergency Contacts -->
+                <div class="bg-white rounded-lg shadow p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-semibold text-gray-800">Contactos de Emergencia *</h3>
+                        <button
+                            type="button"
+                            @click="addEmergencyContact"
+                            class="px-3 py-1.5 text-sm font-medium text-pink-600 border border-pink-300 rounded-lg hover:bg-pink-50 transition-colors"
+                        >
+                            + Agregar contacto
+                        </button>
+                    </div>
+                    <p v-if="form.errors.emergency_contacts" class="mb-3 text-sm text-red-600">{{ form.errors.emergency_contacts }}</p>
+
+                    <div
+                        v-for="(contact, index) in form.emergency_contacts"
+                        :key="index"
+                        class="p-4 border border-gray-200 rounded-lg mb-4 last:mb-0"
+                    >
+                        <div class="flex items-center justify-between mb-3">
+                            <span class="text-sm font-medium text-gray-600">Contacto {{ index + 1 }}</span>
+                            <button
+                                type="button"
+                                @click="removeEmergencyContact(index)"
+                                :disabled="form.emergency_contacts.length <= 1"
+                                class="text-sm text-red-500 hover:text-red-700 disabled:opacity-30 disabled:cursor-not-allowed"
+                            >
+                                Eliminar
+                            </button>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Nombre *</label>
+                                <input
+                                    v-model="contact.name"
+                                    type="text"
+                                    class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                    :class="{ 'border-red-500': form.errors[`emergency_contacts.${index}.name`] }"
+                                />
+                                <p v-if="form.errors[`emergency_contacts.${index}.name`]" class="mt-1 text-sm text-red-600">{{ form.errors[`emergency_contacts.${index}.name`] }}</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Telefono *</label>
+                                <input
+                                    v-model="contact.phone"
+                                    type="text"
+                                    class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                    :class="{ 'border-red-500': form.errors[`emergency_contacts.${index}.phone`] }"
+                                />
+                                <p v-if="form.errors[`emergency_contacts.${index}.phone`]" class="mt-1 text-sm text-red-600">{{ form.errors[`emergency_contacts.${index}.phone`] }}</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                                <input
+                                    v-model="contact.email"
+                                    type="email"
+                                    class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                    :class="{ 'border-red-500': form.errors[`emergency_contacts.${index}.email`] }"
+                                />
+                                <p v-if="form.errors[`emergency_contacts.${index}.email`]" class="mt-1 text-sm text-red-600">{{ form.errors[`emergency_contacts.${index}.email`] }}</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Parentesco *</label>
+                                <select
+                                    v-model="contact.relationship"
+                                    class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                    :class="{ 'border-red-500': form.errors[`emergency_contacts.${index}.relationship`] }"
+                                >
+                                    <option value="">Seleccionar...</option>
+                                    <option v-for="rel in relationshipOptions" :key="rel" :value="rel">{{ rel }}</option>
+                                </select>
+                                <p v-if="form.errors[`emergency_contacts.${index}.relationship`]" class="mt-1 text-sm text-red-600">{{ form.errors[`emergency_contacts.${index}.relationship`] }}</p>
+                            </div>
+                            <div class="md:col-span-2">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Direccion</label>
+                                <input
+                                    v-model="contact.address"
+                                    type="text"
+                                    class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                />
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -811,6 +926,15 @@ watch(() => form.hire_date, onHireDateChange);
                     <div v-if="positionTemplateInfo" class="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                         <p class="text-sm text-blue-700">
                             <span class="font-medium">Este puesto pre-configura:</span> {{ positionTemplateInfo }}
+                        </p>
+                    </div>
+
+                    <!-- Anchor Employee Info Badge -->
+                    <div v-if="selectedPosition?.anchor_employee" class="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+                        <p class="text-sm text-green-700">
+                            <span class="font-medium">Empleado ancla:</span>
+                            {{ selectedPosition.anchor_employee.full_name }}
+                            — los datos de compensacion se pre-llenaron desde este empleado
                         </p>
                     </div>
 

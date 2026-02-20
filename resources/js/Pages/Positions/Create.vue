@@ -7,6 +7,7 @@ const props = defineProps({
     schedules: Array,
     positions: Array,
     compensationTypes: Array,
+    employees: Array,
 });
 
 const form = useForm({
@@ -21,6 +22,7 @@ const form = useForm({
     department_id: '',
     supervisor_position_id: '',
     default_schedule_id: '',
+    anchor_employee_id: '',
     compensation_type_ids: [],
     compensation_type_percentages: {},
     compensation_type_fixed_amounts: {},
@@ -182,6 +184,28 @@ const submit = () => {
                             </select>
                             <p v-if="form.errors.default_schedule_id" class="mt-1 text-sm text-red-600">
                                 {{ form.errors.default_schedule_id }}
+                            </p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                Empleado Ancla
+                            </label>
+                            <select
+                                v-model="form.anchor_employee_id"
+                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                :class="{ 'border-red-500': form.errors.anchor_employee_id }"
+                            >
+                                <option value="">Sin empleado ancla</option>
+                                <option v-for="emp in employees" :key="emp.id" :value="emp.id">
+                                    {{ emp.full_name }} ({{ emp.employee_number }})
+                                </option>
+                            </select>
+                            <p class="mt-1 text-sm text-gray-500">
+                                Empleado de referencia para pre-llenar datos al crear nuevos empleados
+                            </p>
+                            <p v-if="form.errors.anchor_employee_id" class="mt-1 text-sm text-red-600">
+                                {{ form.errors.anchor_employee_id }}
                             </p>
                         </div>
 

@@ -441,24 +441,27 @@ class AuthorizationController extends Controller
 
     /**
      * Auto-resolve anomalies that match an approved authorization.
+     *
+     * For night shift authorizations, resolves both unauthorized_velada
+     * and velada_missing_confirmation anomalies.
      */
     private function autoResolveAnomalies(Authorization $authorization): void
     {
         $typeMap = [
-            Authorization::TYPE_OVERTIME => 'unauthorized_overtime',
-            Authorization::TYPE_NIGHT_SHIFT => 'unauthorized_velada',
-            Authorization::TYPE_EXIT_PERMISSION => 'early_departure',
-            Authorization::TYPE_ENTRY_PERMISSION => 'late_arrival',
+            Authorization::TYPE_OVERTIME => ['unauthorized_overtime'],
+            Authorization::TYPE_NIGHT_SHIFT => ['unauthorized_velada', AttendanceAnomaly::TYPE_VELADA_MISSING_CONFIRMATION],
+            Authorization::TYPE_EXIT_PERMISSION => ['early_departure'],
+            Authorization::TYPE_ENTRY_PERMISSION => ['late_arrival'],
         ];
 
-        $anomalyType = $typeMap[$authorization->type] ?? null;
-        if (!$anomalyType) {
+        $anomalyTypes = $typeMap[$authorization->type] ?? [];
+        if (empty($anomalyTypes)) {
             return;
         }
 
         $anomalies = AttendanceAnomaly::where('employee_id', $authorization->employee_id)
             ->where('work_date', $authorization->date)
-            ->where('anomaly_type', $anomalyType)
+            ->whereIn('anomaly_type', $anomalyTypes)
             ->where('status', 'open')
             ->get();
 

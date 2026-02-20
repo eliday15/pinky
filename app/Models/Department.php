@@ -30,12 +30,14 @@ class Department extends Model
         'name',
         'code',
         'description',
+        'default_break_minutes',
         'supervisor_user_id',
         'is_active',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
+        'default_break_minutes' => 'integer',
     ];
 
     /**

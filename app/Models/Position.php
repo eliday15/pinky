@@ -42,6 +42,7 @@ class Position extends Model
         'department_id',
         'supervisor_position_id',
         'default_schedule_id',
+        'anchor_employee_id',
     ];
 
     protected $casts = [
@@ -73,6 +74,14 @@ class Position extends Model
     public function subordinatePositions(): HasMany
     {
         return $this->hasMany(Position::class, 'supervisor_position_id');
+    }
+
+    /**
+     * Get the anchor employee whose configuration serves as template.
+     */
+    public function anchorEmployee(): BelongsTo
+    {
+        return $this->belongsTo(Employee::class, 'anchor_employee_id');
     }
 
     /**

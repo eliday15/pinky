@@ -28,6 +28,11 @@ class PayrollController extends Controller
      */
     public function index(Request $request): Response
     {
+        $user = auth()->user();
+        if (!$user->hasPermissionTo('payroll.view_basic') && !$user->hasPermissionTo('payroll.view_complete')) {
+            abort(403);
+        }
+
         $periods = PayrollPeriod::with(['createdBy', 'approvedBy'])
             ->withCount('entries')
             ->withSum('entries', 'net_pay')
@@ -44,6 +49,10 @@ class PayrollController extends Controller
      */
     public function create(): Response
     {
+        if (!auth()->user()->hasPermissionTo('payroll.create')) {
+            abort(403);
+        }
+
         // Suggest dates for next period
         $lastPeriod = PayrollPeriod::orderBy('end_date', 'desc')->first();
 
@@ -72,6 +81,10 @@ class PayrollController extends Controller
      */
     public function store(Request $request): RedirectResponse
     {
+        if (!auth()->user()->hasPermissionTo('payroll.create')) {
+            abort(403);
+        }
+
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'type' => ['required', 'in:weekly,biweekly,monthly'],
@@ -111,8 +124,12 @@ class PayrollController extends Controller
      */
     public function show(PayrollPeriod $payroll): Response
     {
-        $payroll->load(['createdBy', 'approvedBy']);
         $user = auth()->user();
+        if (!$user->hasPermissionTo('payroll.view_basic') && !$user->hasPermissionTo('payroll.view_complete')) {
+            abort(403);
+        }
+
+        $payroll->load(['createdBy', 'approvedBy']);
 
         $entries = PayrollEntry::where('payroll_period_id', $payroll->id)
             ->with(['employee.department', 'employee.position'])
@@ -139,6 +156,10 @@ class PayrollController extends Controller
      */
     public function calculate(PayrollPeriod $payroll): RedirectResponse
     {
+        if (!auth()->user()->hasPermissionTo('payroll.calculate')) {
+            abort(403);
+        }
+
         if (!in_array($payroll->status, ['draft', 'review'])) {
             return redirect()->back()
                 ->with('error', 'No se puede recalcular una nomina aprobada o pagada.');
@@ -155,6 +176,10 @@ class PayrollController extends Controller
      */
     public function approve(Request $request, PayrollPeriod $payroll): RedirectResponse
     {
+        if (!auth()->user()->hasPermissionTo('payroll.approve')) {
+            abort(403);
+        }
+
         $this->verifyTwoFactorCode($request);
 
         if ($payroll->status !== 'review') {
@@ -176,6 +201,10 @@ class PayrollController extends Controller
      */
     public function markPaid(Request $request, PayrollPeriod $payroll): RedirectResponse
     {
+        if (!auth()->user()->hasPermissionTo('payroll.approve')) {
+            abort(403);
+        }
+
         $this->verifyTwoFactorCode($request);
 
         if ($payroll->status !== 'approved') {
@@ -194,6 +223,11 @@ class PayrollController extends Controller
      */
     public function entryDetail(PayrollEntry $entry): Response
     {
+        $user = auth()->user();
+        if (!$user->hasPermissionTo('payroll.view_basic') && !$user->hasPermissionTo('payroll.view_complete')) {
+            abort(403);
+        }
+
         $entry->load(['employee.department', 'employee.position', 'employee.schedule', 'payrollPeriod']);
 
         return Inertia::render('Payroll/EntryDetail', [
@@ -206,6 +240,10 @@ class PayrollController extends Controller
      */
     public function destroy(PayrollPeriod $payroll): RedirectResponse
     {
+        if (!auth()->user()->hasPermissionTo('payroll.create')) {
+            abort(403);
+        }
+
         if ($payroll->status !== 'draft') {
             return redirect()->back()
                 ->with('error', 'Solo se pueden eliminar periodos en borrador.');
@@ -223,6 +261,10 @@ class PayrollController extends Controller
      */
     public function exportContpaqi(Request $request, PayrollPeriod $payroll): BinaryFileResponse|RedirectResponse
     {
+        if (!auth()->user()->hasPermissionTo('payroll.export')) {
+            abort(403);
+        }
+
         // Validate period has entries
         if ($payroll->entries()->count() === 0) {
             return redirect()->back()

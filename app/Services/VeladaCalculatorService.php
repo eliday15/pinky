@@ -61,10 +61,11 @@ class VeladaCalculatorService
         }
 
         $dailyHours = $daySchedule->daily_work_hours ?? 8;
-        $totalWorkedMinutes = $checkIn->diffInMinutes($checkOut);
+        $totalWorkedMinutes = abs($checkIn->diffInMinutes($checkOut));
 
-        // Subtract break
-        $breakMinutes = $record->actual_break_minutes ?: ($totalWorkedMinutes > 300 ? ($daySchedule->break_minutes ?? 60) : 0);
+        // Subtract break (fallback: schedule -> department -> 60)
+        $departmentBreak = $employee->department?->default_break_minutes;
+        $breakMinutes = $record->actual_break_minutes ?: ($totalWorkedMinutes > 300 ? ($daySchedule->break_minutes ?? $departmentBreak ?? 60) : 0);
         $netWorkedMinutes = max(0, $totalWorkedMinutes - $breakMinutes);
         $netWorkedHours = $netWorkedMinutes / 60;
 
@@ -80,26 +81,41 @@ class VeladaCalculatorService
         }
 
         // Split extra hours into overtime vs velada
-        // Velada = hours worked in the window [veladaStartHour, veladaEndHour) of the NEXT day
-        $midnight = $checkIn->copy()->addDay()->startOfDay();
-        $veladaStart = $midnight->copy()->hour($veladaStartHour);
-        $veladaEnd = $midnight->copy()->hour($veladaEndHour);
+        // Velada window: [veladaStartHour, veladaEndHour)
+        // When start > end (e.g., 22:00-05:00), window crosses midnight
+        if ($veladaStartHour > $veladaEndHour) {
+            // Window crosses midnight: start on work_date, end on work_date+1
+            $veladaStart = Carbon::parse($dateStr)->hour($veladaStartHour)->minute(0)->second(0);
+            $veladaEnd = Carbon::parse($dateStr)->addDay()->hour($veladaEndHour)->minute(0)->second(0);
+        } elseif ($veladaStartHour === $veladaEndHour) {
+            // No velada window configured
+            $veladaStart = null;
+            $veladaEnd = null;
+        } else {
+            // Window within same day after midnight (e.g., 00:00-06:00)
+            $midnight = $checkIn->copy()->addDay()->startOfDay();
+            $veladaStart = $midnight->copy()->hour($veladaStartHour);
+            $veladaEnd = $midnight->copy()->hour($veladaEndHour);
+        }
 
         $overtimeHours = 0;
         $veladaHours = 0;
 
-        if ($checkOut->gt($veladaStart) && $checkOut->lte($veladaEnd)) {
+        if (!$veladaStart || !$veladaEnd) {
+            // No velada window — all extra is overtime
+            $overtimeHours = $extraHours;
+        } elseif ($checkOut->gt($veladaStart) && $checkOut->lte($veladaEnd)) {
             // Part of the work falls in velada window
-            $veladaMinutes = $veladaStart->diffInMinutes($checkOut);
+            $veladaMinutes = abs($veladaStart->diffInMinutes($checkOut));
             $veladaHours = min($extraHours, $veladaMinutes / 60);
             $overtimeHours = max(0, $extraHours - $veladaHours);
         } elseif ($checkOut->gt($veladaEnd)) {
             // Worked past velada window
-            $veladaMinutes = $veladaStartHour === $veladaEndHour ? 0 : ($veladaEndHour - $veladaStartHour) * 60;
+            $veladaMinutes = abs($veladaStart->diffInMinutes($veladaEnd));
             $veladaHours = min($extraHours, $veladaMinutes / 60);
             $overtimeHours = max(0, $extraHours - $veladaHours);
         } else {
-            // All extra is regular overtime (before midnight/velada window)
+            // All extra is regular overtime (before velada window)
             $overtimeHours = $extraHours;
         }
 

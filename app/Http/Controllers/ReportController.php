@@ -11,11 +11,31 @@ use App\Models\PayrollEntry;
 use App\Models\PayrollPeriod;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Routing\Controllers\HasMiddleware;
+use Illuminate\Routing\Controllers\Middleware;
 use Inertia\Inertia;
 use Inertia\Response;
 
-class ReportController extends Controller
+class ReportController extends Controller implements HasMiddleware
 {
+    /**
+     * Get the middleware that should be assigned to the controller.
+     */
+    public static function middleware(): array
+    {
+        return [
+            new Middleware(function ($request, $next) {
+                $user = $request->user();
+                if (!$user->hasPermissionTo('reports.view_all')
+                    && !$user->hasPermissionTo('reports.view_team')
+                    && !$user->hasPermissionTo('reports.view_own')) {
+                    abort(403);
+                }
+                return $next($request);
+            }),
+        ];
+    }
+
     /**
      * Reports index / menu.
      */

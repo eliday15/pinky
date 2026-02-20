@@ -144,19 +144,19 @@ const hasRoute = (routeName) => {
         <!-- Sidebar -->
         <aside
             :class="[
-                'fixed inset-y-0 left-0 z-50 w-64 bg-white shadow-lg transform transition-transform duration-300 ease-in-out',
+                'fixed inset-y-0 left-0 z-50 w-64 bg-white shadow-lg transform transition-transform duration-300 ease-in-out flex flex-col',
                 showingSidebar ? 'translate-x-0' : '-translate-x-full'
             ]"
         >
             <!-- Logo -->
-            <div class="flex items-center justify-center h-16 border-b border-gray-200 bg-pink-600">
+            <div class="shrink-0 flex items-center justify-center h-16 border-b border-gray-200 bg-pink-600">
                 <Link :href="route('dashboard')" class="text-xl font-bold text-white">
                     Pinky ERP
                 </Link>
             </div>
 
             <!-- Navigation -->
-            <nav class="mt-6 px-4">
+            <nav class="flex-1 overflow-y-auto mt-6 px-4 pb-4">
                 <template v-for="item in visibleNavigation" :key="item.name">
                     <Link
                         v-if="hasRoute(item.href)"
@@ -186,7 +186,7 @@ const hasRoute = (routeName) => {
             </nav>
 
             <!-- User Info at Bottom -->
-            <div class="absolute bottom-0 left-0 right-0 p-4 border-t border-gray-200">
+            <div class="shrink-0 p-4 border-t border-gray-200">
                 <div class="flex items-center">
                     <div class="w-10 h-10 rounded-full bg-pink-100 flex items-center justify-center">
                         <span class="text-pink-600 font-semibold">

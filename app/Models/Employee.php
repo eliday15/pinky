@@ -173,6 +173,14 @@ class Employee extends Model
     }
 
     /**
+     * Get emergency contacts for this employee.
+     */
+    public function emergencyContacts(): HasMany
+    {
+        return $this->hasMany(EmergencyContact::class);
+    }
+
+    /**
      * Get compensation types assigned to this employee.
      */
     public function compensationTypes(): BelongsToMany

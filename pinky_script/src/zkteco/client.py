@@ -1,4 +1,9 @@
-"""ZKTeco device client using pyzk library."""
+"""ZKTeco device client using pyzk library.
+
+Connects to ZKTeco biometric devices to extract attendance records,
+users, and device information. Includes retry logic and protocol
+fallback to handle unreliable UDP connections.
+"""
 
 import logging
 import time
@@ -10,6 +15,9 @@ from zk.exception import ZKErrorResponse, ZKNetworkError
 from src.zkteco.models import AttendanceRecord, DeviceInfo, Fingerprint, User
 
 logger = logging.getLogger(__name__)
+
+# Minimum percentage of expected records to consider a fetch successful
+MIN_FETCH_RATIO = 0.95
 
 
 class ZKTecoClient:
@@ -272,7 +280,11 @@ class ZKTecoClient:
             return []
 
     def get_attendance(self) -> List[AttendanceRecord]:
-        """Get all attendance records from the device.
+        """Get all attendance records from the device with retry and verification.
+
+        Reads the expected record count from the device first, then fetches
+        attendance data. If the fetch returns fewer records than expected,
+        retries up to 3 times. Logs warnings when data appears incomplete.
 
         Returns:
             List of AttendanceRecord objects.
@@ -280,11 +292,103 @@ class ZKTecoClient:
         if not self._conn:
             return []
 
-        try:
-            raw_attendance = self._conn.get_attendance()
-            records = []
+        expected_count = self._get_expected_attendance_count()
+        max_attempts = 3
+        best_records: List[AttendanceRecord] = []
 
-            for a in raw_attendance:
+        for attempt in range(1, max_attempts + 1):
+            try:
+                raw_attendance = self._conn.get_attendance()
+                records = self._parse_raw_attendance(raw_attendance)
+
+                logger.info(
+                    "Attempt %d/%d: Retrieved %d/%d attendance records from %s (%s)",
+                    attempt,
+                    max_attempts,
+                    len(records),
+                    expected_count,
+                    self.ip_address,
+                    self._connected_protocol,
+                )
+
+                if len(records) > len(best_records):
+                    best_records = records
+
+                # Success: got enough records
+                if expected_count > 0 and len(records) >= expected_count * MIN_FETCH_RATIO:
+                    break
+
+                # No expected count available but got records - accept it
+                if expected_count == 0 and len(records) > 0:
+                    break
+
+                # Low count - retry
+                if attempt < max_attempts:
+                    logger.warning(
+                        "Incomplete fetch from %s (%d/%d), retrying in 3s...",
+                        self.ip_address,
+                        len(records),
+                        expected_count,
+                    )
+                    time.sleep(3)
+
+            except Exception as e:
+                logger.error(
+                    "Attempt %d/%d failed getting attendance from %s: %s",
+                    attempt,
+                    max_attempts,
+                    self.ip_address,
+                    e,
+                )
+                if attempt < max_attempts:
+                    time.sleep(3)
+
+        if expected_count > 0 and len(best_records) < expected_count * 0.9:
+            logger.warning(
+                "INCOMPLETE DATA from %s: got %d of %d expected records (%.1f%%)",
+                self.ip_address,
+                len(best_records),
+                expected_count,
+                len(best_records) / expected_count * 100,
+            )
+
+        return best_records
+
+    def _get_expected_attendance_count(self) -> int:
+        """Read expected attendance record count from device memory.
+
+        Returns:
+            Expected number of attendance records, or 0 if unknown.
+        """
+        try:
+            self._conn.read_sizes()
+            count = getattr(self._conn, "records", 0)
+            logger.info(
+                "Device %s reports %d attendance records in memory",
+                self.ip_address,
+                count,
+            )
+            return count
+        except Exception as e:
+            logger.warning(
+                "Could not read sizes from %s: %s", self.ip_address, e
+            )
+            return 0
+
+    def _parse_raw_attendance(
+        self, raw_attendance: list
+    ) -> List[AttendanceRecord]:
+        """Parse raw pyzk attendance objects into our AttendanceRecord model.
+
+        Args:
+            raw_attendance: List of pyzk Attendance objects.
+
+        Returns:
+            List of parsed AttendanceRecord objects.
+        """
+        records = []
+        for a in raw_attendance:
+            try:
                 user_id = a.user_id if hasattr(a, "user_id") else int(a.uid)
                 records.append(
                     AttendanceRecord(
@@ -295,18 +399,9 @@ class ZKTecoClient:
                         uid=f"{self.ip_address}_{user_id}_{a.timestamp.isoformat()}",
                     )
                 )
-
-            logger.info(
-                "Retrieved %d attendance records from %s",
-                len(records),
-                self.ip_address,
-            )
-            return records
-        except Exception as e:
-            logger.error(
-                "Failed to get attendance from %s: %s", self.ip_address, e
-            )
-            return []
+            except Exception as e:
+                logger.warning("Failed to parse attendance record: %s", e)
+        return records
 
     def get_fingerprints(self) -> List[Fingerprint]:
         """Get all fingerprint templates from the device.
@@ -361,6 +456,9 @@ class ZKTecoClient:
         """Get all data from the device in a single operation.
 
         Disables the device during extraction to prevent interference.
+        If the initial attendance fetch appears incomplete and the connection
+        is using UDP, automatically retries with TCP for more reliable
+        chunked data transfer.
 
         Returns:
             Tuple of (DeviceInfo, users, attendance, fingerprints).
@@ -378,12 +476,83 @@ class ZKTecoClient:
 
             device_info = self.get_device_info()
             users = self.get_users()
-            attendance = self.get_attendance()
-            # Skip fingerprint extraction - too slow and not needed
-            # fingerprints = self.get_fingerprints()
 
-            self.enable_device()
+            # Get expected attendance count before fetching
+            expected_count = self._get_expected_attendance_count()
+
+            attendance = self.get_attendance()
+
+            # If fetch seems incomplete and we used UDP, retry with TCP
+            if (
+                expected_count > 0
+                and len(attendance) < expected_count * MIN_FETCH_RATIO
+                and self._connected_protocol == "UDP"
+            ):
+                logger.warning(
+                    "Incomplete attendance on UDP (%d/%d) from %s, retrying with TCP...",
+                    len(attendance),
+                    expected_count,
+                    self.ip_address,
+                )
+                self.enable_device()
+                self.disconnect()
+
+                # Reconnect forcing TCP
+                original_force_udp = self.force_udp
+                self.force_udp = False
+
+                if self._try_connect(force_udp=False):
+                    try:
+                        self.disable_device()
+                        tcp_attendance = self.get_attendance()
+
+                        if len(tcp_attendance) > len(attendance):
+                            logger.info(
+                                "TCP retry improved: %d records (was %d on UDP) from %s",
+                                len(tcp_attendance),
+                                len(attendance),
+                                self.ip_address,
+                            )
+                            attendance = tcp_attendance
+                        else:
+                            logger.info(
+                                "TCP retry got %d records (same or fewer than UDP %d) from %s",
+                                len(tcp_attendance),
+                                len(attendance),
+                                self.ip_address,
+                            )
+
+                        self.enable_device()
+                    except Exception as e:
+                        logger.error(
+                            "TCP retry failed for %s: %s", self.ip_address, e
+                        )
+                else:
+                    logger.warning(
+                        "Could not reconnect via TCP to %s, using UDP results",
+                        self.ip_address,
+                    )
+
+                self.force_udp = original_force_udp
+            else:
+                self.enable_device()
+
+        except Exception as e:
+            logger.error(
+                "Error during data extraction from %s: %s", self.ip_address, e
+            )
+            try:
+                self.enable_device()
+            except Exception:
+                pass
         finally:
             self.disconnect()
+
+        logger.info(
+            "Final data from %s: %d users, %d attendance records",
+            self.ip_address,
+            len(users),
+            len(attendance),
+        )
 
         return (device_info, users, attendance, fingerprints)

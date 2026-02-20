@@ -29,6 +29,7 @@ class AttendanceAnomaly extends Model
     public const TYPE_EARLY_DEPARTURE = 'early_departure';
     public const TYPE_SCHEDULE_DEVIATION = 'schedule_deviation';
     public const TYPE_DUPLICATE_PUNCHES = 'duplicate_punches';
+    public const TYPE_VELADA_MISSING_CONFIRMATION = 'velada_missing_confirmation';
 
     // Severity levels
     public const SEVERITY_INFO = 'info';
@@ -169,6 +170,7 @@ class AttendanceAnomaly extends Model
             self::TYPE_EARLY_DEPARTURE => 'Salida anticipada',
             self::TYPE_SCHEDULE_DEVIATION => 'Desviacion de horario',
             self::TYPE_DUPLICATE_PUNCHES => 'Checadas duplicadas',
+            self::TYPE_VELADA_MISSING_CONFIRMATION => 'Velada sin confirmacion post-medianoche',
             default => $this->anomaly_type,
         };
     }

@@ -61,6 +61,12 @@ class RolesPermissionsSeeder extends Seeder
             'authorizations.approve',
             'authorizations.reject',
 
+            // Anomalías
+            'anomalies.view_all',
+            'anomalies.view_team',
+            'anomalies.resolve',
+            'anomalies.dismiss',
+
             // Nómina
             'payroll.view_basic',
             'payroll.view_complete',
@@ -121,6 +127,10 @@ class RolesPermissionsSeeder extends Seeder
             'authorizations.create',
             'authorizations.approve',
             'authorizations.reject',
+            // Anomalías - full access
+            'anomalies.view_all',
+            'anomalies.resolve',
+            'anomalies.dismiss',
             // Nómina - full access
             'payroll.view_basic',
             'payroll.view_complete',
@@ -153,6 +163,9 @@ class RolesPermissionsSeeder extends Seeder
             'authorizations.create',
             'authorizations.approve',
             'authorizations.reject',
+            // Anomalías - team only
+            'anomalies.view_team',
+            'anomalies.resolve',
         ]);
 
         // Create Employee role - Self-service only

@@ -19,7 +19,11 @@ Artisan::command('inspire', function () {
 |
 */
 
-Schedule::command('zkteco:sync --days=1')
+$syncCommand = config('zkteco.sync.remote_python')
+    ? 'zkteco:sync --days=1 --skip-python'
+    : 'zkteco:sync --days=1';
+
+Schedule::command($syncCommand)
     ->everyFiveMinutes()
     ->withoutOverlapping()
     ->appendOutputTo(storage_path('logs/zkteco-sync.log'));
