@@ -89,6 +89,13 @@ class RolesPermissionsSeeder extends Seeder
             'compensation_types.manage',
             'holidays.manage',
 
+            // Usuarios
+            'users.view',
+            'users.create',
+            'users.edit',
+            'users.delete',
+            'users.reset_password',
+
             // Logs/Auditoría
             'logs.view',
         ];

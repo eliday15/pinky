@@ -8,6 +8,7 @@ use App\Http\Controllers\Auth\NewPasswordController;
 use App\Http\Controllers\Auth\PasswordController;
 use App\Http\Controllers\Auth\PasswordResetLinkController;
 use App\Http\Controllers\Auth\RegisteredUserController;
+use App\Http\Controllers\Auth\ForcePasswordChangeController;
 use App\Http\Controllers\Auth\TwoFactorChallengeController;
 use App\Http\Controllers\Auth\TwoFactorSetupController;
 use App\Http\Controllers\Auth\VerifyEmailController;
@@ -46,6 +47,12 @@ Route::post('two-factor-challenge', [TwoFactorChallengeController::class, 'store
     ->middleware('throttle:6,1');
 
 Route::middleware('auth')->group(function () {
+    // Force Password Change
+    Route::get('force-password-change', [ForcePasswordChangeController::class, 'show'])
+        ->name('password.force-change');
+    Route::post('force-password-change', [ForcePasswordChangeController::class, 'update'])
+        ->name('password.force-change.update');
+
     // 2FA Setup
     Route::get('two-factor/setup', [TwoFactorSetupController::class, 'show'])
         ->name('two-factor.setup');

@@ -7,9 +7,9 @@ use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
- * Middleware that forces users with required roles to set up 2FA before accessing the app.
+ * Middleware that forces users with must_change_password flag to change their password.
  */
-class EnsureTwoFactorSetup
+class EnsurePasswordChanged
 {
     /**
      * Handle an incoming request.
@@ -26,14 +26,14 @@ class EnsureTwoFactorSetup
             return $next($request);
         }
 
-        // Allow 2FA setup routes, password change routes, and logout
-        if ($request->routeIs('two-factor.*') || $request->routeIs('password.force-change*') || $request->routeIs('logout')) {
+        // Allow password change routes, 2FA routes, and logout
+        if ($request->routeIs('password.force-change*') || $request->routeIs('two-factor.*') || $request->routeIs('logout')) {
             return $next($request);
         }
 
-        if ($user->requiresTwoFactor() && !$user->hasTwoFactorEnabled()) {
-            return redirect()->route('two-factor.setup')
-                ->with('warning', 'Debes configurar la autenticacion de dos pasos para continuar.');
+        if ($user->must_change_password) {
+            return redirect()->route('password.force-change')
+                ->with('warning', 'Debes cambiar tu contraseña temporal antes de continuar.');
         }
 
         return $next($request);

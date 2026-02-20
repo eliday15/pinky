@@ -23,6 +23,7 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
 
         $middleware->alias([
+            'password-changed' => \App\Http\Middleware\EnsurePasswordChanged::class,
             'two-factor-setup' => \App\Http\Middleware\EnsureTwoFactorSetup::class,
         ]);
     })

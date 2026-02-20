@@ -17,6 +17,7 @@ use App\Http\Controllers\ReportController;
 use App\Http\Controllers\ReportExportController;
 use App\Http\Controllers\ScheduleController;
 use App\Http\Controllers\SettingsController;
+use App\Http\Controllers\UserController;
 use App\Http\Controllers\VacationTableController;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
@@ -29,7 +30,7 @@ Route::get('/', function () {
     return redirect()->route('login');
 });
 
-Route::middleware(['auth', 'verified', 'two-factor-setup'])->group(function () {
+Route::middleware(['auth', 'verified', 'password-changed', 'two-factor-setup'])->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
 
     // Schedules
@@ -139,6 +140,10 @@ Route::middleware(['auth', 'verified', 'two-factor-setup'])->group(function () {
     Route::post('/anomalies/{anomaly}/resolve', [AnomalyResolutionController::class, 'resolve'])->name('anomalies.resolve');
     Route::post('/anomalies/{anomaly}/dismiss', [AnomalyResolutionController::class, 'dismiss'])->name('anomalies.dismiss');
     Route::post('/anomalies/{anomaly}/link-authorization', [AnomalyResolutionController::class, 'linkAuthorization'])->name('anomalies.linkAuthorization');
+
+    // Users
+    Route::resource('users', UserController::class)->except(['show']);
+    Route::post('/users/{user}/reset-password', [UserController::class, 'resetPassword'])->name('users.reset-password');
 
     // Audit Logs
     Route::get('/audit-logs', [AuditLogController::class, 'index'])->name('audit-logs.index');
