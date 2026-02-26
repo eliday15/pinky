@@ -4,21 +4,20 @@ namespace App\Exports;
 
 use App\Models\AttendanceRecord;
 use App\Models\Employee;
+use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Maatwebsite\Excel\Concerns\Exportable;
-use Maatwebsite\Excel\Concerns\FromCollection;
+use Maatwebsite\Excel\Concerns\FromArray;
 use Maatwebsite\Excel\Concerns\ShouldAutoSize;
-use Maatwebsite\Excel\Concerns\WithHeadings;
-use Maatwebsite\Excel\Concerns\WithMapping;
 use Maatwebsite\Excel\Concerns\WithStyles;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 
 /**
- * Export attendance records for a date range to Excel.
+ * Export attendance records pivoted by employee (one row per employee).
  *
- * Includes employee schedule information alongside actual attendance data.
+ * Columns: Employee info + per-date Entrada/Salida/Horas/Estado.
  */
-class AttendanceRangeExport implements FromCollection, WithHeadings, WithMapping, WithStyles, ShouldAutoSize
+class AttendanceRangeExport implements FromArray, WithStyles, ShouldAutoSize
 {
     use Exportable;
 
@@ -28,8 +27,10 @@ class AttendanceRangeExport implements FromCollection, WithHeadings, WithMapping
 
     private ?int $departmentId;
 
-    /** @var Collection|null Scoped employee IDs (for permission filtering). Null = all active. */
     private ?Collection $scopedEmployeeIds;
+
+    /** @var array Dates in the range */
+    private array $dates = [];
 
     public function __construct(
         string $startDate,
@@ -41,61 +42,56 @@ class AttendanceRangeExport implements FromCollection, WithHeadings, WithMapping
         $this->endDate = $endDate;
         $this->departmentId = $departmentId;
         $this->scopedEmployeeIds = $scopedEmployeeIds;
+        $this->buildDates();
     }
 
     /**
-     * Get the collection of attendance records for the date range.
+     * Build the list of dates in the range.
      */
-    public function collection(): Collection
+    private function buildDates(): void
     {
-        $activeEmployeeIds = $this->scopedEmployeeIds ?? Employee::active()->pluck('id');
+        $current = Carbon::parse($this->startDate);
+        $end = Carbon::parse($this->endDate);
 
-        $query = AttendanceRecord::with(['employee.department', 'employee.schedule'])
-            ->whereBetween('work_date', [$this->startDate, $this->endDate])
-            ->whereIn('employee_id', $activeEmployeeIds)
-            ->orderBy('work_date')
-            ->orderBy('employee_id');
+        while ($current->lte($end)) {
+            $this->dates[] = $current->toDateString();
+            $current->addDay();
+        }
+    }
 
-        if ($this->departmentId) {
-            $deptEmployeeIds = Employee::active()
-                ->where('department_id', $this->departmentId)
-                ->pluck('id');
-            $query->whereIn('employee_id', $deptEmployeeIds);
+    /**
+     * Build the full array: header row + data rows.
+     */
+    public function array(): array
+    {
+        $rows = [];
+
+        // Header row
+        $header = ['No. Empleado', 'Nombre', 'Departamento', 'Horario'];
+        foreach ($this->dates as $date) {
+            $label = Carbon::parse($date)->locale('es')->isoFormat('dd DD/MM');
+            $header[] = "{$label} Entrada";
+            $header[] = "{$label} Salida";
+            $header[] = "{$label} Horas";
+            $header[] = "{$label} Estado";
+        }
+        $rows[] = $header;
+
+        // Query employees with attendance
+        $employeeQuery = Employee::active()
+            ->with(['department', 'schedule'])
+            ->with(['attendanceRecords' => function ($q) {
+                $q->whereBetween('work_date', [$this->startDate, $this->endDate]);
+            }]);
+
+        if ($this->scopedEmployeeIds !== null) {
+            $employeeQuery->whereIn('id', $this->scopedEmployeeIds);
         }
 
-        return $query->get();
-    }
+        if ($this->departmentId) {
+            $employeeQuery->where('department_id', $this->departmentId);
+        }
 
-    /**
-     * Define column headings.
-     */
-    public function headings(): array
-    {
-        return [
-            'Fecha',
-            'No. Empleado',
-            'Nombre',
-            'Departamento',
-            'Horario',
-            'Entrada Programada',
-            'Salida Programada',
-            'Entrada Real',
-            'Salida Real',
-            'Horas Trabajadas',
-            'Horas Extra',
-            'Min. Retardo',
-            'Estado',
-        ];
-    }
-
-    /**
-     * Map each attendance record to a row.
-     *
-     * @param AttendanceRecord $record
-     */
-    public function map($record): array
-    {
-        $schedule = $record->employee?->schedule;
         $statusLabels = [
             'present' => 'Presente',
             'late' => 'Retardo',
@@ -107,21 +103,43 @@ class AttendanceRangeExport implements FromCollection, WithHeadings, WithMapping
             'permission' => 'Permiso',
         ];
 
-        return [
-            $record->work_date->format('Y-m-d'),
-            $record->employee?->employee_number ?? '-',
-            $record->employee?->full_name ?? '-',
-            $record->employee?->department?->name ?? '-',
-            $schedule?->name ?? '-',
-            $schedule ? substr($schedule->entry_time ?? '', 0, 5) : '-',
-            $schedule ? substr($schedule->exit_time ?? '', 0, 5) : '-',
-            $record->check_in ? substr($record->check_in, 0, 5) : '-',
-            $record->check_out ? substr($record->check_out, 0, 5) : '-',
-            (float) ($record->worked_hours ?? 0),
-            (float) ($record->overtime_hours ?? 0),
-            (int) ($record->late_minutes ?? 0),
-            $statusLabels[$record->status] ?? $record->status,
-        ];
+        $employees = $employeeQuery->orderBy('full_name')->get();
+
+        foreach ($employees as $employee) {
+            $attendanceByDate = $employee->attendanceRecords
+                ->keyBy(fn ($r) => $r->work_date->format('Y-m-d'));
+
+            $schedule = $employee->schedule;
+            $scheduleName = $schedule
+                ? substr($schedule->entry_time ?? '', 0, 5) . ' - ' . substr($schedule->exit_time ?? '', 0, 5)
+                : '-';
+
+            $row = [
+                $employee->employee_number,
+                $employee->full_name,
+                $employee->department?->name ?? '-',
+                $scheduleName,
+            ];
+
+            foreach ($this->dates as $date) {
+                $record = $attendanceByDate->get($date);
+                if ($record) {
+                    $row[] = $record->check_in ? substr($record->check_in, 0, 5) : '-';
+                    $row[] = $record->check_out ? substr($record->check_out, 0, 5) : '-';
+                    $row[] = (float) ($record->worked_hours ?? 0);
+                    $row[] = $statusLabels[$record->status] ?? $record->status;
+                } else {
+                    $row[] = '-';
+                    $row[] = '-';
+                    $row[] = 0;
+                    $row[] = '-';
+                }
+            }
+
+            $rows[] = $row;
+        }
+
+        return $rows;
     }
 
     /**

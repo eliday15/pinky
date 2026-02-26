@@ -5,7 +5,8 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import debounce from 'lodash/debounce';
 
 const props = defineProps({
-    records: Object,
+    employees: Object,
+    dates: Array,
     startDate: String,
     endDate: String,
     summary: Object,
@@ -23,7 +24,7 @@ const search = ref(props.filters.search || '');
 const autoRefreshEnabled = ref(true);
 let refreshInterval = null;
 
-const isRangeView = computed(() => selectedStartDate.value !== selectedEndDate.value);
+const isRangeView = computed(() => props.dates.length > 1);
 
 const applyFilters = debounce(() => {
     router.get(route('attendance.index'), {
@@ -40,24 +41,17 @@ const applyFilters = debounce(() => {
 
 watch([selectedStartDate, selectedEndDate, department, status, search], applyFilters);
 
-// Auto-refresh every 2 minutes to sync with ZKTeco changes
+// Auto-refresh every 2 minutes
 const startAutoRefresh = () => {
     refreshInterval = setInterval(() => {
         if (autoRefreshEnabled.value) {
-            router.reload({ only: ['records', 'summary', 'lastSync'] });
+            router.reload({ only: ['employees', 'summary', 'lastSync'] });
         }
-    }, 120000); // 2 minutes
+    }, 120000);
 };
 
-onMounted(() => {
-    startAutoRefresh();
-});
-
-onUnmounted(() => {
-    if (refreshInterval) {
-        clearInterval(refreshInterval);
-    }
-});
+onMounted(() => startAutoRefresh());
+onUnmounted(() => { if (refreshInterval) clearInterval(refreshInterval); });
 
 const statusColors = {
     present: 'bg-green-100 text-green-800',
@@ -92,9 +86,7 @@ const downloadExcel = () => {
         start_date: selectedStartDate.value,
         end_date: selectedEndDate.value,
     });
-    if (department.value) {
-        params.set('department', department.value);
-    }
+    if (department.value) params.set('department', department.value);
     window.open(route('attendance.export') + '?' + params.toString(), '_blank');
 };
 
@@ -102,23 +94,15 @@ const formatDate = (dateStr) => {
     const [year, month, day] = dateStr.split('-').map(Number);
     const date = new Date(year, month - 1, day);
     return date.toLocaleDateString('es-MX', {
-        weekday: 'long',
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric'
+        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
     });
 };
 
 const formatShortDate = (dateStr) => {
-    if (!dateStr) return '-';
-    // Handle both "2026-02-18" and "2026-02-18T00:00:00.000000Z" formats
-    const clean = String(dateStr).substring(0, 10);
-    const [year, month, day] = clean.split('-').map(Number);
+    const [year, month, day] = dateStr.split('-').map(Number);
     const date = new Date(year, month - 1, day);
     return date.toLocaleDateString('es-MX', {
-        weekday: 'short',
-        day: 'numeric',
-        month: 'short'
+        weekday: 'short', day: 'numeric', month: 'short'
     });
 };
 
@@ -129,102 +113,16 @@ const dateRangeLabel = computed(() => {
     return `Del ${formatDate(selectedStartDate.value)} al ${formatDate(selectedEndDate.value)}`;
 });
 
-// Convert time string "HH:MM:SS" to minutes since midnight
-const timeToMinutes = (timeStr) => {
-    if (!timeStr) return 0;
-    const parts = timeStr.split(':');
-    return parseInt(parts[0]) * 60 + parseInt(parts[1]);
-};
-
-// Filter duplicate punches (within 5 minutes of each other)
-const filterDuplicatePunches = (punches, windowMinutes = 5) => {
-    if (!punches || punches.length === 0) return [];
-
-    // Sort by time
-    const sorted = [...punches].sort((a, b) =>
-        (a.time || '').localeCompare(b.time || '')
-    );
-
-    const filtered = [];
-    let lastMinutes = -999;
-
-    for (const punch of sorted) {
-        const currentMinutes = timeToMinutes(punch.time);
-
-        // Only keep if more than windowMinutes apart from last kept punch
-        if (currentMinutes - lastMinutes >= windowMinutes) {
-            filtered.push(punch);
-            lastMinutes = currentMinutes;
-        }
-    }
-
-    return filtered;
-};
-
-// Parse raw_punches into work sessions (entry-exit pairs)
-const getWorkSessions = (record) => {
-    if (!record.raw_punches || record.raw_punches.length === 0) {
-        // Fallback to check_in/check_out if no raw_punches
-        if (record.check_in || record.check_out) {
-            return [{
-                entry: record.check_in?.substring(0, 5) || '?',
-                exit: record.check_out?.substring(0, 5) || null
-            }];
-        }
-        return [];
-    }
-
-    // Filter duplicates (punches within 5 minutes)
-    const punches = filterDuplicatePunches(record.raw_punches, 5);
-
-    // Group into sessions using simple pairing (every 2 consecutive punches)
-    const sessions = [];
-
-    for (let i = 0; i < punches.length; i += 2) {
-        const entry = punches[i];
-        const exit = punches[i + 1];
-
-        sessions.push({
-            entry: entry?.time?.substring(0, 5) || '?',
-            exit: exit?.time?.substring(0, 5) || null,
-            entryType: entry?.type || 'punch',
-            exitType: exit?.type || null
-        });
-    }
-
-    return sessions;
-};
-
-// Get session label based on type
-const getSessionLabel = (session, index, total) => {
-    if (total === 1) return '';
-    if (index === 0) return 'AM';
-    if (index === total - 1) return 'PM';
-    return `S${index + 1}`;
-};
-
-// Calculate gross hours (check_out - check_in)
-const getGrossHours = (record) => {
-    if (!record.check_in || !record.check_out) return '0.00';
-    const inMinutes = timeToMinutes(record.check_in);
-    const outMinutes = timeToMinutes(record.check_out);
-    return ((outMinutes - inMinutes) / 60).toFixed(2);
-};
-
-// Calculate net hours (gross - break)
-const getNetHours = (record) => {
-    const gross = parseFloat(getGrossHours(record));
-    const breakHours = (record.employee?.schedule?.break_minutes || 60) / 60;
-    return (gross - breakHours).toFixed(2);
-};
-
-// Format schedule times for display
-const getScheduleLabel = (record) => {
-    const schedule = record.employee?.schedule;
+const getScheduleLabel = (employee) => {
+    const schedule = employee.schedule;
     if (!schedule) return '-';
-    const entry = schedule.entry_time?.substring(0, 5) || '?';
-    const exit = schedule.exit_time?.substring(0, 5) || '?';
+    const entry = (schedule.entry_time || '').substring(0, 5) || '?';
+    const exit = (schedule.exit_time || '').substring(0, 5) || '?';
     return `${entry} - ${exit}`;
+};
+
+const getAttendance = (employee, date) => {
+    return employee.attendance_by_date?.[date] || null;
 };
 </script>
 
@@ -349,17 +247,6 @@ const getScheduleLabel = (record) => {
                     </option>
                 </select>
 
-                <select
-                    v-model="status"
-                    class="rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                >
-                    <option value="">Todos los estados</option>
-                    <option value="present">Presente</option>
-                    <option value="late">Retardo</option>
-                    <option value="absent">Ausente</option>
-                    <option value="partial">Parcial</option>
-                </select>
-
                 <div class="ml-auto flex items-center gap-2">
                     <button
                         v-if="can?.export"
@@ -388,143 +275,74 @@ const getScheduleLabel = (record) => {
             <table class="min-w-full divide-y divide-gray-200">
                 <thead class="bg-gray-50">
                     <tr>
-                        <th v-if="isRangeView" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Fecha</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Empleado</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Departamento</th>
-                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Horario</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Sesiones de Trabajo</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Horas</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Estado</th>
-                        <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Acciones</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase sticky left-0 bg-gray-50 z-10 min-w-[200px]">Empleado</th>
+                        <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase min-w-[120px]">Departamento</th>
+                        <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase min-w-[100px]">Horario</th>
+                        <th
+                            v-for="date in dates"
+                            :key="date"
+                            class="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase min-w-[140px] border-l border-gray-200"
+                            :colspan="1"
+                        >
+                            {{ formatShortDate(date) }}
+                        </th>
                     </tr>
                 </thead>
                 <tbody class="bg-white divide-y divide-gray-200">
-                    <tr v-for="record in records.data" :key="record.id" class="hover:bg-gray-50">
-                        <td v-if="isRangeView" class="px-4 py-4 whitespace-nowrap text-sm text-gray-600">
-                            {{ formatShortDate(record.work_date) }}
-                        </td>
-                        <td class="px-6 py-4 whitespace-nowrap">
+                    <tr v-for="employee in employees.data" :key="employee.id" class="hover:bg-gray-50">
+                        <!-- Employee name (sticky) -->
+                        <td class="px-4 py-3 whitespace-nowrap sticky left-0 bg-white z-10">
                             <div class="flex items-center">
-                                <div class="w-8 h-8 rounded-full bg-pink-100 flex items-center justify-center">
+                                <div class="w-8 h-8 rounded-full bg-pink-100 flex items-center justify-center flex-shrink-0">
                                     <span class="text-pink-600 text-sm font-medium">
-                                        {{ record.employee?.full_name?.charAt(0) || '?' }}
+                                        {{ employee.full_name?.charAt(0) || '?' }}
                                     </span>
                                 </div>
-                                <div class="ml-3">
-                                    <p class="text-sm font-medium text-gray-900">{{ record.employee?.full_name }}</p>
-                                    <p class="text-xs text-gray-500">{{ record.employee?.employee_number }}</p>
+                                <div class="ml-2">
+                                    <p class="text-sm font-medium text-gray-900 truncate max-w-[150px]">{{ employee.full_name }}</p>
+                                    <p class="text-xs text-gray-500">{{ employee.employee_number }}</p>
                                 </div>
                             </div>
                         </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {{ record.employee?.department?.name || '-' }}
+                        <!-- Department -->
+                        <td class="px-3 py-3 whitespace-nowrap text-sm text-gray-500">
+                            {{ employee.department?.name || '-' }}
                         </td>
-                        <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {{ getScheduleLabel(record) }}
+                        <!-- Schedule -->
+                        <td class="px-3 py-3 whitespace-nowrap text-sm text-gray-500">
+                            {{ getScheduleLabel(employee) }}
                         </td>
-                        <td class="px-6 py-4 text-sm">
-                            <div class="flex flex-wrap gap-2">
-                                <template v-if="getWorkSessions(record).length > 0">
+                        <!-- Per-date cells -->
+                        <td
+                            v-for="date in dates"
+                            :key="date"
+                            class="px-3 py-3 text-center border-l border-gray-100"
+                        >
+                            <template v-if="getAttendance(employee, date)">
+                                <div class="text-sm">
+                                    <span class="text-gray-700">{{ getAttendance(employee, date).check_in || '-' }}</span>
+                                    <span class="text-gray-400 mx-1">-</span>
+                                    <span class="text-gray-700">{{ getAttendance(employee, date).check_out || '-' }}</span>
+                                </div>
+                                <div class="flex items-center justify-center gap-1 mt-1">
+                                    <span class="text-xs text-gray-500">{{ getAttendance(employee, date).worked_hours }}h</span>
                                     <span
-                                        v-for="(session, idx) in getWorkSessions(record)"
-                                        :key="idx"
-                                        class="inline-flex items-center px-2 py-1 rounded text-xs"
-                                        :class="getWorkSessions(record).length > 1 ? 'bg-blue-50 text-blue-800 border border-blue-200' : 'bg-gray-100 text-gray-800'"
+                                        :class="[statusColors[getAttendance(employee, date).status], 'px-1.5 py-0.5 text-[10px] font-medium rounded-full']"
                                     >
-                                        <span
-                                            v-if="getWorkSessions(record).length > 1"
-                                            class="mr-1 font-medium text-blue-600"
-                                        >
-                                            {{ getSessionLabel(session, idx, getWorkSessions(record).length) }}:
-                                        </span>
-                                        <span :class="record.late_minutes > 0 && idx === 0 ? 'text-yellow-600 font-medium' : ''">
-                                            {{ session.entry }}
-                                        </span>
-                                        <svg class="w-3 h-3 mx-1 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3" />
-                                        </svg>
-                                        <span :class="!session.exit ? 'text-orange-500' : ''">
-                                            {{ session.exit || '?' }}
-                                        </span>
+                                        {{ statusLabels[getAttendance(employee, date).status] }}
                                     </span>
-                                </template>
-                                <template v-else>
-                                    <span class="text-gray-400">-</span>
-                                </template>
-                            </div>
-                            <div v-if="record.late_minutes > 0" class="mt-1 text-xs text-yellow-600">
-                                +{{ record.late_minutes }}min tardanza
-                            </div>
-                        </td>
-                        <td class="px-6 py-4">
-                            <div class="flex items-center gap-2 flex-wrap">
-                                <!-- Regular hours box -->
-                                <div class="flex items-center bg-gray-100 rounded-lg px-2 py-1">
-                                    <svg class="w-4 h-4 text-gray-500 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                    </svg>
-                                    <span class="font-semibold text-gray-800">{{ record.worked_hours }}h</span>
                                 </div>
-
-                                <!-- Extra hours box (if any) -->
-                                <template v-if="record.overtime_hours > 0">
-                                    <div
-                                        v-if="can?.viewOvertimeDetails || record.overtime_authorized"
-                                        class="flex items-center bg-green-100 text-green-700 rounded-lg px-2 py-1"
-                                    >
-                                        <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                                        </svg>
-                                        <span class="font-semibold">{{ record.overtime_hours }}h</span>
-                                        <span class="text-xs ml-1 text-green-600">extra</span>
-                                    </div>
-                                    <div
-                                        v-else-if="can?.viewOvertimeDetails === false && !record.overtime_authorized"
-                                        class="flex items-center bg-yellow-50 text-yellow-600 rounded-lg px-2 py-1 text-xs"
-                                    >
-                                        <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                        </svg>
-                                        pendiente
-                                    </div>
-                                </template>
-                            </div>
-
-                            <!-- Calculation breakdown -->
-                            <div v-if="record.check_in && record.check_out" class="text-xs text-gray-400 mt-1.5 space-y-0.5">
-                                <div class="flex items-center gap-1">
-                                    <span>{{ getGrossHours(record) }}h bruto</span>
-                                    <span class="text-red-400">- 1h comida</span>
-                                    <span>=</span>
-                                    <span class="font-medium text-gray-600">{{ getNetHours(record) }}h neto</span>
+                                <div v-if="getAttendance(employee, date).late_minutes > 0" class="text-[10px] text-yellow-600 mt-0.5">
+                                    +{{ getAttendance(employee, date).late_minutes }}min
                                 </div>
-                            </div>
-                        </td>
-                        <td class="px-6 py-4 whitespace-nowrap">
-                            <div class="flex items-center gap-2">
-                                <span :class="[statusColors[record.status], 'px-2 py-1 text-xs font-medium rounded-full']">
-                                    {{ statusLabels[record.status] }}
-                                </span>
-                                <span v-if="record.is_night_shift" class="text-indigo-500" title="Turno nocturno">
-                                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                                        <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z" />
-                                    </svg>
-                                </span>
-                            </div>
-                        </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm">
-                            <Link
-                                v-if="can?.edit"
-                                :href="route('attendance.edit', record.id)"
-                                class="text-pink-600 hover:text-pink-900"
-                            >
-                                Editar
-                            </Link>
-                            <span v-else class="text-gray-400">-</span>
+                            </template>
+                            <template v-else>
+                                <span class="text-gray-300 text-sm">-</span>
+                            </template>
                         </td>
                     </tr>
-                    <tr v-if="records.data.length === 0">
-                        <td :colspan="isRangeView ? 8 : 7" class="px-6 py-12 text-center text-gray-500">
+                    <tr v-if="employees.data.length === 0">
+                        <td :colspan="3 + dates.length" class="px-6 py-12 text-center text-gray-500">
                             No hay registros de asistencia para este periodo
                         </td>
                     </tr>
@@ -532,14 +350,14 @@ const getScheduleLabel = (record) => {
             </table>
 
             <!-- Pagination -->
-            <div v-if="records.last_page > 1" class="px-6 py-4 border-t border-gray-200">
+            <div v-if="employees.last_page > 1" class="px-6 py-4 border-t border-gray-200">
                 <div class="flex items-center justify-between">
                     <p class="text-sm text-gray-700">
-                        Mostrando {{ records.from }} a {{ records.to }} de {{ records.total }}
+                        Mostrando {{ employees.from }} a {{ employees.to }} de {{ employees.total }} empleados
                     </p>
                     <div class="flex space-x-2">
                         <Link
-                            v-for="link in records.links"
+                            v-for="link in employees.links"
                             :key="link.label"
                             :href="link.url || '#'"
                             :class="[

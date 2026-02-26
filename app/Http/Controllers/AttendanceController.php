@@ -49,65 +49,77 @@ class AttendanceController extends Controller
             $endDate = $startDate->copy();
         }
 
-        // Get only active employee IDs for filtering
-        $activeEmployeeIds = Employee::active()->pluck('id');
+        // Build list of dates in the range
+        $dates = [];
+        $current = $startDate->copy();
+        while ($current->lte($endDate)) {
+            $dates[] = $current->toDateString();
+            $current->addDay();
+        }
 
-        $query = AttendanceRecord::with(['employee.department', 'employee.position', 'employee.schedule'])
-            ->whereBetween('work_date', [$startDate->toDateString(), $endDate->toDateString()])
-            ->whereIn('employee_id', $activeEmployeeIds);
+        // Build employee query with attendance for the range
+        $employeeQuery = Employee::active()
+            ->with(['department', 'schedule'])
+            ->with(['attendanceRecords' => function ($q) use ($startDate, $endDate) {
+                $q->whereBetween('work_date', [$startDate->toDateString(), $endDate->toDateString()]);
+            }]);
 
-        // Apply permission-based filtering (using whereIn for better performance)
+        // Apply permission-based filtering
         if (! $user->hasPermissionTo('attendance.view_all')) {
             if ($user->hasPermissionTo('attendance.view_team')) {
                 $userEmployee = $user->employee;
                 if ($userEmployee) {
-                    $teamEmployeeIds = Employee::active()
-                        ->where(function ($q) use ($userEmployee) {
-                            $q->where('department_id', $userEmployee->department_id)
-                                ->orWhere('supervisor_id', $userEmployee->id);
-                        })
-                        ->pluck('id');
-                    $query->whereIn('employee_id', $teamEmployeeIds);
+                    $employeeQuery->where(function ($q) use ($userEmployee) {
+                        $q->where('department_id', $userEmployee->department_id)
+                            ->orWhere('supervisor_id', $userEmployee->id);
+                    });
                 } else {
-                    $query->whereRaw('1 = 0');
+                    $employeeQuery->whereRaw('1 = 0');
                 }
             } elseif ($user->hasPermissionTo('attendance.view_own')) {
-                $query->where('employee_id', $user->employee?->id);
+                $employeeQuery->where('id', $user->employee?->id);
             } else {
-                $query->whereRaw('1 = 0');
+                $employeeQuery->whereRaw('1 = 0');
             }
         }
 
-        // Apply search filters (optimized with whereIn) - only active employees
-        $query->when($request->department, function ($q, $department) {
-            $deptEmployeeIds = Employee::active()->where('department_id', $department)->pluck('id');
-            $q->whereIn('employee_id', $deptEmployeeIds);
+        // Apply filters
+        $employeeQuery->when($request->department, function ($q, $department) {
+            $q->where('department_id', $department);
         })
-            ->when($request->status, function ($q, $status) {
-                $q->where('status', $status);
-            })
             ->when($request->search, function ($q, $search) {
-                $searchEmployeeIds = Employee::active()
-                    ->where(function ($q) use ($search) {
-                        $q->where('full_name', 'like', "%{$search}%")
-                            ->orWhere('employee_number', 'like', "%{$search}%");
-                    })
-                    ->pluck('id');
-                $q->whereIn('employee_id', $searchEmployeeIds);
+                $q->where(function ($q) use ($search) {
+                    $q->where('full_name', 'like', "%{$search}%")
+                        ->orWhere('employee_number', 'like', "%{$search}%");
+                });
             });
 
-        $records = $query->orderBy('work_date')->orderBy('check_in')->paginate(20)->withQueryString();
+        $employees = $employeeQuery->orderBy('full_name')->paginate(20)->withQueryString();
 
-        // Add authorization flags to each record for frontend visibility control
-        $records->getCollection()->transform(function ($record) {
-            $record->overtime_authorized = AttendanceRecordPolicy::isOvertimeAuthorized($record);
-            $record->night_shift_authorized = AttendanceRecordPolicy::isNightShiftAuthorized($record);
-            return $record;
+        // Transform: key attendance by date for each employee
+        $employees->getCollection()->transform(function ($employee) {
+            $employee->attendance_by_date = $employee->attendanceRecords
+                ->keyBy(fn ($r) => $r->work_date->format('Y-m-d'))
+                ->map(fn ($r) => [
+                    'id' => $r->id,
+                    'check_in' => $r->check_in ? substr($r->check_in, 0, 5) : null,
+                    'check_out' => $r->check_out ? substr($r->check_out, 0, 5) : null,
+                    'worked_hours' => $r->worked_hours,
+                    'overtime_hours' => $r->overtime_hours,
+                    'status' => $r->status,
+                    'late_minutes' => $r->late_minutes,
+                ]);
+            unset($employee->attendanceRecords);
+
+            return $employee;
         });
 
-        // Get summary for the range in a single query (optimized) - only active employees
-        $summaryQuery = AttendanceRecord::whereBetween('work_date', [$startDate->toDateString(), $endDate->toDateString()])
-            ->whereIn('employee_id', $activeEmployeeIds);
+        // Get summary for the range
+        $allRecords = AttendanceRecord::whereBetween('work_date', [$startDate->toDateString(), $endDate->toDateString()])
+            ->whereIn('employee_id', $employees->getCollection()->pluck('id')->merge(
+                Employee::active()->pluck('id')
+            ));
+
         if (! $user->hasPermissionTo('attendance.view_all')) {
             if ($user->hasPermissionTo('attendance.view_team')) {
                 $userEmployee = $user->employee;
@@ -118,15 +130,14 @@ class AttendanceController extends Controller
                                 ->orWhere('supervisor_id', $userEmployee->id);
                         })
                         ->pluck('id');
-                    $summaryQuery->whereIn('employee_id', $teamEmployeeIds);
+                    $allRecords->whereIn('employee_id', $teamEmployeeIds);
                 }
             } elseif ($user->hasPermissionTo('attendance.view_own')) {
-                $summaryQuery->where('employee_id', $user->employee?->id);
+                $allRecords->where('employee_id', $user->employee?->id);
             }
         }
 
-        // Single query with grouping instead of 4 separate queries
-        $summaryCounts = (clone $summaryQuery)
+        $summaryCounts = $allRecords
             ->selectRaw('status, COUNT(*) as count')
             ->groupBy('status')
             ->pluck('count', 'status')
@@ -140,7 +151,8 @@ class AttendanceController extends Controller
         ];
 
         return Inertia::render('Attendance/Index', [
-            'records' => $records,
+            'employees' => $employees,
+            'dates' => $dates,
             'startDate' => $startDate->toDateString(),
             'endDate' => $endDate->toDateString(),
             'summary' => $summary,
