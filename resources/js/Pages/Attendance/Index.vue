@@ -111,7 +111,9 @@ const formatDate = (dateStr) => {
 
 const formatShortDate = (dateStr) => {
     if (!dateStr) return '-';
-    const [year, month, day] = dateStr.split('-').map(Number);
+    // Handle both "2026-02-18" and "2026-02-18T00:00:00.000000Z" formats
+    const clean = String(dateStr).substring(0, 10);
+    const [year, month, day] = clean.split('-').map(Number);
     const date = new Date(year, month - 1, day);
     return date.toLocaleDateString('es-MX', {
         weekday: 'short',
@@ -382,7 +384,7 @@ const getScheduleLabel = (record) => {
         </div>
 
         <!-- Table -->
-        <div class="bg-white rounded-lg shadow overflow-hidden">
+        <div class="bg-white rounded-lg shadow overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-200">
                 <thead class="bg-gray-50">
                     <tr>
