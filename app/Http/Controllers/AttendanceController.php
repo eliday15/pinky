@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Exports\AttendanceRangeExport;
 use App\Jobs\SyncZktecoJob;
 use App\Models\AttendanceRecord;
 use App\Models\Authorization;
@@ -17,6 +18,8 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Inertia\Inertia;
 use Inertia\Response;
+use Maatwebsite\Excel\Facades\Excel;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class AttendanceController extends Controller
 {
@@ -38,13 +41,19 @@ class AttendanceController extends Controller
         // Users should manually sync using the sync button
         $lastSync = SyncLog::completed()->latest('completed_at')->first();
 
-        $date = $request->date ? Carbon::parse($request->date) : Carbon::today();
+        $startDate = $request->start_date ? Carbon::parse($request->start_date) : Carbon::today();
+        $endDate = $request->end_date ? Carbon::parse($request->end_date) : $startDate->copy();
+
+        // Ensure end_date is not before start_date
+        if ($endDate->lt($startDate)) {
+            $endDate = $startDate->copy();
+        }
 
         // Get only active employee IDs for filtering
         $activeEmployeeIds = Employee::active()->pluck('id');
 
-        $query = AttendanceRecord::with(['employee.department', 'employee.position'])
-            ->where('work_date', $date->toDateString())
+        $query = AttendanceRecord::with(['employee.department', 'employee.position', 'employee.schedule'])
+            ->whereBetween('work_date', [$startDate->toDateString(), $endDate->toDateString()])
             ->whereIn('employee_id', $activeEmployeeIds);
 
         // Apply permission-based filtering (using whereIn for better performance)
@@ -87,7 +96,7 @@ class AttendanceController extends Controller
                 $q->whereIn('employee_id', $searchEmployeeIds);
             });
 
-        $records = $query->orderBy('check_in')->paginate(20)->withQueryString();
+        $records = $query->orderBy('work_date')->orderBy('check_in')->paginate(20)->withQueryString();
 
         // Add authorization flags to each record for frontend visibility control
         $records->getCollection()->transform(function ($record) {
@@ -96,8 +105,8 @@ class AttendanceController extends Controller
             return $record;
         });
 
-        // Get summary for the day in a single query (optimized) - only active employees
-        $summaryQuery = AttendanceRecord::where('work_date', $date->toDateString())
+        // Get summary for the range in a single query (optimized) - only active employees
+        $summaryQuery = AttendanceRecord::whereBetween('work_date', [$startDate->toDateString(), $endDate->toDateString()])
             ->whereIn('employee_id', $activeEmployeeIds);
         if (! $user->hasPermissionTo('attendance.view_all')) {
             if ($user->hasPermissionTo('attendance.view_team')) {
@@ -132,7 +141,8 @@ class AttendanceController extends Controller
 
         return Inertia::render('Attendance/Index', [
             'records' => $records,
-            'date' => $date->toDateString(),
+            'startDate' => $startDate->toDateString(),
+            'endDate' => $endDate->toDateString(),
             'summary' => $summary,
             'lastSync' => $lastSync ? $lastSync->completed_at->diffForHumans() : 'Nunca',
             'departments' => Department::active()->get(['id', 'name']),
@@ -140,9 +150,60 @@ class AttendanceController extends Controller
             'can' => [
                 'sync' => $user->hasPermissionTo('attendance.sync'),
                 'edit' => $user->hasPermissionTo('attendance.edit'),
+                'export' => $user->hasPermissionTo('attendance.view_all')
+                    || $user->hasPermissionTo('attendance.view_team'),
                 'viewOvertimeDetails' => $user->hasPermissionTo('attendance.view_all'),
             ],
         ]);
+    }
+
+    /**
+     * Export attendance records for a date range to Excel.
+     */
+    public function export(Request $request): BinaryFileResponse
+    {
+        $this->authorize('viewAny', AttendanceRecord::class);
+
+        $request->validate([
+            'start_date' => ['required', 'date'],
+            'end_date' => ['required', 'date', 'after_or_equal:start_date'],
+        ]);
+
+        $user = Auth::user();
+        $startDate = $request->start_date;
+        $endDate = $request->end_date;
+        $departmentId = $request->department ? (int) $request->department : null;
+
+        // Determine scoped employee IDs based on permissions
+        $scopedEmployeeIds = null;
+        if (! $user->hasPermissionTo('attendance.view_all')) {
+            if ($user->hasPermissionTo('attendance.view_team')) {
+                $userEmployee = $user->employee;
+                if ($userEmployee) {
+                    $scopedEmployeeIds = Employee::active()
+                        ->where(function ($q) use ($userEmployee) {
+                            $q->where('department_id', $userEmployee->department_id)
+                                ->orWhere('supervisor_id', $userEmployee->id);
+                        })
+                        ->pluck('id');
+                } else {
+                    $scopedEmployeeIds = collect();
+                }
+            } elseif ($user->hasPermissionTo('attendance.view_own')) {
+                $scopedEmployeeIds = collect([$user->employee?->id])->filter();
+            } else {
+                $scopedEmployeeIds = collect();
+            }
+        } else {
+            $scopedEmployeeIds = Employee::active()->pluck('id');
+        }
+
+        $filename = "asistencia_{$startDate}_{$endDate}.xlsx";
+
+        return Excel::download(
+            new AttendanceRangeExport($startDate, $endDate, $departmentId, $scopedEmployeeIds),
+            $filename
+        );
     }
 
     /**

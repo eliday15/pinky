@@ -1,12 +1,13 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head, Link, router } from '@inertiajs/vue3';
-import { ref, watch, onMounted, onUnmounted } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import debounce from 'lodash/debounce';
 
 const props = defineProps({
     records: Object,
-    date: String,
+    startDate: String,
+    endDate: String,
     summary: Object,
     lastSync: String,
     departments: Array,
@@ -14,16 +15,20 @@ const props = defineProps({
     can: Object,
 });
 
-const selectedDate = ref(props.date);
+const selectedStartDate = ref(props.startDate);
+const selectedEndDate = ref(props.endDate);
 const department = ref(props.filters.department || '');
 const status = ref(props.filters.status || '');
 const search = ref(props.filters.search || '');
 const autoRefreshEnabled = ref(true);
 let refreshInterval = null;
 
+const isRangeView = computed(() => selectedStartDate.value !== selectedEndDate.value);
+
 const applyFilters = debounce(() => {
     router.get(route('attendance.index'), {
-        date: selectedDate.value,
+        start_date: selectedStartDate.value,
+        end_date: selectedEndDate.value,
         department: department.value || undefined,
         status: status.value || undefined,
         search: search.value || undefined,
@@ -33,7 +38,7 @@ const applyFilters = debounce(() => {
     });
 }, 300);
 
-watch([selectedDate, department, status, search], applyFilters);
+watch([selectedStartDate, selectedEndDate, department, status, search], applyFilters);
 
 // Auto-refresh every 2 minutes to sync with ZKTeco changes
 const startAutoRefresh = () => {
@@ -82,16 +87,19 @@ const syncNow = () => {
     }
 };
 
-const goToDate = (days) => {
-    const newDate = new Date(selectedDate.value);
-    newDate.setDate(newDate.getDate() + days);
-    selectedDate.value = newDate.toISOString().split('T')[0];
+const downloadExcel = () => {
+    const params = new URLSearchParams({
+        start_date: selectedStartDate.value,
+        end_date: selectedEndDate.value,
+    });
+    if (department.value) {
+        params.set('department', department.value);
+    }
+    window.open(route('attendance.export') + '?' + params.toString(), '_blank');
 };
 
 const formatDate = (dateStr) => {
-    // Parse the date parts to avoid timezone issues
     const [year, month, day] = dateStr.split('-').map(Number);
-    // Create date using local timezone (month is 0-indexed)
     const date = new Date(year, month - 1, day);
     return date.toLocaleDateString('es-MX', {
         weekday: 'long',
@@ -100,6 +108,24 @@ const formatDate = (dateStr) => {
         day: 'numeric'
     });
 };
+
+const formatShortDate = (dateStr) => {
+    if (!dateStr) return '-';
+    const [year, month, day] = dateStr.split('-').map(Number);
+    const date = new Date(year, month - 1, day);
+    return date.toLocaleDateString('es-MX', {
+        weekday: 'short',
+        day: 'numeric',
+        month: 'short'
+    });
+};
+
+const dateRangeLabel = computed(() => {
+    if (selectedStartDate.value === selectedEndDate.value) {
+        return formatDate(selectedStartDate.value);
+    }
+    return `Del ${formatDate(selectedStartDate.value)} al ${formatDate(selectedEndDate.value)}`;
+});
 
 // Convert time string "HH:MM:SS" to minutes since midnight
 const timeToMinutes = (timeStr) => {
@@ -189,6 +215,15 @@ const getNetHours = (record) => {
     const breakHours = (record.employee?.schedule?.break_minutes || 60) / 60;
     return (gross - breakHours).toFixed(2);
 };
+
+// Format schedule times for display
+const getScheduleLabel = (record) => {
+    const schedule = record.employee?.schedule;
+    if (!schedule) return '-';
+    const entry = schedule.entry_time?.substring(0, 5) || '?';
+    const exit = schedule.exit_time?.substring(0, 5) || '?';
+    return `${entry} - ${exit}`;
+};
 </script>
 
 <template>
@@ -277,22 +312,22 @@ const getNetHours = (record) => {
         <!-- Filters -->
         <div class="bg-white rounded-lg shadow p-4 mb-6">
             <div class="flex flex-wrap items-center gap-4">
-                <div class="flex items-center space-x-2">
-                    <button @click="goToDate(-1)" class="p-2 hover:bg-gray-100 rounded">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-                        </svg>
-                    </button>
+                <div class="flex items-center gap-2">
+                    <label class="text-sm text-gray-500 whitespace-nowrap">Desde</label>
                     <input
-                        v-model="selectedDate"
+                        v-model="selectedStartDate"
                         type="date"
                         class="rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
                     />
-                    <button @click="goToDate(1)" class="p-2 hover:bg-gray-100 rounded">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-                        </svg>
-                    </button>
+                </div>
+                <div class="flex items-center gap-2">
+                    <label class="text-sm text-gray-500 whitespace-nowrap">Hasta</label>
+                    <input
+                        v-model="selectedEndDate"
+                        type="date"
+                        :min="selectedStartDate"
+                        class="rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                    />
                 </div>
 
                 <input
@@ -323,14 +358,27 @@ const getNetHours = (record) => {
                     <option value="partial">Parcial</option>
                 </select>
 
-                <Link
-                    :href="route('attendance.calendar')"
-                    class="ml-auto px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
-                >
-                    Ver Calendario
-                </Link>
+                <div class="ml-auto flex items-center gap-2">
+                    <button
+                        v-if="can?.export"
+                        @click="downloadExcel"
+                        class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2"
+                        title="Descargar Excel"
+                    >
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        Excel
+                    </button>
+                    <Link
+                        :href="route('attendance.calendar')"
+                        class="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
+                    >
+                        Ver Calendario
+                    </Link>
+                </div>
             </div>
-            <p class="mt-2 text-sm text-gray-500 capitalize">{{ formatDate(date) }}</p>
+            <p class="mt-2 text-sm text-gray-500 capitalize">{{ dateRangeLabel }}</p>
         </div>
 
         <!-- Table -->
@@ -338,8 +386,10 @@ const getNetHours = (record) => {
             <table class="min-w-full divide-y divide-gray-200">
                 <thead class="bg-gray-50">
                     <tr>
+                        <th v-if="isRangeView" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Fecha</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Empleado</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Departamento</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Horario</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Sesiones de Trabajo</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Horas</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Estado</th>
@@ -348,6 +398,9 @@ const getNetHours = (record) => {
                 </thead>
                 <tbody class="bg-white divide-y divide-gray-200">
                     <tr v-for="record in records.data" :key="record.id" class="hover:bg-gray-50">
+                        <td v-if="isRangeView" class="px-4 py-4 whitespace-nowrap text-sm text-gray-600">
+                            {{ formatShortDate(record.work_date) }}
+                        </td>
                         <td class="px-6 py-4 whitespace-nowrap">
                             <div class="flex items-center">
                                 <div class="w-8 h-8 rounded-full bg-pink-100 flex items-center justify-center">
@@ -363,6 +416,9 @@ const getNetHours = (record) => {
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                             {{ record.employee?.department?.name || '-' }}
+                        </td>
+                        <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {{ getScheduleLabel(record) }}
                         </td>
                         <td class="px-6 py-4 text-sm">
                             <div class="flex flex-wrap gap-2">
@@ -466,8 +522,8 @@ const getNetHours = (record) => {
                         </td>
                     </tr>
                     <tr v-if="records.data.length === 0">
-                        <td colspan="6" class="px-6 py-12 text-center text-gray-500">
-                            No hay registros de asistencia para esta fecha
+                        <td :colspan="isRangeView ? 8 : 7" class="px-6 py-12 text-center text-gray-500">
+                            No hay registros de asistencia para este periodo
                         </td>
                     </tr>
                 </tbody>
