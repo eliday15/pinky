@@ -106,19 +106,24 @@ const applyBulkEdit = () => {
             compensation_type_ids: compensationField.value === 'compensation_types' ? compensationTypeIds.value : undefined,
         };
 
+        // Always send current page filters for redirect preservation
+        const currentFilters = {
+            search: search.value || undefined,
+            department: department.value || undefined,
+            position: position.value || undefined,
+            schedule: schedule.value || undefined,
+            supervisor: supervisor.value || undefined,
+            status: status.value || undefined,
+            is_minimum_wage: isMinimumWage.value || undefined,
+        };
+
         if (applyTo.value === 'filtered') {
-            payload.filters = {
-                search: search.value || undefined,
-                department: department.value || undefined,
-                position: position.value || undefined,
-                schedule: schedule.value || undefined,
-                supervisor: supervisor.value || undefined,
-                status: status.value || undefined,
-                is_minimum_wage: isMinimumWage.value || undefined,
-            };
+            payload.filters = currentFilters;
         } else {
             payload.employee_ids = selectedEmployees.value;
         }
+
+        payload.page_filters = currentFilters;
 
         router.post(route('employees.bulkUpdate'), payload, {
             onSuccess: () => {

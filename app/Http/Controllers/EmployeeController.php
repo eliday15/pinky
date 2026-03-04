@@ -499,6 +499,7 @@ class EmployeeController extends Controller
             'adjustment_value' => ['required_if:operation_type,adjust_compensation', 'numeric'],
             'compensation_type_ids' => ['nullable', 'array'],
             'compensation_type_ids.*' => ['exists:compensation_types,id'],
+            'page_filters' => ['nullable', 'array'],
         ]);
 
         // Resolve target employees based on selection mode
@@ -582,7 +583,13 @@ class EmployeeController extends Controller
             }
         });
 
-        return redirect()->route('employees.index')
+        // Preserve page filters in redirect so the user stays on the same filtered view
+        $redirectParams = array_filter(
+            $request->input('page_filters', []),
+            fn ($v) => $v !== null && $v !== ''
+        );
+
+        return redirect()->route('employees.index', $redirectParams)
             ->with('success', $count . ' empleados actualizados exitosamente.');
     }
 
