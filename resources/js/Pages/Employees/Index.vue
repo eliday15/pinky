@@ -26,14 +26,20 @@ const isMinimumWage = ref(props.filters.is_minimum_wage || '');
 // Bulk edit state
 const selectedEmployees = ref([]);
 const bulkEditMode = ref(false);
+const applyTo = ref('filtered');
 const operationType = ref('set_field');
 const bulkField = ref('');
 const bulkValue = ref('');
 const compensationField = ref('');
 const adjustmentType = ref('fixed');
 const adjustmentValue = ref('');
-const isMinimumWageFilter = ref('');
 const compensationTypeIds = ref([]);
+
+const affectedCount = computed(() => {
+    return applyTo.value === 'filtered'
+        ? props.employees.total
+        : selectedEmployees.value.length;
+});
 
 const toggleSelectAll = (event) => {
     if (event.target.checked) {
@@ -53,12 +59,17 @@ const toggleEmployee = (id) => {
 };
 
 const applyBulkEdit = () => {
-    if (selectedEmployees.value.length === 0) {
+    if (applyTo.value === 'selected' && selectedEmployees.value.length === 0) {
         alert('Selecciona al menos un empleado para la edicion masiva');
         return;
     }
 
-    if (operationType.value === 'set_field' && (!bulkField.value || !bulkValue.value)) {
+    if (applyTo.value === 'filtered' && props.employees.total === 0) {
+        alert('No hay empleados que coincidan con los filtros actuales');
+        return;
+    }
+
+    if (operationType.value === 'set_field' && (!bulkField.value || bulkValue.value === '' || bulkValue.value === null)) {
         alert('Selecciona campo y valor para la edicion masiva');
         return;
     }
@@ -78,28 +89,48 @@ const applyBulkEdit = () => {
         return;
     }
 
-    if (confirm(`¿Actualizar ${selectedEmployees.value.length} empleados?`)) {
-        router.post(route('employees.bulkUpdate'), {
-            employee_ids: selectedEmployees.value,
+    const count = affectedCount.value;
+    const modeLabel = applyTo.value === 'filtered'
+        ? `todos los ${count} empleados filtrados`
+        : `${count} empleados seleccionados`;
+
+    if (confirm(`¿Actualizar ${modeLabel}?`)) {
+        const payload = {
+            apply_to: applyTo.value,
             operation_type: operationType.value,
-            field: bulkField.value,
-            value: bulkValue.value,
-            compensation_field: compensationField.value,
+            field: bulkField.value || undefined,
+            value: bulkValue.value !== '' ? bulkValue.value : undefined,
+            compensation_field: compensationField.value || undefined,
             adjustment_type: adjustmentType.value,
-            adjustment_value: adjustmentValue.value,
-            is_minimum_wage_filter: isMinimumWageFilter.value || undefined,
+            adjustment_value: adjustmentValue.value || undefined,
             compensation_type_ids: compensationField.value === 'compensation_types' ? compensationTypeIds.value : undefined,
-        }, {
+        };
+
+        if (applyTo.value === 'filtered') {
+            payload.filters = {
+                search: search.value || undefined,
+                department: department.value || undefined,
+                position: position.value || undefined,
+                schedule: schedule.value || undefined,
+                supervisor: supervisor.value || undefined,
+                status: status.value || undefined,
+                is_minimum_wage: isMinimumWage.value || undefined,
+            };
+        } else {
+            payload.employee_ids = selectedEmployees.value;
+        }
+
+        router.post(route('employees.bulkUpdate'), payload, {
             onSuccess: () => {
                 selectedEmployees.value = [];
                 bulkEditMode.value = false;
+                applyTo.value = 'filtered';
                 operationType.value = 'set_field';
                 bulkField.value = '';
                 bulkValue.value = '';
                 compensationField.value = '';
                 adjustmentType.value = 'fixed';
                 adjustmentValue.value = '';
-                isMinimumWageFilter.value = '';
                 compensationTypeIds.value = [];
             }
         });
@@ -109,13 +140,13 @@ const applyBulkEdit = () => {
 const cancelBulkEdit = () => {
     selectedEmployees.value = [];
     bulkEditMode.value = false;
+    applyTo.value = 'filtered';
     operationType.value = 'set_field';
     bulkField.value = '';
     bulkValue.value = '';
     compensationField.value = '';
     adjustmentType.value = 'fixed';
     adjustmentValue.value = '';
-    isMinimumWageFilter.value = '';
     compensationTypeIds.value = [];
 };
 
@@ -135,6 +166,16 @@ const applyFilters = debounce(() => {
 }, 300);
 
 watch([search, department, position, schedule, supervisor, status, isMinimumWage], applyFilters);
+
+// Clear manual selections when filters change
+watch([search, department, position, schedule, supervisor, status, isMinimumWage], () => {
+    selectedEmployees.value = [];
+});
+
+// Clear bulkValue when bulkField changes
+watch(bulkField, () => {
+    bulkValue.value = '';
+});
 
 const statusColors = {
     active: 'bg-green-100 text-green-800',
@@ -169,7 +210,7 @@ const exportUrl = computed(() => {
     if (department.value) params.append('department', department.value);
     if (status.value) params.append('status', status.value);
     if (isMinimumWage.value) params.append('is_minimum_wage', isMinimumWage.value);
-    if (bulkEditMode.value && selectedEmployees.value.length > 0) {
+    if (selectedEmployees.value.length > 0) {
         selectedEmployees.value.forEach(id => params.append('employee_ids[]', id));
     }
     const qs = params.toString();
@@ -238,143 +279,228 @@ const exportUrl = computed(() => {
         </div>
 
         <!-- Bulk Edit Panel -->
-        <div v-if="bulkEditMode" class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-            <div class="space-y-4">
-                <div class="flex items-center justify-between">
-                    <span class="text-sm font-medium text-blue-800">
-                        {{ selectedEmployees.length }} empleados seleccionados
-                    </span>
-                    <button
-                        @click="cancelBulkEdit"
-                        class="px-4 py-2 text-gray-600 hover:text-gray-800 text-sm"
-                    >
-                        Cancelar
-                    </button>
+        <div v-if="bulkEditMode" class="bg-white border border-blue-300 rounded-lg shadow-sm mb-6 overflow-hidden">
+            <!-- Header -->
+            <div class="flex items-center justify-between px-5 py-3 bg-blue-600 text-white">
+                <div class="flex items-center gap-3">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                    <span class="font-semibold text-sm">Edicion Masiva</span>
+                </div>
+                <button
+                    @click="cancelBulkEdit"
+                    class="text-blue-100 hover:text-white text-sm flex items-center gap-1"
+                >
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                    Cerrar
+                </button>
+            </div>
+
+            <div class="p-5 space-y-5">
+                <!-- Section 1: Employee Selection -->
+                <div>
+                    <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Seleccion de empleados</label>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <label
+                            class="relative flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all"
+                            :class="applyTo === 'filtered'
+                                ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-200'
+                                : 'border-gray-200 hover:border-gray-300 bg-white'"
+                        >
+                            <input
+                                type="radio"
+                                v-model="applyTo"
+                                value="filtered"
+                                class="mt-0.5 text-blue-600 focus:ring-blue-500"
+                            />
+                            <div>
+                                <span class="text-sm font-medium text-gray-900">Todos los filtrados</span>
+                                <span class="ml-1.5 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700">
+                                    {{ employees.total }}
+                                </span>
+                                <p class="text-xs text-gray-500 mt-0.5">Los filtros de la pagina determinan los empleados afectados</p>
+                            </div>
+                        </label>
+                        <label
+                            class="relative flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all"
+                            :class="applyTo === 'selected'
+                                ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-200'
+                                : 'border-gray-200 hover:border-gray-300 bg-white'"
+                        >
+                            <input
+                                type="radio"
+                                v-model="applyTo"
+                                value="selected"
+                                class="mt-0.5 text-blue-600 focus:ring-blue-500"
+                            />
+                            <div>
+                                <span class="text-sm font-medium text-gray-900">Seleccion manual</span>
+                                <span
+                                    v-if="selectedEmployees.length > 0"
+                                    class="ml-1.5 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700"
+                                >
+                                    {{ selectedEmployees.length }}
+                                </span>
+                                <p class="text-xs text-gray-500 mt-0.5">Usa los checkboxes en la tabla para elegir empleados</p>
+                            </div>
+                        </label>
+                    </div>
+                    <p v-if="applyTo === 'filtered'" class="mt-2 text-xs text-blue-600 flex items-center gap-1">
+                        <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        Ajusta los filtros de la seccion de abajo para definir el grupo de empleados a actualizar.
+                    </p>
                 </div>
 
-                <!-- Operation Type Selector -->
-                <div class="flex flex-wrap items-center gap-4">
-                    <div>
-                        <label class="block text-xs font-medium text-blue-700 mb-1">Tipo de operacion</label>
-                        <select
-                            v-model="operationType"
-                            class="rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
-                        >
-                            <option value="set_field">Asignar campo</option>
-                            <option value="adjust_compensation">Ajustar compensacion</option>
-                        </select>
+                <!-- Section 2: Operation Config -->
+                <div>
+                    <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Configuracion de operacion</label>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-700 mb-1">Tipo de operacion</label>
+                            <select
+                                v-model="operationType"
+                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
+                            >
+                                <option value="set_field">Asignar campo</option>
+                                <option value="adjust_compensation">Ajustar compensacion</option>
+                            </select>
+                        </div>
+
+                        <!-- Set Field Options -->
+                        <template v-if="operationType === 'set_field'">
+                            <div>
+                                <label class="block text-xs font-medium text-gray-700 mb-1">Campo</label>
+                                <select
+                                    v-model="bulkField"
+                                    class="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
+                                >
+                                    <option value="">Seleccionar campo...</option>
+                                    <option value="department_id">Departamento</option>
+                                    <option value="position_id">Puesto</option>
+                                    <option value="schedule_id">Horario</option>
+                                    <option value="supervisor_id">Jefe</option>
+                                    <option value="status">Estado</option>
+                                    <option value="is_minimum_wage">Salario Minimo</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-gray-700 mb-1">Valor</label>
+                                <select
+                                    v-if="bulkField === 'department_id'"
+                                    v-model="bulkValue"
+                                    class="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
+                                >
+                                    <option value="">Seleccionar departamento...</option>
+                                    <option v-for="dept in departments" :key="dept.id" :value="dept.id">
+                                        {{ dept.name }}
+                                    </option>
+                                </select>
+                                <select
+                                    v-else-if="bulkField === 'position_id'"
+                                    v-model="bulkValue"
+                                    class="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
+                                >
+                                    <option value="">Seleccionar puesto...</option>
+                                    <option v-for="pos in positions" :key="pos.id" :value="pos.id">
+                                        {{ pos.name }}
+                                    </option>
+                                </select>
+                                <select
+                                    v-else-if="bulkField === 'schedule_id'"
+                                    v-model="bulkValue"
+                                    class="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
+                                >
+                                    <option value="">Seleccionar horario...</option>
+                                    <option v-for="sch in schedules" :key="sch.id" :value="sch.id">
+                                        {{ sch.name }}
+                                    </option>
+                                </select>
+                                <select
+                                    v-else-if="bulkField === 'supervisor_id'"
+                                    v-model="bulkValue"
+                                    class="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
+                                >
+                                    <option value="">Seleccionar jefe...</option>
+                                    <option v-for="sup in supervisors" :key="sup.id" :value="sup.id">
+                                        {{ sup.full_name }}
+                                    </option>
+                                </select>
+                                <select
+                                    v-else-if="bulkField === 'status'"
+                                    v-model="bulkValue"
+                                    class="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
+                                >
+                                    <option value="">Seleccionar estado...</option>
+                                    <option value="active">Activo</option>
+                                    <option value="inactive">Inactivo</option>
+                                    <option value="terminated">Baja</option>
+                                </select>
+                                <select
+                                    v-else-if="bulkField === 'is_minimum_wage'"
+                                    v-model="bulkValue"
+                                    class="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
+                                >
+                                    <option value="">Seleccionar...</option>
+                                    <option :value="1">Si</option>
+                                    <option :value="0">No</option>
+                                </select>
+                                <input
+                                    v-else
+                                    type="text"
+                                    placeholder="Seleccionar campo primero..."
+                                    disabled
+                                    class="w-full rounded-lg border-gray-300 shadow-sm text-sm bg-gray-100"
+                                />
+                            </div>
+                        </template>
+
+                        <!-- Adjust Compensation Options -->
+                        <template v-if="operationType === 'adjust_compensation'">
+                            <div>
+                                <label class="block text-xs font-medium text-gray-700 mb-1">Campo de compensacion</label>
+                                <select
+                                    v-model="compensationField"
+                                    class="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
+                                >
+                                    <option value="">Seleccionar...</option>
+                                    <option value="hourly_rate">Tarifa por hora</option>
+                                    <option value="compensation_types">Conceptos de compensacion</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-gray-700 mb-1">Tipo de ajuste</label>
+                                <select
+                                    v-model="adjustmentType"
+                                    class="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
+                                >
+                                    <option value="fixed">Valor fijo</option>
+                                    <option value="percentage">Porcentaje (%)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-gray-700 mb-1">
+                                    Valor {{ adjustmentType === 'percentage' ? '(%)' : '' }}
+                                </label>
+                                <input
+                                    v-model="adjustmentValue"
+                                    type="number"
+                                    step="0.01"
+                                    :placeholder="adjustmentType === 'percentage' ? 'Ej: 10 para +10%' : 'Valor de ajuste'"
+                                    class="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
+                                />
+                            </div>
+                        </template>
                     </div>
 
-                    <div>
-                        <label class="block text-xs font-medium text-blue-700 mb-1">Filtro salario</label>
-                        <select
-                            v-model="isMinimumWageFilter"
-                            class="rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
-                        >
-                            <option value="">Todos</option>
-                            <option value="only_minimum">Solo Salario Minimo</option>
-                            <option value="above_minimum">Solo Arriba del Minimo</option>
-                        </select>
-                    </div>
-
-                    <!-- Set Field Options -->
-                    <template v-if="operationType === 'set_field'">
-                        <div>
-                            <label class="block text-xs font-medium text-blue-700 mb-1">Campo</label>
-                            <select
-                                v-model="bulkField"
-                                class="rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
-                            >
-                                <option value="">Seleccionar campo...</option>
-                                <option value="department_id">Departamento</option>
-                                <option value="status">Estado</option>
-                                <option value="schedule_id">Horario</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label class="block text-xs font-medium text-blue-700 mb-1">Valor</label>
-                            <select
-                                v-if="bulkField === 'department_id'"
-                                v-model="bulkValue"
-                                class="rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
-                            >
-                                <option value="">Seleccionar departamento...</option>
-                                <option v-for="dept in departments" :key="dept.id" :value="dept.id">
-                                    {{ dept.name }}
-                                </option>
-                            </select>
-                            <select
-                                v-else-if="bulkField === 'status'"
-                                v-model="bulkValue"
-                                class="rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
-                            >
-                                <option value="">Seleccionar estado...</option>
-                                <option value="active">Activo</option>
-                                <option value="inactive">Inactivo</option>
-                                <option value="terminated">Baja</option>
-                            </select>
-                            <select
-                                v-else-if="bulkField === 'schedule_id'"
-                                v-model="bulkValue"
-                                class="rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
-                            >
-                                <option value="">Seleccionar horario...</option>
-                                <option v-for="sch in schedules" :key="sch.id" :value="sch.id">
-                                    {{ sch.name }}
-                                </option>
-                            </select>
-                            <input
-                                v-else
-                                v-model="bulkValue"
-                                type="text"
-                                placeholder="Seleccionar campo primero..."
-                                disabled
-                                class="rounded-lg border-gray-300 shadow-sm text-sm bg-gray-100"
-                            />
-                        </div>
-                    </template>
-
-                    <!-- Adjust Compensation Options -->
-                    <template v-if="operationType === 'adjust_compensation'">
-                        <div>
-                            <label class="block text-xs font-medium text-blue-700 mb-1">Campo de compensacion</label>
-                            <select
-                                v-model="compensationField"
-                                class="rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
-                            >
-                                <option value="">Seleccionar...</option>
-                                <option value="hourly_rate">Tarifa por hora</option>
-                                <option value="compensation_types">Conceptos de compensacion</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label class="block text-xs font-medium text-blue-700 mb-1">Tipo de ajuste</label>
-                            <select
-                                v-model="adjustmentType"
-                                class="rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
-                            >
-                                <option value="fixed">Valor fijo</option>
-                                <option value="percentage">Porcentaje (%)</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label class="block text-xs font-medium text-blue-700 mb-1">
-                                Valor {{ adjustmentType === 'percentage' ? '(%)' : '' }}
-                            </label>
-                            <input
-                                v-model="adjustmentValue"
-                                type="number"
-                                step="0.01"
-                                :placeholder="adjustmentType === 'percentage' ? 'Ej: 10 para +10%' : 'Nuevo valor'"
-                                class="rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
-                            />
-                        </div>
-                    </template>
-
-                    <!-- Compensation Type Checkboxes (Fix 8) -->
-                    <div v-if="operationType === 'adjust_compensation' && compensationField === 'compensation_types' && compensationTypes?.length > 0" class="w-full">
-                        <label class="block text-xs font-medium text-blue-700 mb-2">Conceptos a ajustar</label>
-                        <div class="flex flex-wrap gap-3">
+                    <!-- Compensation Type Checkboxes -->
+                    <div v-if="operationType === 'adjust_compensation' && compensationField === 'compensation_types' && compensationTypes?.length > 0" class="mt-4">
+                        <label class="block text-xs font-medium text-gray-700 mb-2">Conceptos a ajustar</label>
+                        <div class="flex flex-wrap gap-2">
                             <label
                                 v-for="ct in compensationTypes"
                                 :key="ct.id"
@@ -392,22 +518,30 @@ const exportUrl = computed(() => {
                             </label>
                         </div>
                     </div>
+                </div>
 
-                    <div class="flex items-end">
-                        <button
-                            @click="applyBulkEdit"
-                            :disabled="selectedEmployees.length === 0"
-                            class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
-                        >
-                            Aplicar
-                        </button>
-                    </div>
+                <!-- Footer: Count + Apply -->
+                <div class="flex items-center justify-between pt-4 border-t border-gray-200">
+                    <span class="text-sm text-gray-600">
+                        <span class="font-semibold text-gray-900">{{ affectedCount }}</span>
+                        {{ affectedCount === 1 ? 'empleado' : 'empleados' }} seran actualizados
+                    </span>
+                    <button
+                        @click="applyBulkEdit"
+                        :disabled="affectedCount === 0"
+                        class="px-5 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium transition-colors"
+                    >
+                        Aplicar Cambios
+                    </button>
                 </div>
             </div>
         </div>
 
         <!-- Filters -->
-        <div class="bg-white rounded-lg shadow p-4 mb-6">
+        <div
+            class="bg-white rounded-lg shadow p-4 mb-6 transition-all"
+            :class="bulkEditMode && applyTo === 'filtered' ? 'ring-2 ring-blue-400 ring-offset-1' : ''"
+        >
             <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Buscar</label>
@@ -505,7 +639,7 @@ const exportUrl = computed(() => {
             <table class="min-w-full divide-y divide-gray-200">
                 <thead class="bg-gray-50">
                     <tr>
-                        <th v-if="bulkEditMode" class="px-4 py-3 text-left">
+                        <th v-if="bulkEditMode && applyTo === 'selected'" class="px-4 py-3 text-left">
                             <input
                                 type="checkbox"
                                 @change="toggleSelectAll"
@@ -535,7 +669,7 @@ const exportUrl = computed(() => {
                 </thead>
                 <tbody class="bg-white divide-y divide-gray-200">
                     <tr v-for="employee in employees.data" :key="employee.id" class="hover:bg-gray-50">
-                        <td v-if="bulkEditMode" class="px-4 py-4">
+                        <td v-if="bulkEditMode && applyTo === 'selected'" class="px-4 py-4">
                             <input
                                 type="checkbox"
                                 :checked="selectedEmployees.includes(employee.id)"
@@ -603,7 +737,7 @@ const exportUrl = computed(() => {
                         </td>
                     </tr>
                     <tr v-if="employees.data.length === 0">
-                        <td :colspan="bulkEditMode ? 7 : 6" class="px-6 py-12 text-center text-gray-500">
+                        <td :colspan="bulkEditMode && applyTo === 'selected' ? 7 : 6" class="px-6 py-12 text-center text-gray-500">
                             No se encontraron empleados
                         </td>
                     </tr>

@@ -11,9 +11,11 @@ use App\Models\Schedule;
 use App\Models\User;
 use App\Models\VacationTable;
 use App\Services\SupervisorResolutionService;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
@@ -37,57 +39,9 @@ class EmployeeController extends Controller
         $this->authorize('viewAny', Employee::class);
 
         $user = Auth::user();
-        $query = Employee::with(['department', 'position', 'schedule']);
 
-        // Apply permission-based filtering
-        if (! $user->hasPermissionTo('employees.view_all')) {
-            if ($user->hasPermissionTo('employees.view_team')) {
-                $userEmployee = $user->employee;
-                if ($userEmployee) {
-                    $query->where(function ($q) use ($userEmployee) {
-                        $q->where('department_id', $userEmployee->department_id)
-                            ->orWhere('supervisor_id', $userEmployee->id);
-                    });
-                } else {
-                    $query->whereRaw('1 = 0');
-                }
-            } elseif ($user->hasPermissionTo('employees.view_own')) {
-                $query->where('id', $user->employee?->id);
-            } else {
-                $query->whereRaw('1 = 0');
-            }
-        }
-
-        // Apply search filters
-        $query->when($request->search, function ($q, $search) {
-            $q->where(function ($query) use ($search) {
-                $query->where('full_name', 'like', "%{$search}%")
-                    ->orWhere('employee_number', 'like', "%{$search}%")
-                    ->orWhere('email', 'like', "%{$search}%");
-            });
-        })
-            ->when($request->department, function ($q, $department) {
-                $q->where('department_id', $department);
-            })
-            ->when($request->position, function ($q, $position) {
-                $q->where('position_id', $position);
-            })
-            ->when($request->schedule, function ($q, $schedule) {
-                $q->where('schedule_id', $schedule);
-            })
-            ->when($request->supervisor, function ($q, $supervisor) {
-                $q->where('supervisor_id', $supervisor);
-            })
-            ->when($request->has('is_minimum_wage') && $request->is_minimum_wage !== '', function ($q) use ($request) {
-                $q->where('is_minimum_wage', $request->is_minimum_wage === 'yes');
-            })
-            ->when($request->has('status'), function ($q) use ($request) {
-                if ($request->status !== 'all') {
-                    $q->where('status', $request->status);
-                }
-            }, function ($q) {
-                $q->where('status', 'active');
-            });
+        $query = $this->buildEmployeeFilterQuery($request->all())
+            ->with(['department', 'position', 'schedule']);
 
         $employees = $query->orderBy('full_name')->paginate(15)->withQueryString();
 
@@ -514,10 +468,13 @@ class EmployeeController extends Controller
     /**
      * Bulk update employees.
      *
-     * Supports:
-     * - set_field: Set a specific field to a value for all selected employees
+     * Supports two selection modes:
+     * - filtered: Apply to ALL employees matching current page filters
+     * - selected: Apply to manually selected employee IDs (filtered by permissions)
+     *
+     * Operations:
+     * - set_field: Set a specific field to a value
      * - adjust_compensation: Adjust hourly_rate or compensation_types by fixed/percentage
-     * - is_minimum_wage_filter: Pre-filter employee_ids by minimum wage status
      */
     public function bulkUpdate(Request $request): RedirectResponse
     {
@@ -528,11 +485,11 @@ class EmployeeController extends Controller
         }
 
         $validated = $request->validate([
-            'employee_ids' => ['required', 'array', 'min:1'],
+            'apply_to' => ['required', 'string', Rule::in(['filtered', 'selected'])],
+            'filters' => ['nullable', 'array'],
+            'employee_ids' => ['nullable', 'array'],
             'employee_ids.*' => ['exists:employees,id'],
             'operation_type' => ['required', 'string', Rule::in(['set_field', 'adjust_compensation'])],
-            // Minimum wage filter (Fix 7)
-            'is_minimum_wage_filter' => ['nullable', 'string', Rule::in(['all', 'only_minimum', 'above_minimum'])],
             // For set_field
             'field' => ['required_if:operation_type,set_field', 'string', Rule::in(['department_id', 'position_id', 'schedule_id', 'supervisor_id', 'status', 'is_minimum_wage'])],
             'value' => ['required_if:operation_type,set_field'],
@@ -540,89 +497,162 @@ class EmployeeController extends Controller
             'compensation_field' => ['required_if:operation_type,adjust_compensation', 'string', Rule::in(['hourly_rate', 'overtime_rate', 'holiday_rate', 'compensation_types'])],
             'adjustment_type' => ['required_if:operation_type,adjust_compensation', 'string', Rule::in(['fixed', 'percentage'])],
             'adjustment_value' => ['required_if:operation_type,adjust_compensation', 'numeric'],
-            // For compensation_types adjustment (Fix 8)
             'compensation_type_ids' => ['nullable', 'array'],
             'compensation_type_ids.*' => ['exists:compensation_types,id'],
         ]);
 
-        // Apply minimum wage filter (Fix 7)
-        $employeeIds = $validated['employee_ids'];
-        $wageFilter = $validated['is_minimum_wage_filter'] ?? 'all';
-        if ($wageFilter === 'only_minimum') {
-            $employeeIds = Employee::whereIn('id', $employeeIds)
-                ->where('is_minimum_wage', true)
+        // Resolve target employees based on selection mode
+        if ($validated['apply_to'] === 'filtered') {
+            $employeeIds = $this->buildEmployeeFilterQuery($validated['filters'] ?? [])
                 ->pluck('id')
                 ->toArray();
-        } elseif ($wageFilter === 'above_minimum') {
-            $employeeIds = Employee::whereIn('id', $employeeIds)
-                ->where('is_minimum_wage', false)
+        } else {
+            // Selected mode: only apply permission scoping, not content filters
+            // Pass status=all so the default active-only filter doesn't exclude selected employees
+            $employeeIds = $this->buildEmployeeFilterQuery(['status' => 'all'])
+                ->whereIn('id', $validated['employee_ids'] ?? [])
                 ->pluck('id')
                 ->toArray();
         }
 
         if (empty($employeeIds)) {
             return redirect()->route('employees.index')
-                ->with('warning', 'Ningun empleado coincide con el filtro de salario seleccionado.');
+                ->with('warning', 'Ningun empleado coincide con los criterios seleccionados.');
         }
 
-        if ($validated['operation_type'] === 'set_field') {
-            Employee::whereIn('id', $employeeIds)
-                ->update([$validated['field'] => $validated['value']]);
-        } elseif ($validated['operation_type'] === 'adjust_compensation') {
-            $field = $validated['compensation_field'];
+        $count = count($employeeIds);
 
-            // Fix 8: Compensation types adjustment
-            if ($field === 'compensation_types') {
-                $typeIds = $validated['compensation_type_ids'] ?? [];
-                if (! empty($typeIds)) {
-                    $employees = Employee::whereIn('id', $employeeIds)->with('compensationTypes')->get();
-                    foreach ($employees as $employee) {
-                        $existingPivots = $employee->compensationTypes->keyBy('id');
-                        $syncData = [];
-                        foreach ($employee->compensationTypes as $ct) {
-                            $pivotData = ['custom_percentage' => $ct->pivot->custom_percentage, 'custom_fixed_amount' => $ct->pivot->custom_fixed_amount];
-                            if (in_array($ct->id, $typeIds)) {
-                                // Adjust this compensation type
-                                if ($ct->calculation_type === 'fixed') {
-                                    $current = (float) ($ct->pivot->custom_fixed_amount ?? $ct->fixed_amount ?? 0);
-                                    if ($validated['adjustment_type'] === 'fixed') {
-                                        $pivotData['custom_fixed_amount'] = max(0, round($current + $validated['adjustment_value'], 2));
-                                    } else {
-                                        $pivotData['custom_fixed_amount'] = max(0, round($current * (1 + $validated['adjustment_value'] / 100), 2));
-                                    }
-                                } else {
-                                    $current = (float) ($ct->pivot->custom_percentage ?? $ct->percentage_value ?? 0);
-                                    if ($validated['adjustment_type'] === 'fixed') {
-                                        $pivotData['custom_percentage'] = max(0, round($current + $validated['adjustment_value'], 2));
-                                    } else {
-                                        $pivotData['custom_percentage'] = max(0, round($current * (1 + $validated['adjustment_value'] / 100), 2));
-                                    }
-                                }
-                            }
-                            $syncData[$ct->id] = $pivotData;
-                        }
-                        $employee->compensationTypes()->sync($syncData);
-                    }
-                }
-            } else {
-                // Standard field adjustment (hourly_rate, overtime_rate, holiday_rate)
+        DB::transaction(function () use ($validated, $employeeIds) {
+            if ($validated['operation_type'] === 'set_field') {
                 $employees = Employee::whereIn('id', $employeeIds)->get();
                 foreach ($employees as $employee) {
-                    $currentValue = (float) $employee->$field;
-
-                    if ($validated['adjustment_type'] === 'fixed') {
-                        $newValue = $currentValue + $validated['adjustment_value'];
-                    } else {
-                        $newValue = $currentValue * (1 + $validated['adjustment_value'] / 100);
-                    }
-
-                    $employee->update([$field => max(0, round($newValue, 2))]);
+                    $employee->update([$validated['field'] => $validated['value']]);
                 }
+            } elseif ($validated['operation_type'] === 'adjust_compensation') {
+                $field = $validated['compensation_field'];
+
+                if ($field === 'compensation_types') {
+                    $typeIds = $validated['compensation_type_ids'] ?? [];
+                    if (! empty($typeIds)) {
+                        $employees = Employee::whereIn('id', $employeeIds)->with('compensationTypes')->get();
+                        foreach ($employees as $employee) {
+                            $syncData = [];
+                            foreach ($employee->compensationTypes as $ct) {
+                                $pivotData = [
+                                    'custom_percentage' => $ct->pivot->custom_percentage,
+                                    'custom_fixed_amount' => $ct->pivot->custom_fixed_amount,
+                                ];
+                                if (in_array($ct->id, $typeIds)) {
+                                    if ($ct->calculation_type === 'fixed') {
+                                        $current = (float) ($ct->pivot->custom_fixed_amount ?? $ct->fixed_amount ?? 0);
+                                        if ($validated['adjustment_type'] === 'fixed') {
+                                            $pivotData['custom_fixed_amount'] = max(0, round($current + $validated['adjustment_value'], 2));
+                                        } else {
+                                            $pivotData['custom_fixed_amount'] = max(0, round($current * (1 + $validated['adjustment_value'] / 100), 2));
+                                        }
+                                    } else {
+                                        $current = (float) ($ct->pivot->custom_percentage ?? $ct->percentage_value ?? 0);
+                                        if ($validated['adjustment_type'] === 'fixed') {
+                                            $pivotData['custom_percentage'] = max(0, round($current + $validated['adjustment_value'], 2));
+                                        } else {
+                                            $pivotData['custom_percentage'] = max(0, round($current * (1 + $validated['adjustment_value'] / 100), 2));
+                                        }
+                                    }
+                                }
+                                $syncData[$ct->id] = $pivotData;
+                            }
+                            $employee->compensationTypes()->sync($syncData);
+                        }
+                    }
+                } else {
+                    // Standard field adjustment (hourly_rate, overtime_rate, holiday_rate)
+                    $employees = Employee::whereIn('id', $employeeIds)->get();
+                    foreach ($employees as $employee) {
+                        $currentValue = (float) $employee->$field;
+
+                        if ($validated['adjustment_type'] === 'fixed') {
+                            $newValue = $currentValue + $validated['adjustment_value'];
+                        } else {
+                            $newValue = $currentValue * (1 + $validated['adjustment_value'] / 100);
+                        }
+
+                        $employee->update([$field => max(0, round($newValue, 2))]);
+                    }
+                }
+            }
+        });
+
+        return redirect()->route('employees.index')
+            ->with('success', $count . ' empleados actualizados exitosamente.');
+    }
+
+    /**
+     * Build a permission-scoped and filtered Employee query.
+     *
+     * Reusable for both index() pagination and bulkUpdate() target resolution.
+     *
+     * Args:
+     *     filters: Associative array of filter values (search, department, position, etc.)
+     *
+     * Returns:
+     *     Eloquent Builder scoped by user permissions and applied filters
+     */
+    private function buildEmployeeFilterQuery(array $filters): Builder
+    {
+        $user = Auth::user();
+        $query = Employee::query();
+
+        // Permission-based filtering
+        if (! $user->hasPermissionTo('employees.view_all')) {
+            if ($user->hasPermissionTo('employees.view_team')) {
+                $userEmployee = $user->employee;
+                if ($userEmployee) {
+                    $query->where(function ($q) use ($userEmployee) {
+                        $q->where('department_id', $userEmployee->department_id)
+                            ->orWhere('supervisor_id', $userEmployee->id);
+                    });
+                } else {
+                    $query->whereRaw('1 = 0');
+                }
+            } elseif ($user->hasPermissionTo('employees.view_own')) {
+                $query->where('id', $user->employee?->id);
+            } else {
+                $query->whereRaw('1 = 0');
             }
         }
 
-        return redirect()->route('employees.index')
-            ->with('success', count($employeeIds) . ' empleados actualizados exitosamente.');
+        // Apply search filters
+        $query->when($filters['search'] ?? null, function ($q, $search) {
+            $q->where(function ($query) use ($search) {
+                $query->where('full_name', 'like', "%{$search}%")
+                    ->orWhere('employee_number', 'like', "%{$search}%")
+                    ->orWhere('email', 'like', "%{$search}%");
+            });
+        })
+            ->when($filters['department'] ?? null, function ($q, $department) {
+                $q->where('department_id', $department);
+            })
+            ->when($filters['position'] ?? null, function ($q, $position) {
+                $q->where('position_id', $position);
+            })
+            ->when($filters['schedule'] ?? null, function ($q, $schedule) {
+                $q->where('schedule_id', $schedule);
+            })
+            ->when($filters['supervisor'] ?? null, function ($q, $supervisor) {
+                $q->where('supervisor_id', $supervisor);
+            })
+            ->when(isset($filters['is_minimum_wage']) && $filters['is_minimum_wage'] !== '', function ($q) use ($filters) {
+                $q->where('is_minimum_wage', $filters['is_minimum_wage'] === 'yes');
+            })
+            ->when(isset($filters['status']), function ($q) use ($filters) {
+                if ($filters['status'] !== 'all') {
+                    $q->where('status', $filters['status']);
+                }
+            }, function ($q) {
+                $q->where('status', 'active');
+            });
+
+        return $query;
     }
 
     /**
