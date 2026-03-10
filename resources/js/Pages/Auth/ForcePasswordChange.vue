@@ -1,4 +1,5 @@
 <script setup>
+import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import GuestLayout from '@/Layouts/GuestLayout.vue';
 import InputError from '@/Components/InputError.vue';
 import InputLabel from '@/Components/InputLabel.vue';
@@ -27,6 +28,8 @@ const submit = () => {
         </div>
 
         <form @submit.prevent="submit">
+            <FormErrorBanner :errors="form.errors" />
+
             <div>
                 <InputLabel for="password" value="Nueva Contraseña" />
 

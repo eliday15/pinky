@@ -305,6 +305,7 @@ const linkToAuthorization = () => {
                                 <textarea
                                     v-model="resolveForm.resolution_notes"
                                     rows="3"
+                                    :class="{ 'border-red-500': resolveForm.errors.resolution_notes }"
                                     class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 mb-2"
                                     placeholder="Describa como se resolvio..."
                                 ></textarea>
@@ -319,6 +320,7 @@ const linkToAuthorization = () => {
                                         inputmode="numeric"
                                         autocomplete="one-time-code"
                                         maxlength="6"
+                                        :class="{ 'border-red-500': resolveForm.errors.two_factor_code }"
                                         class="w-full text-center text-lg tracking-widest rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
                                         placeholder="000000"
                                     />
@@ -361,6 +363,7 @@ const linkToAuthorization = () => {
                                 <textarea
                                     v-model="dismissForm.resolution_notes"
                                     rows="3"
+                                    :class="{ 'border-red-500': dismissForm.errors.resolution_notes }"
                                     class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 mb-2"
                                     placeholder="Indique por que se descarta..."
                                 ></textarea>
@@ -375,6 +378,7 @@ const linkToAuthorization = () => {
                                         inputmode="numeric"
                                         autocomplete="one-time-code"
                                         maxlength="6"
+                                        :class="{ 'border-red-500': dismissForm.errors.two_factor_code }"
                                         class="w-full text-center text-lg tracking-widest rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
                                         placeholder="000000"
                                     />

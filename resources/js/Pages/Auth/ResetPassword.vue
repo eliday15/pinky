@@ -1,4 +1,5 @@
 <script setup>
+import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import GuestLayout from '@/Layouts/GuestLayout.vue';
 import InputError from '@/Components/InputError.vue';
 import InputLabel from '@/Components/InputLabel.vue';
@@ -36,6 +37,8 @@ const submit = () => {
         <Head title="Reset Password" />
 
         <form @submit.prevent="submit">
+            <FormErrorBanner :errors="form.errors" />
+
             <div>
                 <InputLabel for="email" value="Email" />
 

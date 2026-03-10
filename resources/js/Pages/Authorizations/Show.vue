@@ -253,6 +253,7 @@ const submitReject = () => {
                             <textarea
                                 v-model="rejectForm.rejection_reason"
                                 rows="3"
+                                :class="{ 'border-red-500': rejectForm.errors.rejection_reason }"
                                 class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
                                 required
                             ></textarea>
@@ -270,6 +271,7 @@ const submitReject = () => {
                                 inputmode="numeric"
                                 autocomplete="one-time-code"
                                 maxlength="6"
+                                :class="{ 'border-red-500': rejectForm.errors.two_factor_code }"
                                 class="w-full text-center text-lg tracking-widest rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
                                 placeholder="000000"
                             />

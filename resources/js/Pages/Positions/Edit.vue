@@ -1,5 +1,6 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
+import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
 
 const props = defineProps({
@@ -97,6 +98,8 @@ const submit = () => {
             </div>
 
             <form @submit.prevent="submit" class="space-y-6">
+                <FormErrorBanner :errors="form.errors" />
+
                 <!-- Basic Information -->
                 <div class="bg-white rounded-lg shadow p-6">
                     <h3 class="text-lg font-semibold text-gray-800 mb-4">Informacion General</h3>

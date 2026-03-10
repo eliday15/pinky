@@ -1,5 +1,6 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
+import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import { Head, Link, useForm, usePage } from '@inertiajs/vue3';
 import { computed } from 'vue';
 
@@ -79,6 +80,8 @@ const totalChanges = computed(() => {
                 </p>
 
                 <form @submit.prevent="submitPreview" class="space-y-4">
+                    <FormErrorBanner :errors="form.errors" />
+
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-2">
                             Archivo Excel

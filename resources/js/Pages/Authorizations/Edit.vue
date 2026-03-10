@@ -1,5 +1,6 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
+import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
 
 const props = defineProps({
@@ -81,6 +82,8 @@ const isPending = props.authorization.status === 'pending';
             </div>
 
             <form @submit.prevent="submit" class="space-y-6">
+                <FormErrorBanner :errors="form.errors" />
+
                 <!-- Employee & Type -->
                 <div class="bg-white rounded-lg shadow p-6">
                     <h3 class="text-lg font-semibold text-gray-800 mb-4">Informacion General</h3>
@@ -159,7 +162,11 @@ const isPending = props.authorization.status === 'pending';
                                 type="time"
                                 :disabled="!isPending"
                                 class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 disabled:bg-gray-100"
+                                :class="{ 'border-red-500': form.errors.start_time }"
                             />
+                            <p v-if="form.errors.start_time" class="mt-1 text-sm text-red-600">
+                                {{ form.errors.start_time }}
+                            </p>
                         </div>
 
                         <div>
@@ -171,7 +178,11 @@ const isPending = props.authorization.status === 'pending';
                                 type="time"
                                 :disabled="!isPending"
                                 class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 disabled:bg-gray-100"
+                                :class="{ 'border-red-500': form.errors.end_time }"
                             />
+                            <p v-if="form.errors.end_time" class="mt-1 text-sm text-red-600">
+                                {{ form.errors.end_time }}
+                            </p>
                         </div>
 
                         <div>
@@ -187,7 +198,11 @@ const isPending = props.authorization.status === 'pending';
                                 :disabled="!isPending"
                                 placeholder="Auto o manual"
                                 class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 disabled:bg-gray-100"
+                                :class="{ 'border-red-500': form.errors.hours }"
                             />
+                            <p v-if="form.errors.hours" class="mt-1 text-sm text-red-600">
+                                {{ form.errors.hours }}
+                            </p>
                             <p class="mt-1 text-xs text-gray-500">
                                 Se calcula automaticamente si pone inicio/fin
                             </p>

@@ -1,4 +1,5 @@
 <script setup>
+import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import InputError from '@/Components/InputError.vue';
 import InputLabel from '@/Components/InputLabel.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
@@ -38,6 +39,8 @@ const form = useForm({
             @submit.prevent="form.patch(route('profile.update'))"
             class="mt-6 space-y-6"
         >
+            <FormErrorBanner :errors="form.errors" />
+
             <div>
                 <InputLabel for="name" value="Name" />
 

@@ -1,5 +1,6 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
+import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import InputError from '@/Components/InputError.vue';
 import InputLabel from '@/Components/InputLabel.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
@@ -72,6 +73,8 @@ const resetPassword = () => {
                 <h3 class="text-lg font-medium text-gray-900 mb-4">Datos del Usuario</h3>
 
                 <form @submit.prevent="submit" class="space-y-6">
+                    <FormErrorBanner :errors="form.errors" />
+
                     <!-- Name -->
                     <div>
                         <InputLabel for="name" value="Nombre" />

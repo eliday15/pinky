@@ -1,5 +1,6 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
+import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import { Head, useForm } from '@inertiajs/vue3';
 import { ref, computed } from 'vue';
 
@@ -114,6 +115,8 @@ const groupLabels = {
                             Configuracion de {{ groupLabels[activeGroup] }}
                         </h3>
 
+                        <FormErrorBanner :errors="form.errors" />
+
                         <div class="space-y-6">
                             <div
                                 v-for="(setting, index) in currentSettings"
@@ -139,12 +142,14 @@ const groupLabels = {
                                                     :checked="form.settings[index]?.value === 'true'"
                                                     @change="updateValue(index, setting, $event)"
                                                     :disabled="!can.edit"
+                                                    :class="{ 'border-red-500': form.errors['settings.' + index + '.value'] }"
                                                     class="rounded border-gray-300 text-pink-600 shadow-sm focus:border-pink-500 focus:ring-pink-500"
                                                 />
                                                 <span class="ml-2 text-sm text-gray-600">
                                                     {{ form.settings[index]?.value === 'true' ? 'Si' : 'No' }}
                                                 </span>
                                             </label>
+                                            <p v-if="form.errors['settings.' + index + '.value']" class="mt-1 text-sm text-red-600">{{ form.errors['settings.' + index + '.value'] }}</p>
                                         </template>
 
                                         <!-- Number/Text Input -->
@@ -156,8 +161,10 @@ const groupLabels = {
                                                 :value="form.settings[index]?.value"
                                                 @input="updateValue(index, setting, $event)"
                                                 :disabled="!can.edit"
+                                                :class="{ 'border-red-500': form.errors['settings.' + index + '.value'] }"
                                                 class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 disabled:bg-gray-100"
                                             />
+                                            <p v-if="form.errors['settings.' + index + '.value']" class="mt-1 text-sm text-red-600">{{ form.errors['settings.' + index + '.value'] }}</p>
                                         </template>
                                     </div>
                                 </div>

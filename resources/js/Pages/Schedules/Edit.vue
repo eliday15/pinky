@@ -1,5 +1,6 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
+import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
 import { ref, computed, watch } from 'vue';
 
@@ -126,6 +127,8 @@ const submit = () => {
             </div>
 
             <form @submit.prevent="submit" class="space-y-6">
+                <FormErrorBanner :errors="form.errors" />
+
                 <!-- General Information -->
                 <div class="bg-white rounded-lg shadow p-6">
                     <h3 class="text-lg font-semibold text-gray-800 mb-4">Informacion General</h3>
@@ -195,11 +198,13 @@ const submit = () => {
                             </div>
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Inicio de Descanso</label>
-                                <input v-model="form.break_start" type="time" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" />
+                                <input v-model="form.break_start" type="time" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.break_start }" />
+                                <p v-if="form.errors.break_start" class="mt-1 text-sm text-red-600">{{ form.errors.break_start }}</p>
                             </div>
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Fin de Descanso</label>
-                                <input v-model="form.break_end" type="time" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" />
+                                <input v-model="form.break_end" type="time" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.break_end }" />
+                                <p v-if="form.errors.break_end" class="mt-1 text-sm text-red-600">{{ form.errors.break_end }}</p>
                             </div>
                         </div>
                     </div>
@@ -283,6 +288,7 @@ const submit = () => {
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Tolerancia de Retardo (min)</label>
                             <input v-model="form.late_tolerance_minutes" type="number" min="0" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.late_tolerance_minutes }" />
+                            <p v-if="form.errors.late_tolerance_minutes" class="mt-1 text-sm text-red-600">{{ form.errors.late_tolerance_minutes }}</p>
                             <p class="mt-1 text-sm text-gray-500">Minutos permitidos despues de la hora de entrada</p>
                         </div>
                         <div v-if="sameForAllDays">

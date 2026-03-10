@@ -1,5 +1,6 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
+import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
 import { computed } from 'vue';
 
@@ -121,6 +122,8 @@ const submit = () => {
             <!-- Edit Form (only if pending) -->
             <template v-if="incident.status === 'pending'">
                 <form @submit.prevent="submit" class="bg-white rounded-lg shadow p-6 space-y-6">
+                    <FormErrorBanner :errors="form.errors" />
+
                     <!-- Employee Selection -->
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">

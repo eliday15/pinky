@@ -1,5 +1,6 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
+import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
 import { ref, computed } from 'vue';
 
@@ -76,6 +77,8 @@ const submit = () => {
             </div>
 
             <form @submit.prevent="submit" class="space-y-6">
+                <FormErrorBanner :errors="form.errors" />
+
                 <!-- Employee Selection -->
                 <div class="bg-white rounded-lg shadow p-6">
                     <div class="flex justify-between items-center mb-4">
@@ -202,7 +205,11 @@ const submit = () => {
                             rows="3"
                             placeholder="Observaciones o notas adicionales (aplica para todos los empleados seleccionados)..."
                             class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                            :class="{ 'border-red-500': form.errors.reason }"
                         ></textarea>
+                        <p v-if="form.errors.reason" class="mt-1 text-sm text-red-600">
+                            {{ form.errors.reason }}
+                        </p>
                     </div>
                 </div>
 

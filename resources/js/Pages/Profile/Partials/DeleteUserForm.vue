@@ -1,5 +1,6 @@
 <script setup>
 import DangerButton from '@/Components/DangerButton.vue';
+import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import InputError from '@/Components/InputError.vue';
 import InputLabel from '@/Components/InputLabel.vue';
 import Modal from '@/Components/Modal.vue';
@@ -67,6 +68,8 @@ const closeModal = () => {
                     will be permanently deleted. Please enter your password to
                     confirm you would like to permanently delete your account.
                 </p>
+
+                <FormErrorBanner :errors="form.errors" class="mt-4" />
 
                 <div class="mt-6">
                     <InputLabel

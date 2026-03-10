@@ -1,5 +1,6 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
+import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
 import { computed } from 'vue';
 
@@ -131,6 +132,8 @@ const overtimeHours = computed(() => {
             </div>
 
             <form @submit.prevent="submit" class="bg-white rounded-lg shadow p-6 space-y-6">
+                <FormErrorBanner :errors="form.errors" />
+
                 <div class="grid grid-cols-2 gap-6">
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">
@@ -140,7 +143,11 @@ const overtimeHours = computed(() => {
                             v-model="form.check_in"
                             type="time"
                             class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                            :class="{ 'border-red-500': form.errors.check_in }"
                         />
+                        <p v-if="form.errors.check_in" class="mt-1 text-sm text-red-600">
+                            {{ form.errors.check_in }}
+                        </p>
                         <p class="mt-1 text-xs text-gray-500">
                             Horario esperado: {{ record.employee?.schedule?.entry_time || 'N/A' }}
                         </p>
@@ -154,7 +161,11 @@ const overtimeHours = computed(() => {
                             v-model="form.check_out"
                             type="time"
                             class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                            :class="{ 'border-red-500': form.errors.check_out }"
                         />
+                        <p v-if="form.errors.check_out" class="mt-1 text-sm text-red-600">
+                            {{ form.errors.check_out }}
+                        </p>
                         <p class="mt-1 text-xs text-gray-500">
                             Horario esperado: {{ record.employee?.schedule?.exit_time || 'N/A' }}
                         </p>
@@ -168,6 +179,7 @@ const overtimeHours = computed(() => {
                     <select
                         v-model="form.status"
                         class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                        :class="{ 'border-red-500': form.errors.status }"
                     >
                         <option value="present">Presente</option>
                         <option value="late">Retardo</option>
@@ -178,6 +190,9 @@ const overtimeHours = computed(() => {
                         <option value="sick_leave">Incapacidad</option>
                         <option value="permission">Permiso</option>
                     </select>
+                    <p v-if="form.errors.status" class="mt-1 text-sm text-red-600">
+                        {{ form.errors.status }}
+                    </p>
                 </div>
 
                 <div>
@@ -215,8 +230,12 @@ const overtimeHours = computed(() => {
                         v-model="form.notes"
                         rows="3"
                         class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                        :class="{ 'border-red-500': form.errors.notes }"
                         placeholder="Notas adicionales..."
                     ></textarea>
+                    <p v-if="form.errors.notes" class="mt-1 text-sm text-red-600">
+                        {{ form.errors.notes }}
+                    </p>
                 </div>
 
                 <!-- Calculation Breakdown -->

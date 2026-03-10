@@ -1,5 +1,6 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
+import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import InputError from '@/Components/InputError.vue';
 import InputLabel from '@/Components/InputLabel.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
@@ -136,6 +137,8 @@ const copyRecoveryCodes = () => {
 
                 <!-- Confirmation Form -->
                 <form @submit.prevent="submitConfirm">
+                    <FormErrorBanner :errors="confirmForm.errors" />
+
                     <InputLabel for="code" value="Codigo de verificacion" />
                     <TextInput
                         id="code"
@@ -226,6 +229,8 @@ const copyRecoveryCodes = () => {
                     <div v-if="!requiresTwoFactor" class="border-t pt-4 mt-4">
                         <h4 class="text-sm font-medium text-red-600 mb-3">Desactivar autenticacion de dos pasos</h4>
                         <form @submit.prevent="submitDisable">
+                            <FormErrorBanner :errors="disableForm.errors" />
+
                             <InputLabel for="password" value="Confirma tu contrasena" />
                             <TextInput
                                 id="password"

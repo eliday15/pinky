@@ -1,5 +1,6 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
+import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import InputError from '@/Components/InputError.vue';
 import InputLabel from '@/Components/InputLabel.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
@@ -52,6 +53,8 @@ const submit = () => {
         <div class="max-w-2xl">
             <div class="bg-white rounded-lg shadow p-6">
                 <form @submit.prevent="submit" class="space-y-6">
+                    <FormErrorBanner :errors="form.errors" />
+
                     <!-- Name -->
                     <div>
                         <InputLabel for="name" value="Nombre" />

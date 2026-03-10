@@ -1,5 +1,6 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
+import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
 import { computed } from 'vue';
 
@@ -65,6 +66,8 @@ const submit = () => {
             </div>
 
             <form @submit.prevent="submit" class="bg-white rounded-lg shadow p-6 space-y-6">
+                <FormErrorBanner :errors="form.errors" />
+
                 <!-- Period Type -->
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">
@@ -73,6 +76,7 @@ const submit = () => {
                     <select
                         v-model="form.type"
                         class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                        :class="{ 'border-red-500': form.errors.type }"
                     >
                         <option value="weekly">Semanal (7 dias)</option>
                         <option value="biweekly">Quincenal (14 dias)</option>

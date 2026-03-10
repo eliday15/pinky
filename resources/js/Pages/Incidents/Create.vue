@@ -1,5 +1,6 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
+import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
 import { ref, computed, watch } from 'vue';
 
@@ -138,6 +139,8 @@ const submit = () => {
             </div>
 
             <form @submit.prevent="submit" class="bg-white rounded-lg shadow p-6 space-y-6">
+                <FormErrorBanner :errors="form.errors" />
+
                 <!-- Employee Selection -->
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">
