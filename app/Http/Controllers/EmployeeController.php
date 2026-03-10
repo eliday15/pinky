@@ -146,11 +146,11 @@ class EmployeeController extends Controller
             'compensation_type_ids' => ['nullable', 'array'],
             'compensation_type_ids.*' => ['exists:compensation_types,id'],
             'compensation_type_overrides' => ['nullable', 'array'],
-            'emergency_contacts' => ['required', 'array', 'min:1'],
-            'emergency_contacts.*.name' => ['required', 'string', 'max:100'],
-            'emergency_contacts.*.phone' => ['required', 'string', 'max:20'],
+            'emergency_contacts' => ['nullable', 'array'],
+            'emergency_contacts.*.name' => ['required_with:emergency_contacts', 'nullable', 'string', 'max:100'],
+            'emergency_contacts.*.phone' => ['required_with:emergency_contacts', 'nullable', 'string', 'max:20'],
             'emergency_contacts.*.email' => ['nullable', 'email', 'max:255'],
-            'emergency_contacts.*.relationship' => ['required', 'string', 'max:50'],
+            'emergency_contacts.*.relationship' => ['required_with:emergency_contacts', 'nullable', 'string', 'max:50'],
             'emergency_contacts.*.address' => ['nullable', 'string', 'max:255'],
         ]);
 
@@ -177,12 +177,14 @@ class EmployeeController extends Controller
             $validated['schedule_id']
         );
 
-        $emergencyContacts = $validated['emergency_contacts'];
+        $emergencyContacts = $validated['emergency_contacts'] ?? [];
         $employeeData = collect($validated)->except(['compensation_type_ids', 'compensation_type_overrides', 'emergency_contacts'])->toArray();
         $employee = Employee::create($employeeData);
 
         // Create emergency contacts
-        $employee->emergencyContacts()->createMany($emergencyContacts);
+        if (! empty($emergencyContacts)) {
+            $employee->emergencyContacts()->createMany($emergencyContacts);
+        }
 
         // Sync compensation types
         if ($request->has('compensation_type_ids') && ! empty($request->compensation_type_ids)) {
@@ -358,11 +360,11 @@ class EmployeeController extends Controller
             'compensation_type_ids' => ['nullable', 'array'],
             'compensation_type_ids.*' => ['exists:compensation_types,id'],
             'compensation_type_overrides' => ['nullable', 'array'],
-            'emergency_contacts' => ['required', 'array', 'min:1'],
-            'emergency_contacts.*.name' => ['required', 'string', 'max:100'],
-            'emergency_contacts.*.phone' => ['required', 'string', 'max:20'],
+            'emergency_contacts' => ['nullable', 'array'],
+            'emergency_contacts.*.name' => ['required_with:emergency_contacts', 'nullable', 'string', 'max:100'],
+            'emergency_contacts.*.phone' => ['required_with:emergency_contacts', 'nullable', 'string', 'max:20'],
             'emergency_contacts.*.email' => ['nullable', 'email', 'max:255'],
-            'emergency_contacts.*.relationship' => ['required', 'string', 'max:50'],
+            'emergency_contacts.*.relationship' => ['required_with:emergency_contacts', 'nullable', 'string', 'max:50'],
             'emergency_contacts.*.address' => ['nullable', 'string', 'max:255'],
         ];
 
@@ -417,13 +419,15 @@ class EmployeeController extends Controller
 
         $positionChanged = $request->position_id != $employee->position_id;
 
-        $emergencyContacts = $validated['emergency_contacts'];
+        $emergencyContacts = $validated['emergency_contacts'] ?? [];
         $employeeData = collect($validated)->except(['compensation_type_ids', 'compensation_type_overrides', 'emergency_contacts'])->toArray();
         $employee->update($employeeData);
 
         // Sync emergency contacts (delete + recreate)
         $employee->emergencyContacts()->delete();
-        $employee->emergencyContacts()->createMany($emergencyContacts);
+        if (! empty($emergencyContacts)) {
+            $employee->emergencyContacts()->createMany($emergencyContacts);
+        }
 
         // Sync compensation types
         if ($request->has('compensation_type_ids')) {

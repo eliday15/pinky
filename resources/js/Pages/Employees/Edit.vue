@@ -471,6 +471,10 @@ const relationshipOptions = [
 ];
 
 const submit = () => {
+    // Filter out empty emergency contacts before submitting
+    const filledContacts = form.emergency_contacts.filter(c => c.name || c.phone || c.relationship);
+    form.emergency_contacts = filledContacts;
+
     form.put(route('employees.update', props.employee.id), {
         forceFormData: true,
     });
@@ -499,6 +503,21 @@ watch(() => form.hire_date, onHireDateChange);
             </div>
 
             <form @submit.prevent="submit" class="space-y-6">
+                <!-- Global Error Banner -->
+                <div v-if="Object.keys(form.errors).length" class="bg-red-50 border border-red-300 rounded-lg p-4">
+                    <div class="flex items-start">
+                        <svg class="w-5 h-5 text-red-600 mt-0.5 mr-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
+                        </svg>
+                        <div>
+                            <h4 class="text-sm font-semibold text-red-800">Se encontraron errores en el formulario:</h4>
+                            <ul class="mt-2 list-disc list-inside text-sm text-red-700 space-y-1">
+                                <li v-for="(error, field) in form.errors" :key="field">{{ error }}</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Personal Information -->
                 <div class="bg-white rounded-lg shadow p-6">
                     <h3 class="text-lg font-semibold text-gray-800 mb-4">Informacion Personal</h3>
@@ -520,27 +539,33 @@ watch(() => form.hire_date, onHireDateChange);
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Nombre *</label>
-                            <input v-model="form.first_name" type="text" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" />
+                            <input v-model="form.first_name" type="text" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.first_name }" />
+                            <p v-if="form.errors.first_name" class="mt-1 text-sm text-red-600">{{ form.errors.first_name }}</p>
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Apellidos *</label>
-                            <input v-model="form.last_name" type="text" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" />
+                            <input v-model="form.last_name" type="text" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.last_name }" />
+                            <p v-if="form.errors.last_name" class="mt-1 text-sm text-red-600">{{ form.errors.last_name }}</p>
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                            <input v-model="form.email" type="email" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" />
+                            <input v-model="form.email" type="email" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.email }" />
+                            <p v-if="form.errors.email" class="mt-1 text-sm text-red-600">{{ form.errors.email }}</p>
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Telefono</label>
-                            <input v-model="form.phone" type="text" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" />
+                            <input v-model="form.phone" type="text" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.phone }" />
+                            <p v-if="form.errors.phone" class="mt-1 text-sm text-red-600">{{ form.errors.phone }}</p>
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Fecha de Ingreso *</label>
-                            <input v-model="form.hire_date" type="date" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" />
+                            <input v-model="form.hire_date" type="date" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.hire_date }" />
+                            <p v-if="form.errors.hire_date" class="mt-1 text-sm text-red-600">{{ form.errors.hire_date }}</p>
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Fecha de Baja</label>
-                            <input v-model="form.termination_date" type="date" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" />
+                            <input v-model="form.termination_date" type="date" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.termination_date }" />
+                            <p v-if="form.errors.termination_date" class="mt-1 text-sm text-red-600">{{ form.errors.termination_date }}</p>
                         </div>
                         <!-- Photo Upload -->
                         <div class="md:col-span-2">
@@ -560,7 +585,7 @@ watch(() => form.hire_date, onHireDateChange);
                 <!-- Emergency Contacts -->
                 <div class="bg-white rounded-lg shadow p-6">
                     <div class="flex items-center justify-between mb-4">
-                        <h3 class="text-lg font-semibold text-gray-800">Contactos de Emergencia *</h3>
+                        <h3 class="text-lg font-semibold text-gray-800">Contactos de Emergencia</h3>
                         <button
                             type="button"
                             @click="addEmergencyContact"
@@ -581,8 +606,7 @@ watch(() => form.hire_date, onHireDateChange);
                             <button
                                 type="button"
                                 @click="removeEmergencyContact(index)"
-                                :disabled="form.emergency_contacts.length <= 1"
-                                class="text-sm text-red-500 hover:text-red-700 disabled:opacity-30 disabled:cursor-not-allowed"
+                                class="text-sm text-red-500 hover:text-red-700"
                             >
                                 Eliminar
                             </button>
@@ -720,11 +744,13 @@ watch(() => form.hire_date, onHireDateChange);
                                 v-model="form.department_id"
                                 @change="onDepartmentChange"
                                 class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                :class="{ 'border-red-500': form.errors.department_id }"
                             >
                                 <option v-for="dept in departments" :key="dept.id" :value="dept.id">
                                     {{ dept.name }}
                                 </option>
                             </select>
+                            <p v-if="form.errors.department_id" class="mt-1 text-sm text-red-600">{{ form.errors.department_id }}</p>
                         </div>
 
                         <div>
@@ -735,11 +761,13 @@ watch(() => form.hire_date, onHireDateChange);
                                 v-model="form.position_id"
                                 @change="onPositionChange"
                                 class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                :class="{ 'border-red-500': form.errors.position_id }"
                             >
                                 <option v-for="pos in positions" :key="pos.id" :value="pos.id">
                                     {{ pos.name }}
                                 </option>
                             </select>
+                            <p v-if="form.errors.position_id" class="mt-1 text-sm text-red-600">{{ form.errors.position_id }}</p>
                             <p v-if="selectedPosition?.position_type" class="mt-1 text-sm text-blue-600">
                                 Tipo: {{ positionTypeLabels[selectedPosition.position_type] || selectedPosition.position_type }}
                             </p>
@@ -753,12 +781,13 @@ watch(() => form.hire_date, onHireDateChange);
                             <select
                                 v-model="form.schedule_id"
                                 class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                                :class="{ 'border-yellow-500 ring-1 ring-yellow-500': scheduleChanged }"
+                                :class="{ 'border-yellow-500 ring-1 ring-yellow-500': scheduleChanged, 'border-red-500': form.errors.schedule_id }"
                             >
                                 <option v-for="sched in schedules" :key="sched.id" :value="sched.id">
                                     {{ sched.name }}
                                 </option>
                             </select>
+                            <p v-if="form.errors.schedule_id" class="mt-1 text-sm text-red-600">{{ form.errors.schedule_id }}</p>
                             <p v-if="scheduleChanged" class="mt-1 text-sm text-yellow-600">
                                 Cambio de horario detectado - se requiere evidencia
                             </p>
@@ -771,11 +800,13 @@ watch(() => form.hire_date, onHireDateChange);
                             <select
                                 v-model="form.status"
                                 class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                :class="{ 'border-red-500': form.errors.status }"
                             >
                                 <option value="active">Activo</option>
                                 <option value="inactive">Inactivo</option>
                                 <option value="terminated">Baja</option>
                             </select>
+                            <p v-if="form.errors.status" class="mt-1 text-sm text-red-600">{{ form.errors.status }}</p>
                         </div>
                     </div>
 
@@ -1020,7 +1051,9 @@ watch(() => form.hire_date, onHireDateChange);
                                 type="number"
                                 step="0.01"
                                 class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                :class="{ 'border-red-500': form.errors.hourly_rate }"
                             />
+                            <p v-if="form.errors.hourly_rate" class="mt-1 text-sm text-red-600">{{ form.errors.hourly_rate }}</p>
                         </div>
                     </div>
 
