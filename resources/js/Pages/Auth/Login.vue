@@ -5,7 +5,8 @@ import InputError from '@/Components/InputError.vue';
 import InputLabel from '@/Components/InputLabel.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
 import TextInput from '@/Components/TextInput.vue';
-import { Head, Link, useForm } from '@inertiajs/vue3';
+import { Head, Link, useForm, usePage } from '@inertiajs/vue3';
+import { computed } from 'vue';
 
 defineProps({
     canResetPassword: {
@@ -15,6 +16,8 @@ defineProps({
         type: String,
     },
 });
+
+const flash = computed(() => usePage().props.flash);
 
 const form = useForm({
     email: '',
@@ -32,6 +35,10 @@ const submit = () => {
 <template>
     <GuestLayout>
         <Head title="Log in" />
+
+        <div v-if="flash?.error" class="mb-4 rounded-md bg-red-50 p-3 text-sm font-medium text-red-600">
+            {{ flash.error }}
+        </div>
 
         <div v-if="status" class="mb-4 text-sm font-medium text-green-600">
             {{ status }}
