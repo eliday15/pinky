@@ -99,6 +99,7 @@ class DepartmentController extends Controller
 
         $department->loadCount(['employees', 'positions']);
         $department->load([
+            'supervisor:id,name',
             'employees' => function ($q) {
                 $q->active()->select(['id', 'full_name', 'employee_number', 'department_id', 'position_id'])
                     ->with('position:id,name')

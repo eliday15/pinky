@@ -217,8 +217,8 @@ const linkToAuthorization = () => {
                             <dd class="mt-1 text-sm text-gray-900">{{ anomaly.attendance_record.overtime_hours ?? '-' }}</dd>
                         </div>
                         <div>
-                            <dt class="text-sm font-medium text-gray-500">Horas Velada</dt>
-                            <dd class="mt-1 text-sm text-gray-900">{{ anomaly.attendance_record.night_shift_hours ?? '-' }}</dd>
+                            <dt class="text-sm font-medium text-gray-500">Turno Nocturno</dt>
+                            <dd class="mt-1 text-sm text-gray-900">{{ anomaly.attendance_record.is_night_shift ? 'Sí' : 'No' }}</dd>
                         </div>
                         <div>
                             <dt class="text-sm font-medium text-gray-500">Minutos Tarde</dt>

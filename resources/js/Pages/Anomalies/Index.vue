@@ -307,7 +307,7 @@ const cancelBulkAction = () => {
                         <option value="">Todas</option>
                         <option value="resolved">Resueltas</option>
                         <option value="dismissed">Descartadas</option>
-                        <option value="linked">Vinculadas</option>
+                        <option value="linked_to_authorization">Vinculadas</option>
                     </select>
                 </div>
 

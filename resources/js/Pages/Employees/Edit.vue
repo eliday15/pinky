@@ -56,7 +56,9 @@ const originalPositionId = props.employee.position_id;
 const initialCompensationTypeIds = (props.employee.compensation_types || []).map(ct => ct.id);
 const initialCompensationTypeOverrides = {};
 (props.employee.compensation_types || []).forEach(ct => {
-    if (ct.pivot?.custom_percentage) {
+    if (ct.pivot?.custom_fixed_amount) {
+        initialCompensationTypeOverrides[ct.id] = ct.pivot.custom_fixed_amount;
+    } else if (ct.pivot?.custom_percentage) {
         initialCompensationTypeOverrides[ct.id] = ct.pivot.custom_percentage;
     }
 });

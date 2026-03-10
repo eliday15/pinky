@@ -30,6 +30,7 @@ const typeLabels = {
     exit_permission: 'Permiso de Salida',
     entry_permission: 'Permiso de Entrada',
     schedule_change: 'Cambio de Horario',
+    holiday_worked: 'Festivo Trabajado',
     special: 'Especial',
 };
 
@@ -159,7 +160,7 @@ const submitReject = () => {
                         <div>
                             <dt class="text-sm font-medium text-gray-500">Solicitado por</dt>
                             <dd class="mt-1 text-sm text-gray-900">
-                                {{ authorization.requested_by_user?.name || '-' }}
+                                {{ authorization.requested_by?.name || '-' }}
                                 <span class="text-gray-500 ml-2">
                                     {{ new Date(authorization.created_at).toLocaleString('es-MX') }}
                                 </span>
@@ -170,7 +171,7 @@ const submitReject = () => {
                                 {{ authorization.status === 'approved' ? 'Aprobado por' : 'Rechazado por' }}
                             </dt>
                             <dd class="mt-1 text-sm text-gray-900">
-                                {{ authorization.approved_by_user?.name || '-' }}
+                                {{ authorization.approved_by?.name || '-' }}
                                 <span v-if="authorization.approved_at" class="text-gray-500 ml-2">
                                     {{ new Date(authorization.approved_at).toLocaleString('es-MX') }}
                                 </span>
