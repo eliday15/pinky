@@ -31,6 +31,9 @@ return Application::configure(basePath: dirname(__DIR__))
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->render(function (TokenMismatchException $e, Request $request) {
+            $request->session()->invalidate();
+            $request->session()->regenerateToken();
+
             return redirect()->back()->with('error', 'Tu sesión expiró. Por favor intenta de nuevo.');
         });
     })->create();
