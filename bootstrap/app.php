@@ -5,6 +5,7 @@ use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
 use Illuminate\Session\TokenMismatchException;
+use Inertia\Inertia;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -31,9 +32,19 @@ return Application::configure(basePath: dirname(__DIR__))
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->render(function (TokenMismatchException $e, Request $request) {
-            $request->session()->invalidate();
+            // Only regenerate the CSRF token — do NOT invalidate the session.
+            // The user is likely still authenticated; only the token is stale.
             $request->session()->regenerateToken();
 
-            return redirect()->back()->with('error', 'Tu sesión expiró. Por favor intenta de nuevo.');
+            if ($request->header('X-Inertia')) {
+                // For Inertia XHR requests: force a full page reload via 409 + X-Inertia-Location.
+                // This guarantees fresh tokens on the reloaded page.
+                return Inertia::location($request->header('referer', url()->current()));
+            }
+
+            // For traditional (non-Inertia) form submissions:
+            return redirect()->back()
+                ->withInput()
+                ->with('warning', 'Tu formulario expiró. Tus datos han sido preservados, por favor intenta de nuevo.');
         });
     })->create();
