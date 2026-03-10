@@ -469,8 +469,7 @@ const relationshipOptions = [
 ];
 
 const submit = () => {
-    form.post(route('employees.update', props.employee.id), {
-        _method: 'PUT',
+    form.put(route('employees.update', props.employee.id), {
         forceFormData: true,
     });
 };
