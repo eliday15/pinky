@@ -553,7 +553,7 @@ const exportUrl = computed(() => {
                     <input
                         v-model="search"
                         type="text"
-                        placeholder="Nombre, numero, email..."
+                        placeholder="Nombre, numero, email, ID ZKTeco, teléfono, IMSS..."
                         class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
                     />
                 </div>
@@ -702,7 +702,10 @@ const exportUrl = computed(() => {
                                             Incompleto
                                         </span>
                                     </div>
-                                    <div class="text-sm text-gray-500">{{ employee.employee_number }}</div>
+                                    <div class="text-sm text-gray-500">
+                                        {{ employee.employee_number }}
+                                        <span v-if="employee.zkteco_user_id" class="ml-2 text-gray-400">ZK: {{ employee.zkteco_user_id }}</span>
+                                    </div>
                                 </div>
                             </div>
                         </td>
