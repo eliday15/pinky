@@ -13,6 +13,7 @@ use App\Http\Controllers\IncidentController;
 use App\Http\Controllers\PayrollController;
 use App\Http\Controllers\PositionController;
 use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\AttendanceReportController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\ReportExportController;
 use App\Http\Controllers\ScheduleController;
@@ -110,6 +111,12 @@ Route::middleware(['auth', 'verified', 'password-changed', 'two-factor-setup'])-
     Route::get('/reports/productivity', [ReportController::class, 'productivity'])->name('reports.productivity');
     Route::get('/reports/payroll-trends', [ReportController::class, 'payrollTrends'])->name('reports.payrollTrends');
 
+    // Discipline Reports
+    Route::get('/reports/faltas', [AttendanceReportController::class, 'faltas'])->name('reports.faltas');
+    Route::get('/reports/asistencia', [AttendanceReportController::class, 'asistencia'])->name('reports.asistencia');
+    Route::get('/reports/retardos', [AttendanceReportController::class, 'retardos'])->name('reports.retardos');
+    Route::get('/reports/salidas-tempranas', [AttendanceReportController::class, 'earlyDepartures'])->name('reports.earlyDepartures');
+
     // FASE 5.4: Report Exports (CSV/Excel)
     Route::get('/reports/export/daily', [ReportExportController::class, 'exportDaily'])->name('reports.export.daily');
     Route::get('/reports/export/weekly', [ReportExportController::class, 'exportWeekly'])->name('reports.export.weekly');
@@ -119,6 +126,12 @@ Route::middleware(['auth', 'verified', 'password-changed', 'two-factor-setup'])-
     Route::get('/reports/export/vacation-balance', [ReportExportController::class, 'exportVacationBalance'])->name('reports.export.vacationBalance');
     Route::get('/reports/export/incidents', [ReportExportController::class, 'exportIncidents'])->name('reports.export.incidents');
     Route::get('/reports/export/overtime', [ReportExportController::class, 'exportOvertime'])->name('reports.export.overtime');
+
+    // Discipline Report Exports
+    Route::get('/reports/export/faltas', [ReportExportController::class, 'exportFaltas'])->name('reports.export.faltas');
+    Route::get('/reports/export/asistencia', [ReportExportController::class, 'exportAsistencia'])->name('reports.export.asistencia');
+    Route::get('/reports/export/retardos', [ReportExportController::class, 'exportRetardos'])->name('reports.export.retardos');
+    Route::get('/reports/export/salidas-tempranas', [ReportExportController::class, 'exportEarlyDepartures'])->name('reports.export.earlyDepartures');
 
     // Profile routes
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');

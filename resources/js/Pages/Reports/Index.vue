@@ -51,6 +51,17 @@ const reports = [
             { name: 'Tendencias', description: 'Historico de pago', route: 'reports.payrollTrends', icon: 'trends' },
         ],
     },
+    {
+        category: 'Disciplina',
+        icon: 'shield',
+        color: 'pink',
+        items: [
+            { name: 'Faltas', description: 'Ausencias y acumuladas', route: 'reports.faltas', icon: 'falta' },
+            { name: 'Asistencia', description: 'Semana completa', route: 'reports.asistencia', icon: 'perfect' },
+            { name: 'Retardos', description: 'Menos de 60 min', route: 'reports.retardos', icon: 'retardo' },
+            { name: 'Salidas Tempranas', description: 'Antes de hora', route: 'reports.earlyDepartures', icon: 'early' },
+        ],
+    },
 ];
 
 const colorClasses = {
@@ -59,6 +70,7 @@ const colorClasses = {
     purple: { bg: 'bg-purple-500', light: 'bg-purple-50', text: 'text-purple-600', hover: 'hover:bg-purple-100', border: 'border-purple-200' },
     indigo: { bg: 'bg-indigo-500', light: 'bg-indigo-50', text: 'text-indigo-600', hover: 'hover:bg-indigo-100', border: 'border-indigo-200' },
     emerald: { bg: 'bg-emerald-500', light: 'bg-emerald-50', text: 'text-emerald-600', hover: 'hover:bg-emerald-100', border: 'border-emerald-200' },
+    pink: { bg: 'bg-pink-500', light: 'bg-pink-50', text: 'text-pink-600', hover: 'hover:bg-pink-100', border: 'border-pink-200' },
 };
 </script>
 
@@ -71,7 +83,7 @@ const colorClasses = {
         </template>
 
         <!-- Quick Stats -->
-        <div class="grid grid-cols-5 gap-3 mb-6">
+        <div class="grid grid-cols-3 md:grid-cols-6 gap-3 mb-6">
             <div v-for="section in reports" :key="section.category"
                  :class="[colorClasses[section.color].light, colorClasses[section.color].border, 'border rounded-lg p-3 text-center']">
                 <p :class="[colorClasses[section.color].text, 'text-2xl font-bold']">{{ section.items.length }}</p>
@@ -81,7 +93,7 @@ const colorClasses = {
 
         <!-- Reports Grid -->
         <div class="bg-white rounded-xl shadow-sm overflow-hidden">
-            <div class="grid grid-cols-1 md:grid-cols-5 divide-x divide-gray-100">
+            <div class="grid grid-cols-1 md:grid-cols-6 divide-x divide-gray-100">
                 <div v-for="section in reports" :key="section.category" class="flex flex-col">
                     <!-- Category Header -->
                     <div :class="[colorClasses[section.color].bg, 'px-4 py-3']">
@@ -101,6 +113,9 @@ const colorClasses = {
                             </svg>
                             <svg v-if="section.icon === 'money'" class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <svg v-if="section.icon === 'shield'" class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                             </svg>
                             <span class="text-white font-semibold text-sm">{{ section.category }}</span>
                         </div>
@@ -163,6 +178,22 @@ const colorClasses = {
                                         <!-- Trends -->
                                         <svg v-if="report.icon === 'trends'" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+                                        </svg>
+                                        <!-- Falta -->
+                                        <svg v-if="report.icon === 'falta'" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                                        </svg>
+                                        <!-- Perfect -->
+                                        <svg v-if="report.icon === 'perfect'" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                        </svg>
+                                        <!-- Retardo -->
+                                        <svg v-if="report.icon === 'retardo'" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                        </svg>
+                                        <!-- Early Departure -->
+                                        <svg v-if="report.icon === 'early'" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
                                         </svg>
                                     </div>
                                     <div>

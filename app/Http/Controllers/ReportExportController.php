@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\AttendanceRecord;
 use App\Models\Employee;
 use App\Models\Incident;
+use App\Models\SystemSetting;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controllers\HasMiddleware;
@@ -278,6 +279,200 @@ class ReportExportController extends Controller implements HasMiddleware
                 $record->employee?->department?->name ?? '-',
                 $record->worked_hours ?? 0,
                 $record->overtime_hours ?? 0,
+            ])->toArray()
+        );
+    }
+
+    /**
+     * Export faltas report to CSV.
+     */
+    public function exportFaltas(Request $request): StreamedResponse
+    {
+        $startDate = $request->get('start_date', Carbon::now()->startOfWeek()->toDateString());
+        $endDate = $request->get('end_date', Carbon::now()->endOfWeek()->toDateString());
+        $activeEmployeeIds = Employee::active()->pluck('id');
+        $lateToAbsenceCount = (int) SystemSetting::get('late_to_absence_count', 6);
+
+        // Direct faltas
+        $absentRecords = AttendanceRecord::with(['employee.department'])
+            ->whereBetween('work_date', [$startDate, $endDate])
+            ->whereIn('employee_id', $activeEmployeeIds)
+            ->where('status', 'absent')
+            ->get();
+
+        // Retardo records
+        $lateRecords = AttendanceRecord::whereBetween('work_date', [$startDate, $endDate])
+            ->whereIn('employee_id', $activeEmployeeIds)
+            ->where('status', 'late')
+            ->get();
+
+        // Calculate retardo faltas per employee (monthly)
+        $retardoFaltas = [];
+        foreach ($lateRecords->groupBy('employee_id') as $employeeId => $empRecords) {
+            $byMonth = $empRecords->groupBy(fn ($r) => Carbon::parse($r->work_date)->format('Y-m'));
+            $total = 0;
+            foreach ($byMonth as $monthRecords) {
+                $total += intdiv($monthRecords->count(), $lateToAbsenceCount);
+            }
+            if ($total > 0) {
+                $retardoFaltas[$employeeId] = $total;
+            }
+        }
+
+        // Combine
+        $allEmployeeIds = $absentRecords->pluck('employee_id')
+            ->merge(array_keys($retardoFaltas))
+            ->unique();
+
+        $data = [];
+        foreach ($allEmployeeIds as $employeeId) {
+            $empAbsent = $absentRecords->where('employee_id', $employeeId);
+            $employee = $empAbsent->first()?->employee ?? Employee::with('department')->find($employeeId);
+            $direct = $empAbsent->count();
+            $retardo = $retardoFaltas[$employeeId] ?? 0;
+
+            $data[] = [
+                $employee?->full_name ?? '-',
+                $employee?->employee_number ?? '-',
+                $employee?->department?->name ?? '-',
+                $direct,
+                $retardo,
+                $direct + $retardo,
+            ];
+        }
+
+        return $this->exportCsv(
+            "reporte_faltas_{$startDate}_{$endDate}.csv",
+            ['Empleado', 'No. Empleado', 'Departamento', 'Faltas Directas', 'Faltas por Retardos', 'Total Faltas'],
+            $data
+        );
+    }
+
+    /**
+     * Export asistencia perfecta report to CSV.
+     */
+    public function exportAsistencia(Request $request): StreamedResponse
+    {
+        $startDate = Carbon::parse($request->get('start_date', Carbon::now()->startOfWeek()->toDateString()));
+        $endDate = Carbon::parse($request->get('end_date', Carbon::now()->endOfWeek()->toDateString()));
+
+        $employees = Employee::with(['schedule', 'department'])->active()->get();
+        $allRecords = AttendanceRecord::whereBetween('work_date', [$startDate, $endDate])
+            ->whereIn('employee_id', $employees->pluck('id'))
+            ->get();
+
+        $data = [];
+        foreach ($employees as $employee) {
+            $effectiveSchedule = $employee->getEffectiveSchedule();
+            if (!$effectiveSchedule) {
+                continue;
+            }
+
+            $workingDays = $effectiveSchedule->working_days ?? [];
+            if (empty($workingDays)) {
+                continue;
+            }
+
+            $expectedDays = 0;
+            $currentDate = $startDate->copy();
+            while ($currentDate->lte($endDate)) {
+                if (in_array($currentDate->englishDayOfWeek, $workingDays)) {
+                    $expectedDays++;
+                }
+                $currentDate->addDay();
+            }
+
+            if ($expectedDays === 0) {
+                continue;
+            }
+
+            $records = $allRecords->where('employee_id', $employee->id);
+            $excusedDays = $records->whereIn('status', ['holiday', 'vacation', 'sick_leave', 'permission'])->count();
+            $adjustedExpected = $expectedDays - $excusedDays;
+
+            if ($adjustedExpected <= 0) {
+                continue;
+            }
+
+            $presentRecords = $records->where('status', 'present');
+            $hasLate = $records->where('late_minutes', '>', 0)->isNotEmpty();
+            $hasEarlyDeparture = $records->where('early_departure_minutes', '>', 0)->isNotEmpty();
+            $hasAbsence = $records->where('status', 'absent')->isNotEmpty();
+
+            if ($presentRecords->count() >= $adjustedExpected && !$hasLate && !$hasEarlyDeparture && !$hasAbsence) {
+                $data[] = [
+                    $employee->full_name,
+                    $employee->employee_number ?? '-',
+                    $employee->department?->name ?? '-',
+                    $presentRecords->count(),
+                    round($records->sum('worked_hours'), 2),
+                ];
+            }
+        }
+
+        return $this->exportCsv(
+            "reporte_asistencia_{$startDate->toDateString()}_{$endDate->toDateString()}.csv",
+            ['Empleado', 'No. Empleado', 'Departamento', 'Dias Trabajados', 'Horas Totales'],
+            $data
+        );
+    }
+
+    /**
+     * Export retardos report to CSV.
+     */
+    public function exportRetardos(Request $request): StreamedResponse
+    {
+        $startDate = $request->get('start_date', Carbon::now()->startOfWeek()->toDateString());
+        $endDate = $request->get('end_date', Carbon::now()->endOfWeek()->toDateString());
+
+        $records = AttendanceRecord::with(['employee.department'])
+            ->whereBetween('work_date', [$startDate, $endDate])
+            ->whereIn('employee_id', Employee::active()->pluck('id'))
+            ->where('status', 'late')
+            ->orderBy('work_date')
+            ->orderBy('employee_id')
+            ->get();
+
+        return $this->exportCsv(
+            "reporte_retardos_{$startDate}_{$endDate}.csv",
+            ['Fecha', 'Empleado', 'No. Empleado', 'Departamento', 'Entrada', 'Minutos Retardo'],
+            $records->map(fn ($record) => [
+                $record->work_date,
+                $record->employee?->full_name ?? '-',
+                $record->employee?->employee_number ?? '-',
+                $record->employee?->department?->name ?? '-',
+                $record->check_in ?? '-',
+                $record->late_minutes ?? 0,
+            ])->toArray()
+        );
+    }
+
+    /**
+     * Export early departures report to CSV.
+     */
+    public function exportEarlyDepartures(Request $request): StreamedResponse
+    {
+        $startDate = $request->get('start_date', Carbon::now()->startOfWeek()->toDateString());
+        $endDate = $request->get('end_date', Carbon::now()->endOfWeek()->toDateString());
+
+        $records = AttendanceRecord::with(['employee.department'])
+            ->whereBetween('work_date', [$startDate, $endDate])
+            ->whereIn('employee_id', Employee::active()->pluck('id'))
+            ->where('early_departure_minutes', '>', 0)
+            ->orderBy('work_date')
+            ->orderBy('employee_id')
+            ->get();
+
+        return $this->exportCsv(
+            "reporte_salidas_tempranas_{$startDate}_{$endDate}.csv",
+            ['Fecha', 'Empleado', 'No. Empleado', 'Departamento', 'Salida', 'Minutos Temprano'],
+            $records->map(fn ($record) => [
+                $record->work_date,
+                $record->employee?->full_name ?? '-',
+                $record->employee?->employee_number ?? '-',
+                $record->employee?->department?->name ?? '-',
+                $record->check_out ?? '-',
+                $record->early_departure_minutes ?? 0,
             ])->toArray()
         );
     }
