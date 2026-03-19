@@ -82,8 +82,14 @@ class PayrollCalculatorService
         $holidays = Holiday::whereBetween('date', [$startDate, $endDate])->get();
         $holidayDates = $holidays->pluck('date')->map(fn($d) => Carbon::parse($d)->toDateString())->toArray();
 
+        // Get approved authorizations for the period (for holiday/weekend gating)
+        $approvedAuthorizations = Authorization::where('employee_id', $employee->id)
+            ->whereBetween('date', [$startDate, $endDate])
+            ->whereIn('status', [Authorization::STATUS_APPROVED, Authorization::STATUS_PAID])
+            ->get();
+
         // Calculate attendance metrics
-        $metrics = $this->calculateAttendanceMetrics($attendance, $employee, $holidayDates);
+        $metrics = $this->calculateAttendanceMetrics($attendance, $employee, $holidayDates, $approvedAuthorizations);
 
         // Calculate incident days
         $incidentMetrics = $this->calculateIncidentMetrics($incidents, $startDate, $endDate);
@@ -183,6 +189,10 @@ class PayrollCalculatorService
                 'holiday_hours' => $metrics['holiday_hours'],
                 'weekend_hours' => $metrics['weekend_hours'],
                 'punctual_days' => $metrics['punctual_days'],
+            ],
+            'unauthorized' => [
+                'holiday_hours' => $metrics['unauthorized_holiday_hours'],
+                'weekend_hours' => $metrics['unauthorized_weekend_hours'],
             ],
             'incidents' => [
                 'vacation_days' => $incidentMetrics['vacation_days'],
@@ -430,13 +440,22 @@ class PayrollCalculatorService
 
     /**
      * Calculate attendance metrics for the period.
+     *
+     * Holiday and weekend hours require an approved authorization to count
+     * as premium hours. Without authorization, those hours are NOT paid.
      */
-    private function calculateAttendanceMetrics(Collection $attendance, Employee $employee, array $holidayDates): array
-    {
+    private function calculateAttendanceMetrics(
+        Collection $attendance,
+        Employee $employee,
+        array $holidayDates,
+        Collection $approvedAuthorizations,
+    ): array {
         $regularHours = 0;
         $overtimeHours = 0;
         $holidayHours = 0;
         $weekendHours = 0;
+        $unauthorizedHolidayHours = 0;
+        $unauthorizedWeekendHours = 0;
         $daysWorked = 0;
         $daysAbsent = 0;
         $daysLate = 0;
@@ -468,9 +487,33 @@ class PayrollCalculatorService
                 $overtime = (float) $record->overtime_hours;
 
                 if ($isHoliday) {
-                    $holidayHours += $workedHours + $overtime;
+                    // Holiday premium requires approved holiday_worked/special authorization
+                    $hasHolidayAuth = $approvedAuthorizations
+                        ->where('date', $record->work_date)
+                        ->whereIn('type', [Authorization::TYPE_HOLIDAY_WORKED, Authorization::TYPE_SPECIAL])
+                        ->isNotEmpty();
+
+                    if ($hasHolidayAuth) {
+                        $holidayHours += $workedHours + $overtime;
+                    } else {
+                        $unauthorizedHolidayHours += $workedHours + $overtime;
+                    }
                 } elseif ($isWeekend) {
-                    $weekendHours += $workedHours + $overtime;
+                    // Weekend premium requires approved overtime/special/holiday_worked authorization
+                    $hasWeekendAuth = $approvedAuthorizations
+                        ->where('date', $record->work_date)
+                        ->whereIn('type', [
+                            Authorization::TYPE_OVERTIME,
+                            Authorization::TYPE_SPECIAL,
+                            Authorization::TYPE_HOLIDAY_WORKED,
+                        ])
+                        ->isNotEmpty();
+
+                    if ($hasWeekendAuth) {
+                        $weekendHours += $workedHours + $overtime;
+                    } else {
+                        $unauthorizedWeekendHours += $workedHours + $overtime;
+                    }
                 } else {
                     $regularHours += $workedHours;
                     $overtimeHours += $overtime;
@@ -483,6 +526,8 @@ class PayrollCalculatorService
             'overtime_hours' => round($overtimeHours, 2),
             'holiday_hours' => round($holidayHours, 2),
             'weekend_hours' => round($weekendHours, 2),
+            'unauthorized_holiday_hours' => round($unauthorizedHolidayHours, 2),
+            'unauthorized_weekend_hours' => round($unauthorizedWeekendHours, 2),
             'days_worked' => $daysWorked,
             'days_absent' => $daysAbsent,
             'days_late' => $daysLate,
