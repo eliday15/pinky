@@ -156,24 +156,27 @@ class EmployeeController extends Controller
             'emergency_contacts.*.address' => ['nullable', 'string', 'max:255'],
         ]);
 
-        // Check ZKTeco ID conflict
-        $existingEmployee = Employee::where('zkteco_user_id', $validated['zkteco_user_id'])->first();
+        // Check ZKTeco ID conflict (include soft-deleted to avoid DB unique constraint violations)
+        $existingEmployee = Employee::withTrashed()->where('zkteco_user_id', $validated['zkteco_user_id'])->first();
         if ($existingEmployee) {
-            if ($existingEmployee->status === 'active') {
+            // Soft-deleted employees: silently clear the ZKTeco ID
+            if ($existingEmployee->trashed()) {
+                $existingEmployee->update(['zkteco_user_id' => null]);
+            } elseif ($existingEmployee->status === 'active') {
                 throw ValidationException::withMessages([
                     'zkteco_user_id' => "El ID ZKTeco {$validated['zkteco_user_id']} ya está asignado al empleado activo: {$existingEmployee->full_name} ({$existingEmployee->employee_number}).",
                 ]);
-            }
+            } else {
+                // Inactive/terminated employee — require confirmation
+                if (! ($validated['confirm_zkteco_reassign'] ?? false)) {
+                    throw ValidationException::withMessages([
+                        'zkteco_user_id' => "zkteco_conflict_inactive:{$existingEmployee->full_name}:{$existingEmployee->employee_number}:{$existingEmployee->status}",
+                    ]);
+                }
 
-            // Inactive/terminated employee — require confirmation
-            if (! ($validated['confirm_zkteco_reassign'] ?? false)) {
-                throw ValidationException::withMessages([
-                    'zkteco_user_id' => "zkteco_conflict_inactive:{$existingEmployee->full_name}:{$existingEmployee->employee_number}:{$existingEmployee->status}",
-                ]);
+                // Confirmed — remove ZKTeco ID from the inactive employee
+                $existingEmployee->update(['zkteco_user_id' => null]);
             }
-
-            // Confirmed — remove ZKTeco ID from the inactive employee
-            $existingEmployee->update(['zkteco_user_id' => null]);
         }
         unset($validated['confirm_zkteco_reassign']);
 
@@ -416,24 +419,28 @@ class EmployeeController extends Controller
             ]);
         }
 
-        // Check ZKTeco ID conflict (exclude current employee)
-        $existingEmployee = Employee::where('zkteco_user_id', $validated['zkteco_user_id'])
+        // Check ZKTeco ID conflict (exclude current employee, include soft-deleted)
+        $existingEmployee = Employee::withTrashed()
+            ->where('zkteco_user_id', $validated['zkteco_user_id'])
             ->where('id', '!=', $employee->id)
             ->first();
         if ($existingEmployee) {
-            if ($existingEmployee->status === 'active') {
+            // Soft-deleted employees: silently clear the ZKTeco ID
+            if ($existingEmployee->trashed()) {
+                $existingEmployee->update(['zkteco_user_id' => null]);
+            } elseif ($existingEmployee->status === 'active') {
                 throw ValidationException::withMessages([
                     'zkteco_user_id' => "El ID ZKTeco {$validated['zkteco_user_id']} ya está asignado al empleado activo: {$existingEmployee->full_name} ({$existingEmployee->employee_number}).",
                 ]);
-            }
+            } else {
+                if (! ($validated['confirm_zkteco_reassign'] ?? false)) {
+                    throw ValidationException::withMessages([
+                        'zkteco_user_id' => "zkteco_conflict_inactive:{$existingEmployee->full_name}:{$existingEmployee->employee_number}:{$existingEmployee->status}",
+                    ]);
+                }
 
-            if (! ($validated['confirm_zkteco_reassign'] ?? false)) {
-                throw ValidationException::withMessages([
-                    'zkteco_user_id' => "zkteco_conflict_inactive:{$existingEmployee->full_name}:{$existingEmployee->employee_number}:{$existingEmployee->status}",
-                ]);
+                $existingEmployee->update(['zkteco_user_id' => null]);
             }
-
-            $existingEmployee->update(['zkteco_user_id' => null]);
         }
         unset($validated['confirm_zkteco_reassign']);
 
