@@ -60,6 +60,7 @@ class Authorization extends Model
         'requested_by',
         'approved_by',
         'type',
+        'compensation_type_id',
         'date',
         'start_time',
         'end_time',
@@ -118,6 +119,14 @@ class Authorization extends Model
     public function departmentHead(): BelongsTo
     {
         return $this->belongsTo(Employee::class, 'department_head_id');
+    }
+
+    /**
+     * Get the compensation type linked to this authorization.
+     */
+    public function compensationType(): BelongsTo
+    {
+        return $this->belongsTo(CompensationType::class);
     }
 
     /**

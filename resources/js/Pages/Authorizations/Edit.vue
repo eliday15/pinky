@@ -2,6 +2,7 @@
 import AppLayout from '@/Layouts/AppLayout.vue';
 import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
+import { computed } from 'vue';
 
 const props = defineProps({
     authorization: Object,
@@ -26,6 +27,7 @@ const formatDate = (date) => {
 const form = useForm({
     employee_id: props.authorization.employee_id,
     type: props.authorization.type,
+    compensation_type_id: props.authorization.compensation_type_id || null,
     date: formatDate(props.authorization.date),
     start_time: formatTime(props.authorization.start_time),
     end_time: formatTime(props.authorization.end_time),
@@ -37,12 +39,39 @@ const submit = () => {
     form.put(route('authorizations.update', props.authorization.id));
 };
 
+/** Group types for optgroup display. */
+const compensationTypes = computed(() => props.types.filter(t => t.group === 'compensation'));
+const administrativeTypes = computed(() => props.types.filter(t => t.group === 'administrative'));
+
+const optionValue = (type) => {
+    return type.compensation_type_id ? `comp_${type.compensation_type_id}` : type.value;
+};
+
+const selectedOptionValue = computed(() => {
+    if (form.compensation_type_id) return `comp_${form.compensation_type_id}`;
+    return form.type;
+});
+
+const onTypeChange = (event) => {
+    const raw = event.target.value;
+    if (raw.startsWith('comp_')) {
+        const compId = parseInt(raw.replace('comp_', ''), 10);
+        const matched = props.types.find(t => t.compensation_type_id === compId);
+        form.type = matched?.value || '';
+        form.compensation_type_id = compId;
+    } else {
+        form.type = raw;
+        form.compensation_type_id = null;
+    }
+};
+
 const typeDescriptions = {
     overtime: 'Horas adicionales trabajadas fuera del horario normal',
     night_shift: 'Turno nocturno o velada completa',
     exit_permission: 'Permiso para salir antes del horario establecido',
     entry_permission: 'Permiso para entrar despues del horario establecido',
     schedule_change: 'Cambio temporal en el horario de trabajo',
+    holiday_worked: 'Trabajo realizado en dia festivo oficial',
     special: 'Autorizacion especial que no encaja en otras categorias',
 };
 
@@ -113,15 +142,23 @@ const isPending = props.authorization.status === 'pending';
                                 Tipo de Autorizacion *
                             </label>
                             <select
-                                v-model="form.type"
+                                :value="selectedOptionValue"
+                                @change="onTypeChange"
                                 :disabled="!isPending"
                                 class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 disabled:bg-gray-100"
                                 :class="{ 'border-red-500': form.errors.type }"
                             >
                                 <option value="">Seleccionar...</option>
-                                <option v-for="type in types" :key="type.value" :value="type.value">
-                                    {{ type.label }}
-                                </option>
+                                <optgroup v-if="compensationTypes.length" label="Compensacion">
+                                    <option v-for="type in compensationTypes" :key="type.compensation_type_id" :value="optionValue(type)">
+                                        {{ type.label }}
+                                    </option>
+                                </optgroup>
+                                <optgroup v-if="administrativeTypes.length" label="Administrativos">
+                                    <option v-for="type in administrativeTypes" :key="type.value" :value="optionValue(type)">
+                                        {{ type.label }}
+                                    </option>
+                                </optgroup>
                             </select>
                             <p v-if="form.type && typeDescriptions[form.type]" class="mt-1 text-sm text-gray-500">
                                 {{ typeDescriptions[form.type] }}

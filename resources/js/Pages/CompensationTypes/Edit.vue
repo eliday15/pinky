@@ -47,6 +47,9 @@ const form = useForm({
     percentage_value: props.compensationType.percentage_value || '',
     fixed_amount: props.compensationType.fixed_amount || '',
     is_active: props.compensationType.is_active,
+    application_mode: props.compensationType.application_mode || 'per_hour',
+    authorization_type: props.compensationType.authorization_type || '',
+    priority: props.compensationType.priority ?? 0,
     position_ids: initialPositionIds,
     position_percentages: initialPositionPercentages,
     position_fixed_amounts: initialPositionFixedAmounts,
@@ -54,6 +57,20 @@ const form = useForm({
     department_percentages: initialDepartmentPercentages,
     department_fixed_amounts: initialDepartmentFixedAmounts,
 });
+
+const applicationModeOptions = [
+    { value: 'per_hour', label: 'Por Hora' },
+    { value: 'per_day', label: 'Por Dia' },
+    { value: 'one_time', label: 'Monto Unico' },
+];
+
+const authorizationTypeOptions = [
+    { value: '', label: 'Ninguno' },
+    { value: 'overtime', label: 'Horas Extra' },
+    { value: 'night_shift', label: 'Velada' },
+    { value: 'holiday_worked', label: 'Dia Festivo' },
+    { value: 'special', label: 'Especial' },
+];
 
 const togglePosition = (posId) => {
     const idx = form.position_ids.indexOf(posId);
@@ -215,6 +232,73 @@ const submit = () => {
                                 />
                                 <span class="text-sm font-medium text-gray-700">Concepto activo</span>
                             </label>
+                        </div>
+
+                        <!-- Application Mode -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">
+                                Modo de Aplicacion *
+                            </label>
+                            <div class="flex flex-wrap gap-3">
+                                <label
+                                    v-for="opt in applicationModeOptions"
+                                    :key="opt.value"
+                                    class="flex items-center"
+                                >
+                                    <input
+                                        v-model="form.application_mode"
+                                        type="radio"
+                                        :value="opt.value"
+                                        class="text-pink-600 focus:ring-pink-500"
+                                    />
+                                    <span class="ml-2 text-sm text-gray-700">{{ opt.label }}</span>
+                                </label>
+                            </div>
+                            <p v-if="form.errors.application_mode" class="mt-1 text-sm text-red-600">
+                                {{ form.errors.application_mode }}
+                            </p>
+                        </div>
+
+                        <!-- Authorization Type -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                Tipo de Autorizacion
+                            </label>
+                            <select
+                                v-model="form.authorization_type"
+                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                :class="{ 'border-red-500': form.errors.authorization_type }"
+                            >
+                                <option v-for="opt in authorizationTypeOptions" :key="opt.value" :value="opt.value">
+                                    {{ opt.label }}
+                                </option>
+                            </select>
+                            <p class="mt-1 text-sm text-gray-500">
+                                Vincula este concepto a un tipo de autorizacion
+                            </p>
+                            <p v-if="form.errors.authorization_type" class="mt-1 text-sm text-red-600">
+                                {{ form.errors.authorization_type }}
+                            </p>
+                        </div>
+
+                        <!-- Priority -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                Prioridad
+                            </label>
+                            <input
+                                v-model="form.priority"
+                                type="number"
+                                min="0"
+                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                :class="{ 'border-red-500': form.errors.priority }"
+                            />
+                            <p class="mt-1 text-sm text-gray-500">
+                                Menor = mayor prioridad (ej: HE=10, HED=20, HET=30)
+                            </p>
+                            <p v-if="form.errors.priority" class="mt-1 text-sm text-red-600">
+                                {{ form.errors.priority }}
+                            </p>
                         </div>
 
                         <div class="md:col-span-2">

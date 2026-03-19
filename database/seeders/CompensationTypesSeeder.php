@@ -8,9 +8,8 @@ use Illuminate\Database\Seeder;
 /**
  * Seeds default compensation type concepts for the HR system.
  *
- * Uses percentage-based calculation:
- * - percentage_value represents % of the employee's daily salary
- *   e.g., 50 = 50% of daily salary (equivalent to old multiplier 1.5)
+ * Uses percentage-based calculation with application_mode and authorization_type
+ * to integrate with the authorization and payroll systems.
  */
 class CompensationTypesSeeder extends Seeder
 {
@@ -26,6 +25,9 @@ class CompensationTypesSeeder extends Seeder
                 'description' => 'Hora extra trabajada (50% adicional)',
                 'calculation_type' => 'percentage',
                 'percentage_value' => 50.00,
+                'application_mode' => 'per_hour',
+                'authorization_type' => 'overtime',
+                'priority' => 10,
             ],
             [
                 'name' => 'Hora Extra Doble',
@@ -33,6 +35,9 @@ class CompensationTypesSeeder extends Seeder
                 'description' => 'Hora extra doble (100% adicional)',
                 'calculation_type' => 'percentage',
                 'percentage_value' => 100.00,
+                'application_mode' => 'per_hour',
+                'authorization_type' => 'overtime',
+                'priority' => 20,
             ],
             [
                 'name' => 'Hora Extra Triple',
@@ -40,6 +45,9 @@ class CompensationTypesSeeder extends Seeder
                 'description' => 'Hora extra triple (200% adicional)',
                 'calculation_type' => 'percentage',
                 'percentage_value' => 200.00,
+                'application_mode' => 'per_hour',
+                'authorization_type' => 'overtime',
+                'priority' => 30,
             ],
             [
                 'name' => 'Velada',
@@ -47,6 +55,9 @@ class CompensationTypesSeeder extends Seeder
                 'description' => 'Trabajo nocturno despues de medianoche (100% adicional)',
                 'calculation_type' => 'percentage',
                 'percentage_value' => 100.00,
+                'application_mode' => 'per_hour',
+                'authorization_type' => 'night_shift',
+                'priority' => 10,
             ],
             [
                 'name' => 'Dominical',
@@ -54,6 +65,9 @@ class CompensationTypesSeeder extends Seeder
                 'description' => 'Trabajo en domingo con prima dominical (25% adicional)',
                 'calculation_type' => 'percentage',
                 'percentage_value' => 25.00,
+                'application_mode' => 'per_day',
+                'authorization_type' => 'special',
+                'priority' => 10,
             ],
             [
                 'name' => 'Dia Festivo',
@@ -61,11 +75,14 @@ class CompensationTypesSeeder extends Seeder
                 'description' => 'Trabajo en dia festivo oficial (100% adicional)',
                 'calculation_type' => 'percentage',
                 'percentage_value' => 100.00,
+                'application_mode' => 'per_day',
+                'authorization_type' => 'holiday_worked',
+                'priority' => 10,
             ],
         ];
 
         foreach ($types as $type) {
-            CompensationType::firstOrCreate(
+            CompensationType::updateOrCreate(
                 ['code' => $type['code']],
                 $type
             );

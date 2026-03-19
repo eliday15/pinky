@@ -14,6 +14,7 @@ const props = defineProps({
 const form = useForm({
     employee_ids: [],
     type: '',
+    compensation_type_id: null,
     date: new Date().toISOString().split('T')[0],
     start_time: '',
     end_time: '',
@@ -71,6 +72,33 @@ const selectDepartment = () => {
     if (!departmentFilter.value) return;
     form.employee_ids = filteredEmployees.value.map(e => e.id);
     selectAll.value = true;
+};
+
+/** Group types for optgroup display. */
+const compensationTypes = computed(() => props.types.filter(t => t.group === 'compensation'));
+const administrativeTypes = computed(() => props.types.filter(t => t.group === 'administrative'));
+
+const optionValue = (type) => {
+    return type.compensation_type_id ? `comp_${type.compensation_type_id}` : type.value;
+};
+
+const selectedOptionValue = computed(() => {
+    if (form.compensation_type_id) return `comp_${form.compensation_type_id}`;
+    return form.type;
+});
+
+/** When user selects a type, parse and set both type and compensation_type_id. */
+const onTypeChange = (event) => {
+    const raw = event.target.value;
+    if (raw.startsWith('comp_')) {
+        const compId = parseInt(raw.replace('comp_', ''), 10);
+        const matched = props.types.find(t => t.compensation_type_id === compId);
+        form.type = matched?.value || '';
+        form.compensation_type_id = compId;
+    } else {
+        form.type = raw;
+        form.compensation_type_id = null;
+    }
 };
 
 /** Pre-set night shift defaults when type changes. */
@@ -222,14 +250,22 @@ const getDepartmentName = (deptId) => {
                     <h3 class="text-lg font-semibold text-gray-800 mb-4">Tipo de Autorizacion</h3>
                     <div>
                         <select
-                            v-model="form.type"
+                            :value="selectedOptionValue"
+                            @change="onTypeChange"
                             class="w-full md:w-1/2 rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
                             :class="{ 'border-red-500': form.errors.type }"
                         >
                             <option value="">Seleccionar tipo...</option>
-                            <option v-for="type in types" :key="type.value" :value="type.value">
-                                {{ type.label }}
-                            </option>
+                            <optgroup v-if="compensationTypes.length" label="Compensacion">
+                                <option v-for="type in compensationTypes" :key="type.compensation_type_id" :value="optionValue(type)">
+                                    {{ type.label }}
+                                </option>
+                            </optgroup>
+                            <optgroup v-if="administrativeTypes.length" label="Administrativos">
+                                <option v-for="type in administrativeTypes" :key="type.value" :value="optionValue(type)">
+                                    {{ type.label }}
+                                </option>
+                            </optgroup>
                         </select>
                         <p v-if="form.type && typeDescriptions[form.type]" class="mt-2 text-sm text-gray-500">
                             {{ typeDescriptions[form.type] }}
@@ -368,7 +404,7 @@ const getDepartmentName = (deptId) => {
                 <div v-if="form.employee_ids.length > 0" class="bg-blue-50 border border-blue-200 rounded-lg p-4">
                     <p class="text-sm text-blue-800">
                         Se crearan <strong>{{ form.employee_ids.length }}</strong> autorizaciones
-                        <span v-if="form.type"> de tipo <strong>{{ types.find(t => t.value === form.type)?.label }}</strong></span>
+                        <span v-if="form.type"> de tipo <strong>{{ form.compensation_type_id ? types.find(t => t.compensation_type_id === form.compensation_type_id)?.label : types.find(t => t.value === form.type && !t.compensation_type_id)?.label }}</strong></span>
                         <span v-if="form.date"> para el <strong>{{ form.date }}</strong></span>
                         <span v-if="form.department_head_id"> firmadas por <strong>{{ filteredDepartmentHeads.find(h => h.id == form.department_head_id)?.full_name }}</strong></span>
                     </p>

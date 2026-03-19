@@ -36,6 +36,18 @@ const formatValue = (ct) => {
     }
     return `${Number(ct.percentage_value).toFixed(2)}%`;
 };
+
+const applicationModeLabels = {
+    per_hour: 'Por Hora',
+    per_day: 'Por Dia',
+    one_time: 'Unico',
+};
+
+const applicationModeColors = {
+    per_hour: 'bg-blue-100 text-blue-800',
+    per_day: 'bg-green-100 text-green-800',
+    one_time: 'bg-purple-100 text-purple-800',
+};
 </script>
 
 <template>
@@ -117,6 +129,9 @@ const formatValue = (ct) => {
                             Valor
                         </th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Modo
+                        </th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                             Empleados
                         </th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -154,6 +169,15 @@ const formatValue = (ct) => {
                                 {{ formatValue(ct) }}
                             </span>
                         </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm">
+                            <span
+                                v-if="ct.application_mode"
+                                :class="applicationModeColors[ct.application_mode] || 'bg-gray-100 text-gray-800'"
+                                class="px-2 py-1 text-xs font-medium rounded-full"
+                            >
+                                {{ applicationModeLabels[ct.application_mode] || ct.application_mode }}
+                            </span>
+                        </td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                             {{ ct.employees_count }}
                         </td>
@@ -179,7 +203,7 @@ const formatValue = (ct) => {
                         </td>
                     </tr>
                     <tr v-if="compensationTypes.data.length === 0">
-                        <td colspan="8" class="px-6 py-12 text-center text-gray-500">
+                        <td colspan="9" class="px-6 py-12 text-center text-gray-500">
                             No se encontraron conceptos de compensacion
                         </td>
                     </tr>

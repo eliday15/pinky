@@ -6,6 +6,7 @@ use App\Http\Traits\VerifiesTwoFactor;
 use App\Models\AttendanceAnomaly;
 use App\Models\AttendanceRecord;
 use App\Models\Authorization;
+use App\Models\CompensationType;
 use App\Models\Employee;
 use App\Services\ZktecoSyncService;
 use Carbon\Carbon;
@@ -178,6 +179,7 @@ class AuthorizationController extends Controller
                 Authorization::TYPE_HOLIDAY_WORKED,
                 Authorization::TYPE_SPECIAL,
             ])],
+            'compensation_type_id' => ['nullable', 'exists:compensation_types,id'],
             'date' => ['required', 'date'],
             'start_time' => ['nullable', 'date_format:H:i'],
             'end_time' => ['nullable', 'date_format:H:i'],
@@ -265,6 +267,7 @@ class AuthorizationController extends Controller
                 Authorization::TYPE_HOLIDAY_WORKED,
                 Authorization::TYPE_SPECIAL,
             ])],
+            'compensation_type_id' => ['nullable', 'exists:compensation_types,id'],
             'date' => ['required', 'date'],
             'start_time' => ['nullable', 'date_format:H:i'],
             'end_time' => ['nullable', 'date_format:H:i'],
@@ -292,6 +295,7 @@ class AuthorizationController extends Controller
                 'employee_id' => $employeeId,
                 'requested_by' => Auth::id(),
                 'type' => $validated['type'],
+                'compensation_type_id' => $validated['compensation_type_id'] ?? null,
                 'date' => $validated['date'],
                 'start_time' => $validated['start_time'] ?? null,
                 'end_time' => $validated['end_time'] ?? null,
@@ -368,6 +372,7 @@ class AuthorizationController extends Controller
                 Authorization::TYPE_HOLIDAY_WORKED,
                 Authorization::TYPE_SPECIAL,
             ])],
+            'compensation_type_id' => ['nullable', 'exists:compensation_types,id'],
             'date' => ['required', 'date'],
             'start_time' => ['nullable', 'date_format:H:i'],
             'end_time' => ['nullable', 'date_format:H:i'],
@@ -511,24 +516,33 @@ class AuthorizationController extends Controller
     /**
      * Get authorization types for dropdown.
      *
-     * All types require evidence according to the specification (2.4):
-     * - Horas extra: Sí
-     * - Veladas: Sí
-     * - Permisos de salida: Sí
-     * - Permisos de entrada: Sí
-     * - Cambio de horario: Sí
-     * - Permisos especiales: Sí
+     * Compensation-linked types are loaded from the CompensationType catalog.
+     * Administrative types (permissions, schedule changes) are added statically.
      */
     private function getAuthorizationTypes(): array
     {
-        return [
-            ['value' => Authorization::TYPE_OVERTIME, 'label' => 'Horas Extra', 'requires_evidence' => true],
-            ['value' => Authorization::TYPE_NIGHT_SHIFT, 'label' => 'Velada', 'requires_evidence' => true],
-            ['value' => Authorization::TYPE_EXIT_PERMISSION, 'label' => 'Permiso de Salida', 'requires_evidence' => true],
-            ['value' => Authorization::TYPE_ENTRY_PERMISSION, 'label' => 'Permiso de Entrada', 'requires_evidence' => true],
-            ['value' => Authorization::TYPE_SCHEDULE_CHANGE, 'label' => 'Cambio de Horario', 'requires_evidence' => true],
-            ['value' => Authorization::TYPE_HOLIDAY_WORKED, 'label' => 'Día Festivo Trabajado', 'requires_evidence' => true],
-            ['value' => Authorization::TYPE_SPECIAL, 'label' => 'Especial', 'requires_evidence' => true],
+        // Compensation-linked types from catalog
+        $compTypes = CompensationType::active()
+            ->whereNotNull('authorization_type')
+            ->orderBy('priority')
+            ->get(['id', 'name', 'code', 'authorization_type', 'application_mode']);
+
+        $types = $compTypes->map(fn(CompensationType $ct) => [
+            'value' => $ct->authorization_type,
+            'label' => $ct->name,
+            'compensation_type_id' => $ct->id,
+            'application_mode' => $ct->application_mode,
+            'requires_evidence' => true,
+            'group' => 'compensation',
+        ])->toArray();
+
+        // Administrative types (no compensation type linked)
+        $adminTypes = [
+            ['value' => Authorization::TYPE_EXIT_PERMISSION, 'label' => 'Permiso de Salida', 'compensation_type_id' => null, 'application_mode' => null, 'requires_evidence' => true, 'group' => 'administrative'],
+            ['value' => Authorization::TYPE_ENTRY_PERMISSION, 'label' => 'Permiso de Entrada', 'compensation_type_id' => null, 'application_mode' => null, 'requires_evidence' => true, 'group' => 'administrative'],
+            ['value' => Authorization::TYPE_SCHEDULE_CHANGE, 'label' => 'Cambio de Horario', 'compensation_type_id' => null, 'application_mode' => null, 'requires_evidence' => true, 'group' => 'administrative'],
         ];
+
+        return array_merge($types, $adminTypes);
     }
 }

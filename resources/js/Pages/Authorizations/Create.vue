@@ -2,7 +2,7 @@
 import AppLayout from '@/Layouts/AppLayout.vue';
 import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 
 const props = defineProps({
     employees: Array,
@@ -13,6 +13,7 @@ const props = defineProps({
 const form = useForm({
     employee_id: props.selectedEmployee || '',
     type: '',
+    compensation_type_id: null,
     date: new Date().toISOString().split('T')[0],
     start_time: '',
     end_time: '',
@@ -44,12 +45,45 @@ const submit = () => {
     form.post(route('authorizations.store'));
 };
 
+/** Group types for optgroup display. */
+const compensationTypes = computed(() => props.types.filter(t => t.group === 'compensation'));
+const administrativeTypes = computed(() => props.types.filter(t => t.group === 'administrative'));
+
+/**
+ * Build a unique option value for each type entry.
+ * Compensation types use 'comp_{id}', admin types use their raw value.
+ */
+const optionValue = (type) => {
+    return type.compensation_type_id ? `comp_${type.compensation_type_id}` : type.value;
+};
+
+/** Currently selected option value (derived from form state). */
+const selectedOptionValue = computed(() => {
+    if (form.compensation_type_id) return `comp_${form.compensation_type_id}`;
+    return form.type;
+});
+
+/** When user selects a type, parse and set both type and compensation_type_id. */
+const onTypeChange = (event) => {
+    const raw = event.target.value;
+    if (raw.startsWith('comp_')) {
+        const compId = parseInt(raw.replace('comp_', ''), 10);
+        const matched = props.types.find(t => t.compensation_type_id === compId);
+        form.type = matched?.value || '';
+        form.compensation_type_id = compId;
+    } else {
+        form.type = raw;
+        form.compensation_type_id = null;
+    }
+};
+
 const typeDescriptions = {
     overtime: 'Horas adicionales trabajadas fuera del horario normal',
     night_shift: 'Turno nocturno o velada completa',
     exit_permission: 'Permiso para salir antes del horario establecido',
     entry_permission: 'Permiso para entrar despues del horario establecido',
     schedule_change: 'Cambio temporal en el horario de trabajo',
+    holiday_worked: 'Trabajo realizado en dia festivo oficial',
     special: 'Autorizacion especial que no encaja en otras categorias',
 };
 </script>
@@ -103,14 +137,22 @@ const typeDescriptions = {
                                 Tipo de Autorizacion *
                             </label>
                             <select
-                                v-model="form.type"
+                                :value="selectedOptionValue"
+                                @change="onTypeChange"
                                 class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
                                 :class="{ 'border-red-500': form.errors.type }"
                             >
                                 <option value="">Seleccionar...</option>
-                                <option v-for="type in types" :key="type.value" :value="type.value">
-                                    {{ type.label }}
-                                </option>
+                                <optgroup v-if="compensationTypes.length" label="Compensacion">
+                                    <option v-for="type in compensationTypes" :key="type.compensation_type_id" :value="optionValue(type)">
+                                        {{ type.label }}
+                                    </option>
+                                </optgroup>
+                                <optgroup v-if="administrativeTypes.length" label="Administrativos">
+                                    <option v-for="type in administrativeTypes" :key="type.value" :value="optionValue(type)">
+                                        {{ type.label }}
+                                    </option>
+                                </optgroup>
                             </select>
                             <p v-if="form.type && typeDescriptions[form.type]" class="mt-1 text-sm text-gray-500">
                                 {{ typeDescriptions[form.type] }}

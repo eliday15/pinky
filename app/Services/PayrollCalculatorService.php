@@ -14,8 +14,19 @@ use App\Models\SystemSetting;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 
+/**
+ * Service for calculating payroll entries for employees in a period.
+ */
+
 class PayrollCalculatorService
 {
+    private CompensationRateResolverService $resolver;
+
+    public function __construct(CompensationRateResolverService $resolver)
+    {
+        $this->resolver = $resolver;
+    }
+
     /**
      * Calculate payroll for all active employees in a period.
      */
@@ -23,7 +34,10 @@ class PayrollCalculatorService
     {
         $period->update(['status' => 'calculating']);
 
-        $employees = Employee::active()->get();
+        // Eager load compensation types to avoid N+1
+        $employees = Employee::active()
+            ->with(['compensationTypes' => fn($q) => $q->wherePivot('is_active', true)])
+            ->get();
 
         foreach ($employees as $employee) {
             $this->calculateEmployeePayroll($period, $employee);
@@ -37,6 +51,11 @@ class PayrollCalculatorService
      */
     public function calculateEmployeePayroll(PayrollPeriod $period, Employee $employee): PayrollEntry
     {
+        // Ensure compensation types are loaded for rate resolution
+        if (! $employee->relationLoaded('compensationTypes')) {
+            $employee->load(['compensationTypes' => fn($q) => $q->wherePivot('is_active', true)]);
+        }
+
         $startDate = Carbon::parse($period->start_date);
         $endDate = Carbon::parse($period->end_date);
 
@@ -74,6 +93,9 @@ class PayrollCalculatorService
 
         // Get rates
         $hourlyRate = $employee->hourly_rate;
+        $dailySalary = $hourlyRate * 8;
+
+        // Legacy fallback rates (used when employee has no comp types)
         $overtimeMultiplier = $employee->overtime_rate ?? 1.5;
         $holidayMultiplier = $employee->holiday_rate ?? 2.0;
 
@@ -95,11 +117,50 @@ class PayrollCalculatorService
         // Calculate pay - only authorized overtime/velada hours get paid
         $regularPay = $metrics['regular_hours'] * $hourlyRate;
         $authorizedOvertimeHours = $veladaMetrics['overtime_authorized_hours'];
-        $overtimePay = $authorizedOvertimeHours * $hourlyRate * $overtimeMultiplier;
-        $veladaPay = $veladaMetrics['velada_authorized_hours'] * $hourlyRate * $veladaMultiplier;
-        $holidayPay = $metrics['holiday_hours'] * $hourlyRate * $holidayMultiplier;
-        $weekendPay = $metrics['weekend_hours'] * $hourlyRate * $overtimeMultiplier;
         $vacationPay = $incidentMetrics['vacation_days'] * ($hourlyRate * 8);
+
+        // Use CompensationType-driven calculation if employee has comp types assigned
+        $useCompTypes = $this->resolver->hasCompensationTypes($employee);
+        $compensationConcepts = [];
+
+        if ($useCompTypes) {
+            $compensationPayments = $this->resolver->calculateAllCompensation($employee, [
+                'overtime_hours' => $authorizedOvertimeHours,
+                'velada_hours' => $veladaMetrics['velada_authorized_hours'],
+                'holiday_hours' => $metrics['holiday_hours'],
+                'weekend_hours' => $metrics['weekend_hours'],
+            ], $hourlyRate, $dailySalary);
+
+            $compensationConcepts = $compensationPayments['concepts'];
+
+            // Extract individual pays from concepts for backward-compatible fields
+            $overtimePay = 0;
+            $veladaPay = 0;
+            $holidayPay = 0;
+            $weekendPay = 0;
+
+            foreach ($compensationConcepts as $concept) {
+                $code = $concept['code'] ?? '';
+                if (in_array($code, ['HE', 'HED', 'HET'])) {
+                    $overtimePay += $concept['amount'];
+                } elseif ($code === 'VEL') {
+                    $veladaPay += $concept['amount'];
+                } elseif ($code === 'FEST') {
+                    $holidayPay += $concept['amount'];
+                } elseif (str_contains($concept['name'] ?? '', 'Fin de semana')) {
+                    $weekendPay += $concept['amount'];
+                } else {
+                    // Other compensation concepts go into overtime as catch-all
+                    $overtimePay += $concept['amount'];
+                }
+            }
+        } else {
+            // Legacy fallback: hardcoded multipliers
+            $overtimePay = $authorizedOvertimeHours * $hourlyRate * $overtimeMultiplier;
+            $veladaPay = $veladaMetrics['velada_authorized_hours'] * $hourlyRate * $veladaMultiplier;
+            $holidayPay = $metrics['holiday_hours'] * $hourlyRate * $holidayMultiplier;
+            $weekendPay = $metrics['weekend_hours'] * $hourlyRate * $overtimeMultiplier;
+        }
 
         // Calculate total bonuses
         $totalBonuses = $punctualityBonus + $weeklyBonus + $monthlyBonus
@@ -143,7 +204,7 @@ class PayrollCalculatorService
                 'total_hours' => $veladaMetrics['velada_hours'],
                 'authorized_hours' => $veladaMetrics['velada_authorized_hours'],
                 'overtime_authorized_hours' => $veladaMetrics['overtime_authorized_hours'],
-                'multiplier' => $veladaMultiplier,
+                'multiplier' => $useCompTypes ? null : $veladaMultiplier,
                 'pay' => $veladaPay,
             ],
             'bonuses' => [
@@ -154,9 +215,11 @@ class PayrollCalculatorService
             ],
             'rates' => [
                 'hourly' => $hourlyRate,
-                'overtime_multiplier' => $overtimeMultiplier,
-                'holiday_multiplier' => $holidayMultiplier,
+                'overtime_multiplier' => $useCompTypes ? null : $overtimeMultiplier,
+                'holiday_multiplier' => $useCompTypes ? null : $holidayMultiplier,
+                'uses_compensation_types' => $useCompTypes,
             ],
+            'compensation_concepts' => $compensationConcepts,
             'calculations' => [
                 'regular_pay' => $regularPay,
                 'overtime_pay' => $overtimePay,

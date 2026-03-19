@@ -87,6 +87,9 @@ class CompensationTypeController extends Controller
             'percentage_value' => ['required_if:calculation_type,percentage', 'nullable', 'numeric', 'min:0.01', 'max:999.99'],
             'fixed_amount' => ['required_if:calculation_type,fixed', 'nullable', 'numeric', 'min:0.01', 'max:999999.99'],
             'is_active' => ['boolean'],
+            'application_mode' => ['required', Rule::in(['per_hour', 'per_day', 'one_time'])],
+            'authorization_type' => ['nullable', Rule::in(['overtime', 'night_shift', 'holiday_worked', 'special'])],
+            'priority' => ['integer', 'min:0'],
             'position_ids' => ['nullable', 'array'],
             'position_ids.*' => ['exists:positions,id'],
             'position_percentages' => ['nullable', 'array'],
@@ -98,7 +101,11 @@ class CompensationTypeController extends Controller
         ]);
 
         $compensationType = CompensationType::create(
-            collect($validated)->only(['name', 'code', 'description', 'calculation_type', 'percentage_value', 'fixed_amount', 'is_active'])->toArray()
+            collect($validated)->only([
+                'name', 'code', 'description', 'calculation_type',
+                'percentage_value', 'fixed_amount', 'is_active',
+                'application_mode', 'authorization_type', 'priority',
+            ])->toArray()
         );
 
         // Sync positions
@@ -148,6 +155,9 @@ class CompensationTypeController extends Controller
             'percentage_value' => ['required_if:calculation_type,percentage', 'nullable', 'numeric', 'min:0.01', 'max:999.99'],
             'fixed_amount' => ['required_if:calculation_type,fixed', 'nullable', 'numeric', 'min:0.01', 'max:999999.99'],
             'is_active' => ['boolean'],
+            'application_mode' => ['required', Rule::in(['per_hour', 'per_day', 'one_time'])],
+            'authorization_type' => ['nullable', Rule::in(['overtime', 'night_shift', 'holiday_worked', 'special'])],
+            'priority' => ['integer', 'min:0'],
             'position_ids' => ['nullable', 'array'],
             'position_ids.*' => ['exists:positions,id'],
             'position_percentages' => ['nullable', 'array'],
@@ -159,7 +169,11 @@ class CompensationTypeController extends Controller
         ]);
 
         $compensationType->update(
-            collect($validated)->only(['name', 'code', 'description', 'calculation_type', 'percentage_value', 'fixed_amount', 'is_active'])->toArray()
+            collect($validated)->only([
+                'name', 'code', 'description', 'calculation_type',
+                'percentage_value', 'fixed_amount', 'is_active',
+                'application_mode', 'authorization_type', 'priority',
+            ])->toArray()
         );
 
         // Sync positions

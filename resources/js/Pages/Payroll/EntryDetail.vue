@@ -148,13 +148,42 @@ const breakdown = props.entry.calculation_breakdown || {};
                     <p class="text-2xl font-bold text-gray-800">{{ formatCurrency(entry.hourly_rate) }}</p>
                     <p class="text-gray-500">Tarifa por hora</p>
                 </div>
-                <div class="bg-gray-50 rounded-lg p-4 text-center">
-                    <p class="text-2xl font-bold text-green-600">{{ entry.overtime_multiplier }}x</p>
-                    <p class="text-gray-500">Multiplicador horas extra</p>
+                <template v-if="!breakdown.rates?.uses_compensation_types">
+                    <div class="bg-gray-50 rounded-lg p-4 text-center">
+                        <p class="text-2xl font-bold text-green-600">{{ entry.overtime_multiplier }}x</p>
+                        <p class="text-gray-500">Multiplicador horas extra</p>
+                    </div>
+                    <div class="bg-gray-50 rounded-lg p-4 text-center">
+                        <p class="text-2xl font-bold text-blue-600">{{ entry.holiday_multiplier }}x</p>
+                        <p class="text-gray-500">Multiplicador dias festivos</p>
+                    </div>
+                </template>
+                <div v-else class="col-span-2 bg-green-50 rounded-lg p-4 text-center">
+                    <p class="text-sm font-medium text-green-700">Tarifas calculadas por conceptos de compensacion</p>
                 </div>
-                <div class="bg-gray-50 rounded-lg p-4 text-center">
-                    <p class="text-2xl font-bold text-blue-600">{{ entry.holiday_multiplier }}x</p>
-                    <p class="text-gray-500">Multiplicador dias festivos</p>
+            </div>
+        </div>
+
+        <!-- Compensation Concepts Breakdown (when using comp types) -->
+        <div v-if="breakdown.compensation_concepts?.length" class="bg-white rounded-lg shadow p-6 mt-6">
+            <h3 class="text-lg font-semibold text-gray-800 mb-4">Conceptos de Compensacion</h3>
+            <div class="space-y-3">
+                <div
+                    v-for="(concept, idx) in breakdown.compensation_concepts"
+                    :key="idx"
+                    class="flex justify-between items-center py-2 border-b"
+                >
+                    <div>
+                        <span class="text-gray-600">{{ concept.name }}</span>
+                        <span class="ml-2 px-2 py-0.5 bg-gray-100 rounded text-xs text-gray-500">{{ concept.code }}</span>
+                        <span v-if="concept.hours > 0" class="text-xs text-gray-400 ml-2">
+                            ({{ concept.hours }}h)
+                        </span>
+                        <span v-if="concept.days > 0" class="text-xs text-gray-400 ml-2">
+                            ({{ concept.days }}d)
+                        </span>
+                    </div>
+                    <span class="font-medium text-green-600">{{ formatCurrency(concept.amount) }}</span>
                 </div>
             </div>
         </div>
@@ -175,7 +204,7 @@ const breakdown = props.entry.calculation_breakdown || {};
                 <div class="flex justify-between items-center py-2 border-b">
                     <div>
                         <span class="text-gray-600">Pago horas extra</span>
-                        <span class="text-xs text-gray-400 ml-2">
+                        <span v-if="!breakdown.rates?.uses_compensation_types" class="text-xs text-gray-400 ml-2">
                             ({{ entry.overtime_hours }}h x {{ formatCurrency(entry.hourly_rate) }} x {{ entry.overtime_multiplier }})
                         </span>
                     </div>
@@ -184,7 +213,7 @@ const breakdown = props.entry.calculation_breakdown || {};
                 <div class="flex justify-between items-center py-2 border-b">
                     <div>
                         <span class="text-gray-600">Pago dias festivos</span>
-                        <span class="text-xs text-gray-400 ml-2">
+                        <span v-if="!breakdown.rates?.uses_compensation_types" class="text-xs text-gray-400 ml-2">
                             ({{ entry.holiday_hours }}h x {{ formatCurrency(entry.hourly_rate) }} x {{ entry.holiday_multiplier }})
                         </span>
                     </div>

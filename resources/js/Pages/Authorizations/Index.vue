@@ -24,6 +24,16 @@ const filters = ref({
     search: props.filters.search || '',
 });
 
+/** Deduplicate types by value for the filter dropdown. */
+const uniqueFilterTypes = computed(() => {
+    const seen = new Set();
+    return props.types.filter(t => {
+        if (seen.has(t.value)) return false;
+        seen.add(t.value);
+        return true;
+    });
+});
+
 const applyFilters = () => {
     router.get(route('authorizations.index'), filters.value, {
         preserveState: true,
@@ -167,7 +177,7 @@ const typeLabels = {
                         @change="applyFilters"
                     >
                         <option value="">Todos</option>
-                        <option v-for="type in types" :key="type.value" :value="type.value">
+                        <option v-for="type in uniqueFilterTypes" :key="type.value" :value="type.value">
                             {{ type.label }}
                         </option>
                     </select>
