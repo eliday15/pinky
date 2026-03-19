@@ -106,7 +106,7 @@ class CompensationType extends Model
                 ? round($hours * $hourlyRate * (1 + $percentage / 100), 2)
                 : round($hours * $fixedAmount, 2),
             self::APPLICATION_PER_DAY => $this->calculation_type === 'percentage'
-                ? round($days * $dailySalary * ($percentage / 100), 2)
+                ? round($days * $dailySalary * (1 + $percentage / 100), 2)
                 : round($days * $fixedAmount, 2),
             self::APPLICATION_ONE_TIME => $this->calculation_type === 'percentage'
                 ? round($dailySalary * ($percentage / 100), 2)
