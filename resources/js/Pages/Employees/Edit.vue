@@ -64,10 +64,14 @@ const initialCompensationTypeOverrides = {};
     }
 });
 
+const zktecoConflict = ref(null);
+const showZktecoModal = ref(false);
+
 const form = useForm({
     employee_number: props.employee.employee_number,
     contpaqi_code: props.employee.contpaqi_code || '',
     zkteco_user_id: props.employee.zkteco_user_id,
+    confirm_zkteco_reassign: false,
     first_name: props.employee.first_name,
     last_name: props.employee.last_name,
     email: props.employee.email || '',
@@ -478,7 +482,37 @@ const submit = () => {
 
     form.put(route('employees.update', props.employee.id), {
         forceFormData: true,
+        onError: (errors) => {
+            if (errors.zkteco_user_id?.startsWith('zkteco_conflict_inactive:')) {
+                const parts = errors.zkteco_user_id.split(':');
+                zktecoConflict.value = {
+                    name: parts[1],
+                    number: parts[2],
+                    status: parts[3],
+                };
+                showZktecoModal.value = true;
+                form.clearErrors('zkteco_user_id');
+            }
+        },
     });
+};
+
+const confirmZktecoReassign = () => {
+    showZktecoModal.value = false;
+    zktecoConflict.value = null;
+    form.confirm_zkteco_reassign = true;
+
+    const filledContacts = form.emergency_contacts.filter(c => c.name || c.phone || c.relationship);
+    form.emergency_contacts = filledContacts;
+
+    form.put(route('employees.update', props.employee.id), {
+        forceFormData: true,
+    });
+};
+
+const cancelZktecoReassign = () => {
+    showZktecoModal.value = false;
+    zktecoConflict.value = null;
 };
 
 // Watch hire_date for auto-calculation
@@ -1352,5 +1386,38 @@ watch(() => form.hire_date, onHireDateChange);
                 </form>
             </div>
         </div>
+        <!-- ZKTeco Conflict Modal -->
+        <Teleport to="body">
+            <div v-if="showZktecoModal" class="fixed inset-0 z-50 flex items-center justify-center">
+                <div class="fixed inset-0 bg-black/50" @click="cancelZktecoReassign"></div>
+                <div class="relative bg-white rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-2">ID ZKTeco en uso por empleado inactivo</h3>
+                    <p class="text-sm text-gray-600 mb-4">
+                        El ID ZKTeco <strong>{{ form.zkteco_user_id }}</strong> esta asignado al empleado
+                        <strong>{{ zktecoConflict?.name }}</strong> ({{ zktecoConflict?.number }}),
+                        que tiene estado <span class="font-semibold text-amber-600">{{ zktecoConflict?.status === 'inactive' ? 'Inactivo' : 'Terminado' }}</span>.
+                    </p>
+                    <p class="text-sm text-gray-600 mb-6">
+                        Si continuas, se le quitara el ID ZKTeco al empleado inactivo y se asignara a este empleado.
+                    </p>
+                    <div class="flex justify-end gap-3">
+                        <button
+                            type="button"
+                            class="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
+                            @click="cancelZktecoReassign"
+                        >
+                            Cancelar
+                        </button>
+                        <button
+                            type="button"
+                            class="px-4 py-2 text-sm font-medium text-white bg-pink-600 rounded-lg hover:bg-pink-700"
+                            @click="confirmZktecoReassign"
+                        >
+                            Reasignar y Guardar
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </Teleport>
     </AppLayout>
 </template>

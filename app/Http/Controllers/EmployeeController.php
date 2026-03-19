@@ -18,6 +18,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -96,9 +97,10 @@ class EmployeeController extends Controller
         $this->authorize('create', Employee::class);
 
         $validated = $request->validate([
-            'employee_number' => ['required', 'string', 'max:50', 'unique:employees'],
-            'contpaqi_code' => ['nullable', 'string', 'max:50', 'unique:employees'],
-            'zkteco_user_id' => ['required', 'integer', 'unique:employees'],
+            'employee_number' => ['required', 'string', 'max:50', Rule::unique('employees')->whereNull('deleted_at')],
+            'contpaqi_code' => ['nullable', 'string', 'max:50', Rule::unique('employees')->whereNull('deleted_at')],
+            'zkteco_user_id' => ['required', 'integer'],
+            'confirm_zkteco_reassign' => ['nullable', 'boolean'],
             'first_name' => ['required', 'string', 'max:100'],
             'last_name' => ['required', 'string', 'max:100'],
             'email' => ['nullable', 'email', 'max:255'],
@@ -153,6 +155,27 @@ class EmployeeController extends Controller
             'emergency_contacts.*.relationship' => ['required_with:emergency_contacts', 'nullable', 'string', 'max:50'],
             'emergency_contacts.*.address' => ['nullable', 'string', 'max:255'],
         ]);
+
+        // Check ZKTeco ID conflict
+        $existingEmployee = Employee::where('zkteco_user_id', $validated['zkteco_user_id'])->first();
+        if ($existingEmployee) {
+            if ($existingEmployee->status === 'active') {
+                throw ValidationException::withMessages([
+                    'zkteco_user_id' => "El ID ZKTeco {$validated['zkteco_user_id']} ya está asignado al empleado activo: {$existingEmployee->full_name} ({$existingEmployee->employee_number}).",
+                ]);
+            }
+
+            // Inactive/terminated employee — require confirmation
+            if (! ($validated['confirm_zkteco_reassign'] ?? false)) {
+                throw ValidationException::withMessages([
+                    'zkteco_user_id' => "zkteco_conflict_inactive:{$existingEmployee->full_name}:{$existingEmployee->employee_number}:{$existingEmployee->status}",
+                ]);
+            }
+
+            // Confirmed — remove ZKTeco ID from the inactive employee
+            $existingEmployee->update(['zkteco_user_id' => null]);
+        }
+        unset($validated['confirm_zkteco_reassign']);
 
         $validated['full_name'] = $validated['first_name'] . ' ' . $validated['last_name'];
         $validated['vacation_days_entitled'] = $validated['vacation_days_entitled'] ?? 6;
@@ -310,9 +333,10 @@ class EmployeeController extends Controller
         $scheduleChanging = $request->schedule_id != $employee->schedule_id;
 
         $rules = [
-            'employee_number' => ['required', 'string', 'max:50', Rule::unique('employees')->ignore($employee->id)],
-            'contpaqi_code' => ['nullable', 'string', 'max:50', Rule::unique('employees')->ignore($employee->id)],
-            'zkteco_user_id' => ['required', 'integer', Rule::unique('employees')->ignore($employee->id)],
+            'employee_number' => ['required', 'string', 'max:50', Rule::unique('employees')->ignore($employee->id)->whereNull('deleted_at')],
+            'contpaqi_code' => ['nullable', 'string', 'max:50', Rule::unique('employees')->ignore($employee->id)->whereNull('deleted_at')],
+            'zkteco_user_id' => ['required', 'integer'],
+            'confirm_zkteco_reassign' => ['nullable', 'boolean'],
             'first_name' => ['required', 'string', 'max:100'],
             'last_name' => ['required', 'string', 'max:100'],
             'email' => ['nullable', 'email', 'max:255'],
@@ -391,6 +415,27 @@ class EmployeeController extends Controller
                 'user_agent' => $request->userAgent(),
             ]);
         }
+
+        // Check ZKTeco ID conflict (exclude current employee)
+        $existingEmployee = Employee::where('zkteco_user_id', $validated['zkteco_user_id'])
+            ->where('id', '!=', $employee->id)
+            ->first();
+        if ($existingEmployee) {
+            if ($existingEmployee->status === 'active') {
+                throw ValidationException::withMessages([
+                    'zkteco_user_id' => "El ID ZKTeco {$validated['zkteco_user_id']} ya está asignado al empleado activo: {$existingEmployee->full_name} ({$existingEmployee->employee_number}).",
+                ]);
+            }
+
+            if (! ($validated['confirm_zkteco_reassign'] ?? false)) {
+                throw ValidationException::withMessages([
+                    'zkteco_user_id' => "zkteco_conflict_inactive:{$existingEmployee->full_name}:{$existingEmployee->employee_number}:{$existingEmployee->status}",
+                ]);
+            }
+
+            $existingEmployee->update(['zkteco_user_id' => null]);
+        }
+        unset($validated['confirm_zkteco_reassign']);
 
         $validated['full_name'] = $validated['first_name'] . ' ' . $validated['last_name'];
         $validated['is_minimum_wage'] = $validated['is_minimum_wage'] ?? false;
