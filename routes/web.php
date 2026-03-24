@@ -158,6 +158,7 @@ Route::middleware(['auth', 'verified', 'password-changed', 'two-factor-setup'])-
     // Users
     Route::resource('users', UserController::class)->except(['show']);
     Route::post('/users/{user}/reset-password', [UserController::class, 'resetPassword'])->name('users.reset-password');
+    Route::post('/users/{user}/reset-two-factor', [UserController::class, 'resetTwoFactor'])->name('users.reset-two-factor');
 
     // Audit Logs
     Route::get('/audit-logs', [AuditLogController::class, 'index'])->name('audit-logs.index');

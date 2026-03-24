@@ -26,6 +26,8 @@ const passwordForm = useForm({
     password: '',
 });
 
+const twoFactorForm = useForm({});
+
 const showPassword = ref(false);
 
 const generatePassword = () => {
@@ -56,6 +58,13 @@ const resetPassword = () => {
             showPassword.value = false;
         },
     });
+};
+
+const resetTwoFactor = () => {
+    if (!confirm('¿Estas seguro? Se reseteara la autenticacion de dos pasos. El usuario debera reconfigurar 2FA en su proximo inicio de sesion.')) {
+        return;
+    }
+    twoFactorForm.post(route('users.reset-two-factor', props.editUser.id));
 };
 </script>
 
@@ -171,6 +180,36 @@ const resetPassword = () => {
                         </PrimaryButton>
                     </div>
                 </form>
+            </div>
+
+            <!-- Reset 2FA Section -->
+            <div v-if="can.resetPassword && editUser.two_factor_enabled" class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-medium text-gray-900 mb-2">Resetear Autenticacion de Dos Pasos</h3>
+                <p class="text-sm text-gray-500 mb-4">
+                    Resetea la autenticacion de dos pasos (2FA) del usuario para que pueda configurar una nueva aplicacion de autenticacion.
+                    La contraseña no se modifica.
+                </p>
+
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                            2FA Activo
+                        </span>
+                    </div>
+                    <button
+                        type="button"
+                        @click="resetTwoFactor"
+                        :disabled="twoFactorForm.processing"
+                        :class="[
+                            'inline-flex items-center px-4 py-2 border border-transparent rounded-md font-semibold text-xs text-white uppercase tracking-widest transition',
+                            twoFactorForm.processing
+                                ? 'bg-yellow-300 cursor-not-allowed'
+                                : 'bg-yellow-600 hover:bg-yellow-700'
+                        ]"
+                    >
+                        {{ twoFactorForm.processing ? 'Reseteando...' : 'Resetear 2FA' }}
+                    </button>
+                </div>
             </div>
 
             <!-- Reset Password Section -->

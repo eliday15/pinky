@@ -254,6 +254,22 @@ class UserController extends Controller
     }
 
     /**
+     * Reset only the 2FA for a user, forcing re-setup on next login.
+     */
+    public function resetTwoFactor(Request $request, User $user): RedirectResponse
+    {
+        $this->authorize('resetPassword', $user);
+
+        $user->update([
+            'two_factor_secret' => null,
+            'two_factor_confirmed_at' => null,
+            'two_factor_recovery_codes' => null,
+        ]);
+
+        return back()->with('success', 'Autenticacion de dos pasos reseteada. El usuario debera reconfigurar 2FA en su proximo inicio de sesion.');
+    }
+
+    /**
      * Reset a user's password, clear 2FA, and force full re-setup on next login.
      */
     public function resetPassword(Request $request, User $user): RedirectResponse
