@@ -18,6 +18,19 @@ class Employee extends Model
     use HasFactory, SoftDeletes, Auditable;
 
     /**
+     * Free up unique fields when soft-deleting so they can be reused.
+     */
+    protected static function booted(): void
+    {
+        static::softDeleted(function (Employee $employee) {
+            $suffix = '_deleted_' . $employee->id;
+            $employee->updateQuietly([
+                'employee_number' => $employee->employee_number . $suffix,
+            ]);
+        });
+    }
+
+    /**
      * Module name for audit logging.
      */
     protected string $auditModule = 'employees';
