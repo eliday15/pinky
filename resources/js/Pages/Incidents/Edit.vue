@@ -3,7 +3,7 @@ import AppLayout from '@/Layouts/AppLayout.vue';
 import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import SearchableSelect from '@/Components/SearchableSelect.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
-import { computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 
 const props = defineProps({
     incident: Object,
@@ -37,6 +37,29 @@ const hasTimeRange = computed(() => {
     return selectedIncidentType.value?.has_time_range === true;
 });
 
+const initStartDate = props.incident.start_date?.split('T')[0] || '';
+const initEndDate = props.incident.end_date?.split('T')[0] || '';
+const initStartTime = formatTime(props.incident.start_time) || '08:00';
+const initEndTime = formatTime(props.incident.end_time) || '16:00';
+
+const startDatetime = ref(`${initStartDate}T${initStartTime}`);
+const endDatetime = ref(`${initEndDate}T${initEndTime}`);
+
+/** Sync datetime-local values to form fields for time-range types. */
+watch([startDatetime, endDatetime], ([start, end]) => {
+    if (start && end && hasTimeRange.value) {
+        form.start_date = start.split('T')[0];
+        form.end_date = end.split('T')[0];
+        form.start_time = start.split('T')[1] || '';
+        form.end_time = end.split('T')[1] || '';
+        const s = new Date(start);
+        const e = new Date(end);
+        if (e > s) {
+            form.hours = ((e - s) / (1000 * 60 * 60)).toFixed(2);
+        }
+    }
+});
+
 const daysCount = computed(() => {
     if (!form.start_date || !form.end_date) return 0;
     const start = new Date(form.start_date);
@@ -64,17 +87,6 @@ const formatDate = (date) => {
         day: 'numeric',
     });
 };
-
-/** Auto-calculate hours from start/end time. */
-watch([() => form.start_time, () => form.end_time], ([start, end]) => {
-    if (start && end) {
-        const [sh, sm] = start.split(':').map(Number);
-        const [eh, em] = end.split(':').map(Number);
-        let mins = (eh * 60 + em) - (sh * 60 + sm);
-        if (mins < 0) mins += 24 * 60;
-        form.hours = (mins / 60).toFixed(2);
-    }
-});
 
 const submit = () => {
     form.put(route('incidents.update', props.incident.id));
@@ -204,8 +216,8 @@ const submit = () => {
                         </span>
                     </div>
 
-                    <!-- Date Range -->
-                    <div class="grid grid-cols-2 gap-6">
+                    <!-- Date Range (normal types - date only) -->
+                    <div v-if="!hasTimeRange" class="grid grid-cols-2 gap-6">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">
                                 Fecha Inicio <span class="text-red-500">*</span>
@@ -237,27 +249,31 @@ const submit = () => {
                         </div>
                     </div>
 
-                    <!-- Time Range (for permission types) -->
+                    <!-- DateTime Range (time-range types like permissions) -->
                     <div v-if="hasTimeRange" class="grid grid-cols-3 gap-6">
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Hora Inicio</label>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                Fecha/Hora Inicio <span class="text-red-500">*</span>
+                            </label>
                             <input
-                                v-model="form.start_time"
-                                type="time"
+                                v-model="startDatetime"
+                                type="datetime-local"
                                 class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                                :class="{ 'border-red-500': form.errors.start_time }"
+                                :class="{ 'border-red-500': form.errors.start_date || form.errors.start_time }"
                             />
-                            <p v-if="form.errors.start_time" class="mt-1 text-sm text-red-600">{{ form.errors.start_time }}</p>
+                            <p v-if="form.errors.start_date" class="mt-1 text-sm text-red-600">{{ form.errors.start_date }}</p>
                         </div>
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Hora Fin</label>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                Fecha/Hora Fin <span class="text-red-500">*</span>
+                            </label>
                             <input
-                                v-model="form.end_time"
-                                type="time"
+                                v-model="endDatetime"
+                                type="datetime-local"
                                 class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                                :class="{ 'border-red-500': form.errors.end_time }"
+                                :class="{ 'border-red-500': form.errors.end_date || form.errors.end_time }"
                             />
-                            <p v-if="form.errors.end_time" class="mt-1 text-sm text-red-600">{{ form.errors.end_time }}</p>
+                            <p v-if="form.errors.end_date" class="mt-1 text-sm text-red-600">{{ form.errors.end_date }}</p>
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Horas Totales</label>
@@ -266,12 +282,13 @@ const submit = () => {
                                 type="number"
                                 step="0.5"
                                 min="0"
-                                max="24"
-                                placeholder="Auto si pone inicio/fin"
+                                max="48"
+                                placeholder="Auto"
                                 class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
                                 :class="{ 'border-red-500': form.errors.hours }"
                             />
                             <p v-if="form.errors.hours" class="mt-1 text-sm text-red-600">{{ form.errors.hours }}</p>
+                            <p class="mt-1 text-xs text-gray-500">Se calcula automaticamente</p>
                         </div>
                     </div>
 
