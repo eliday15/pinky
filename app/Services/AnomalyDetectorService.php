@@ -6,6 +6,7 @@ use App\Models\AttendanceAnomaly;
 use App\Models\AttendanceRecord;
 use App\Models\Authorization;
 use App\Models\Employee;
+use App\Models\Incident;
 use App\Models\SystemSetting;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
@@ -366,10 +367,11 @@ class AnomalyDetectorService
     private function detectEarlyDeparture(AttendanceRecord $record, $schedule): array
     {
         if (($record->early_departure_minutes ?? 0) > 15) {
-            $hasPermission = Authorization::where('employee_id', $record->employee_id)
-                ->where('date', $record->work_date)
-                ->where('type', Authorization::TYPE_EXIT_PERMISSION)
-                ->whereIn('status', [Authorization::STATUS_APPROVED, Authorization::STATUS_PAID])
+            $hasPermission = Incident::where('employee_id', $record->employee_id)
+                ->whereDate('start_date', '<=', $record->work_date)
+                ->whereDate('end_date', '>=', $record->work_date)
+                ->where('status', 'approved')
+                ->whereHas('incidentType', fn($q) => $q->where('code', 'PSA'))
                 ->exists();
 
             if (!$hasPermission) {

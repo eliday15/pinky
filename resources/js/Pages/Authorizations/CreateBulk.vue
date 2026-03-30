@@ -83,10 +83,9 @@ const compensationTypes = computed(() => {
         emp.active_compensation_type_ids?.includes(t.compensation_type_id)
     ));
 });
-const administrativeTypes = computed(() => props.types.filter(t => t.group === 'administrative'));
 
 const optionValue = (type) => {
-    return type.compensation_type_id ? `comp_${type.compensation_type_id}` : type.value;
+    return `comp_${type.compensation_type_id}`;
 };
 
 const selectedOptionValue = computed(() => {
@@ -103,7 +102,7 @@ const onTypeChange = (event) => {
         form.type = matched?.value || '';
         form.compensation_type_id = compId;
     } else {
-        form.type = raw;
+        form.type = '';
         form.compensation_type_id = null;
     }
 };
@@ -145,9 +144,6 @@ const submit = () => {
 const typeDescriptions = {
     overtime: 'Horas adicionales trabajadas fuera del horario normal',
     night_shift: 'Turno nocturno o velada completa',
-    exit_permission: 'Permiso para salir antes del horario establecido',
-    entry_permission: 'Permiso para entrar despues del horario establecido',
-    schedule_change: 'Cambio temporal en el horario de trabajo',
     holiday_worked: 'Trabajo realizado en dia festivo oficial',
     special: 'Autorizacion especial que no encaja en otras categorias',
 };
@@ -274,16 +270,9 @@ const getDepartmentName = (deptId) => {
                             :class="{ 'border-red-500': form.errors.type }"
                         >
                             <option value="">Seleccionar tipo...</option>
-                            <optgroup v-if="compensationTypes.length" label="Compensacion">
-                                <option v-for="type in compensationTypes" :key="type.compensation_type_id" :value="optionValue(type)">
-                                    {{ type.label }}
-                                </option>
-                            </optgroup>
-                            <optgroup v-if="administrativeTypes.length" label="Administrativos">
-                                <option v-for="type in administrativeTypes" :key="type.value" :value="optionValue(type)">
-                                    {{ type.label }}
-                                </option>
-                            </optgroup>
+                            <option v-for="type in compensationTypes" :key="type.compensation_type_id" :value="optionValue(type)">
+                                {{ type.label }}
+                            </option>
                         </select>
                         <p v-if="form.type && typeDescriptions[form.type]" class="mt-2 text-sm text-gray-500">
                             {{ typeDescriptions[form.type] }}

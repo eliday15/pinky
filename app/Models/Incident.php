@@ -33,11 +33,15 @@ class Incident extends Model
         'days_count',
         'reason',
         'document_path',
+        'start_time',
+        'end_time',
+        'hours',
         'status',
         'approved_by',
         'approved_at',
         'rejection_reason',
         'pay_worked_days',
+        'migrated_from_authorization_id',
     ];
 
     protected $casts = [

@@ -27,9 +27,6 @@ const statusLabels = {
 const typeLabels = {
     overtime: 'Horas Extra',
     night_shift: 'Velada',
-    exit_permission: 'Permiso de Salida',
-    entry_permission: 'Permiso de Entrada',
-    schedule_change: 'Cambio de Horario',
     holiday_worked: 'Festivo Trabajado',
     special: 'Especial',
 };

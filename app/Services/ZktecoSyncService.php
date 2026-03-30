@@ -717,24 +717,23 @@ class ZktecoSyncService
         $veladaCalculator = app(VeladaCalculatorService::class);
         $veladaSplit = $veladaCalculator->calculate($attendance, $employee);
 
-        // Check for approved authorizations
+        // Check for approved permission incidents (exit/entry)
         $permissionHours = 0;
-        $approvedAuth = Authorization::where('employee_id', $employee->id)
-            ->where('date', $workDate->toDateString())
-            ->where('status', Authorization::STATUS_APPROVED)
-            ->whereIn('type', [
-                Authorization::TYPE_EXIT_PERMISSION,
-                Authorization::TYPE_ENTRY_PERMISSION,
-            ])
+        $approvedPermission = Incident::where('employee_id', $employee->id)
+            ->whereDate('start_date', '<=', $workDate->toDateString())
+            ->whereDate('end_date', '>=', $workDate->toDateString())
+            ->where('status', 'approved')
+            ->whereHas('incidentType', fn($q) => $q->where('affects_attendance', true))
+            ->with('incidentType')
             ->first();
 
         $hasApprovedExitPermission = false;
         $hasApprovedEntryPermission = false;
 
-        if ($approvedAuth) {
-            $permissionHours = (float) ($approvedAuth->hours ?? 0);
-            $hasApprovedExitPermission = $approvedAuth->type === Authorization::TYPE_EXIT_PERMISSION;
-            $hasApprovedEntryPermission = $approvedAuth->type === Authorization::TYPE_ENTRY_PERMISSION;
+        if ($approvedPermission) {
+            $permissionHours = (float) ($approvedPermission->hours ?? 0);
+            $hasApprovedExitPermission = $approvedPermission->incidentType->code === 'PSA';
+            $hasApprovedEntryPermission = $approvedPermission->incidentType->code === 'PEN';
         }
 
         $totalPayrollHours = $workedHours + $permissionHours;

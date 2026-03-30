@@ -176,9 +176,6 @@ class AuthorizationController extends Controller
             'type' => ['required', Rule::in([
                 Authorization::TYPE_OVERTIME,
                 Authorization::TYPE_NIGHT_SHIFT,
-                Authorization::TYPE_EXIT_PERMISSION,
-                Authorization::TYPE_ENTRY_PERMISSION,
-                Authorization::TYPE_SCHEDULE_CHANGE,
                 Authorization::TYPE_HOLIDAY_WORKED,
                 Authorization::TYPE_SPECIAL,
             ])],
@@ -267,9 +264,6 @@ class AuthorizationController extends Controller
             'type' => ['required', Rule::in([
                 Authorization::TYPE_OVERTIME,
                 Authorization::TYPE_NIGHT_SHIFT,
-                Authorization::TYPE_EXIT_PERMISSION,
-                Authorization::TYPE_ENTRY_PERMISSION,
-                Authorization::TYPE_SCHEDULE_CHANGE,
                 Authorization::TYPE_HOLIDAY_WORKED,
                 Authorization::TYPE_SPECIAL,
             ])],
@@ -375,9 +369,6 @@ class AuthorizationController extends Controller
             'type' => ['required', Rule::in([
                 Authorization::TYPE_OVERTIME,
                 Authorization::TYPE_NIGHT_SHIFT,
-                Authorization::TYPE_EXIT_PERMISSION,
-                Authorization::TYPE_ENTRY_PERMISSION,
-                Authorization::TYPE_SCHEDULE_CHANGE,
                 Authorization::TYPE_HOLIDAY_WORKED,
                 Authorization::TYPE_SPECIAL,
             ])],
@@ -464,8 +455,6 @@ class AuthorizationController extends Controller
         $typeMap = [
             Authorization::TYPE_OVERTIME => ['unauthorized_overtime'],
             Authorization::TYPE_NIGHT_SHIFT => ['unauthorized_velada', AttendanceAnomaly::TYPE_VELADA_MISSING_CONFIRMATION],
-            Authorization::TYPE_EXIT_PERMISSION => ['early_departure'],
-            Authorization::TYPE_ENTRY_PERMISSION => ['late_arrival'],
         ];
 
         $anomalyTypes = $typeMap[$authorization->type] ?? [];
@@ -541,8 +530,7 @@ class AuthorizationController extends Controller
     /**
      * Get authorization types for dropdown.
      *
-     * Compensation-linked types are loaded from the CompensationType catalog.
-     * Administrative types (permissions, schedule changes) are added statically.
+     * Returns compensation-linked types from the CompensationType catalog.
      */
     private function getAuthorizationTypes(): array
     {
@@ -561,13 +549,6 @@ class AuthorizationController extends Controller
             'group' => 'compensation',
         ])->toArray();
 
-        // Administrative types (no compensation type linked)
-        $adminTypes = [
-            ['value' => Authorization::TYPE_EXIT_PERMISSION, 'label' => 'Permiso de Salida', 'compensation_type_id' => null, 'application_mode' => null, 'requires_evidence' => true, 'group' => 'administrative'],
-            ['value' => Authorization::TYPE_ENTRY_PERMISSION, 'label' => 'Permiso de Entrada', 'compensation_type_id' => null, 'application_mode' => null, 'requires_evidence' => true, 'group' => 'administrative'],
-            ['value' => Authorization::TYPE_SCHEDULE_CHANGE, 'label' => 'Cambio de Horario', 'compensation_type_id' => null, 'application_mode' => null, 'requires_evidence' => true, 'group' => 'administrative'],
-        ];
-
-        return array_merge($types, $adminTypes);
+        return $types;
     }
 }

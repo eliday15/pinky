@@ -87,6 +87,7 @@ class RolesPermissionsSeeder extends Seeder
             'departments.manage',
             'positions.manage',
             'compensation_types.manage',
+            'incident_types.manage',
             'holidays.manage',
 
             // Usuarios

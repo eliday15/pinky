@@ -11,17 +11,30 @@ const props = defineProps({
     employees: Array,
 });
 
+const formatTime = (time) => {
+    if (!time) return '';
+    const parts = time.split(':');
+    return parts.length >= 2 ? `${parts[0]}:${parts[1]}` : '';
+};
+
 const form = useForm({
     employee_id: props.incident.employee_id,
     incident_type_id: props.incident.incident_type_id,
     start_date: props.incident.start_date,
     end_date: props.incident.end_date,
+    start_time: formatTime(props.incident.start_time),
+    end_time: formatTime(props.incident.end_time),
+    hours: props.incident.hours || '',
     reason: props.incident.reason || '',
 });
 
 const selectedIncidentType = computed(() => {
     if (!form.incident_type_id) return null;
     return props.incidentTypes.find(t => t.id == form.incident_type_id);
+});
+
+const hasTimeRange = computed(() => {
+    return selectedIncidentType.value?.has_time_range === true;
 });
 
 const daysCount = computed(() => {
@@ -210,6 +223,44 @@ const submit = () => {
                             <p v-if="form.errors.end_date" class="mt-1 text-sm text-red-600">
                                 {{ form.errors.end_date }}
                             </p>
+                        </div>
+                    </div>
+
+                    <!-- Time Range (for permission types) -->
+                    <div v-if="hasTimeRange" class="grid grid-cols-3 gap-6">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Hora Inicio</label>
+                            <input
+                                v-model="form.start_time"
+                                type="time"
+                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                :class="{ 'border-red-500': form.errors.start_time }"
+                            />
+                            <p v-if="form.errors.start_time" class="mt-1 text-sm text-red-600">{{ form.errors.start_time }}</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Hora Fin</label>
+                            <input
+                                v-model="form.end_time"
+                                type="time"
+                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                :class="{ 'border-red-500': form.errors.end_time }"
+                            />
+                            <p v-if="form.errors.end_time" class="mt-1 text-sm text-red-600">{{ form.errors.end_time }}</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Horas Totales</label>
+                            <input
+                                v-model="form.hours"
+                                type="number"
+                                step="0.5"
+                                min="0"
+                                max="24"
+                                placeholder="Auto si pone inicio/fin"
+                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                :class="{ 'border-red-500': form.errors.hours }"
+                            />
+                            <p v-if="form.errors.hours" class="mt-1 text-sm text-red-600">{{ form.errors.hours }}</p>
                         </div>
                     </div>
 

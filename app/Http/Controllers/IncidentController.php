@@ -167,16 +167,25 @@ class IncidentController extends Controller
             'incident_type_id' => ['required', 'exists:incident_types,id'],
             'start_date' => ['required', 'date'],
             'end_date' => ['required', 'date', 'after_or_equal:start_date'],
+            'start_time' => ['nullable', 'date_format:H:i'],
+            'end_time' => ['nullable', 'date_format:H:i'],
+            'hours' => ['nullable', 'numeric', 'min:0', 'max:24'],
             'reason' => ['nullable', 'string', 'max:500'],
-            // FASE 2.3: Require document for incapacity incidents (code: INC)
             'document' => [
-                Rule::requiredIf(fn () => $incidentType && $incidentType->code === 'INC'),
+                Rule::requiredIf(fn () => $incidentType && $incidentType->requires_document),
                 'nullable',
                 'file',
                 'mimes:pdf,jpg,jpeg,png',
                 'max:5120',
             ],
         ]);
+
+        // Auto-calculate hours from start/end time if not provided
+        if (! empty($validated['start_time']) && ! empty($validated['end_time']) && empty($validated['hours'])) {
+            $start = Carbon::parse($validated['start_time']);
+            $end = Carbon::parse($validated['end_time']);
+            $validated['hours'] = $end->diffInMinutes($start) / 60;
+        }
 
         // Get employee and their schedule for working days calculation
         $employee = Employee::with('schedule')->find($validated['employee_id']);
@@ -393,12 +402,27 @@ class IncidentController extends Controller
             'incident_type_id' => ['required', 'exists:incident_types,id'],
             'start_date' => ['required', 'date'],
             'end_date' => ['required', 'date', 'after_or_equal:start_date'],
+            'start_time' => ['nullable', 'date_format:H:i'],
+            'end_time' => ['nullable', 'date_format:H:i'],
+            'hours' => ['nullable', 'numeric', 'min:0', 'max:24'],
             'reason' => ['nullable', 'string', 'max:500'],
         ]);
 
+        // Auto-calculate hours from start/end time if not provided
+        if (! empty($validated['start_time']) && ! empty($validated['end_time']) && empty($validated['hours'])) {
+            $start = Carbon::parse($validated['start_time']);
+            $end = Carbon::parse($validated['end_time']);
+            $validated['hours'] = $end->diffInMinutes($start) / 60;
+        }
+
+        $employee = Employee::with('schedule')->find($validated['employee_id']);
         $startDate = Carbon::parse($validated['start_date']);
         $endDate = Carbon::parse($validated['end_date']);
-        $validated['days_count'] = $startDate->diffInDays($endDate) + 1;
+        $validated['days_count'] = $this->calculateWorkingDays(
+            $startDate,
+            $endDate,
+            $employee->schedule?->working_days ?? ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
+        );
 
         $incident->update($validated);
 

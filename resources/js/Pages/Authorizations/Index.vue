@@ -95,9 +95,6 @@ const statusLabels = {
 const typeLabels = {
     overtime: 'Horas Extra',
     night_shift: 'Velada',
-    exit_permission: 'Permiso Salida',
-    entry_permission: 'Permiso Entrada',
-    schedule_change: 'Cambio Horario',
     holiday_worked: 'Festivo Trabajado',
     special: 'Especial',
 };
@@ -120,7 +117,7 @@ const typeLabels = {
         <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
             <div>
                 <h1 class="text-2xl font-bold text-gray-800">Gestion de Autorizaciones</h1>
-                <p class="text-gray-600">Horas extra, veladas, permisos y cambios de horario</p>
+                <p class="text-gray-600">Horas extra, veladas y conceptos de compensacion</p>
             </div>
             <div v-if="can.create" class="flex space-x-2">
                 <Link

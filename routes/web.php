@@ -10,6 +10,7 @@ use App\Http\Controllers\DepartmentController;
 use App\Http\Controllers\EmployeeBulkController;
 use App\Http\Controllers\EmployeeController;
 use App\Http\Controllers\IncidentController;
+use App\Http\Controllers\IncidentTypeController;
 use App\Http\Controllers\PayrollController;
 use App\Http\Controllers\PositionController;
 use App\Http\Controllers\ProfileController;
@@ -45,6 +46,9 @@ Route::middleware(['auth', 'verified', 'password-changed', 'two-factor-setup'])-
 
     // Compensation Types
     Route::resource('compensation-types', CompensationTypeController::class)->except(['show']);
+
+    // Incident Types
+    Route::resource('incident-types', IncidentTypeController::class)->except(['show']);
 
     // Vacation Table
     Route::get('/settings/vacation-table', [VacationTableController::class, 'index'])->name('settings.vacation-table');

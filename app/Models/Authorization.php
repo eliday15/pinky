@@ -34,12 +34,6 @@ class Authorization extends Model
 
     public const TYPE_NIGHT_SHIFT = 'night_shift';
 
-    public const TYPE_EXIT_PERMISSION = 'exit_permission';
-
-    public const TYPE_ENTRY_PERMISSION = 'entry_permission';
-
-    public const TYPE_SCHEDULE_CHANGE = 'schedule_change';
-
     public const TYPE_HOLIDAY_WORKED = 'holiday_worked';
 
     public const TYPE_SPECIAL = 'special';
@@ -271,9 +265,6 @@ class Authorization extends Model
         return match ($this->type) {
             self::TYPE_OVERTIME => 'Horas Extra',
             self::TYPE_NIGHT_SHIFT => 'Velada',
-            self::TYPE_EXIT_PERMISSION => 'Permiso de Salida',
-            self::TYPE_ENTRY_PERMISSION => 'Permiso de Entrada',
-            self::TYPE_SCHEDULE_CHANGE => 'Cambio de Horario',
             self::TYPE_HOLIDAY_WORKED => 'Día Festivo Trabajado',
             self::TYPE_SPECIAL => 'Especial',
             default => $this->type,
