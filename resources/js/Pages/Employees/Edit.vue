@@ -197,8 +197,25 @@ watch(() => form.schedule_id, () => {
     }
 });
 
+/** Calculate hours between two HH:mm time strings, accounting for break minutes. */
+const calcHoursFromTimes = (entry, exit, breakMin) => {
+    if (!entry || !exit) return null;
+    const [eh, em] = entry.split(':').map(Number);
+    const [xh, xm] = exit.split(':').map(Number);
+    let mins = (xh * 60 + xm) - (eh * 60 + em);
+    if (mins < 0) mins += 24 * 60; // overnight
+    mins -= parseInt(breakMin) || 0;
+    return Math.max(0, (mins / 60)).toFixed(1);
+};
+
 const updateScheduleOverride = (field, value) => {
     scheduleFields.value[field] = value;
+    if (field === 'entry_time' || field === 'exit_time' || field === 'break_minutes') {
+        const hours = calcHoursFromTimes(scheduleFields.value.entry_time, scheduleFields.value.exit_time, scheduleFields.value.break_minutes);
+        if (hours !== null) {
+            scheduleFields.value.daily_work_hours = hours;
+        }
+    }
     syncOverrides();
 };
 
@@ -240,6 +257,13 @@ watch(perDayMode, (val) => {
 const updateDayField = (day, field, value) => {
     if (!daySchedules.value[day]) daySchedules.value[day] = {};
     daySchedules.value[day][field] = value;
+    if (field === 'entry_time' || field === 'exit_time' || field === 'break_minutes') {
+        const ds = daySchedules.value[day];
+        const hours = calcHoursFromTimes(ds.entry_time, ds.exit_time, ds.break_minutes);
+        if (hours !== null) {
+            daySchedules.value[day].daily_work_hours = hours;
+        }
+    }
     syncOverrides();
 };
 

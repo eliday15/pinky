@@ -69,10 +69,40 @@ watch(sameForAllDays, (val) => {
     }
 });
 
+/** Auto-calculate daily_work_hours from entry/exit times. */
+const calcHoursFromTimes = (entry, exit, breakMin) => {
+    if (!entry || !exit) return null;
+    const [eh, em] = entry.split(':').map(Number);
+    const [xh, xm] = exit.split(':').map(Number);
+    let mins = (xh * 60 + xm) - (eh * 60 + em);
+    if (mins < 0) mins += 24 * 60;
+    mins -= parseInt(breakMin) || 0;
+    return Math.max(0, (mins / 60)).toFixed(1);
+};
+
+watch([() => form.entry_time, () => form.exit_time, () => form.break_minutes], () => {
+    const hours = calcHoursFromTimes(form.entry_time, form.exit_time, form.break_minutes);
+    if (hours !== null) {
+        form.daily_work_hours = hours;
+    }
+});
+
 /** Selected working days with labels, for the per-day table. */
 const selectedDays = computed(() => {
     return weekDays.filter(d => form.working_days.includes(d.value));
 });
+
+/** Auto-calculate daily_work_hours for per-day overrides when their times change. */
+watch(() => form.day_schedules, (ds) => {
+    for (const [day, fields] of Object.entries(ds)) {
+        if (fields.entry_time && fields.exit_time) {
+            const hours = calcHoursFromTimes(fields.entry_time, fields.exit_time, fields.break_minutes);
+            if (hours !== null && parseFloat(hours) !== parseFloat(fields.daily_work_hours)) {
+                fields.daily_work_hours = hours;
+            }
+        }
+    }
+}, { deep: true });
 
 const submit = () => {
     // Clean day_schedules: only send if per-day mode is active

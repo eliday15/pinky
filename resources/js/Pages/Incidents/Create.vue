@@ -119,6 +119,17 @@ const vacationWarning = computed(() => {
     return null;
 });
 
+/** Auto-calculate hours from start/end time. */
+watch([() => form.start_time, () => form.end_time], ([start, end]) => {
+    if (start && end) {
+        const [sh, sm] = start.split(':').map(Number);
+        const [eh, em] = end.split(':').map(Number);
+        let mins = (eh * 60 + em) - (sh * 60 + sm);
+        if (mins < 0) mins += 24 * 60;
+        form.hours = (mins / 60).toFixed(2);
+    }
+});
+
 const submit = () => {
     form.post(route('incidents.store'));
 };
