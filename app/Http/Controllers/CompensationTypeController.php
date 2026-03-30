@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\CompensationType;
 use App\Models\Department;
+use App\Models\Employee;
 use App\Models\Position;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -114,6 +115,9 @@ class CompensationTypeController extends Controller
         // Sync departments
         $this->syncDepartments($compensationType, $request);
 
+        // Auto-assign to employees matching the positions/departments
+        $this->syncEmployeesFromAssignments($compensationType, $request);
+
         return redirect()->route('compensation-types.index')
             ->with('success', 'Concepto de compensacion creado exitosamente.');
     }
@@ -182,6 +186,9 @@ class CompensationTypeController extends Controller
         // Sync departments
         $this->syncDepartments($compensationType, $request);
 
+        // Auto-assign to employees matching the positions/departments
+        $this->syncEmployeesFromAssignments($compensationType, $request);
+
         return redirect()->route('compensation-types.index')
             ->with('success', 'Concepto de compensacion actualizado exitosamente.');
     }
@@ -218,6 +225,62 @@ class CompensationTypeController extends Controller
             $compensationType->positions()->sync($syncData);
         } else {
             $compensationType->positions()->detach();
+        }
+    }
+
+    /**
+     * Auto-assign compensation type to all active employees matching assigned positions/departments.
+     *
+     * Uses syncWithoutDetaching so manually assigned employees are preserved.
+     * Position-level overrides take priority over department-level overrides.
+     */
+    private function syncEmployeesFromAssignments(CompensationType $compensationType, Request $request): void
+    {
+        $positionIds = $request->position_ids ?? [];
+        $departmentIds = $request->department_ids ?? [];
+
+        if (empty($positionIds) && empty($departmentIds)) {
+            return;
+        }
+
+        $employees = Employee::active()
+            ->where(function ($q) use ($positionIds, $departmentIds) {
+                $q->whereIn('position_id', $positionIds)
+                    ->orWhereIn('department_id', $departmentIds);
+            })
+            ->get(['id', 'position_id', 'department_id']);
+
+        $syncData = [];
+        foreach ($employees as $employee) {
+            $pivotData = ['is_active' => true];
+
+            // Apply position-level override if the employee's position was assigned
+            if (in_array($employee->position_id, $positionIds)) {
+                $posPercentage = $request->position_percentages[$employee->position_id] ?? null;
+                $posFixed = $request->position_fixed_amounts[$employee->position_id] ?? null;
+                if ($posPercentage !== null) {
+                    $pivotData['custom_percentage'] = $posPercentage;
+                }
+                if ($posFixed !== null) {
+                    $pivotData['custom_fixed_amount'] = $posFixed;
+                }
+            } elseif (in_array($employee->department_id, $departmentIds)) {
+                // Fall back to department-level override
+                $deptPercentage = $request->department_percentages[$employee->department_id] ?? null;
+                $deptFixed = $request->department_fixed_amounts[$employee->department_id] ?? null;
+                if ($deptPercentage !== null) {
+                    $pivotData['custom_percentage'] = $deptPercentage;
+                }
+                if ($deptFixed !== null) {
+                    $pivotData['custom_fixed_amount'] = $deptFixed;
+                }
+            }
+
+            $syncData[$employee->id] = $pivotData;
+        }
+
+        if (! empty($syncData)) {
+            $compensationType->employees()->syncWithoutDetaching($syncData);
         }
     }
 
