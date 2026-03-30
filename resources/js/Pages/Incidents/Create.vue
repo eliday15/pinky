@@ -50,22 +50,16 @@ const hasTimeRange = computed(() => {
     return selectedIncidentType.value?.has_time_range === true;
 });
 
-const today = new Date().toISOString().split('T')[0];
-const startDatetime = ref(`${today}T08:00`);
-const endDatetime = ref(`${today}T16:00`);
+const permissionDate = ref('');
+const permissionTime = ref('');
 
-/** Sync datetime-local values to form fields for time-range types. */
-watch([startDatetime, endDatetime], ([start, end]) => {
-    if (start && end && hasTimeRange.value) {
-        form.start_date = start.split('T')[0];
-        form.end_date = end.split('T')[0];
-        form.start_time = start.split('T')[1] || '';
-        form.end_time = end.split('T')[1] || '';
-        const s = new Date(start);
-        const e = new Date(end);
-        if (e > s) {
-            form.hours = ((e - s) / (1000 * 60 * 60)).toFixed(2);
-        }
+/** Sync permission date/time to form fields. */
+watch([permissionDate, permissionTime], ([date, time]) => {
+    if (date && hasTimeRange.value) {
+        form.start_date = date;
+        form.end_date = date;
+        form.start_time = time || '';
+        form.end_time = time || '';
     }
 });
 
@@ -289,17 +283,17 @@ const submit = () => {
                 </div>
                 </div>
 
-                <!-- DateTime Range (time-range types like permissions) -->
-                <div v-if="hasTimeRange" class="grid grid-cols-3 gap-6">
+                <!-- Permission type: single date + time -->
+                <div v-if="hasTimeRange" class="grid grid-cols-2 gap-6">
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">
-                            Fecha/Hora Inicio <span class="text-red-500">*</span>
+                            Fecha <span class="text-red-500">*</span>
                         </label>
                         <input
-                            v-model="startDatetime"
-                            type="datetime-local"
+                            v-model="permissionDate"
+                            type="date"
                             class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                            :class="{ 'border-red-500': form.errors.start_date || form.errors.start_time }"
+                            :class="{ 'border-red-500': form.errors.start_date }"
                         />
                         <p v-if="form.errors.start_date" class="mt-1 text-sm text-red-600">
                             {{ form.errors.start_date }}
@@ -307,34 +301,19 @@ const submit = () => {
                     </div>
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">
-                            Fecha/Hora Fin <span class="text-red-500">*</span>
+                            {{ selectedIncidentType?.code === 'PSA' ? 'Hora de Salida' : 'Hora de Entrada' }} <span class="text-red-500">*</span>
                         </label>
                         <input
-                            v-model="endDatetime"
-                            type="datetime-local"
+                            v-model="permissionTime"
+                            type="time"
                             class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                            :class="{ 'border-red-500': form.errors.end_date || form.errors.end_time }"
+                            :class="{ 'border-red-500': form.errors.start_time }"
                         />
-                        <p v-if="form.errors.end_date" class="mt-1 text-sm text-red-600">
-                            {{ form.errors.end_date }}
+                        <p v-if="form.errors.start_time" class="mt-1 text-sm text-red-600">
+                            {{ form.errors.start_time }}
                         </p>
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">
-                            Horas Totales
-                        </label>
-                        <input
-                            v-model="form.hours"
-                            type="number"
-                            step="0.5"
-                            min="0"
-                            max="24"
-                            placeholder="Auto si pone inicio/fin"
-                            class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                            :class="{ 'border-red-500': form.errors.hours }"
-                        />
-                        <p v-if="form.errors.hours" class="mt-1 text-sm text-red-600">
-                            {{ form.errors.hours }}
+                        <p class="mt-1 text-xs text-gray-500">
+                            {{ selectedIncidentType?.code === 'PSA' ? 'Hora a la que se permite salir' : 'Hora a la que se permite entrar' }}
                         </p>
                     </div>
                 </div>

@@ -14,6 +14,8 @@ const props = defineProps({
 const today = new Date().toISOString().split('T')[0];
 const startDatetime = ref(`${today}T08:00`);
 const endDatetime = ref(`${today}T16:00`);
+const startDate = ref(today);
+const endDate = ref(today);
 
 const form = useForm({
     employee_ids: [],
@@ -27,9 +29,16 @@ const form = useForm({
     department_head_id: '',
 });
 
-/** Auto-calculate hours when datetimes change. */
+/** The application_mode of the currently selected compensation type. */
+const selectedApplicationMode = computed(() => {
+    if (!form.compensation_type_id) return null;
+    const t = props.types.find(t => t.compensation_type_id === form.compensation_type_id);
+    return t?.application_mode || null;
+});
+
+/** Auto-calculate hours when datetimes change (per_hour mode). */
 watch([startDatetime, endDatetime], ([start, end]) => {
-    if (start && end) {
+    if (start && end && selectedApplicationMode.value === 'per_hour') {
         const s = new Date(start);
         const e = new Date(end);
         if (e > s) {
@@ -38,6 +47,28 @@ watch([startDatetime, endDatetime], ([start, end]) => {
         form.date = start.split('T')[0];
         form.start_time = start.split('T')[1] || '';
         form.end_time = end.split('T')[1] || '';
+    }
+});
+
+watch([startDate, endDate], ([start, end]) => {
+    if (start && selectedApplicationMode.value === 'per_day') {
+        form.date = start;
+        form.start_time = '';
+        form.end_time = '';
+        if (start && end) {
+            const s = new Date(start);
+            const e = new Date(end);
+            const days = Math.ceil((e - s) / (1000 * 60 * 60 * 24)) + 1;
+            form.hours = days > 0 ? days : '';
+        }
+    }
+});
+
+watch(startDate, (val) => {
+    if (selectedApplicationMode.value === 'one_time') {
+        form.date = val;
+        form.start_time = '';
+        form.end_time = '';
     }
 });
 
@@ -314,61 +345,57 @@ const getDepartmentName = (deptId) => {
                     </div>
                 </div>
 
-                <!-- Date & Time -->
-                <div class="bg-white rounded-lg shadow p-6">
+                <!-- Date & Time - adapts to application_mode -->
+                <div v-if="selectedApplicationMode" class="bg-white rounded-lg shadow p-6">
                     <h3 class="text-lg font-semibold text-gray-800 mb-4">Fecha y Horario</h3>
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">
-                                Fecha/Hora Inicio *
-                            </label>
-                            <input
-                                v-model="startDatetime"
-                                type="datetime-local"
-                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                                :class="{ 'border-red-500': form.errors.date || form.errors.start_time }"
-                            />
-                            <p v-if="form.errors.date" class="mt-1 text-sm text-red-600">
-                                {{ form.errors.date }}
-                            </p>
-                            <p v-if="form.errors.start_time" class="mt-1 text-sm text-red-600">
-                                {{ form.errors.start_time }}
-                            </p>
-                        </div>
 
+                    <!-- per_hour -->
+                    <div v-if="selectedApplicationMode === 'per_hour'" class="grid grid-cols-1 md:grid-cols-3 gap-6">
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">
-                                Fecha/Hora Fin *
-                            </label>
-                            <input
-                                v-model="endDatetime"
-                                type="datetime-local"
-                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                                :class="{ 'border-red-500': form.errors.end_time }"
-                            />
-                            <p v-if="form.errors.end_time" class="mt-1 text-sm text-red-600">
-                                {{ form.errors.end_time }}
-                            </p>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Fecha/Hora Inicio *</label>
+                            <input v-model="startDatetime" type="datetime-local" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.date || form.errors.start_time }" />
+                            <p v-if="form.errors.date" class="mt-1 text-sm text-red-600">{{ form.errors.date }}</p>
+                            <p v-if="form.errors.start_time" class="mt-1 text-sm text-red-600">{{ form.errors.start_time }}</p>
                         </div>
-
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">
-                                Horas Totales
-                            </label>
-                            <input
-                                v-model="form.hours"
-                                type="number"
-                                step="0.5"
-                                min="0"
-                                max="48"
-                                placeholder="Auto"
-                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                                :class="{ 'border-red-500': form.errors.hours }"
-                            />
-                            <p v-if="form.errors.hours" class="mt-1 text-sm text-red-600">
-                                {{ form.errors.hours }}
-                            </p>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Fecha/Hora Fin *</label>
+                            <input v-model="endDatetime" type="datetime-local" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.end_time }" />
+                            <p v-if="form.errors.end_time" class="mt-1 text-sm text-red-600">{{ form.errors.end_time }}</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Horas Totales</label>
+                            <input v-model="form.hours" type="number" step="0.5" min="0" max="48" placeholder="Auto" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.hours }" />
+                            <p v-if="form.errors.hours" class="mt-1 text-sm text-red-600">{{ form.errors.hours }}</p>
                             <p class="mt-1 text-xs text-gray-500">Se calcula automaticamente</p>
+                        </div>
+                    </div>
+
+                    <!-- per_day -->
+                    <div v-else-if="selectedApplicationMode === 'per_day'" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Fecha Inicio *</label>
+                            <input v-model="startDate" type="date" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.date }" />
+                            <p v-if="form.errors.date" class="mt-1 text-sm text-red-600">{{ form.errors.date }}</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Fecha Fin *</label>
+                            <input v-model="endDate" type="date" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" />
+                            <p v-if="form.hours" class="mt-1 text-sm text-gray-500">{{ form.hours }} dia(s)</p>
+                        </div>
+                    </div>
+
+                    <!-- one_time: date + quantity -->
+                    <div v-else-if="selectedApplicationMode === 'one_time'" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Fecha *</label>
+                            <input v-model="startDate" type="date" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.date }" />
+                            <p v-if="form.errors.date" class="mt-1 text-sm text-red-600">{{ form.errors.date }}</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Cantidad</label>
+                            <input v-model="form.hours" type="number" step="1" min="1" placeholder="1" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.hours }" />
+                            <p v-if="form.errors.hours" class="mt-1 text-sm text-red-600">{{ form.errors.hours }}</p>
+                            <p class="mt-1 text-xs text-gray-500">Numero de unidades (el monto se calcula del valor asignado al empleado)</p>
                         </div>
                     </div>
                 </div>
