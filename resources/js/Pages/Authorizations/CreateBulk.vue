@@ -11,16 +11,34 @@ const props = defineProps({
     departmentHeads: Array,
 });
 
+const today = new Date().toISOString().split('T')[0];
+const startDatetime = ref(`${today}T08:00`);
+const endDatetime = ref(`${today}T16:00`);
+
 const form = useForm({
     employee_ids: [],
     type: '',
     compensation_type_id: null,
-    date: new Date().toISOString().split('T')[0],
+    date: today,
     start_time: '',
     end_time: '',
     hours: '',
     reason: '',
     department_head_id: '',
+});
+
+/** Auto-calculate hours when datetimes change. */
+watch([startDatetime, endDatetime], ([start, end]) => {
+    if (start && end) {
+        const s = new Date(start);
+        const e = new Date(end);
+        if (e > s) {
+            form.hours = ((e - s) / (1000 * 60 * 60)).toFixed(2);
+        }
+        form.date = start.split('T')[0];
+        form.start_time = start.split('T')[1] || '';
+        form.end_time = end.split('T')[1] || '';
+    }
 });
 
 const searchQuery = ref('');
@@ -110,8 +128,13 @@ const onTypeChange = (event) => {
 /** Pre-set night shift defaults when type changes. */
 watch(() => form.type, (newType) => {
     if (newType === 'night_shift' && !form.start_time && !form.end_time) {
-        form.start_time = '22:00';
-        form.end_time = '06:00';
+        const dateStr = startDatetime.value.split('T')[0] || today;
+        startDatetime.value = `${dateStr}T22:00`;
+        // Next day for end
+        const nextDay = new Date(dateStr);
+        nextDay.setDate(nextDay.getDate() + 1);
+        const nextDayStr = nextDay.toISOString().split('T')[0];
+        endDatetime.value = `${nextDayStr}T06:00`;
     }
 });
 
@@ -294,32 +317,20 @@ const getDepartmentName = (deptId) => {
                 <!-- Date & Time -->
                 <div class="bg-white rounded-lg shadow p-6">
                     <h3 class="text-lg font-semibold text-gray-800 mb-4">Fecha y Horario</h3>
-                    <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">
-                                Fecha *
+                                Fecha/Hora Inicio *
                             </label>
                             <input
-                                v-model="form.date"
-                                type="date"
+                                v-model="startDatetime"
+                                type="datetime-local"
                                 class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                                :class="{ 'border-red-500': form.errors.date }"
+                                :class="{ 'border-red-500': form.errors.date || form.errors.start_time }"
                             />
                             <p v-if="form.errors.date" class="mt-1 text-sm text-red-600">
                                 {{ form.errors.date }}
                             </p>
-                        </div>
-
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">
-                                Hora Inicio
-                            </label>
-                            <input
-                                v-model="form.start_time"
-                                type="time"
-                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                                :class="{ 'border-red-500': form.errors.start_time }"
-                            />
                             <p v-if="form.errors.start_time" class="mt-1 text-sm text-red-600">
                                 {{ form.errors.start_time }}
                             </p>
@@ -327,11 +338,11 @@ const getDepartmentName = (deptId) => {
 
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">
-                                Hora Fin
+                                Fecha/Hora Fin *
                             </label>
                             <input
-                                v-model="form.end_time"
-                                type="time"
+                                v-model="endDatetime"
+                                type="datetime-local"
                                 class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
                                 :class="{ 'border-red-500': form.errors.end_time }"
                             />
@@ -349,7 +360,7 @@ const getDepartmentName = (deptId) => {
                                 type="number"
                                 step="0.5"
                                 min="0"
-                                max="24"
+                                max="48"
                                 placeholder="Auto"
                                 class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
                                 :class="{ 'border-red-500': form.errors.hours }"
@@ -357,7 +368,7 @@ const getDepartmentName = (deptId) => {
                             <p v-if="form.errors.hours" class="mt-1 text-sm text-red-600">
                                 {{ form.errors.hours }}
                             </p>
-                            <p class="mt-1 text-xs text-gray-500">Auto si pone inicio/fin</p>
+                            <p class="mt-1 text-xs text-gray-500">Se calcula automaticamente</p>
                         </div>
                     </div>
                 </div>

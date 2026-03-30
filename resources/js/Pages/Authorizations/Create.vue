@@ -11,17 +11,36 @@ const props = defineProps({
     types: Array,
 });
 
+const today = new Date().toISOString().split('T')[0];
+const startDatetime = ref(`${today}T08:00`);
+const endDatetime = ref(`${today}T16:00`);
+
 const form = useForm({
     employee_id: props.selectedEmployee || '',
     type: '',
     compensation_type_id: null,
-    date: new Date().toISOString().split('T')[0],
+    date: today,
     start_time: '',
     end_time: '',
     hours: '',
     reason: '',
     evidence: null,
 });
+
+/** Auto-calculate hours when datetimes change. */
+watch([startDatetime, endDatetime], ([start, end]) => {
+    if (start && end) {
+        const s = new Date(start);
+        const e = new Date(end);
+        if (e > s) {
+            form.hours = ((e - s) / (1000 * 60 * 60)).toFixed(2);
+        }
+        // Sync hidden fields for backend
+        form.date = start.split('T')[0];
+        form.start_time = start.split('T')[1] || '';
+        form.end_time = end.split('T')[1] || '';
+    }
+}, { immediate: true });
 
 const evidencePreview = ref(null);
 
@@ -176,32 +195,20 @@ const typeDescriptions = {
                 <!-- Date & Time -->
                 <div class="bg-white rounded-lg shadow p-6">
                     <h3 class="text-lg font-semibold text-gray-800 mb-4">Fecha y Horario</h3>
-                    <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">
-                                Fecha *
+                                Fecha/Hora Inicio *
                             </label>
                             <input
-                                v-model="form.date"
-                                type="date"
+                                v-model="startDatetime"
+                                type="datetime-local"
                                 class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                                :class="{ 'border-red-500': form.errors.date }"
+                                :class="{ 'border-red-500': form.errors.date || form.errors.start_time }"
                             />
                             <p v-if="form.errors.date" class="mt-1 text-sm text-red-600">
                                 {{ form.errors.date }}
                             </p>
-                        </div>
-
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">
-                                Hora Inicio
-                            </label>
-                            <input
-                                v-model="form.start_time"
-                                type="time"
-                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                                :class="{ 'border-red-500': form.errors.start_time }"
-                            />
                             <p v-if="form.errors.start_time" class="mt-1 text-sm text-red-600">
                                 {{ form.errors.start_time }}
                             </p>
@@ -209,11 +216,11 @@ const typeDescriptions = {
 
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">
-                                Hora Fin
+                                Fecha/Hora Fin *
                             </label>
                             <input
-                                v-model="form.end_time"
-                                type="time"
+                                v-model="endDatetime"
+                                type="datetime-local"
                                 class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
                                 :class="{ 'border-red-500': form.errors.end_time }"
                             />
@@ -231,8 +238,8 @@ const typeDescriptions = {
                                 type="number"
                                 step="0.5"
                                 min="0"
-                                max="24"
-                                placeholder="Auto o manual"
+                                max="48"
+                                placeholder="Auto"
                                 class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
                                 :class="{ 'border-red-500': form.errors.hours }"
                             />
@@ -240,7 +247,7 @@ const typeDescriptions = {
                                 {{ form.errors.hours }}
                             </p>
                             <p class="mt-1 text-xs text-gray-500">
-                                Se calcula automaticamente si pone inicio/fin
+                                Se calcula automaticamente
                             </p>
                         </div>
                     </div>
