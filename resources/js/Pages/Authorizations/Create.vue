@@ -3,7 +3,7 @@ import AppLayout from '@/Layouts/AppLayout.vue';
 import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import SearchableSelect from '@/Components/SearchableSelect.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 
 const props = defineProps({
     employees: Array,
@@ -46,8 +46,19 @@ const submit = () => {
     form.post(route('authorizations.store'));
 };
 
-/** Group types for optgroup display. */
-const compensationTypes = computed(() => props.types.filter(t => t.group === 'compensation'));
+/** Active compensation type IDs for the selected employee. */
+const selectedEmployeeData = computed(() => {
+    if (!form.employee_id) return null;
+    return props.employees.find(e => e.id == form.employee_id);
+});
+
+/** Group types for optgroup display, filtered by employee's active compensation types. */
+const compensationTypes = computed(() => {
+    const all = props.types.filter(t => t.group === 'compensation');
+    const ids = selectedEmployeeData.value?.active_compensation_type_ids;
+    if (!ids) return all;
+    return all.filter(t => ids.includes(t.compensation_type_id));
+});
 const administrativeTypes = computed(() => props.types.filter(t => t.group === 'administrative'));
 
 /**
@@ -77,6 +88,17 @@ const onTypeChange = (event) => {
         form.compensation_type_id = null;
     }
 };
+
+/** Reset type selection when employee changes and selected type is no longer available. */
+watch(() => form.employee_id, () => {
+    if (form.compensation_type_id) {
+        const ids = selectedEmployeeData.value?.active_compensation_type_ids;
+        if (ids && !ids.includes(form.compensation_type_id)) {
+            form.type = '';
+            form.compensation_type_id = null;
+        }
+    }
+});
 
 const typeDescriptions = {
     overtime: 'Horas adicionales trabajadas fuera del horario normal',

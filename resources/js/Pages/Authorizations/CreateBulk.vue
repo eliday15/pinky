@@ -74,8 +74,15 @@ const selectDepartment = () => {
     selectAll.value = true;
 };
 
-/** Group types for optgroup display. */
-const compensationTypes = computed(() => props.types.filter(t => t.group === 'compensation'));
+/** Group types for optgroup display, filtered by intersection of selected employees' active compensation types. */
+const compensationTypes = computed(() => {
+    const all = props.types.filter(t => t.group === 'compensation');
+    if (form.employee_ids.length === 0) return all;
+    const selectedEmps = props.employees.filter(e => form.employee_ids.includes(e.id));
+    return all.filter(t => selectedEmps.every(emp =>
+        emp.active_compensation_type_ids?.includes(t.compensation_type_id)
+    ));
+});
 const administrativeTypes = computed(() => props.types.filter(t => t.group === 'administrative'));
 
 const optionValue = (type) => {
@@ -112,6 +119,17 @@ watch(() => form.type, (newType) => {
 /** Reset select-all when department filter changes. */
 watch(departmentFilter, () => {
     selectAll.value = false;
+});
+
+/** Reset type selection when employee selection changes and selected type is no longer available. */
+watch(() => form.employee_ids.length, () => {
+    if (form.compensation_type_id) {
+        const stillValid = compensationTypes.value.some(t => t.compensation_type_id === form.compensation_type_id);
+        if (!stillValid) {
+            form.type = '';
+            form.compensation_type_id = null;
+        }
+    }
 });
 
 /** Filtered department heads based on selected department. */

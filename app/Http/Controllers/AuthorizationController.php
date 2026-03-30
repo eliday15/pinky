@@ -154,8 +154,11 @@ class AuthorizationController extends Controller
             }
         }
 
+        $employees = $employeesQuery->get(['id', 'full_name', 'employee_number']);
+        $this->appendActiveCompensationTypeIds($employees);
+
         return Inertia::render('Authorizations/Create', [
-            'employees' => $employeesQuery->get(['id', 'full_name', 'employee_number']),
+            'employees' => $employees,
             'selectedEmployee' => $request->employee ?? $user->employee?->id,
             'types' => $this->getAuthorizationTypes(),
         ]);
@@ -237,8 +240,11 @@ class AuthorizationController extends Controller
             }
         }
 
+        $employees = $employeesQuery->get(['id', 'full_name', 'employee_number', 'department_id']);
+        $this->appendActiveCompensationTypeIds($employees);
+
         return Inertia::render('Authorizations/CreateBulk', [
-            'employees' => $employeesQuery->get(['id', 'full_name', 'employee_number', 'department_id']),
+            'employees' => $employees,
             'types' => $this->getAuthorizationTypes(),
             'departments' => \App\Models\Department::active()->get(['id', 'name']),
             'departmentHeads' => Employee::active()
@@ -343,9 +349,12 @@ class AuthorizationController extends Controller
 
         $authorization->load(['employee']);
 
+        $employees = Employee::active()->orderBy('full_name')->get(['id', 'full_name', 'employee_number']);
+        $this->appendActiveCompensationTypeIds($employees);
+
         return Inertia::render('Authorizations/Edit', [
             'authorization' => $authorization,
-            'employees' => Employee::active()->orderBy('full_name')->get(['id', 'full_name', 'employee_number']),
+            'employees' => $employees,
             'types' => $this->getAuthorizationTypes(),
         ]);
     }
@@ -511,6 +520,22 @@ class AuthorizationController extends Controller
         $authorization->markAsPaid();
 
         return redirect()->back()->with('success', 'Autorizacion marcada como pagada.');
+    }
+
+    /**
+     * Append active compensation type IDs to each employee in the collection.
+     *
+     * Eager-loads the pivot and sets a `active_compensation_type_ids` attribute
+     * so the frontend can filter authorization types per employee.
+     */
+    private function appendActiveCompensationTypeIds(\Illuminate\Database\Eloquent\Collection $employees): void
+    {
+        $employees->load(['compensationTypes' => fn($q) => $q->wherePivot('is_active', true)->select('compensation_types.id')]);
+
+        $employees->each(function (Employee $emp) {
+            $emp->setAttribute('active_compensation_type_ids', $emp->compensationTypes->pluck('id')->values());
+            $emp->unsetRelation('compensationTypes');
+        });
     }
 
     /**
