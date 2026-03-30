@@ -249,12 +249,23 @@ const typeLabels = {
                             <div class="text-sm text-gray-900">
                                 {{ new Date(auth.date).toLocaleDateString('es-MX') }}
                             </div>
-                            <div v-if="auth.start_time" class="text-sm text-gray-500">
-                                {{ auth.start_time }} - {{ auth.end_time }}
+                            <div v-if="auth.compensation_type?.application_mode === 'per_hour' && auth.start_time" class="text-xs text-gray-500">
+                                {{ auth.start_time?.substring(0,5) }} - {{ auth.end_time?.substring(0,5) }}
                             </div>
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                            {{ auth.hours ? `${auth.hours}h` : '-' }}
+                            <template v-if="auth.compensation_type?.application_mode === 'per_hour'">
+                                {{ auth.hours ? `${auth.hours}h` : '-' }}
+                            </template>
+                            <template v-else-if="auth.compensation_type?.application_mode === 'per_day'">
+                                {{ auth.hours ? `${auth.hours} dia(s)` : '-' }}
+                            </template>
+                            <template v-else-if="auth.compensation_type?.application_mode === 'one_time'">
+                                {{ auth.hours ? `x${auth.hours}` : 'x1' }}
+                            </template>
+                            <template v-else>
+                                {{ auth.hours ? `${auth.hours}h` : '-' }}
+                            </template>
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap">
                             <span :class="[statusColors[auth.status], 'px-2 py-1 text-xs rounded-full']">

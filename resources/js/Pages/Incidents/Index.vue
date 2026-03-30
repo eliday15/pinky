@@ -213,10 +213,23 @@ const deleteIncident = (incident) => {
                             </span>
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {{ formatDate(incident.start_date) }} - {{ formatDate(incident.end_date) }}
+                            <template v-if="incident.incident_type?.has_time_range">
+                                {{ formatDate(incident.start_date) }}
+                                <span v-if="incident.start_time" class="text-xs text-gray-400 ml-1">
+                                    {{ incident.start_time?.substring(0,5) }}
+                                </span>
+                            </template>
+                            <template v-else>
+                                {{ formatDate(incident.start_date) }} - {{ formatDate(incident.end_date) }}
+                            </template>
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">
-                            {{ incident.days_count }}
+                            <template v-if="incident.incident_type?.has_time_range">
+                                {{ incident.hours ? `${incident.hours}h` : '-' }}
+                            </template>
+                            <template v-else>
+                                {{ incident.days_count }} {{ incident.days_count === 1 ? 'dia' : 'dias' }}
+                            </template>
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap">
                             <span :class="[statusColors[incident.status], 'px-2 py-1 text-xs font-medium rounded-full']">

@@ -37,7 +37,7 @@ class AuthorizationController extends Controller
         $this->authorize('viewAny', Authorization::class);
 
         $user = Auth::user();
-        $query = Authorization::with(['employee.department', 'requestedBy', 'approvedBy']);
+        $query = Authorization::with(['employee.department', 'requestedBy', 'approvedBy', 'compensationType']);
 
         // Apply permission-based filtering
         if (! $user->hasPermissionTo('authorizations.view_all')) {
