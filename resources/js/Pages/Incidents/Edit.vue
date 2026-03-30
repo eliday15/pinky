@@ -217,36 +217,46 @@ const submit = () => {
                     </div>
 
                     <!-- Date Range (normal types - date only) -->
-                    <div v-if="!hasTimeRange" class="grid grid-cols-2 gap-6">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">
-                                Fecha Inicio <span class="text-red-500">*</span>
-                            </label>
-                            <input
-                                v-model="form.start_date"
-                                type="date"
-                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                                :class="{ 'border-red-500': form.errors.start_date }"
-                            />
-                            <p v-if="form.errors.start_date" class="mt-1 text-sm text-red-600">
-                                {{ form.errors.start_date }}
-                            </p>
-                        </div>
+                    <div v-if="!hasTimeRange">
+                        <div class="grid grid-cols-2 gap-6">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">
+                                    Fecha Inicio <span class="text-red-500">*</span>
+                                </label>
+                                <input
+                                    v-model="form.start_date"
+                                    type="date"
+                                    class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                    :class="{ 'border-red-500': form.errors.start_date }"
+                                />
+                                <p v-if="form.errors.start_date" class="mt-1 text-sm text-red-600">
+                                    {{ form.errors.start_date }}
+                                </p>
+                            </div>
 
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">
-                                Fecha Fin <span class="text-red-500">*</span>
-                            </label>
-                            <input
-                                v-model="form.end_date"
-                                type="date"
-                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                                :class="{ 'border-red-500': form.errors.end_date }"
-                            />
-                            <p v-if="form.errors.end_date" class="mt-1 text-sm text-red-600">
-                                {{ form.errors.end_date }}
-                            </p>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">
+                                    Fecha Fin <span class="text-red-500">*</span>
+                                </label>
+                                <input
+                                    v-model="form.end_date"
+                                    type="date"
+                                    class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                    :class="{ 'border-red-500': form.errors.end_date }"
+                                />
+                                <p v-if="form.errors.end_date" class="mt-1 text-sm text-red-600">
+                                    {{ form.errors.end_date }}
+                                </p>
+                            </div>
                         </div>
+                        <button
+                            v-if="form.start_date"
+                            type="button"
+                            @click="form.end_date = form.start_date"
+                            class="mt-2 text-sm text-pink-600 hover:text-pink-800"
+                        >
+                            Mismo dia
+                        </button>
                     </div>
 
                     <!-- DateTime Range (time-range types like permissions) -->
