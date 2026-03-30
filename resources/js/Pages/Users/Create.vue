@@ -4,6 +4,7 @@ import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import InputError from '@/Components/InputError.vue';
 import InputLabel from '@/Components/InputLabel.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
+import SearchableSelect from '@/Components/SearchableSelect.vue';
 import TextInput from '@/Components/TextInput.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
 import { ref } from 'vue';
@@ -138,16 +139,15 @@ const submit = () => {
                     <!-- Link Employee -->
                     <div>
                         <InputLabel for="employee_id" value="Vincular a Empleado (Opcional)" />
-                        <select
-                            id="employee_id"
+                        <SearchableSelect
                             v-model="form.employee_id"
-                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                        >
-                            <option value="">Sin vincular</option>
-                            <option v-for="emp in employees" :key="emp.id" :value="emp.id">
-                                {{ emp.full_name }}
-                            </option>
-                        </select>
+                            :options="employees"
+                            value-key="id"
+                            label-key="full_name"
+                            placeholder="Buscar empleado..."
+                            :has-error="!!form.errors.employee_id"
+                            class="mt-1"
+                        />
                         <p class="mt-1 text-xs text-gray-500">Solo se muestran empleados activos que no estan vinculados a ningun usuario.</p>
                         <InputError class="mt-2" :message="form.errors.employee_id" />
                     </div>

@@ -2,6 +2,7 @@
 import AppLayout from '@/Layouts/AppLayout.vue';
 import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import InputError from '@/Components/InputError.vue';
+import SearchableSelect from '@/Components/SearchableSelect.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
 import { computed, ref, watch } from 'vue';
 
@@ -1004,17 +1005,15 @@ watch(() => form.hire_date, onHireDateChange);
                             </button>
                         </div>
 
-                        <select
+                        <SearchableSelect
                             v-if="!resolvedSupervisor || overrideSupervisor"
                             v-model="form.supervisor_id"
-                            class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                            :class="{ 'border-red-500': form.errors.supervisor_id }"
-                        >
-                            <option value="">Sin jefe directo asignado</option>
-                            <option v-for="emp in employees" :key="emp.id" :value="emp.id">
-                                {{ emp.full_name }}
-                            </option>
-                        </select>
+                            :options="employees"
+                            value-key="id"
+                            label-key="full_name"
+                            placeholder="Buscar supervisor..."
+                            :has-error="!!form.errors.supervisor_id"
+                        />
                         <p v-if="!resolvedSupervisor && !overrideSupervisor" class="mt-1 text-sm text-gray-500">
                             Supervisor o jefe inmediato del empleado
                         </p>

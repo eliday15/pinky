@@ -1,6 +1,7 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
 import FormErrorBanner from '@/Components/FormErrorBanner.vue';
+import SearchableSelect from '@/Components/SearchableSelect.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
 import { computed } from 'vue';
 
@@ -121,17 +122,16 @@ const isPending = props.authorization.status === 'pending';
                             <label class="block text-sm font-medium text-gray-700 mb-1">
                                 Empleado *
                             </label>
-                            <select
+                            <SearchableSelect
                                 v-model="form.employee_id"
+                                :options="employees"
+                                value-key="id"
+                                label-key="full_name"
+                                secondary-key="employee_number"
+                                placeholder="Buscar empleado..."
                                 :disabled="!isPending"
-                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 disabled:bg-gray-100"
-                                :class="{ 'border-red-500': form.errors.employee_id }"
-                            >
-                                <option value="">Seleccionar...</option>
-                                <option v-for="emp in employees" :key="emp.id" :value="emp.id">
-                                    {{ emp.full_name }} ({{ emp.employee_number }})
-                                </option>
-                            </select>
+                                :has-error="!!form.errors.employee_id"
+                            />
                             <p v-if="form.errors.employee_id" class="mt-1 text-sm text-red-600">
                                 {{ form.errors.employee_id }}
                             </p>

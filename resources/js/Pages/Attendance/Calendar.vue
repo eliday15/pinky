@@ -1,5 +1,6 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
+import SearchableSelect from '@/Components/SearchableSelect.vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import { ref, watch } from 'vue';
 
@@ -115,15 +116,16 @@ const calculateSummary = () => {
                     &larr; Volver a lista
                 </Link>
 
-                <select
-                    v-model="employee"
-                    class="flex-1 max-w-md rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                >
-                    <option value="">Seleccionar empleado...</option>
-                    <option v-for="emp in employees" :key="emp.id" :value="emp.id">
-                        {{ emp.full_name }} ({{ emp.employee_number }})
-                    </option>
-                </select>
+                <div class="flex-1 max-w-md">
+                    <SearchableSelect
+                        v-model="employee"
+                        :options="employees"
+                        value-key="id"
+                        label-key="full_name"
+                        secondary-key="employee_number"
+                        placeholder="Buscar empleado..."
+                    />
+                </div>
 
                 <div class="flex items-center space-x-2">
                     <button @click="changeMonth(-1)" class="p-2 hover:bg-gray-100 rounded">

@@ -1,6 +1,7 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
 import FormErrorBanner from '@/Components/FormErrorBanner.vue';
+import SearchableSelect from '@/Components/SearchableSelect.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
 import { computed } from 'vue';
 
@@ -129,16 +130,15 @@ const submit = () => {
                         <label class="block text-sm font-medium text-gray-700 mb-1">
                             Empleado <span class="text-red-500">*</span>
                         </label>
-                        <select
+                        <SearchableSelect
                             v-model="form.employee_id"
-                            class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                            :class="{ 'border-red-500': form.errors.employee_id }"
-                        >
-                            <option value="">Seleccionar empleado...</option>
-                            <option v-for="emp in employees" :key="emp.id" :value="emp.id">
-                                {{ emp.employee_number }} - {{ emp.full_name }}
-                            </option>
-                        </select>
+                            :options="employees"
+                            value-key="id"
+                            label-key="full_name"
+                            secondary-key="employee_number"
+                            placeholder="Buscar empleado..."
+                            :has-error="!!form.errors.employee_id"
+                        />
                         <p v-if="form.errors.employee_id" class="mt-1 text-sm text-red-600">
                             {{ form.errors.employee_id }}
                         </p>
