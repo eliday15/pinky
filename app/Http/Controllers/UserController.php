@@ -44,11 +44,9 @@ class UserController extends Controller
         // Apply 2FA status filter
         $query->when($request->has('two_factor') && $request->two_factor !== '', function ($q) use ($request) {
             if ($request->two_factor === 'enabled') {
-                $q->whereNotNull('two_factor_secret')->whereNotNull('two_factor_confirmed_at');
+                $q->whereHas('twoFactorDevices', fn ($d) => $d->whereNotNull('confirmed_at'));
             } else {
-                $q->where(function ($query) {
-                    $query->whereNull('two_factor_secret')->orWhereNull('two_factor_confirmed_at');
-                });
+                $q->whereDoesntHave('twoFactorDevices', fn ($d) => $d->whereNotNull('confirmed_at'));
             }
         });
 
@@ -156,7 +154,7 @@ class UserController extends Controller
 
         $user->load(['roles', 'employee:id,user_id,full_name']);
 
-        // Add computed 2FA attributes (two_factor_secret is hidden from serialization)
+        // Add computed 2FA attributes
         $user->two_factor_enabled = $user->hasTwoFactorEnabled();
         $user->requires_two_factor = $user->requiresTwoFactor();
 
@@ -260,9 +258,8 @@ class UserController extends Controller
     {
         $this->authorize('resetPassword', $user);
 
+        $user->twoFactorDevices()->delete();
         $user->update([
-            'two_factor_secret' => null,
-            'two_factor_confirmed_at' => null,
             'two_factor_recovery_codes' => null,
         ]);
 
@@ -283,11 +280,10 @@ class UserController extends Controller
             'password.min' => 'La contraseña debe tener al menos 8 caracteres.',
         ]);
 
+        $user->twoFactorDevices()->delete();
         $user->update([
             'password' => $validated['password'],
             'must_change_password' => true,
-            'two_factor_secret' => null,
-            'two_factor_confirmed_at' => null,
             'two_factor_recovery_codes' => null,
         ]);
 

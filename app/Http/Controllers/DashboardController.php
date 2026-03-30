@@ -339,7 +339,7 @@ class DashboardController extends Controller
             'route' => route('authorizations.show', $a->id),
         ]);
 
-        return $incidents->merge($authorizations)->sortByDesc('date')->values()->toArray();
+        return $incidents->toBase()->merge($authorizations)->sortByDesc('date')->values()->toArray();
     }
 
     /**
@@ -374,6 +374,6 @@ class DashboardController extends Controller
                 'route' => route('authorizations.show', $a->id),
             ]);
 
-        return $incidents->merge($authorizations)->sortByDesc('date')->values()->take(5)->toArray();
+        return $incidents->toBase()->merge($authorizations)->sortByDesc('date')->values()->take(5)->toArray();
     }
 }

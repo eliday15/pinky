@@ -57,7 +57,8 @@ Route::middleware('auth')->group(function () {
     Route::get('two-factor/setup', [TwoFactorSetupController::class, 'show'])
         ->name('two-factor.setup');
     Route::post('two-factor/confirm', [TwoFactorSetupController::class, 'confirm'])
-        ->name('two-factor.confirm');
+        ->name('two-factor.confirm')
+        ->middleware('throttle:6,1');
     Route::delete('two-factor', [TwoFactorSetupController::class, 'destroy'])
         ->name('two-factor.disable');
     Route::get('two-factor/recovery-codes', [TwoFactorSetupController::class, 'recoveryCodes'])

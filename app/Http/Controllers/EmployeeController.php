@@ -297,7 +297,7 @@ class EmployeeController extends Controller
 
         $employee->load(['supervisor', 'compensationTypes', 'emergencyContacts', 'user.roles']);
 
-        // Compute 2FA status for linked user (two_factor_secret is hidden)
+        // Compute 2FA status for linked user
         $linkedUser = null;
         if ($employee->user) {
             $linkedUser = $employee->user;

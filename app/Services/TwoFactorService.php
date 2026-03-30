@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\TwoFactorDevice;
 use App\Models\User;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Hash;
@@ -12,7 +13,7 @@ use PragmaRX\Google2FA\Google2FA;
  * Service for TOTP two-factor authentication logic.
  *
  * Handles secret generation, QR code URI creation, code verification,
- * and recovery code management.
+ * device management, and recovery code management.
  */
 class TwoFactorService
 {
@@ -38,33 +39,108 @@ class TwoFactorService
      *
      * @param User $user The user to generate the QR URI for
      * @param string $secret The raw (unencrypted) secret key
+     * @param string $deviceName The device name to include in the label
      * @return string The otpauth:// URI
      */
-    public function generateQrCodeUri(User $user, string $secret): string
+    public function generateQrCodeUri(User $user, string $secret, string $deviceName = ''): string
     {
+        $label = $deviceName ? "{$user->email} ({$deviceName})" : $user->email;
+
         return $this->google2fa->getQRCodeUrl(
             'Pinky',
-            $user->email,
+            $label,
             $secret
         );
     }
 
     /**
-     * Verify a TOTP code against the user's stored secret.
+     * Create a new unconfirmed 2FA device for the user.
      *
-     * @param User $user The user to verify the code for
+     * @param User $user The user to create the device for
+     * @param string $name The device label
+     * @return TwoFactorDevice The newly created device
+     */
+    public function createDevice(User $user, string $name): TwoFactorDevice
+    {
+        $secret = $this->generateSecretKey();
+
+        return $user->twoFactorDevices()->create([
+            'name' => $name,
+            'secret' => Crypt::encryptString($secret),
+        ]);
+    }
+
+    /**
+     * Get the decrypted secret for a device.
+     *
+     * @param TwoFactorDevice $device The device
+     * @return string The raw secret
+     */
+    public function getDeviceSecret(TwoFactorDevice $device): string
+    {
+        return Crypt::decryptString($device->secret);
+    }
+
+    /**
+     * Verify a TOTP code against a specific device's secret.
+     *
+     * @param TwoFactorDevice $device The device to verify against
      * @param string $code The 6-digit TOTP code
      * @return bool Whether the code is valid
      */
-    public function verifyCode(User $user, string $code): bool
+    public function verifyCodeForDevice(TwoFactorDevice $device, string $code): bool
     {
-        if (!$user->two_factor_secret) {
-            return false;
-        }
-
-        $secret = Crypt::decryptString($user->two_factor_secret);
+        $secret = Crypt::decryptString($device->secret);
 
         return (bool) $this->google2fa->verifyKey($secret, $code, 1);
+    }
+
+    /**
+     * Confirm a device after successful code verification.
+     *
+     * @param TwoFactorDevice $device The device to confirm
+     * @param User $user The device owner
+     * @return array|null Recovery codes if this is the user's first device, null otherwise
+     */
+    public function confirmDevice(TwoFactorDevice $device, User $user): ?array
+    {
+        $device->update(['confirmed_at' => now()]);
+
+        // Generate recovery codes only if this is the user's first confirmed device
+        $confirmedCount = $user->twoFactorDevices()->whereNotNull('confirmed_at')->count();
+        if ($confirmedCount === 1) {
+            $recoveryCodes = $this->generateRecoveryCodes();
+            $this->storeRecoveryCodes($user, $recoveryCodes);
+
+            return $recoveryCodes;
+        }
+
+        return null;
+    }
+
+    /**
+     * Verify a TOTP code against all confirmed devices for a user.
+     *
+     * Iterates through each confirmed device and returns true if any matches.
+     * Updates last_used_at on the matching device.
+     *
+     * @param User $user The user to verify the code for
+     * @param string $code The 6-digit TOTP code
+     * @return bool Whether the code is valid for any device
+     */
+    public function verifyCode(User $user, string $code): bool
+    {
+        $devices = $user->twoFactorDevices()->whereNotNull('confirmed_at')->get();
+
+        foreach ($devices as $device) {
+            if ($this->verifyCodeForDevice($device, $code)) {
+                $device->update(['last_used_at' => now()]);
+
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

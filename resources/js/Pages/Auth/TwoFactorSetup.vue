@@ -15,6 +15,7 @@ const props = defineProps({
     isEnabled: Boolean,
     requiresTwoFactor: Boolean,
     recoveryCodesCount: Number,
+    pendingDeviceId: Number,
     recoveryCodes: {
         type: Array,
         default: () => [],
@@ -27,6 +28,7 @@ const copiedCodes = ref(false);
 
 const confirmForm = useForm({
     code: '',
+    device_id: props.pendingDeviceId,
 });
 
 const disableForm = useForm({

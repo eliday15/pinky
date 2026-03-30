@@ -18,6 +18,7 @@ use App\Http\Controllers\AttendanceReportController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\ReportExportController;
 use App\Http\Controllers\ScheduleController;
+use App\Http\Controllers\SecurityDeviceController;
 use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\VacationTableController;
@@ -149,6 +150,12 @@ Route::middleware(['auth', 'verified', 'password-changed', 'two-factor-setup'])-
     Route::get('/settings/general', [SettingsController::class, 'general'])->name('settings.general');
     Route::put('/settings', [SettingsController::class, 'update'])->name('settings.update');
     Route::put('/settings/single', [SettingsController::class, 'updateSingle'])->name('settings.updateSingle');
+
+    // Security devices (2FA) management from Settings
+    Route::post('/settings/security/devices', [SecurityDeviceController::class, 'store'])->name('settings.security.devices.store');
+    Route::post('/settings/security/devices/confirm', [SecurityDeviceController::class, 'confirm'])->name('settings.security.devices.confirm')->middleware('throttle:6,1');
+    Route::delete('/settings/security/devices/{device}', [SecurityDeviceController::class, 'destroy'])->name('settings.security.devices.destroy');
+    Route::post('/settings/security/recovery-codes', [SecurityDeviceController::class, 'regenerateRecoveryCodes'])->name('settings.security.recovery-codes.regenerate');
 
     // Anomalies
     Route::get('/anomalies', [AnomalyResolutionController::class, 'index'])->name('anomalies.index');

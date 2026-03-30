@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\SystemSetting;
+use App\Services\TwoFactorService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -17,7 +18,7 @@ class SettingsController extends Controller
     /**
      * Display the settings index page.
      */
-    public function index(): Response
+    public function index(TwoFactorService $twoFactorService): Response
     {
         $user = Auth::user();
 
@@ -33,9 +34,18 @@ class SettingsController extends Controller
                 ['key' => 'attendance', 'label' => 'Asistencia'],
                 ['key' => 'payroll', 'label' => 'Nomina'],
                 ['key' => 'general', 'label' => 'General'],
+                ['key' => 'seguridad', 'label' => 'Seguridad'],
             ],
             'can' => [
                 'edit' => $user->hasPermissionTo('settings.edit'),
+            ],
+            'security' => [
+                'twoFactorEnabled' => $user->hasTwoFactorEnabled(),
+                'requiresTwoFactor' => $user->requiresTwoFactor(),
+                'recoveryCodesCount' => $twoFactorService->remainingRecoveryCodesCount($user),
+                'devices' => $user->twoFactorDevices()
+                    ->whereNotNull('confirmed_at')
+                    ->get(['id', 'name', 'confirmed_at', 'last_used_at']),
             ],
         ]);
     }

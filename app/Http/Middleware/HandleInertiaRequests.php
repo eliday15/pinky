@@ -43,6 +43,8 @@ class HandleInertiaRequests extends Middleware
                 'success' => fn () => $request->session()->get('success'),
                 'error' => fn () => $request->session()->get('error'),
                 'warning' => fn () => $request->session()->get('warning'),
+                'pendingDevice' => fn () => $request->session()->get('pendingDevice'),
+                'recoveryCodes' => fn () => $request->session()->get('recoveryCodes'),
             ],
         ];
     }

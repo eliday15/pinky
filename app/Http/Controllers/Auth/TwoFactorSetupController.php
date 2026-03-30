@@ -6,12 +6,14 @@ use App\Http\Controllers\Controller;
 use App\Services\TwoFactorService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Crypt;
 use Inertia\Inertia;
 use Inertia\Response;
 
 /**
  * Controller for 2FA setup: showing QR code, confirming setup, managing recovery codes.
+ *
+ * This handles the initial/forced 2FA setup flow (middleware redirect).
+ * For managing multiple devices from Settings, see SecurityDeviceController.
  */
 class TwoFactorSetupController extends Controller
 {
@@ -21,21 +23,22 @@ class TwoFactorSetupController extends Controller
 
     /**
      * Show the 2FA setup page with QR code.
+     *
+     * Creates an unconfirmed device if the user doesn't have one pending.
      */
     public function show(Request $request): Response
     {
         $user = $request->user();
 
-        // Generate a new secret if user doesn't have one yet
-        if (!$user->two_factor_secret) {
-            $secret = $this->twoFactorService->generateSecretKey();
-            $user->two_factor_secret = Crypt::encryptString($secret);
-            $user->save();
-        } else {
-            $secret = Crypt::decryptString($user->two_factor_secret);
+        // Find or create an unconfirmed device for setup
+        $pendingDevice = $user->twoFactorDevices()->whereNull('confirmed_at')->first();
+
+        if (!$pendingDevice) {
+            $pendingDevice = $this->twoFactorService->createDevice($user, 'Autenticador principal');
         }
 
-        $qrCodeUri = $this->twoFactorService->generateQrCodeUri($user, $secret);
+        $secret = $this->twoFactorService->getDeviceSecret($pendingDevice);
+        $qrCodeUri = $this->twoFactorService->generateQrCodeUri($user, $secret, $pendingDevice->name);
 
         return Inertia::render('Auth/TwoFactorSetup', [
             'qrCodeUri' => $qrCodeUri,
@@ -43,6 +46,7 @@ class TwoFactorSetupController extends Controller
             'isEnabled' => $user->hasTwoFactorEnabled(),
             'requiresTwoFactor' => $user->requiresTwoFactor(),
             'recoveryCodesCount' => $this->twoFactorService->remainingRecoveryCodesCount($user),
+            'pendingDeviceId' => $pendingDevice->id,
         ]);
     }
 
@@ -53,34 +57,37 @@ class TwoFactorSetupController extends Controller
     {
         $request->validate([
             'code' => ['required', 'string', 'size:6'],
+            'device_id' => ['required', 'integer', 'exists:two_factor_devices,id'],
         ], [
             'code.required' => 'El codigo de verificacion es obligatorio.',
             'code.size' => 'El codigo debe tener 6 digitos.',
         ]);
 
         $user = $request->user();
+        $device = $user->twoFactorDevices()->findOrFail($request->device_id);
 
-        if (!$this->twoFactorService->verifyCode($user, $request->code)) {
+        if (!$this->twoFactorService->verifyCodeForDevice($device, $request->code)) {
             return redirect()->back()->withErrors([
                 'code' => 'El codigo de verificacion es incorrecto. Asegurate de que la hora de tu dispositivo este sincronizada.',
             ]);
         }
 
-        // Mark as confirmed
-        $user->two_factor_confirmed_at = now();
-        $user->save();
+        $recoveryCodes = $this->twoFactorService->confirmDevice($device, $user);
 
-        // Generate recovery codes
-        $recoveryCodes = $this->twoFactorService->generateRecoveryCodes();
-        $this->twoFactorService->storeRecoveryCodes($user, $recoveryCodes);
+        if ($recoveryCodes) {
+            return redirect()->route('two-factor.recovery-codes')
+                ->with('recoveryCodes', $recoveryCodes)
+                ->with('success', 'Autenticacion de dos pasos activada exitosamente.');
+        }
 
         return redirect()->route('two-factor.recovery-codes')
-            ->with('recoveryCodes', $recoveryCodes)
-            ->with('success', 'Autenticacion de dos pasos activada exitosamente.');
+            ->with('success', 'Dispositivo de autenticacion agregado exitosamente.');
     }
 
     /**
      * Disable 2FA for the user (only allowed for non-required roles).
+     *
+     * Removes ALL devices and recovery codes.
      */
     public function destroy(Request $request): RedirectResponse
     {
@@ -97,10 +104,8 @@ class TwoFactorSetupController extends Controller
             return redirect()->back()->with('error', 'Tu rol requiere autenticacion de dos pasos. No se puede desactivar.');
         }
 
-        $user->two_factor_secret = null;
-        $user->two_factor_recovery_codes = null;
-        $user->two_factor_confirmed_at = null;
-        $user->save();
+        $user->twoFactorDevices()->delete();
+        $user->update(['two_factor_recovery_codes' => null]);
 
         return redirect()->route('profile.edit')
             ->with('success', 'Autenticacion de dos pasos desactivada.');

@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Spatie\Permission\Traits\HasRoles;
@@ -26,8 +27,6 @@ class User extends Authenticatable
         'email',
         'password',
         'must_change_password',
-        'two_factor_secret',
-        'two_factor_confirmed_at',
         'two_factor_recovery_codes',
     ];
 
@@ -39,7 +38,6 @@ class User extends Authenticatable
     protected $hidden = [
         'password',
         'remember_token',
-        'two_factor_secret',
         'two_factor_recovery_codes',
     ];
 
@@ -54,16 +52,23 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'must_change_password' => 'boolean',
-            'two_factor_confirmed_at' => 'datetime',
         ];
     }
 
     /**
-     * Check if the user has completed 2FA setup.
+     * Get the user's two-factor authentication devices.
+     */
+    public function twoFactorDevices(): HasMany
+    {
+        return $this->hasMany(TwoFactorDevice::class);
+    }
+
+    /**
+     * Check if the user has at least one confirmed 2FA device.
      */
     public function hasTwoFactorEnabled(): bool
     {
-        return !is_null($this->two_factor_secret) && !is_null($this->two_factor_confirmed_at);
+        return $this->twoFactorDevices()->whereNotNull('confirmed_at')->exists();
     }
 
     /**

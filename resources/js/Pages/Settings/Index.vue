@@ -1,6 +1,7 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
 import FormErrorBanner from '@/Components/FormErrorBanner.vue';
+import SecuritySettings from './Partials/SecuritySettings.vue';
 import { Head, useForm } from '@inertiajs/vue3';
 import { ref, computed } from 'vue';
 
@@ -8,6 +9,7 @@ const props = defineProps({
     settings: Object,
     groups: Array,
     can: Object,
+    security: Object,
 });
 
 const activeGroup = ref('attendance');
@@ -72,6 +74,7 @@ const groupLabels = {
     attendance: 'Asistencia',
     payroll: 'Nomina',
     general: 'General',
+    seguridad: 'Seguridad',
 };
 </script>
 
@@ -109,96 +112,102 @@ const groupLabels = {
 
             <!-- Content -->
             <div class="flex-1">
-                <form @submit.prevent="submit" class="space-y-6">
-                    <div class="bg-white rounded-lg shadow p-6">
-                        <h3 class="text-lg font-semibold text-gray-800 mb-6">
-                            Configuracion de {{ groupLabels[activeGroup] }}
-                        </h3>
+                <!-- Security Tab -->
+                <SecuritySettings v-if="activeGroup === 'seguridad'" :security="security" />
 
-                        <FormErrorBanner :errors="form.errors" />
+                <!-- System Settings Tabs -->
+                <template v-else>
+                    <form @submit.prevent="submit" class="space-y-6">
+                        <div class="bg-white rounded-lg shadow p-6">
+                            <h3 class="text-lg font-semibold text-gray-800 mb-6">
+                                Configuracion de {{ groupLabels[activeGroup] }}
+                            </h3>
 
-                        <div class="space-y-6">
-                            <div
-                                v-for="(setting, index) in currentSettings"
-                                :key="setting.key"
-                                class="border-b border-gray-200 pb-6 last:border-0 last:pb-0"
-                            >
-                                <div class="flex items-start justify-between">
-                                    <div class="flex-1">
-                                        <label :for="setting.key" class="block text-sm font-medium text-gray-700">
-                                            {{ setting.label }}
-                                        </label>
-                                        <p v-if="setting.description" class="mt-1 text-sm text-gray-500">
-                                            {{ setting.description }}
-                                        </p>
-                                    </div>
-                                    <div class="ml-4 w-48">
-                                        <!-- Boolean Input -->
-                                        <template v-if="setting.type === 'boolean'">
-                                            <label class="inline-flex items-center">
+                            <FormErrorBanner :errors="form.errors" />
+
+                            <div class="space-y-6">
+                                <div
+                                    v-for="(setting, index) in currentSettings"
+                                    :key="setting.key"
+                                    class="border-b border-gray-200 pb-6 last:border-0 last:pb-0"
+                                >
+                                    <div class="flex items-start justify-between">
+                                        <div class="flex-1">
+                                            <label :for="setting.key" class="block text-sm font-medium text-gray-700">
+                                                {{ setting.label }}
+                                            </label>
+                                            <p v-if="setting.description" class="mt-1 text-sm text-gray-500">
+                                                {{ setting.description }}
+                                            </p>
+                                        </div>
+                                        <div class="ml-4 w-48">
+                                            <!-- Boolean Input -->
+                                            <template v-if="setting.type === 'boolean'">
+                                                <label class="inline-flex items-center">
+                                                    <input
+                                                        :id="setting.key"
+                                                        type="checkbox"
+                                                        :checked="form.settings[index]?.value === 'true'"
+                                                        @change="updateValue(index, setting, $event)"
+                                                        :disabled="!can.edit"
+                                                        :class="{ 'border-red-500': form.errors['settings.' + index + '.value'] }"
+                                                        class="rounded border-gray-300 text-pink-600 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                                    />
+                                                    <span class="ml-2 text-sm text-gray-600">
+                                                        {{ form.settings[index]?.value === 'true' ? 'Si' : 'No' }}
+                                                    </span>
+                                                </label>
+                                                <p v-if="form.errors['settings.' + index + '.value']" class="mt-1 text-sm text-red-600">{{ form.errors['settings.' + index + '.value'] }}</p>
+                                            </template>
+
+                                            <!-- Number/Text Input -->
+                                            <template v-else>
                                                 <input
                                                     :id="setting.key"
-                                                    type="checkbox"
-                                                    :checked="form.settings[index]?.value === 'true'"
-                                                    @change="updateValue(index, setting, $event)"
+                                                    :type="getInputType(setting.type)"
+                                                    :step="getInputStep(setting.type)"
+                                                    :value="form.settings[index]?.value"
+                                                    @input="updateValue(index, setting, $event)"
                                                     :disabled="!can.edit"
                                                     :class="{ 'border-red-500': form.errors['settings.' + index + '.value'] }"
-                                                    class="rounded border-gray-300 text-pink-600 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                                    class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 disabled:bg-gray-100"
                                                 />
-                                                <span class="ml-2 text-sm text-gray-600">
-                                                    {{ form.settings[index]?.value === 'true' ? 'Si' : 'No' }}
-                                                </span>
-                                            </label>
-                                            <p v-if="form.errors['settings.' + index + '.value']" class="mt-1 text-sm text-red-600">{{ form.errors['settings.' + index + '.value'] }}</p>
-                                        </template>
-
-                                        <!-- Number/Text Input -->
-                                        <template v-else>
-                                            <input
-                                                :id="setting.key"
-                                                :type="getInputType(setting.type)"
-                                                :step="getInputStep(setting.type)"
-                                                :value="form.settings[index]?.value"
-                                                @input="updateValue(index, setting, $event)"
-                                                :disabled="!can.edit"
-                                                :class="{ 'border-red-500': form.errors['settings.' + index + '.value'] }"
-                                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 disabled:bg-gray-100"
-                                            />
-                                            <p v-if="form.errors['settings.' + index + '.value']" class="mt-1 text-sm text-red-600">{{ form.errors['settings.' + index + '.value'] }}</p>
-                                        </template>
+                                                <p v-if="form.errors['settings.' + index + '.value']" class="mt-1 text-sm text-red-600">{{ form.errors['settings.' + index + '.value'] }}</p>
+                                            </template>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
                         </div>
-                    </div>
 
-                    <!-- Actions -->
-                    <div v-if="can.edit" class="flex justify-end">
-                        <button
-                            type="submit"
-                            :disabled="form.processing"
-                            class="px-6 py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700 transition-colors disabled:opacity-50"
-                        >
-                            {{ form.processing ? 'Guardando...' : 'Guardar Cambios' }}
-                        </button>
-                    </div>
-                </form>
+                        <!-- Actions -->
+                        <div v-if="can.edit" class="flex justify-end">
+                            <button
+                                type="submit"
+                                :disabled="form.processing"
+                                class="px-6 py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700 transition-colors disabled:opacity-50"
+                            >
+                                {{ form.processing ? 'Guardando...' : 'Guardar Cambios' }}
+                            </button>
+                        </div>
+                    </form>
 
-                <!-- Info Box -->
-                <div class="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
-                    <div class="flex">
-                        <svg class="h-5 w-5 text-blue-400 mr-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
-                        </svg>
-                        <div class="text-sm text-blue-700">
-                            <p class="font-medium">Nota sobre los cambios</p>
-                            <p class="mt-1">
-                                Los cambios en la configuracion afectan los calculos futuros.
-                                Los registros existentes no se recalculan automaticamente.
-                            </p>
+                    <!-- Info Box -->
+                    <div class="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+                        <div class="flex">
+                            <svg class="h-5 w-5 text-blue-400 mr-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+                            </svg>
+                            <div class="text-sm text-blue-700">
+                                <p class="font-medium">Nota sobre los cambios</p>
+                                <p class="mt-1">
+                                    Los cambios en la configuracion afectan los calculos futuros.
+                                    Los registros existentes no se recalculan automaticamente.
+                                </p>
+                            </div>
                         </div>
                     </div>
-                </div>
+                </template>
             </div>
         </div>
     </AppLayout>
