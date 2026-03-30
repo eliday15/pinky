@@ -220,7 +220,7 @@ const typeLabels = {
                             Fecha
                         </th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Cantidad
+                            Detalle
                         </th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                             Estado
@@ -255,16 +255,19 @@ const typeLabels = {
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                             <template v-if="auth.compensation_type?.application_mode === 'per_hour'">
-                                {{ auth.hours ? `${auth.hours}h` : '-' }}
+                                <span class="font-medium">{{ auth.hours || 0 }}</span>
+                                <span class="text-gray-500 text-xs ml-1">horas</span>
                             </template>
                             <template v-else-if="auth.compensation_type?.application_mode === 'per_day'">
-                                {{ auth.hours ? `${auth.hours} dia(s)` : '-' }}
+                                <span class="font-medium">{{ auth.hours || 0 }}</span>
+                                <span class="text-gray-500 text-xs ml-1">{{ auth.hours == 1 ? 'dia' : 'dias' }}</span>
                             </template>
                             <template v-else-if="auth.compensation_type?.application_mode === 'one_time'">
-                                {{ auth.hours ? `x${auth.hours}` : 'x1' }}
+                                <span class="font-medium">{{ auth.hours || 1 }}</span>
+                                <span class="text-gray-500 text-xs ml-1">{{ auth.hours == 1 ? 'bono' : 'bonos' }}</span>
                             </template>
                             <template v-else>
-                                {{ auth.hours ? `${auth.hours}h` : '-' }}
+                                <span class="font-medium">{{ auth.hours || '-' }}</span>
                             </template>
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap">

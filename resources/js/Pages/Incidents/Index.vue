@@ -184,7 +184,7 @@ const deleteIncident = (incident) => {
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Empleado</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Tipo</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Periodo</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cantidad</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Detalle</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Estado</th>
                         <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Acciones</th>
                     </tr>
@@ -223,12 +223,14 @@ const deleteIncident = (incident) => {
                                 {{ formatDate(incident.start_date) }} - {{ formatDate(incident.end_date) }}
                             </template>
                         </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                             <template v-if="incident.incident_type?.has_time_range">
-                                {{ incident.hours ? `${incident.hours}h` : '-' }}
+                                <span class="font-medium">{{ incident.hours || '-' }}</span>
+                                <span class="text-gray-500 text-xs ml-1">horas</span>
                             </template>
                             <template v-else>
-                                {{ incident.days_count }} {{ incident.days_count === 1 ? 'dia' : 'dias' }}
+                                <span class="font-medium">{{ incident.days_count }}</span>
+                                <span class="text-gray-500 text-xs ml-1">{{ incident.days_count === 1 ? 'dia' : 'dias' }}</span>
                             </template>
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap">
