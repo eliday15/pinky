@@ -110,7 +110,7 @@ class RolesPermissionsSeeder extends Seeder
         $admin = Role::firstOrCreate(['name' => 'admin']);
         $admin->syncPermissions(Permission::all());
 
-        // Create RRHH role - Full HR management except system configuration
+        // Create RRHH role - Employee management and attendance only
         $rrhh = Role::firstOrCreate(['name' => 'rrhh']);
         $rrhh->syncPermissions([
             // Empleados - full access
@@ -125,42 +125,17 @@ class RolesPermissionsSeeder extends Seeder
             'attendance.edit',
             'attendance.sync',
             'attendance.approve_corrections',
-            // Incidencias - full access
-            'incidents.view_all',
-            'incidents.create',
-            'incidents.approve',
-            'incidents.reject',
-            // Autorizaciones - full access
-            'authorizations.view_all',
-            'authorizations.create',
-            'authorizations.approve',
-            'authorizations.reject',
-            // Anomalías - full access
-            'anomalies.view_all',
-            'anomalies.resolve',
-            'anomalies.dismiss',
-            // Nómina - full access
-            'payroll.view_basic',
-            'payroll.view_complete',
-            'payroll.create',
-            'payroll.calculate',
-            'payroll.approve',
-            'payroll.export',
-            // Reportes - full access
-            'reports.view_all',
-            // Config - limited
-            'schedules.manage',
-            'departments.manage',
-            'positions.manage',
-            'compensation_types.manage',
-            'holidays.manage',
-            // Logs
-            'logs.view',
         ]);
 
-        // Create Supervisor role - Limited to Incidents and Authorizations only
+        // Create Supervisor role - Direct reports management, attendance, incidents, authorizations, anomalies
         $supervisor = Role::firstOrCreate(['name' => 'supervisor']);
         $supervisor->syncPermissions([
+            // Empleados - team (direct reports only)
+            'employees.view_team',
+            'employees.create',
+            'employees.edit',
+            // Asistencia - team (direct reports only)
+            'attendance.view_team',
             // Incidencias - team + approval (supervisors can manage their team's incidents)
             'incidents.view_team',
             'incidents.create',

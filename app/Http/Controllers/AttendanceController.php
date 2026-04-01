@@ -69,10 +69,7 @@ class AttendanceController extends Controller
             if ($user->hasPermissionTo('attendance.view_team')) {
                 $userEmployee = $user->employee;
                 if ($userEmployee) {
-                    $employeeQuery->where(function ($q) use ($userEmployee) {
-                        $q->where('department_id', $userEmployee->department_id)
-                            ->orWhere('supervisor_id', $userEmployee->id);
-                    });
+                    $employeeQuery->where('supervisor_id', $userEmployee->id);
                 } else {
                     $employeeQuery->whereRaw('1 = 0');
                 }
@@ -125,10 +122,7 @@ class AttendanceController extends Controller
                 $userEmployee = $user->employee;
                 if ($userEmployee) {
                     $teamEmployeeIds = Employee::active()
-                        ->where(function ($q) use ($userEmployee) {
-                            $q->where('department_id', $userEmployee->department_id)
-                                ->orWhere('supervisor_id', $userEmployee->id);
-                        })
+                        ->where('supervisor_id', $userEmployee->id)
                         ->pluck('id');
                     $allRecords->whereIn('employee_id', $teamEmployeeIds);
                 }
@@ -193,10 +187,7 @@ class AttendanceController extends Controller
                 $userEmployee = $user->employee;
                 if ($userEmployee) {
                     $scopedEmployeeIds = Employee::active()
-                        ->where(function ($q) use ($userEmployee) {
-                            $q->where('department_id', $userEmployee->department_id)
-                                ->orWhere('supervisor_id', $userEmployee->id);
-                        })
+                        ->where('supervisor_id', $userEmployee->id)
                         ->pluck('id');
                 } else {
                     $scopedEmployeeIds = collect();

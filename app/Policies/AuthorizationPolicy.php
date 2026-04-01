@@ -140,7 +140,7 @@ class AuthorizationPolicy
     }
 
     /**
-     * Check if the authorization is in the user's team.
+     * Check if the authorization is in the user's team (direct reports only).
      */
     private function isInUserTeam(User $user, Authorization $authorization): bool
     {
@@ -156,17 +156,7 @@ class AuthorizationPolicy
             return false;
         }
 
-        // Same department
-        if ($authEmployee->department_id === $userEmployee->department_id) {
-            return true;
-        }
-
-        // Check supervisor relationship
-        if ($authEmployee->supervisor_id === $userEmployee->id) {
-            return true;
-        }
-
-        return false;
+        return $authEmployee->supervisor_id === $userEmployee->id;
     }
 
     /**

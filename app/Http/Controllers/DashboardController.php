@@ -130,17 +130,11 @@ class DashboardController extends Controller
     private function supervisorDashboard(string $today, $user): Response
     {
         $userEmployee = $user->employee;
-        $departmentId = $userEmployee?->department_id;
 
-        // Team employee IDs
-        $teamQuery = Employee::active();
-        if ($departmentId) {
-            $teamQuery->where(function ($q) use ($departmentId, $userEmployee) {
-                $q->where('department_id', $departmentId)
-                    ->orWhere('supervisor_id', $userEmployee->id);
-            });
-        }
-        $teamEmployeeIds = $teamQuery->pluck('id');
+        // Team employee IDs (direct reports only)
+        $teamEmployeeIds = Employee::active()
+            ->where('supervisor_id', $userEmployee->id)
+            ->pluck('id');
         $totalTeam = $teamEmployeeIds->count();
 
         // Team attendance stats for today

@@ -11,7 +11,7 @@ use Illuminate\Auth\Access\HandlesAuthorization;
  *
  * Controls access based on user permissions and team membership:
  * - Admin/RRHH: Full access to all employees
- * - Supervisor: Access to employees in their department
+ * - Supervisor: Access only to direct reports (supervisor_id)
  * - Employee: Access only to their own record
  */
 class EmployeePolicy
@@ -63,7 +63,21 @@ class EmployeePolicy
      */
     public function update(User $user, Employee $employee): bool
     {
-        return $user->hasPermissionTo('employees.edit');
+        if (! $user->hasPermissionTo('employees.edit')) {
+            return false;
+        }
+
+        // Users with view_all can edit any employee
+        if ($user->hasPermissionTo('employees.view_all')) {
+            return true;
+        }
+
+        // Supervisors can only edit their direct reports
+        if ($user->hasPermissionTo('employees.view_team')) {
+            return $this->isInUserTeam($user, $employee);
+        }
+
+        return false;
     }
 
     /**
@@ -100,7 +114,7 @@ class EmployeePolicy
     }
 
     /**
-     * Check if the employee is in the user's team (same department).
+     * Check if the employee is in the user's team (direct reports only).
      */
     private function isInUserTeam(User $user, Employee $employee): bool
     {
@@ -110,17 +124,7 @@ class EmployeePolicy
             return false;
         }
 
-        // Same department check
-        if ($employee->department_id === $userEmployee->department_id) {
-            return true;
-        }
-
-        // Check if user's employee is the supervisor of the target employee
-        if ($employee->supervisor_id === $userEmployee->id) {
-            return true;
-        }
-
-        return false;
+        return $employee->supervisor_id === $userEmployee->id;
     }
 
     /**

@@ -142,7 +142,7 @@ class IncidentPolicy
     }
 
     /**
-     * Check if the incident is in the user's team.
+     * Check if the incident is in the user's team (direct reports only).
      */
     private function isInUserTeam(User $user, Incident $incident): bool
     {
@@ -158,17 +158,7 @@ class IncidentPolicy
             return false;
         }
 
-        // Same department
-        if ($incidentEmployee->department_id === $userEmployee->department_id) {
-            return true;
-        }
-
-        // Check supervisor relationship
-        if ($incidentEmployee->supervisor_id === $userEmployee->id) {
-            return true;
-        }
-
-        return false;
+        return $incidentEmployee->supervisor_id === $userEmployee->id;
     }
 
     /**

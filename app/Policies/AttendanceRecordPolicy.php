@@ -87,7 +87,7 @@ class AttendanceRecordPolicy
     }
 
     /**
-     * Check if the record is in the user's team.
+     * Check if the record is in the user's team (direct reports only).
      */
     private function isInUserTeam(User $user, AttendanceRecord $record): bool
     {
@@ -103,17 +103,7 @@ class AttendanceRecordPolicy
             return false;
         }
 
-        // Same department
-        if ($recordEmployee->department_id === $userEmployee->department_id) {
-            return true;
-        }
-
-        // Check supervisor relationship
-        if ($recordEmployee->supervisor_id === $userEmployee->id) {
-            return true;
-        }
-
-        return false;
+        return $recordEmployee->supervisor_id === $userEmployee->id;
     }
 
     /**

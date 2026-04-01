@@ -43,10 +43,7 @@ class EmployeeBulkController extends Controller
             if ($user->hasPermissionTo('employees.view_team')) {
                 $userEmployee = $user->employee;
                 if ($userEmployee) {
-                    $query->where(function ($q) use ($userEmployee) {
-                        $q->where('department_id', $userEmployee->department_id)
-                            ->orWhere('supervisor_id', $userEmployee->id);
-                    });
+                    $query->where('supervisor_id', $userEmployee->id);
                 } else {
                     $query->whereRaw('1 = 0');
                 }
