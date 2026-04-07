@@ -2,6 +2,7 @@
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import { ref } from 'vue';
+import { formatDateTime } from '@/utils/date';
 
 const props = defineProps({
     logs: Object,
@@ -191,7 +192,7 @@ const actionLabels = {
                 <tbody class="bg-white divide-y divide-gray-200">
                     <tr v-for="log in logs.data" :key="log.id" class="hover:bg-gray-50">
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {{ new Date(log.created_at).toLocaleString('es-MX') }}
+                            {{ formatDateTime(log.created_at) }}
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                             {{ log.user?.name || 'Sistema' }}

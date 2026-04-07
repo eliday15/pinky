@@ -1,6 +1,7 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head, Link } from '@inertiajs/vue3';
+import { formatDateTime } from '@/utils/date';
 
 const props = defineProps({
     log: Object,
@@ -61,7 +62,7 @@ const formatValue = (value) => {
                         <div>
                             <dt class="text-sm font-medium text-gray-500">Fecha y Hora</dt>
                             <dd class="mt-1 text-sm text-gray-900">
-                                {{ new Date(log.created_at).toLocaleString('es-MX') }}
+                                {{ formatDateTime(log.created_at) }}
                             </dd>
                         </div>
                         <div>

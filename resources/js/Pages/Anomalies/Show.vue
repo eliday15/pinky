@@ -2,7 +2,7 @@
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head, Link, useForm, router, usePage } from '@inertiajs/vue3';
 import { ref, computed } from 'vue';
-import { formatDate as fmtDate } from '@/utils/date';
+import { formatDate as fmtDate, formatDateTime as fmtDateTime } from '@/utils/date';
 
 const props = defineProps({
     anomaly: Object,
@@ -53,10 +53,7 @@ const authStatusColors = {
 
 const formatDate = (date) => fmtDate(date);
 
-const formatDateTime = (datetime) => {
-    if (!datetime) return '-';
-    return new Date(datetime).toLocaleString('es-MX');
-};
+const formatDateTime = (datetime) => fmtDateTime(datetime);
 
 const formatTime = (time) => {
     if (!time) return '-';

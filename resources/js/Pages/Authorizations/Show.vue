@@ -3,7 +3,7 @@ import AppLayout from '@/Layouts/AppLayout.vue';
 import TwoFactorModal from '@/Components/TwoFactorModal.vue';
 import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
 import { ref, computed } from 'vue';
-import { formatDate as fmtDate } from '@/utils/date';
+import { formatDate as fmtDate, formatDateTime } from '@/utils/date';
 
 const props = defineProps({
     authorization: Object,
@@ -160,7 +160,7 @@ const submitReject = () => {
                             <dd class="mt-1 text-sm text-gray-900">
                                 {{ authorization.requested_by?.name || '-' }}
                                 <span class="text-gray-500 ml-2">
-                                    {{ new Date(authorization.created_at).toLocaleString('es-MX') }}
+                                    {{ formatDateTime(authorization.created_at) }}
                                 </span>
                             </dd>
                         </div>
@@ -171,7 +171,7 @@ const submitReject = () => {
                             <dd class="mt-1 text-sm text-gray-900">
                                 {{ authorization.approved_by?.name || '-' }}
                                 <span v-if="authorization.approved_at" class="text-gray-500 ml-2">
-                                    {{ new Date(authorization.approved_at).toLocaleString('es-MX') }}
+                                    {{ formatDateTime(authorization.approved_at) }}
                                 </span>
                             </dd>
                         </div>

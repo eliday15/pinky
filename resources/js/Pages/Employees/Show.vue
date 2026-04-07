@@ -1,7 +1,7 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head, Link } from '@inertiajs/vue3';
-import { formatDate as fmtDate } from '@/utils/date';
+import { formatDate as fmtDate, formatDateTime } from '@/utils/date';
 
 const props = defineProps({
     employee: Object,
@@ -347,7 +347,7 @@ const supervisorIsAutoResolved = props.employee.position?.supervisor_position_id
                                 <span class="font-medium text-gray-900">
                                     {{ log.action === 'create' ? 'Creado' : log.action === 'update' ? 'Actualizado' : 'Eliminado' }}
                                 </span>
-                                <span class="text-xs text-gray-500">{{ log.created_at }}</span>
+                                <span class="text-xs text-gray-500">{{ formatDateTime(log.created_at) }}</span>
                             </div>
                             <p class="text-gray-600 text-xs">Por: {{ log.user_name }}</p>
                             <div v-if="log.old_values && Object.keys(log.old_values).length > 0" class="mt-2 text-xs">

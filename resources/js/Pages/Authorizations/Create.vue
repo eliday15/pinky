@@ -4,6 +4,7 @@ import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import SearchableSelect from '@/Components/SearchableSelect.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
 import { ref, computed, watch } from 'vue';
+import { todayLocal } from '@/utils/date';
 
 const props = defineProps({
     employees: Array,
@@ -11,7 +12,7 @@ const props = defineProps({
     types: Array,
 });
 
-const today = new Date().toISOString().split('T')[0];
+const today = todayLocal();
 const startDatetime = ref(`${today}T08:00`);
 const endDatetime = ref(`${today}T16:00`);
 const startDate = ref(today);

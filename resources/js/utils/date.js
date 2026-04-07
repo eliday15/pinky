@@ -80,3 +80,20 @@ export function formatDateTime(value, options = {}) {
         ...options,
     });
 }
+
+/**
+ * Return today's date as a "YYYY-MM-DD" string in the browser's local
+ * timezone. Used to initialize date and datetime-local input fields.
+ *
+ * Naive `new Date().toISOString().split('T')[0]` returns the UTC date,
+ * which in Mexico (UTC-6) jumps to tomorrow any time after 18:00 local.
+ * This helper reads the local getFullYear/getMonth/getDate values so the
+ * returned date always matches what the user considers "today".
+ */
+export function todayLocal() {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}

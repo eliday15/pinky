@@ -3,6 +3,7 @@ import AppLayout from '@/Layouts/AppLayout.vue';
 import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
 import { computed } from 'vue';
+import { formatDateTime } from '@/utils/date';
 
 const props = defineProps({
     record: Object,
@@ -217,7 +218,7 @@ const overtimeHours = computed(() => {
                     <h4 class="text-sm font-medium text-yellow-800 mb-2">Edicion Manual Anterior</h4>
                     <div class="text-sm text-yellow-700 space-y-1">
                         <p><span class="font-medium">Editado por:</span> {{ record.manually_edited_by?.name || 'Desconocido' }}</p>
-                        <p><span class="font-medium">Fecha:</span> {{ new Date(record.manually_edited_at).toLocaleString('es-MX') }}</p>
+                        <p><span class="font-medium">Fecha:</span> {{ formatDateTime(record.manually_edited_at) }}</p>
                         <p><span class="font-medium">Motivo:</span> {{ record.manual_edit_reason }}</p>
                     </div>
                 </div>

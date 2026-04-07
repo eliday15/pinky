@@ -1,6 +1,7 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head, Link } from '@inertiajs/vue3';
+import { formatDateTime as fmtDateTime } from '@/utils/date';
 
 const props = defineProps({
     record: Object,
@@ -40,10 +41,7 @@ const formatDate = (dateStr) => {
     });
 };
 
-const formatDateTime = (datetime) => {
-    if (!datetime) return '-';
-    return new Date(datetime).toLocaleString('es-MX');
-};
+const formatDateTime = (datetime) => fmtDateTime(datetime);
 
 const formatTime = (time) => {
     if (!time) return '-';

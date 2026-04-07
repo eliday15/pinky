@@ -4,6 +4,7 @@ import SearchableSelect from '@/Components/SearchableSelect.vue';
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
 import { computed, ref, watch } from 'vue';
+import { todayLocal } from '@/utils/date';
 
 const props = defineProps({
     departments: Array,
@@ -34,7 +35,7 @@ const form = useForm({
     emergency_contacts: [{ name: '', phone: '', email: '', relationship: '', address: '' }],
     credential_type: '',
     credential_number: '',
-    hire_date: new Date().toISOString().split('T')[0],
+    hire_date: todayLocal(),
     termination_date: '',
     department_id: '',
     position_id: '',

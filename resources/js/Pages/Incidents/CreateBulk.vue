@@ -3,6 +3,7 @@ import AppLayout from '@/Layouts/AppLayout.vue';
 import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
 import { ref, computed } from 'vue';
+import { todayLocal } from '@/utils/date';
 
 const props = defineProps({
     employees: Array,
@@ -12,8 +13,8 @@ const props = defineProps({
 const form = useForm({
     employee_ids: [],
     incident_type_id: '',
-    start_date: new Date().toISOString().split('T')[0],
-    end_date: new Date().toISOString().split('T')[0],
+    start_date: todayLocal(),
+    end_date: todayLocal(),
     reason: '',
 });
 

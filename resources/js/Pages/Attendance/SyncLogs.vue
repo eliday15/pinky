@@ -2,6 +2,7 @@
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head, Link } from '@inertiajs/vue3';
 import { ref } from 'vue';
+import { formatDateTime as fmtDateTime } from '@/utils/date';
 
 const props = defineProps({
     logs: Array,
@@ -27,10 +28,7 @@ const toggleExpand = (logId) => {
     expandedLog.value = expandedLog.value === logId ? null : logId;
 };
 
-const formatDateTime = (datetime) => {
-    if (!datetime) return '-';
-    return new Date(datetime).toLocaleString('es-MX');
-};
+const formatDateTime = (datetime) => fmtDateTime(datetime);
 
 /**
  * Calculate duration between two datetime strings.
