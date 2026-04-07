@@ -144,7 +144,7 @@ const copyRecoveryCodes = () => {
 
 const formatDate = (dateStr) => {
     if (!dateStr) return 'Nunca';
-    return new Date(dateStr).toLocaleDateString('es-MX', {
+    return fmtDate(dateStr, {
         year: 'numeric',
         month: 'short',
         day: 'numeric',

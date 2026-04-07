@@ -2,6 +2,7 @@
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import { ref } from 'vue';
+import { formatDate as fmtDate } from '@/utils/date';
 
 const props = defineProps({
     startDate: String,
@@ -25,20 +26,16 @@ const applyFilter = () => {
     });
 };
 
-const formatDate = (date) => {
-    return new Date(date).toLocaleDateString('es-MX', {
-        day: 'numeric',
-        month: 'short',
-        year: 'numeric',
-    });
-};
+const formatDate = (date) => fmtDate(date, {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+});
 
-const formatShortDate = (date) => {
-    return new Date(date).toLocaleDateString('es-MX', {
-        day: 'numeric',
-        month: 'short',
-    });
-};
+const formatShortDate = (date) => fmtDate(date, {
+    day: 'numeric',
+    month: 'short',
+});
 </script>
 
 <template>

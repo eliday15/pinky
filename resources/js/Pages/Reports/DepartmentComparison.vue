@@ -2,6 +2,7 @@
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import { ref } from 'vue';
+import { formatDate as fmtDate } from '@/utils/date';
 
 const props = defineProps({
     startDate: String,
@@ -19,7 +20,7 @@ const applyFilter = () => {
     }, { preserveState: true, replace: true });
 };
 
-const formatDate = (date) => new Date(date).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' });
+const formatDate = (date) => fmtDate(date, { day: 'numeric', month: 'short', year: 'numeric' });
 
 const getAttendanceColor = (rate) => {
     if (rate >= 95) return 'text-green-600';

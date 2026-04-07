@@ -3,6 +3,7 @@ import AppLayout from '@/Layouts/AppLayout.vue';
 import TwoFactorModal from '@/Components/TwoFactorModal.vue';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import { ref, computed } from 'vue';
+import { formatDate as fmtDate } from '@/utils/date';
 
 const props = defineProps({
     period: Object,
@@ -34,13 +35,11 @@ const statusLabels = {
     paid: 'Pagada',
 };
 
-const formatDate = (date) => {
-    return new Date(date).toLocaleDateString('es-MX', {
-        day: 'numeric',
-        month: 'short',
-        year: 'numeric',
-    });
-};
+const formatDate = (date) => fmtDate(date, {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+});
 
 const formatCurrency = (amount) => {
     return new Intl.NumberFormat('es-MX', {

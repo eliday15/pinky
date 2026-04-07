@@ -61,7 +61,7 @@ class AttendanceRecord extends Model
     ];
 
     protected $casts = [
-        'work_date' => 'date',
+        'work_date' => 'date:Y-m-d',
         'worked_hours' => 'decimal:2',
         'overtime_hours' => 'decimal:2',
         'permission_hours' => 'decimal:2',

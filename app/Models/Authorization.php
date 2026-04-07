@@ -73,7 +73,7 @@ class Authorization extends Model
     ];
 
     protected $casts = [
-        'date' => 'date',
+        'date' => 'date:Y-m-d',
         'start_time' => 'datetime:H:i',
         'end_time' => 'datetime:H:i',
         'hours' => 'decimal:2',

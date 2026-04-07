@@ -64,7 +64,7 @@ class AttendanceAnomaly extends Model
     protected $appends = ['type_name'];
 
     protected $casts = [
-        'work_date' => 'date',
+        'work_date' => 'date:Y-m-d',
         'resolved_at' => 'datetime',
         'auto_detected' => 'boolean',
         'deviation_minutes' => 'integer',

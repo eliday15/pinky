@@ -83,9 +83,9 @@ class Employee extends Model
     ];
 
     protected $casts = [
-        'hire_date' => 'date',
-        'termination_date' => 'date',
-        'trial_period_end_date' => 'date',
+        'hire_date' => 'date:Y-m-d',
+        'termination_date' => 'date:Y-m-d',
+        'trial_period_end_date' => 'date:Y-m-d',
         'hourly_rate' => 'decimal:2',
         'overtime_rate' => 'decimal:2',
         'holiday_rate' => 'decimal:2',

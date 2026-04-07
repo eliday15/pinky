@@ -23,9 +23,9 @@ class PayrollPeriod extends Model
     ];
 
     protected $casts = [
-        'start_date' => 'date',
-        'end_date' => 'date',
-        'payment_date' => 'date',
+        'start_date' => 'date:Y-m-d',
+        'end_date' => 'date:Y-m-d',
+        'payment_date' => 'date:Y-m-d',
     ];
 
     /**

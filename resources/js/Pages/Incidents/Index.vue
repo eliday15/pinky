@@ -4,6 +4,7 @@ import TwoFactorModal from '@/Components/TwoFactorModal.vue';
 import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
 import { ref, computed, watch } from 'vue';
 import debounce from 'lodash/debounce';
+import { formatDate as fmtDate } from '@/utils/date';
 
 const props = defineProps({
     incidents: Object,
@@ -56,9 +57,7 @@ const statusLabels = {
     rejected: 'Rechazada',
 };
 
-const formatDate = (date) => {
-    return new Date(date).toLocaleDateString('es-MX');
-};
+const formatDate = (date) => fmtDate(date);
 
 const approveIncident = (incident) => {
     if (hasTwoFactor.value) {

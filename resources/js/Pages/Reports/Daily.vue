@@ -2,6 +2,7 @@
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import { ref, watch } from 'vue';
+import { formatDate as fmtDate } from '@/utils/date';
 
 const props = defineProps({
     date: String,
@@ -39,14 +40,12 @@ const statusLabels = {
     holiday: 'Festivo',
 };
 
-const formatDate = (date) => {
-    return new Date(date).toLocaleDateString('es-MX', {
-        weekday: 'long',
-        day: 'numeric',
-        month: 'long',
-        year: 'numeric',
-    });
-};
+const formatDate = (date) => fmtDate(date, {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+});
 
 const changeDate = (delta) => {
     const d = new Date(selectedDate.value);

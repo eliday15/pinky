@@ -1,6 +1,7 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head, Link } from '@inertiajs/vue3';
+import { formatDate as fmtDate } from '@/utils/date';
 
 const props = defineProps({
     trendData: Array,
@@ -11,7 +12,7 @@ const formatCurrency = (amount) => {
     return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(amount || 0);
 };
 
-const formatDate = (date) => new Date(date).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' });
+const formatDate = (date) => fmtDate(date, { day: 'numeric', month: 'short', year: 'numeric' });
 
 const getMaxValue = () => {
     if (!props.trendData || props.trendData.length === 0) return 0;

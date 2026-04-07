@@ -3,6 +3,7 @@ import AppLayout from '@/Layouts/AppLayout.vue';
 import TwoFactorModal from '@/Components/TwoFactorModal.vue';
 import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
 import { ref, computed } from 'vue';
+import { formatDate } from '@/utils/date';
 
 const props = defineProps({
     authorizations: Object,
@@ -247,7 +248,7 @@ const typeLabels = {
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap">
                             <div class="text-sm text-gray-900">
-                                {{ new Date(auth.date).toLocaleDateString('es-MX') }}
+                                {{ formatDate(auth.date) }}
                             </div>
                             <div v-if="auth.compensation_type?.application_mode === 'per_hour' && auth.start_time" class="text-xs text-gray-500">
                                 {{ auth.start_time?.substring(0,5) }} - {{ auth.end_time?.substring(0,5) }}

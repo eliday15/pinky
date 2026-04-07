@@ -3,6 +3,7 @@ import AppLayout from '@/Layouts/AppLayout.vue';
 import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
 import { computed } from 'vue';
+import { formatDate as fmtDate } from '@/utils/date';
 
 const props = defineProps({
     suggestedDates: Object,
@@ -23,12 +24,10 @@ const periodDays = computed(() => {
     return Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
 });
 
-const formatDateForName = (date) => {
-    return new Date(date).toLocaleDateString('es-MX', {
-        day: 'numeric',
-        month: 'short',
-    });
-};
+const formatDateForName = (date) => fmtDate(date, {
+    day: 'numeric',
+    month: 'short',
+});
 
 const generateName = () => {
     if (form.start_date && form.end_date) {

@@ -3,6 +3,7 @@ import AppLayout from '@/Layouts/AppLayout.vue';
 import TwoFactorModal from '@/Components/TwoFactorModal.vue';
 import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
 import { ref, computed } from 'vue';
+import { formatDate as fmtDate } from '@/utils/date';
 
 const props = defineProps({
     incident: Object,
@@ -29,25 +30,19 @@ const statusLabels = {
     rejected: 'Rechazada',
 };
 
-const formatDate = (date) => {
-    if (!date) return '-';
-    return new Date(date).toLocaleDateString('es-MX', {
-        day: 'numeric',
-        month: 'long',
-        year: 'numeric',
-    });
-};
+const formatDate = (date) => fmtDate(date, {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+});
 
-const formatDateTime = (date) => {
-    if (!date) return '-';
-    return new Date(date).toLocaleDateString('es-MX', {
-        day: 'numeric',
-        month: 'short',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-    });
-};
+const formatDateTime = (date) => fmtDate(date, {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+});
 
 const approveIncident = () => {
     if (hasTwoFactor.value) {

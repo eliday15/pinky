@@ -3,6 +3,7 @@ import AppLayout from '@/Layouts/AppLayout.vue';
 import TwoFactorModal from '@/Components/TwoFactorModal.vue';
 import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
 import { ref, computed } from 'vue';
+import { formatDate as fmtDate } from '@/utils/date';
 
 const props = defineProps({
     authorization: Object,
@@ -95,7 +96,7 @@ const submitReject = () => {
                                 <div>
                                     <dt class="text-sm font-medium text-gray-500">Fecha</dt>
                                     <dd class="mt-1 text-sm text-gray-900">
-                                        {{ new Date(authorization.date).toLocaleDateString('es-MX', {
+                                        {{ fmtDate(authorization.date, {
                                             weekday: 'long',
                                             year: 'numeric',
                                             month: 'long',

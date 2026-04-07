@@ -4,6 +4,7 @@ import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import SearchableSelect from '@/Components/SearchableSelect.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
 import { ref, computed, watch } from 'vue';
+import { formatDate as fmtDate } from '@/utils/date';
 
 const props = defineProps({
     incident: Object,
@@ -70,13 +71,11 @@ const statusLabels = {
     rejected: 'Rechazada',
 };
 
-const formatDate = (date) => {
-    return new Date(date).toLocaleDateString('es-MX', {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-    });
-};
+const formatDate = (date) => fmtDate(date, {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+});
 
 const submit = () => {
     form.put(route('incidents.update', props.incident.id));

@@ -2,6 +2,7 @@
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import { ref, watch } from 'vue';
+import { formatDate as fmtDate } from '@/utils/date';
 
 const props = defineProps({
     startDate: String,
@@ -19,12 +20,10 @@ watch(weekStart, (newDate) => {
     });
 });
 
-const formatDate = (date) => {
-    return new Date(date).toLocaleDateString('es-MX', {
-        day: 'numeric',
-        month: 'short',
-    });
-};
+const formatDate = (date) => fmtDate(date, {
+    day: 'numeric',
+    month: 'short',
+});
 
 const changeWeek = (delta) => {
     const d = new Date(weekStart.value);

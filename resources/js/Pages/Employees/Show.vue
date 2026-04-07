@@ -1,6 +1,7 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head, Link } from '@inertiajs/vue3';
+import { formatDate as fmtDate } from '@/utils/date';
 
 const props = defineProps({
     employee: Object,
@@ -36,10 +37,7 @@ const attendanceStatusColors = {
     sick_leave: 'bg-purple-100 text-purple-800',
 };
 
-const formatDate = (date) => {
-    if (!date) return '-';
-    return new Date(date).toLocaleDateString('es-MX');
-};
+const formatDate = (date) => fmtDate(date);
 
 const formatCurrency = (amount) => {
     return new Intl.NumberFormat('es-MX', {

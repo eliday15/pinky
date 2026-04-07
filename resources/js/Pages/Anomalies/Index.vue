@@ -3,6 +3,7 @@ import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
 import { ref, watch, computed } from 'vue';
 import debounce from 'lodash/debounce';
+import { formatDate as fmtDate } from '@/utils/date';
 
 const props = defineProps({
     anomalies: Object,
@@ -105,10 +106,7 @@ const typeIcons = {
     missing_attendance: 'M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636',
 };
 
-const formatDate = (date) => {
-    if (!date) return '-';
-    return new Date(date).toLocaleDateString('es-MX');
-};
+const formatDate = (date) => fmtDate(date);
 
 const truncate = (text, length) => {
     if (!text) return '-';
