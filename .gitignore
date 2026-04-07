@@ -47,3 +47,7 @@ tests/e2e/screenshots/*.png
 
 # Claude
 .claude/
+
+# Pinky sync agent — embeds production MySQL password + agent API key
+# Keep out of git so secrets never reach the remote repo history
+pinky_script/PinkySyncAgent.py
