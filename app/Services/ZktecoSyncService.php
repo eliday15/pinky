@@ -114,10 +114,16 @@ class ZktecoSyncService
             $hasRecentAttendance = in_array($userId, $usersWithRecentAttendance);
             $status = $hasRecentAttendance ? 'active' : 'inactive';
 
-            // Check if employee already exists
-            $existingEmployee = Employee::where('zkteco_user_id', $userId)->first();
+            // Check if employee already exists (include soft-deleted to avoid
+            // unique constraint violations on zkteco_user_id)
+            $existingEmployee = Employee::withTrashed()->where('zkteco_user_id', $userId)->first();
 
             if ($existingEmployee) {
+                // Restore soft-deleted employees that reappear in ZKTeco
+                if ($existingEmployee->trashed()) {
+                    $existingEmployee->restore();
+                    Log::info("Restored soft-deleted employee {$userId} ({$existingEmployee->full_name})");
+                }
                 $updates = [];
 
                 // Update status if changed (but not if terminated)
