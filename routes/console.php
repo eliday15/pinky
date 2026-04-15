@@ -20,8 +20,8 @@ Artisan::command('inspire', function () {
 */
 
 $syncCommand = config('zkteco.sync.remote_python')
-    ? 'zkteco:sync --days=1 --skip-python'
-    : 'zkteco:sync --days=1';
+    ? 'zkteco:sync --days=7 --skip-python'
+    : 'zkteco:sync --days=7';
 
 Schedule::command($syncCommand)
     ->everyFiveMinutes()

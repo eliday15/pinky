@@ -5,7 +5,6 @@ namespace App\Jobs;
 use App\Services\ZktecoSyncService;
 use Carbon\Carbon;
 use Illuminate\Bus\Queueable;
-use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
@@ -22,14 +21,9 @@ use Illuminate\Support\Facades\Process;
  * Implements ShouldBeUnique to prevent multiple sync jobs from running
  * simultaneously.
  */
-class SyncZktecoJob implements ShouldQueue, ShouldBeUnique
+class SyncZktecoJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
-
-    /**
-     * The number of seconds after which the job's unique lock will be released.
-     */
-    public int $uniqueFor = 1800; // 30 minutes
 
     /**
      * The number of times the job may be attempted.
@@ -111,11 +105,4 @@ class SyncZktecoJob implements ShouldQueue, ShouldBeUnique
         }
     }
 
-    /**
-     * Get the unique ID for the job.
-     */
-    public function uniqueId(): string
-    {
-        return 'zkteco-sync';
-    }
 }
