@@ -33,5 +33,8 @@ php artisan route:cache
 php artisan view:cache
 php artisan permission:cache-reset 2>/dev/null || true
 
+echo "=== Starting scheduler ==="
+php artisan schedule:work >> storage/logs/scheduler.log 2>&1 &
+
 echo "=== Ready ==="
 exec apache2-foreground
