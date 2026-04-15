@@ -94,11 +94,15 @@ class ZktecoSyncService
             ->pluck('user_id')
             ->toArray();
 
-        // Track ZKTeco user_ids that we've seen
-        $seenUserIds = [];
-
         $imported = 0;
-        $updated = 0;
+
+        // Pre-load all zkteco_user_ids that already exist (including soft-deleted)
+        // to avoid duplicate key violations and to respect manual edits made in the UI.
+        $existingUserIds = Employee::withTrashed()
+            ->whereNotNull('zkteco_user_id')
+            ->pluck('zkteco_user_id')
+            ->map(fn ($id) => (int) $id)
+            ->toArray();
 
         foreach ($zktecoUsers as $zkUser) {
             $userId = $zkUser->user_id;
@@ -108,55 +112,16 @@ class ZktecoSyncService
                 continue;
             }
 
-            $seenUserIds[] = $userId;
+            // Skip employees that already exist in Pinky (active, inactive, or
+            // soft-deleted). The UI is the source of truth — the sync never
+            // modifies names, status, or restores deleted employees.
+            if (in_array((int) $userId, $existingUserIds, true)) {
+                continue;
+            }
 
             // Determine status based on recent attendance
             $hasRecentAttendance = in_array($userId, $usersWithRecentAttendance);
             $status = $hasRecentAttendance ? 'active' : 'inactive';
-
-            // Check if employee already exists (include soft-deleted to avoid
-            // unique constraint violations on zkteco_user_id)
-            $existingEmployee = Employee::withTrashed()->where('zkteco_user_id', $userId)->first();
-
-            if ($existingEmployee) {
-                // Restore soft-deleted employees that reappear in ZKTeco
-                if ($existingEmployee->trashed()) {
-                    $existingEmployee->restore();
-                    Log::info("Restored soft-deleted employee {$userId} ({$existingEmployee->full_name})");
-                }
-                $updates = [];
-
-                // Update status if changed (but not if terminated)
-                if ($existingEmployee->status !== $status && $existingEmployee->status !== 'terminated') {
-                    $updates['status'] = $status;
-                }
-
-                // Update name if ZKTeco has a real name that differs from current
-                $isZktecoNameReal = !empty($name) && !preg_match('/^NN-\d+$/', $name) && !preg_match('/^\d+$/', $name);
-
-                if ($isZktecoNameReal) {
-                    $nameParts = $this->parseName($name, $userId);
-                    $currentName = $existingEmployee->full_name;
-                    $newName = $nameParts['full_name'];
-
-                    // Skip if names match or if ZKTeco name is a truncated version of current
-                    $isTruncation = mb_strlen($newName) < mb_strlen($currentName)
-                        && str_starts_with(mb_strtolower($currentName), mb_strtolower($newName));
-
-                    if ($currentName !== $newName && !$isTruncation) {
-                        $updates['first_name'] = $nameParts['first_name'];
-                        $updates['last_name'] = $nameParts['last_name'];
-                        $updates['full_name'] = $nameParts['full_name'];
-                        Log::info("Updated employee {$userId} name from '{$currentName}' to '{$newName}'");
-                    }
-                }
-
-                if (!empty($updates)) {
-                    $existingEmployee->update($updates);
-                    $updated++;
-                }
-                continue;
-            }
 
             // Parse name for new employee
             $nameParts = $this->parseName($name, $userId);
@@ -180,13 +145,10 @@ class ZktecoSyncService
             Log::info("Imported employee {$userId} ({$nameParts['full_name']}) - status: {$status}");
         }
 
-        // Mark employees that exist in Pinky but NOT in ZKTeco users table as inactive
-        $inactiveCount = $this->markMissingEmployeesAsInactive($seenUserIds);
-
         return [
             'imported' => $imported,
-            'updated' => $updated,
-            'inactive' => $inactiveCount,
+            'updated' => 0,
+            'inactive' => 0,
         ];
     }
 
