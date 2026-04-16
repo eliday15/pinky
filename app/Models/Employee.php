@@ -230,6 +230,60 @@ class Employee extends Model
     }
 
     /**
+     * Get the effective schedule for a specific day, applying employee overrides.
+     *
+     * Returns the day-specific schedule with employee overrides merged on top.
+     */
+    public function getEffectiveScheduleForDay(string $dayName): ?object
+    {
+        if (!$this->schedule) {
+            return null;
+        }
+
+        $daySchedule = $this->schedule->getScheduleForDay($dayName);
+        $overrides = $this->schedule_overrides ?? [];
+
+        if (!empty($overrides['entry_time'])) {
+            $daySchedule->entry_time = $overrides['entry_time'];
+        }
+        if (!empty($overrides['exit_time'])) {
+            $daySchedule->exit_time = $overrides['exit_time'];
+        }
+        if (isset($overrides['break_minutes'])) {
+            $daySchedule->break_minutes = (int) $overrides['break_minutes'];
+        }
+        if (isset($overrides['daily_work_hours'])) {
+            $daySchedule->daily_work_hours = (float) $overrides['daily_work_hours'];
+        }
+
+        return $daySchedule;
+    }
+
+    /**
+     * Check if a day is a working day for this employee, considering overrides.
+     */
+    public function isEffectiveWorkingDay(string $dayName): bool
+    {
+        $overrides = $this->schedule_overrides ?? [];
+
+        if (!empty($overrides['working_days'])) {
+            return in_array(strtolower($dayName), array_map('strtolower', $overrides['working_days']));
+        }
+
+        return $this->schedule?->isWorkingDay($dayName) ?? false;
+    }
+
+    /**
+     * Get the effective late tolerance in minutes for this employee.
+     */
+    public function getEffectiveLateTolerance(): int
+    {
+        $overrides = $this->schedule_overrides ?? [];
+
+        return (int) ($overrides['late_tolerance_minutes'] ?? $this->schedule?->late_tolerance_minutes ?? 10);
+    }
+
+    /**
      * Scope for active employees.
      */
     public function scopeActive($query)

@@ -109,9 +109,9 @@ class AttendanceRangeExport implements FromArray, WithStyles, ShouldAutoSize
             $attendanceByDate = $employee->attendanceRecords
                 ->keyBy(fn ($r) => $r->work_date->format('Y-m-d'));
 
-            $schedule = $employee->schedule;
-            $scheduleName = $schedule
-                ? substr($schedule->entry_time ?? '', 0, 5) . ' - ' . substr($schedule->exit_time ?? '', 0, 5)
+            $effectiveSchedule = $employee->getEffectiveSchedule();
+            $scheduleName = $effectiveSchedule
+                ? substr($effectiveSchedule->entry_time ?? '', 0, 5) . ' - ' . substr($effectiveSchedule->exit_time ?? '', 0, 5)
                 : '-';
 
             $row = [

@@ -51,12 +51,16 @@ class AttendanceReportController extends Controller implements HasMiddleware
         $earlyDepartureThreshold = (int) SystemSetting::get('early_departure_absence_threshold', 30);
         $earlyDepartureIsAbsence = (bool) SystemSetting::get('early_departure_is_absence', true);
 
-        // Direct faltas: all records with status 'absent' (covers late >= 60, no-shows, early departure >= threshold)
+        // All records with status 'absent' (covers no-shows, late >= threshold, early departure >= threshold)
         $absentRecords = AttendanceRecord::with(['employee.department'])
             ->whereBetween('work_date', [$startDate, $endDate])
             ->whereIn('employee_id', $activeEmployeeIds)
             ->where('status', 'absent')
             ->get();
+
+        // Split absent records: true no-shows vs threshold-triggered (had check_in)
+        $noShowRecords = $absentRecords->filter(fn ($r) => is_null($r->check_in));
+        $thresholdRecords = $absentRecords->filter(fn ($r) => !is_null($r->check_in));
 
         // Retardo records for accumulated faltas
         $lateRecords = AttendanceRecord::whereBetween('work_date', [$startDate, $endDate])
@@ -82,24 +86,30 @@ class AttendanceReportController extends Controller implements HasMiddleware
             ->merge(array_keys($retardoFaltasByEmployee))
             ->unique();
 
-        $byEmployee = $allEmployeeIds->map(function ($employeeId) use ($absentRecords, $retardoFaltasByEmployee) {
-            $empAbsent = $absentRecords->where('employee_id', $employeeId);
-            $employee = $empAbsent->first()?->employee;
+        $byEmployee = $allEmployeeIds->map(function ($employeeId) use ($noShowRecords, $thresholdRecords, $retardoFaltasByEmployee) {
+            $empNoShow = $noShowRecords->where('employee_id', $employeeId);
+            $empThreshold = $thresholdRecords->where('employee_id', $employeeId);
+            $employee = $empNoShow->first()?->employee ?? $empThreshold->first()?->employee;
 
             // If employee only has retardo-faltas, load them
             if (!$employee) {
                 $employee = Employee::with('department')->find($employeeId);
             }
 
-            $directFaltas = $empAbsent->count();
+            $noShowFaltas = $empNoShow->count();
+            $thresholdFaltas = $empThreshold->count();
             $retardoFaltas = $retardoFaltasByEmployee[$employeeId] ?? 0;
 
             return [
                 'employee' => $employee,
-                'direct_faltas' => $directFaltas,
+                'no_show_faltas' => $noShowFaltas,
+                'threshold_faltas' => $thresholdFaltas,
+                'direct_faltas' => $noShowFaltas + $thresholdFaltas,
                 'retardo_faltas' => $retardoFaltas,
-                'total_faltas' => $directFaltas + $retardoFaltas,
-                'dates' => $empAbsent->pluck('work_date')->toArray(),
+                'total_faltas' => $noShowFaltas + $thresholdFaltas + $retardoFaltas,
+                'no_show_dates' => $empNoShow->pluck('work_date')->toArray(),
+                'threshold_dates' => $empThreshold->pluck('work_date')->toArray(),
+                'dates' => $empNoShow->pluck('work_date')->merge($empThreshold->pluck('work_date'))->toArray(),
             ];
         })->sortByDesc('total_faltas')->values();
 
@@ -107,6 +117,8 @@ class AttendanceReportController extends Controller implements HasMiddleware
             'total_faltas' => $byEmployee->sum('total_faltas'),
             'employees_with_faltas' => $byEmployee->count(),
             'direct_faltas' => $byEmployee->sum('direct_faltas'),
+            'no_show_faltas' => $byEmployee->sum('no_show_faltas'),
+            'threshold_faltas' => $byEmployee->sum('threshold_faltas'),
             'retardo_faltas' => $byEmployee->sum('retardo_faltas'),
         ];
 

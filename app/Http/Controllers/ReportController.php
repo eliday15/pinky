@@ -554,8 +554,8 @@ class ReportController extends Controller implements HasMiddleware
 
         $byEmployee = $records->groupBy('employee_id')->map(function ($group) {
             $employee = $group->first()->employee;
-            $schedule = $employee->schedule;
-            $expectedHoursPerDay = $schedule->daily_work_hours ?? 8;
+            $effectiveSchedule = $employee->getEffectiveSchedule();
+            $expectedHoursPerDay = $effectiveSchedule->daily_work_hours ?? 8;
 
             $workedDays = $group->whereIn('status', ['present', 'late', 'partial'])->count();
             $totalHours = $group->sum('worked_hours');

@@ -306,7 +306,7 @@ class AttendanceController extends Controller
 
         // Recalculate hours if times changed
         if (isset($validated['check_in']) && isset($validated['check_out'])) {
-            $schedule = $attendance->employee->schedule;
+            $employee = $attendance->employee;
             $dateStr = $attendance->work_date->toDateString();
             $checkIn = Carbon::parse($dateStr . ' ' . $validated['check_in']);
             $checkOut = Carbon::parse($dateStr . ' ' . $validated['check_out']);
@@ -318,9 +318,9 @@ class AttendanceController extends Controller
 
             $workedMinutes = abs($checkIn->diffInMinutes($checkOut));
 
-            if ($schedule) {
+            if ($employee->schedule) {
                 $dayName = strtolower($attendance->work_date->format('l'));
-                $daySchedule = $schedule->getScheduleForDay($dayName);
+                $daySchedule = $employee->getEffectiveScheduleForDay($dayName);
                 $departmentBreak = $attendance->employee->department?->default_break_minutes;
                 $breakMinutes = $daySchedule->break_minutes ?? $departmentBreak ?? 60;
 

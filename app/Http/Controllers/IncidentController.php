@@ -196,7 +196,7 @@ class IncidentController extends Controller
         $validated['days_count'] = $this->calculateWorkingDays(
             $startDate,
             $endDate,
-            $employee->schedule?->working_days ?? ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
+            $employee->getEffectiveSchedule()?->working_days ?? ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
         );
 
         // Check if incident type requires approval
@@ -328,7 +328,7 @@ class IncidentController extends Controller
             $daysCount = $this->calculateWorkingDays(
                 $startDate,
                 $endDate,
-                $employee->schedule?->working_days ?? ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
+                $employee->getEffectiveSchedule()?->working_days ?? ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
             );
 
             Incident::create([
@@ -421,7 +421,7 @@ class IncidentController extends Controller
         $validated['days_count'] = $this->calculateWorkingDays(
             $startDate,
             $endDate,
-            $employee->schedule?->working_days ?? ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
+            $employee->getEffectiveSchedule()?->working_days ?? ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
         );
 
         $incident->update($validated);

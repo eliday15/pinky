@@ -29,8 +29,7 @@ class VeladaCalculatorService
      */
     public function calculate(AttendanceRecord $record, Employee $employee): array
     {
-        $schedule = $employee->schedule;
-        if (!$schedule || !$record->check_in || !$record->check_out) {
+        if (!$employee->schedule || !$record->check_in || !$record->check_out) {
             return [
                 'overtime_hours' => 0,
                 'velada_hours' => 0,
@@ -51,9 +50,9 @@ class VeladaCalculatorService
             $checkOut->addDay();
         }
 
-        // Get per-day schedule overrides
+        // Get per-day schedule with employee overrides applied
         $dayName = strtolower(Carbon::parse($record->work_date)->format('l'));
-        $daySchedule = $schedule->getScheduleForDay($dayName);
+        $daySchedule = $employee->getEffectiveScheduleForDay($dayName);
 
         $scheduledExit = Carbon::parse($dateStr . ' ' . Carbon::parse($daySchedule->exit_time)->format('H:i:s'));
         if ($scheduledExit->lt($checkIn)) {

@@ -47,15 +47,14 @@ class AnomalyDetectorService
     public function detectForRecord(AttendanceRecord $record): int
     {
         $employee = $record->employee;
-        $schedule = $employee->schedule;
 
-        if (!$schedule) {
+        if (!$employee->schedule) {
             return 0;
         }
 
-        // Get per-day schedule overrides
+        // Get per-day schedule with employee overrides applied
         $dayName = strtolower(Carbon::parse($record->work_date)->format('l'));
-        $daySchedule = $schedule->getScheduleForDay($dayName);
+        $daySchedule = $employee->getEffectiveScheduleForDay($dayName);
 
         $anomalies = [];
 

@@ -319,6 +319,10 @@ class ReportExportController extends Controller implements HasMiddleware
             }
         }
 
+        // Split absent records: true no-shows vs threshold-triggered
+        $noShowRecords = $absentRecords->filter(fn ($r) => is_null($r->check_in));
+        $thresholdRecords = $absentRecords->filter(fn ($r) => !is_null($r->check_in));
+
         // Combine
         $allEmployeeIds = $absentRecords->pluck('employee_id')
             ->merge(array_keys($retardoFaltas))
@@ -326,24 +330,27 @@ class ReportExportController extends Controller implements HasMiddleware
 
         $data = [];
         foreach ($allEmployeeIds as $employeeId) {
-            $empAbsent = $absentRecords->where('employee_id', $employeeId);
-            $employee = $empAbsent->first()?->employee ?? Employee::with('department')->find($employeeId);
-            $direct = $empAbsent->count();
+            $empNoShow = $noShowRecords->where('employee_id', $employeeId);
+            $empThreshold = $thresholdRecords->where('employee_id', $employeeId);
+            $employee = $empNoShow->first()?->employee ?? $empThreshold->first()?->employee ?? Employee::with('department')->find($employeeId);
+            $noShow = $empNoShow->count();
+            $threshold = $empThreshold->count();
             $retardo = $retardoFaltas[$employeeId] ?? 0;
 
             $data[] = [
                 $employee?->full_name ?? '-',
                 $employee?->employee_number ?? '-',
                 $employee?->department?->name ?? '-',
-                $direct,
+                $noShow,
+                $threshold,
                 $retardo,
-                $direct + $retardo,
+                $noShow + $threshold + $retardo,
             ];
         }
 
         return $this->exportCsv(
             "reporte_faltas_{$startDate}_{$endDate}.csv",
-            ['Empleado', 'No. Empleado', 'Departamento', 'Faltas Directas', 'Faltas por Retardos', 'Total Faltas'],
+            ['Empleado', 'No. Empleado', 'Departamento', 'Inasistencias', 'Por Umbral', 'Faltas por Retardos', 'Total Faltas'],
             $data
         );
     }

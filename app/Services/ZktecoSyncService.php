@@ -561,7 +561,7 @@ class ZktecoSyncService
         }
 
         $dayName = strtolower(Carbon::parse($attendance->work_date)->format('l'));
-        $isWorkingDay = $schedule->isWorkingDay($dayName);
+        $isWorkingDay = $employee->isEffectiveWorkingDay($dayName);
 
         if (!$attendance->check_in && $isWorkingDay && !$attendance->is_holiday) {
             $attendance->update(['status' => 'absent']);
@@ -578,7 +578,7 @@ class ZktecoSyncService
         $checkInTime = $this->extractTime($attendance->check_in);
         $checkOutTime = $this->extractTime($attendance->check_out);
         $dayName = strtolower($workDate->format('l'));
-        $daySchedule = $schedule->getScheduleForDay($dayName);
+        $daySchedule = $employee->getEffectiveScheduleForDay($dayName);
         $entryTime = $this->extractTime($daySchedule->entry_time);
         $exitTime = $this->extractTime($daySchedule->exit_time);
         $isNightShift = $attendance->is_night_shift ?? $this->isNightShiftSchedule($schedule);
@@ -590,7 +590,7 @@ class ZktecoSyncService
         // Calculate late minutes
         $expectedEntry = Carbon::parse($dateStr . ' ' . $entryTime);
         $actualEntry = Carbon::parse($dateStr . ' ' . $checkInTime);
-        $tolerance = $schedule->late_tolerance_minutes ?? 10;
+        $tolerance = $employee->getEffectiveLateTolerance();
 
         $lateMinutes = 0;
 
@@ -902,7 +902,7 @@ class ZktecoSyncService
             }
 
             $dayName = strtolower($yesterday->format('l'));
-            $isWorkingDay = $employee->schedule->isWorkingDay($dayName);
+            $isWorkingDay = $employee->isEffectiveWorkingDay($dayName);
             $isHoliday = Holiday::isHoliday($yesterday);
 
             if ($isWorkingDay && !$isHoliday) {

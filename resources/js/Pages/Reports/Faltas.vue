@@ -54,7 +54,7 @@ const formatShortDate = (date) => fmtDate(date, { day: 'numeric', month: 'short'
             </div>
         </div>
 
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
             <div class="bg-white rounded-lg shadow p-4 text-center">
                 <p class="text-2xl font-bold text-red-600">{{ summary.total_faltas }}</p>
                 <p class="text-xs text-gray-500">Total Faltas</p>
@@ -64,8 +64,12 @@ const formatShortDate = (date) => fmtDate(date, { day: 'numeric', month: 'short'
                 <p class="text-xs text-gray-500">Empleados con Faltas</p>
             </div>
             <div class="bg-white rounded-lg shadow p-4 text-center">
-                <p class="text-2xl font-bold text-orange-600">{{ summary.direct_faltas }}</p>
-                <p class="text-xs text-gray-500">Faltas Directas</p>
+                <p class="text-2xl font-bold text-red-700">{{ summary.no_show_faltas }}</p>
+                <p class="text-xs text-gray-500">Inasistencias</p>
+            </div>
+            <div class="bg-white rounded-lg shadow p-4 text-center">
+                <p class="text-2xl font-bold text-orange-600">{{ summary.threshold_faltas }}</p>
+                <p class="text-xs text-gray-500">Por Umbral</p>
             </div>
             <div class="bg-white rounded-lg shadow p-4 text-center">
                 <p class="text-2xl font-bold text-yellow-600">{{ summary.retardo_faltas }}</p>
@@ -78,7 +82,8 @@ const formatShortDate = (date) => fmtDate(date, { day: 'numeric', month: 'short'
                 <thead class="bg-gray-50">
                     <tr>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Empleado</th>
-                        <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Directas</th>
+                        <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Inasistencias</th>
+                        <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Por Umbral</th>
                         <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Por Retardos</th>
                         <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Total</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Fechas</th>
@@ -98,8 +103,14 @@ const formatShortDate = (date) => fmtDate(date, { day: 'numeric', month: 'short'
                             </div>
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-right">
-                            <span v-if="row.direct_faltas > 0" class="px-2 py-1 rounded-full text-sm font-bold bg-red-100 text-red-800">
-                                {{ row.direct_faltas }}
+                            <span v-if="row.no_show_faltas > 0" class="px-2 py-1 rounded-full text-sm font-bold bg-red-100 text-red-800">
+                                {{ row.no_show_faltas }}
+                            </span>
+                            <span v-else class="text-sm text-gray-400">0</span>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right">
+                            <span v-if="row.threshold_faltas > 0" class="px-2 py-1 rounded-full text-sm font-bold bg-orange-100 text-orange-800">
+                                {{ row.threshold_faltas }}
                             </span>
                             <span v-else class="text-sm text-gray-400">0</span>
                         </td>
@@ -116,26 +127,34 @@ const formatShortDate = (date) => fmtDate(date, { day: 'numeric', month: 'short'
                         </td>
                         <td class="px-6 py-4">
                             <div class="flex flex-wrap gap-1 max-w-xs">
-                                <span v-for="d in row.dates.slice(0, 5)" :key="d" class="px-2 py-0.5 bg-red-50 text-red-700 text-xs rounded">
+                                <span v-for="d in row.no_show_dates.slice(0, 5)" :key="'ns-'+d" class="px-2 py-0.5 bg-red-50 text-red-700 text-xs rounded" title="Inasistencia">
                                     {{ formatShortDate(d) }}
                                 </span>
-                                <span v-if="row.dates.length > 5" class="px-2 py-0.5 bg-gray-200 text-gray-600 text-xs rounded">+{{ row.dates.length - 5 }}</span>
+                                <span v-for="d in row.threshold_dates.slice(0, 5)" :key="'th-'+d" class="px-2 py-0.5 bg-orange-50 text-orange-700 text-xs rounded" title="Por umbral de retardo/salida">
+                                    {{ formatShortDate(d) }}
+                                </span>
+                                <span v-if="row.dates.length > 10" class="px-2 py-0.5 bg-gray-200 text-gray-600 text-xs rounded">+{{ row.dates.length - 10 }}</span>
                             </div>
                         </td>
                     </tr>
                     <tr v-if="byEmployee.length === 0">
-                        <td colspan="5" class="px-6 py-12 text-center text-gray-500">No hay faltas registradas en este periodo</td>
+                        <td colspan="6" class="px-6 py-12 text-center text-gray-500">No hay faltas registradas en este periodo</td>
                     </tr>
                 </tbody>
             </table>
         </div>
 
-        <div class="mt-6 bg-red-50 border border-red-200 rounded-lg p-4">
+        <div class="mt-6 bg-red-50 border border-red-200 rounded-lg p-4 space-y-1">
             <p class="text-sm text-red-800">
-                <strong>Nota:</strong> Una falta se genera al llegar {{ settings.maxLate }}+ min tarde, no presentarse,
+                <strong>Nota:</strong> Una falta se genera al no presentarse, llegar {{ settings.maxLate }}+ min tarde,
                 <template v-if="settings.earlyIsAbsence">salir {{ settings.earlyThreshold }}+ min antes sin autorizacion, </template>
                 o acumular {{ settings.lateToAbsence }} retardos al mes.
             </p>
+            <div class="flex flex-wrap gap-3 text-xs mt-2">
+                <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded bg-red-200 inline-block"></span> Inasistencia (sin registro)</span>
+                <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded bg-orange-200 inline-block"></span> Por umbral (retardo {{ settings.maxLate }}+ min<template v-if="settings.earlyIsAbsence"> o salida {{ settings.earlyThreshold }}+ min antes</template>)</span>
+                <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded bg-yellow-200 inline-block"></span> Por retardos acumulados</span>
+            </div>
         </div>
     </AppLayout>
 </template>
