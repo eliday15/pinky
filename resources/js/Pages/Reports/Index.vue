@@ -62,6 +62,14 @@ const reports = [
             { name: 'Salidas Tempranas', description: 'Antes de hora', route: 'reports.earlyDepartures', icon: 'early' },
         ],
     },
+    {
+        category: 'Tiempo Extra',
+        icon: 'clock',
+        color: 'amber',
+        items: [
+            { name: 'Semanal por Depto', description: 'Formato imprimible', route: 'reports.overtime-weekly.index', icon: 'overtime' },
+        ],
+    },
 ];
 
 const colorClasses = {

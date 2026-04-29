@@ -15,6 +15,7 @@ use App\Http\Controllers\PayrollController;
 use App\Http\Controllers\PositionController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\AttendanceReportController;
+use App\Http\Controllers\OvertimeReportController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\ReportExportController;
 use App\Http\Controllers\ScheduleController;
@@ -115,6 +116,14 @@ Route::middleware(['auth', 'verified', 'password-changed', 'two-factor-setup'])-
     Route::get('/reports/incidents', [ReportController::class, 'incidents'])->name('reports.incidents');
     Route::get('/reports/productivity', [ReportController::class, 'productivity'])->name('reports.productivity');
     Route::get('/reports/payroll-trends', [ReportController::class, 'payrollTrends'])->name('reports.payrollTrends');
+
+    // Weekly overtime report (Formato de Tiempo Extra) per department
+    Route::prefix('reports/overtime-weekly')->name('reports.overtime-weekly.')->group(function () {
+        Route::get('/', [OvertimeReportController::class, 'index'])->name('index');
+        Route::get('/preview', [OvertimeReportController::class, 'preview'])->name('preview');
+        Route::get('/export/pdf', [OvertimeReportController::class, 'exportPdf'])->name('export.pdf');
+        Route::get('/export/excel', [OvertimeReportController::class, 'exportExcel'])->name('export.excel');
+    });
 
     // Discipline Reports
     Route::get('/reports/faltas', [AttendanceReportController::class, 'faltas'])->name('reports.faltas');
