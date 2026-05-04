@@ -10,7 +10,6 @@ use App\Models\Incident;
 use App\Models\SystemSetting;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\Log;
 
 /**
  * Service for detecting anomalies in attendance records.
@@ -24,7 +23,7 @@ class AnomalyDetectorService
     /**
      * Detect all anomalies for a set of attendance records.
      *
-     * @param Collection $records Collection of AttendanceRecord models
+     * @param  Collection  $records  Collection of AttendanceRecord models
      * @return int Number of new anomalies detected
      */
     public function detectForRecords(Collection $records): int
@@ -41,14 +40,16 @@ class AnomalyDetectorService
     /**
      * Detect anomalies for a single attendance record.
      *
-     * @param AttendanceRecord $record The attendance record to analyze
+     * @param  AttendanceRecord  $record  The attendance record to analyze
      * @return int Number of new anomalies detected
      */
     public function detectForRecord(AttendanceRecord $record): int
     {
         $employee = $record->employee;
 
-        if (!$employee->schedule) {
+        // Defensive: an attendance record can outlive its employee (orphan FK
+        // or hard-deleted). Skip rather than crash the whole detection batch.
+        if (! $employee || ! $employee->schedule) {
             return 0;
         }
 
@@ -79,7 +80,7 @@ class AnomalyDetectorService
                 ->where('work_date', $record->work_date)
                 ->exists();
 
-            if (!$exists) {
+            if (! $exists) {
                 AttendanceAnomaly::create(array_merge($anomalyData, [
                     'attendance_record_id' => $record->id,
                     'employee_id' => $record->employee_id,
@@ -110,13 +111,13 @@ class AnomalyDetectorService
      * for that date or the record already has velada_hours, since velada workers
      * may check out past midnight (handled by a different record).
      *
-     * @param AttendanceRecord $record The attendance record
-     * @param mixed $schedule The employee's schedule
+     * @param  AttendanceRecord  $record  The attendance record
+     * @param  mixed  $schedule  The employee's schedule
      * @return array List of anomaly data arrays
      */
     private function detectMissingCheckout(AttendanceRecord $record, $schedule): array
     {
-        if (!$record->check_in || $record->check_out || $record->status === 'absent') {
+        if (! $record->check_in || $record->check_out || $record->status === 'absent') {
             return [];
         }
 
@@ -147,13 +148,13 @@ class AnomalyDetectorService
     /**
      * Detect missing checkin.
      *
-     * @param AttendanceRecord $record The attendance record
-     * @param mixed $schedule The employee's schedule
+     * @param  AttendanceRecord  $record  The attendance record
+     * @param  mixed  $schedule  The employee's schedule
      * @return array List of anomaly data arrays
      */
     private function detectMissingCheckin(AttendanceRecord $record, $schedule): array
     {
-        if (!$record->check_in && $record->check_out) {
+        if (! $record->check_in && $record->check_out) {
             return [[
                 'anomaly_type' => 'missing_checkin',
                 'severity' => 'warning',
@@ -162,14 +163,15 @@ class AnomalyDetectorService
                 'actual_value' => null,
             ]];
         }
+
         return [];
     }
 
     /**
      * Detect unauthorized overtime (overtime without approved authorization).
      *
-     * @param AttendanceRecord $record The attendance record
-     * @param Employee $employee The employee
+     * @param  AttendanceRecord  $record  The attendance record
+     * @param  Employee  $employee  The employee
      * @return array List of anomaly data arrays
      */
     private function detectUnauthorizedOvertime(AttendanceRecord $record, Employee $employee): array
@@ -184,7 +186,7 @@ class AnomalyDetectorService
             ->whereIn('status', [Authorization::STATUS_APPROVED, Authorization::STATUS_PAID])
             ->exists();
 
-        if (!$hasAuthorization) {
+        if (! $hasAuthorization) {
             return [[
                 'anomaly_type' => 'unauthorized_overtime',
                 'severity' => 'warning',
@@ -194,6 +196,7 @@ class AnomalyDetectorService
                 'deviation_minutes' => (int) ($record->overtime_hours * 60),
             ]];
         }
+
         return [];
     }
 
@@ -204,8 +207,8 @@ class AnomalyDetectorService
      * 1. Velada without authorization -> unauthorized_velada (existing)
      * 2. Velada with authorization but no punch in confirmation window -> velada_missing_confirmation (new)
      *
-     * @param AttendanceRecord $record The attendance record
-     * @param Employee $employee The employee
+     * @param  AttendanceRecord  $record  The attendance record
+     * @param  Employee  $employee  The employee
      * @return array List of anomaly data arrays
      */
     private function detectUnauthorizedVelada(AttendanceRecord $record, Employee $employee): array
@@ -220,7 +223,7 @@ class AnomalyDetectorService
             ->whereIn('status', [Authorization::STATUS_APPROVED, Authorization::STATUS_PAID])
             ->exists();
 
-        if (!$hasAuthorization) {
+        if (! $hasAuthorization) {
             return [[
                 'anomaly_type' => 'unauthorized_velada',
                 'severity' => 'critical',
@@ -232,7 +235,7 @@ class AnomalyDetectorService
         }
 
         // Has authorization - check for post-midnight confirmation punch
-        if (!$this->hasPostMidnightPunch($record)) {
+        if (! $this->hasPostMidnightPunch($record)) {
             $confirmStart = (int) SystemSetting::get('velada_confirmation_start_hour', 0);
             $confirmEnd = (int) SystemSetting::get('velada_confirmation_end_hour', 1);
 
@@ -251,7 +254,7 @@ class AnomalyDetectorService
     /**
      * Check if a record has a raw punch in the post-midnight confirmation window.
      *
-     * @param AttendanceRecord $record The attendance record
+     * @param  AttendanceRecord  $record  The attendance record
      * @return bool True if a punch exists in the confirmation window
      */
     private function hasPostMidnightPunch(AttendanceRecord $record): bool
@@ -266,7 +269,7 @@ class AnomalyDetectorService
 
         foreach ($rawPunches as $punch) {
             $punchTime = $punch['time'] ?? null;
-            if (!$punchTime) {
+            if (! $punchTime) {
                 continue;
             }
 
@@ -282,8 +285,8 @@ class AnomalyDetectorService
     /**
      * Detect excessive break (lunch longer than allowed).
      *
-     * @param AttendanceRecord $record The attendance record
-     * @param mixed $schedule The employee's schedule
+     * @param  AttendanceRecord  $record  The attendance record
+     * @param  mixed  $schedule  The employee's schedule
      * @return array List of anomaly data arrays
      */
     private function detectExcessiveBreak(AttendanceRecord $record, $schedule): array
@@ -293,6 +296,7 @@ class AnomalyDetectorService
 
         if ($record->actual_break_minutes > 0 && $record->actual_break_minutes > ($scheduledBreak + $maxDeviation)) {
             $deviation = $record->actual_break_minutes - $scheduledBreak;
+
             return [[
                 'anomaly_type' => 'excessive_break',
                 'severity' => 'info',
@@ -302,26 +306,27 @@ class AnomalyDetectorService
                 'deviation_minutes' => $deviation,
             ]];
         }
+
         return [];
     }
 
     /**
      * Detect missing lunch punch.
      *
-     * @param AttendanceRecord $record The attendance record
-     * @param mixed $schedule The employee's schedule
+     * @param  AttendanceRecord  $record  The attendance record
+     * @param  mixed  $schedule  The employee's schedule
      * @return array List of anomaly data arrays
      */
     private function detectMissingLunch(AttendanceRecord $record, $schedule): array
     {
         $lunchRequired = SystemSetting::get('lunch_required', true);
-        if (!$lunchRequired) {
+        if (! $lunchRequired) {
             return [];
         }
 
         // Only flag if worked > 5 hours and schedule has break defined
         if ($record->worked_hours >= 5 && ($schedule->break_minutes ?? 0) > 0) {
-            if (!$record->lunch_out && !$record->lunch_in) {
+            if (! $record->lunch_out && ! $record->lunch_in) {
                 return [[
                     'anomaly_type' => 'missing_lunch',
                     'severity' => 'info',
@@ -331,14 +336,15 @@ class AnomalyDetectorService
                 ]];
             }
         }
+
         return [];
     }
 
     /**
      * Detect late arrival (significant, beyond normal tolerance).
      *
-     * @param AttendanceRecord $record The attendance record
-     * @param mixed $schedule The employee's schedule
+     * @param  AttendanceRecord  $record  The attendance record
+     * @param  mixed  $schedule  The employee's schedule
      * @return array List of anomaly data arrays
      */
     private function detectLateArrival(AttendanceRecord $record, $schedule): array
@@ -353,14 +359,15 @@ class AnomalyDetectorService
                 'deviation_minutes' => $record->late_minutes,
             ]];
         }
+
         return [];
     }
 
     /**
      * Detect early departure.
      *
-     * @param AttendanceRecord $record The attendance record
-     * @param mixed $schedule The employee's schedule
+     * @param  AttendanceRecord  $record  The attendance record
+     * @param  mixed  $schedule  The employee's schedule
      * @return array List of anomaly data arrays
      */
     private function detectEarlyDeparture(AttendanceRecord $record, $schedule): array
@@ -370,10 +377,10 @@ class AnomalyDetectorService
                 ->whereDate('start_date', '<=', $record->work_date)
                 ->whereDate('end_date', '>=', $record->work_date)
                 ->where('status', 'approved')
-                ->whereHas('incidentType', fn($q) => $q->where('code', 'PSA'))
+                ->whereHas('incidentType', fn ($q) => $q->where('code', 'PSA'))
                 ->exists();
 
-            if (!$hasPermission) {
+            if (! $hasPermission) {
                 return [[
                     'anomaly_type' => 'early_departure',
                     'severity' => $record->early_departure_minutes > 60 ? 'warning' : 'info',
@@ -384,24 +391,25 @@ class AnomalyDetectorService
                 ]];
             }
         }
+
         return [];
     }
 
     /**
      * Detect schedule deviation (arrived much too early or too late).
      *
-     * @param AttendanceRecord $record The attendance record
-     * @param mixed $schedule The employee's schedule
+     * @param  AttendanceRecord  $record  The attendance record
+     * @param  mixed  $schedule  The employee's schedule
      * @return array List of anomaly data arrays
      */
     private function detectScheduleDeviation(AttendanceRecord $record, $schedule): array
     {
-        if (!$record->check_in || !$schedule->entry_time) {
+        if (! $record->check_in || ! $schedule->entry_time) {
             return [];
         }
 
-        $expected = Carbon::parse($record->work_date->toDateString() . ' ' . Carbon::parse($schedule->entry_time)->format('H:i:s'));
-        $actual = Carbon::parse($record->work_date->toDateString() . ' ' . Carbon::parse($record->check_in)->format('H:i:s'));
+        $expected = Carbon::parse($record->work_date->toDateString().' '.Carbon::parse($schedule->entry_time)->format('H:i:s'));
+        $actual = Carbon::parse($record->work_date->toDateString().' '.Carbon::parse($record->check_in)->format('H:i:s'));
         $diffMinutes = $actual->diffInMinutes($expected, false); // negative = early
 
         // Flag if arrived more than 60 minutes early (possible wrong schedule)
@@ -409,19 +417,20 @@ class AnomalyDetectorService
             return [[
                 'anomaly_type' => 'schedule_deviation',
                 'severity' => 'info',
-                'description' => 'Entrada significativamente antes del horario programado (' . abs($diffMinutes) . ' min antes).',
+                'description' => 'Entrada significativamente antes del horario programado ('.abs($diffMinutes).' min antes).',
                 'expected_value' => $schedule->entry_time,
                 'actual_value' => $record->check_in,
                 'deviation_minutes' => abs($diffMinutes),
             ]];
         }
+
         return [];
     }
 
     /**
      * Detect duplicate punches (too many punches in a day).
      *
-     * @param AttendanceRecord $record The attendance record
+     * @param  AttendanceRecord  $record  The attendance record
      * @return array List of anomaly data arrays
      */
     private function detectDuplicatePunches(AttendanceRecord $record): array
@@ -431,19 +440,20 @@ class AnomalyDetectorService
             return [[
                 'anomaly_type' => 'duplicate_punches',
                 'severity' => 'info',
-                'description' => 'Se detectaron ' . count($rawPunches) . ' checadas en el dia (mas de lo normal).',
+                'description' => 'Se detectaron '.count($rawPunches).' checadas en el dia (mas de lo normal).',
                 'expected_value' => '4-6',
                 'actual_value' => (string) count($rawPunches),
             ]];
         }
+
         return [];
     }
 
     /**
      * Detect anomalies for all records in a date range.
      *
-     * @param Carbon $startDate Start of the date range
-     * @param Carbon $endDate End of the date range
+     * @param  Carbon  $startDate  Start of the date range
+     * @param  Carbon  $endDate  End of the date range
      * @return int Number of new anomalies detected
      */
     public function detectForDateRange(Carbon $startDate, Carbon $endDate): int
