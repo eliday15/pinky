@@ -3,7 +3,6 @@
 namespace App\Services;
 
 use App\Models\AttendanceRecord;
-use App\Models\Authorization;
 use App\Models\Department;
 use App\Models\Employee;
 use App\Models\Holiday;
@@ -14,8 +13,6 @@ use App\Models\Position;
 use App\Models\Schedule;
 use App\Models\SyncLog;
 use App\Models\SystemSetting;
-use App\Services\AnomalyDetectorService;
-use App\Services\VeladaCalculatorService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -34,7 +31,7 @@ class ZktecoSyncService
      *
      * Imports new employees and updates existing ones based on attendance activity.
      *
-     * @param int $inactivityDays Number of days without attendance to mark as inactive
+     * @param  int  $inactivityDays  Number of days without attendance to mark as inactive
      * @return array{imported: int, updated: int, inactive: int}
      */
     public function syncEmployees(int $inactivityDays = 60): array
@@ -108,7 +105,7 @@ class ZktecoSyncService
             $userId = $zkUser->user_id;
             $name = trim($zkUser->name ?? '');
 
-            if (!$userId) {
+            if (! $userId) {
                 continue;
             }
 
@@ -128,7 +125,7 @@ class ZktecoSyncService
 
             // Create employee
             Employee::create([
-                'employee_number' => 'EMP-' . str_pad($userId, 4, '0', STR_PAD_LEFT),
+                'employee_number' => 'EMP-'.str_pad($userId, 4, '0', STR_PAD_LEFT),
                 'zkteco_user_id' => $userId,
                 'first_name' => $nameParts['first_name'],
                 'last_name' => $nameParts['last_name'],
@@ -155,7 +152,7 @@ class ZktecoSyncService
     /**
      * Sync attendance records from ZKTeco attendance table.
      *
-     * @param Carbon|null $fromDate Start date for syncing
+     * @param  Carbon|null  $fromDate  Start date for syncing
      * @return array{fetched: int, processed: int, created: int}
      */
     public function syncAttendance(?Carbon $fromDate = null): array
@@ -180,7 +177,7 @@ class ZktecoSyncService
         foreach ($groupedRecords as $userId => $dateRecords) {
             $employee = Employee::where('zkteco_user_id', $userId)->first();
 
-            if (!$employee) {
+            if (! $employee) {
                 continue;
             }
 
@@ -192,7 +189,7 @@ class ZktecoSyncService
                         $created++;
                     }
                 } catch (\Exception $e) {
-                    Log::error("Error processing attendance for employee {$employee->id} on {$date}: " . $e->getMessage());
+                    Log::error("Error processing attendance for employee {$employee->id} on {$date}: ".$e->getMessage());
                 }
             }
         }
@@ -210,10 +207,9 @@ class ZktecoSyncService
     /**
      * Run full sync process.
      *
-     * @param Carbon|null $fromDate Start date for attendance sync
-     * @param int|null $triggeredBy User ID who triggered the sync
-     * @param int|null $syncLogId Existing SyncLog ID to reuse (remote agent mode)
-     * @return SyncLog
+     * @param  Carbon|null  $fromDate  Start date for attendance sync
+     * @param  int|null  $triggeredBy  User ID who triggered the sync
+     * @param  int|null  $syncLogId  Existing SyncLog ID to reuse (remote agent mode)
      */
     public function sync(?Carbon $fromDate = null, ?int $triggeredBy = null, ?int $syncLogId = null): SyncLog
     {
@@ -231,7 +227,7 @@ class ZktecoSyncService
 
         try {
             // Step 1: Sync employees
-            Log::info("ZKTeco Sync: Syncing employees...");
+            Log::info('ZKTeco Sync: Syncing employees...');
             $employeeStats = $this->syncEmployees();
             Log::info("ZKTeco Sync: Employees - Imported: {$employeeStats['imported']}, Updated: {$employeeStats['updated']}, Marked inactive: {$employeeStats['inactive']}");
 
@@ -242,7 +238,7 @@ class ZktecoSyncService
             Log::info("ZKTeco Sync: Attendance - Fetched: {$attendanceStats['fetched']}, Processed: {$attendanceStats['processed']}, Created: {$attendanceStats['created']}");
 
             // Step 3: Detect anomalies
-            Log::info("ZKTeco Sync: Detecting anomalies...");
+            Log::info('ZKTeco Sync: Detecting anomalies...');
             $anomalyDetector = app(AnomalyDetectorService::class);
             $anomalyCount = $anomalyDetector->detectForDateRange($fromDate, Carbon::now());
             Log::info("ZKTeco Sync: Detected {$anomalyCount} new anomalies.");
@@ -259,7 +255,7 @@ class ZktecoSyncService
             ]);
 
         } catch (\Exception $e) {
-            Log::error("ZKTeco Sync failed: " . $e->getMessage());
+            Log::error('ZKTeco Sync failed: '.$e->getMessage());
 
             $log->update([
                 'completed_at' => now(),
@@ -300,7 +296,7 @@ class ZktecoSyncService
             return [
                 'first_name' => 'Empleado',
                 'last_name' => (string) $userId,
-                'full_name' => 'Empleado ' . $userId,
+                'full_name' => 'Empleado '.$userId,
             ];
         }
 
@@ -311,7 +307,7 @@ class ZktecoSyncService
         $parts = preg_split('/\s+/', $name);
 
         if (count($parts) >= 4) {
-            $firstName = $parts[0] . ' ' . $parts[1];
+            $firstName = $parts[0].' '.$parts[1];
             $lastName = implode(' ', array_slice($parts, 2));
         } elseif (count($parts) >= 2) {
             $firstName = $parts[0];
@@ -368,11 +364,11 @@ class ZktecoSyncService
             $date = $timestamp->toDateString();
             $hour = $timestamp->hour;
 
-            if (!isset($grouped[$userId])) {
+            if (! isset($grouped[$userId])) {
                 $grouped[$userId] = [];
             }
 
-            if (!isset($grouped[$userId][$date])) {
+            if (! isset($grouped[$userId][$date])) {
                 $grouped[$userId][$date] = [];
             }
 
@@ -438,7 +434,44 @@ class ZktecoSyncService
      */
     private function processEmployeeDayRecords(Employee $employee, string $date, array $punches): bool
     {
-        // Filter duplicate punches (retries within 5 minutes)
+        // Load any existing record FIRST so we can MERGE the incoming window of punches
+        // with what was already saved on a previous sync run. Previously this method only
+        // saw the latest sync window's punches and overwrote check_in/check_out, which
+        // erased earlier punches when sync ran multiple times the same day.
+        $attendance = AttendanceRecord::firstOrNew([
+            'employee_id' => $employee->id,
+            'work_date' => $date,
+        ]);
+        $wasCreated = ! $attendance->exists;
+
+        // Skip records that were manually edited — never overwrite human corrections.
+        if ($attendance->exists && ! empty($attendance->manually_edited_at)) {
+            return false;
+        }
+
+        // Reconstruct prior punches from the stored HH:MM:SS payload and merge with incoming.
+        foreach (($attendance->raw_punches ?? []) as $rp) {
+            $time = $rp['time'] ?? null;
+            if (! $time) {
+                continue;
+            }
+            $punches[] = [
+                'timestamp' => $date.' '.$time,
+                'device_id' => $rp['device'] ?? null,
+                'status' => match ($rp['method'] ?? 'fingerprint') {
+                    'fingerprint' => 0,
+                    'password' => 1,
+                    default => 2,
+                },
+            ];
+        }
+
+        // Sort punches chronologically BEFORE deduping — the duplicate filter relies on
+        // consecutive ordering to collapse retries within the 5-minute window.
+        usort($punches, fn ($a, $b) => strcmp($a['timestamp'], $b['timestamp']));
+
+        // Filter duplicate punches (retries within 5 minutes — also collapses the
+        // overlap that the merge can introduce when consecutive sync windows share punches).
         $punches = $this->filterDuplicatePunches($punches, 5);
 
         if (empty($punches)) {
@@ -447,9 +480,6 @@ class ZktecoSyncService
 
         $schedule = $employee->schedule;
         $isNightShift = $this->isNightShiftSchedule($schedule);
-
-        // Sort punches by time
-        usort($punches, fn($a, $b) => strcmp($a['timestamp'], $b['timestamp']));
 
         // Simple logic: first = in, last = out
         $firstPunch = $punches[0];
@@ -494,15 +524,8 @@ class ZktecoSyncService
             }
         }
 
-        // Get or create attendance record
-        $attendance = AttendanceRecord::firstOrNew([
-            'employee_id' => $employee->id,
-            'work_date' => $date,
-        ]);
-
-        $wasCreated = !$attendance->exists;
-
         // Store raw punches with type annotations
+        // ($attendance + $wasCreated were resolved at the top of this method, before merging)
         $rawPunches = [];
         foreach ($punches as $punch) {
             $time = Carbon::parse($punch['timestamp'])->format('H:i:s');
@@ -555,20 +578,22 @@ class ZktecoSyncService
         $employee = $attendance->employee;
         $schedule = $employee->schedule;
 
-        if (!$schedule) {
+        if (! $schedule) {
             $attendance->update(['requires_review' => true]);
+
             return;
         }
 
         $dayName = strtolower(Carbon::parse($attendance->work_date)->format('l'));
         $isWorkingDay = $employee->isEffectiveWorkingDay($dayName);
 
-        if (!$attendance->check_in && $isWorkingDay && !$attendance->is_holiday) {
+        if (! $attendance->check_in && $isWorkingDay && ! $attendance->is_holiday) {
             $attendance->update(['status' => 'absent']);
+
             return;
         }
 
-        if (!$attendance->check_in) {
+        if (! $attendance->check_in) {
             return;
         }
 
@@ -583,13 +608,13 @@ class ZktecoSyncService
         $exitTime = $this->extractTime($daySchedule->exit_time);
         $isNightShift = $attendance->is_night_shift ?? $this->isNightShiftSchedule($schedule);
 
-        if (!$checkInTime || !$entryTime) {
+        if (! $checkInTime || ! $entryTime) {
             return;
         }
 
         // Calculate late minutes
-        $expectedEntry = Carbon::parse($dateStr . ' ' . $entryTime);
-        $actualEntry = Carbon::parse($dateStr . ' ' . $checkInTime);
+        $expectedEntry = Carbon::parse($dateStr.' '.$entryTime);
+        $actualEntry = Carbon::parse($dateStr.' '.$checkInTime);
         $tolerance = $employee->getEffectiveLateTolerance();
 
         $lateMinutes = 0;
@@ -605,7 +630,7 @@ class ZktecoSyncService
             }
         } else {
             // Don't count as late if check-in is after scheduled exit (overtime/different shift)
-            $scheduledExit = Carbon::parse($dateStr . ' ' . $exitTime);
+            $scheduledExit = Carbon::parse($dateStr.' '.$exitTime);
             if ($actualEntry->gt($expectedEntry->copy()->addMinutes($tolerance)) && $actualEntry->lt($scheduledExit)) {
                 $lateMinutes = max(0, (int) abs($actualEntry->diffInMinutes($expectedEntry)) - $tolerance);
             }
@@ -618,8 +643,8 @@ class ZktecoSyncService
         // Early departure
         $earlyDepartureMinutes = 0;
         if ($checkOutTime && $exitTime) {
-            $expectedExit = Carbon::parse($dateStr . ' ' . $exitTime);
-            $actualExit = Carbon::parse($dateStr . ' ' . $checkOutTime);
+            $expectedExit = Carbon::parse($dateStr.' '.$exitTime);
+            $actualExit = Carbon::parse($dateStr.' '.$checkOutTime);
 
             // Handle night shift exit (next day)
             if ($isNightShift && $actualExit->lt($expectedExit)) {
@@ -634,8 +659,8 @@ class ZktecoSyncService
         // Worked hours calculation with actual break
         $workedMinutes = 0;
         if ($checkInTime && $checkOutTime) {
-            $checkIn = Carbon::parse($dateStr . ' ' . $checkInTime);
-            $checkOut = Carbon::parse($dateStr . ' ' . $checkOutTime);
+            $checkIn = Carbon::parse($dateStr.' '.$checkInTime);
+            $checkOut = Carbon::parse($dateStr.' '.$checkOutTime);
 
             // Handle midnight crossing for night shifts
             if ($checkOut->lt($checkIn)) {
@@ -691,7 +716,7 @@ class ZktecoSyncService
             ->whereDate('start_date', '<=', $workDate->toDateString())
             ->whereDate('end_date', '>=', $workDate->toDateString())
             ->where('status', 'approved')
-            ->whereHas('incidentType', fn($q) => $q->where('affects_attendance', true))
+            ->whereHas('incidentType', fn ($q) => $q->where('affects_attendance', true))
             ->with('incidentType')
             ->first();
 
@@ -709,7 +734,7 @@ class ZktecoSyncService
         // Determine status
         $status = 'present';
         $maxLateBeforeAbsence = (int) SystemSetting::get('max_late_minutes_before_absence', 60);
-        if ($lateMinutes > 0 && !$hasApprovedEntryPermission) {
+        if ($lateMinutes > 0 && ! $hasApprovedEntryPermission) {
             if ($lateMinutes >= $maxLateBeforeAbsence) {
                 $status = 'absent';
                 $qualifiesForPunctualityBonus = false;
@@ -725,12 +750,12 @@ class ZktecoSyncService
         }
 
         $earlyDepartureThreshold = (int) SystemSetting::get('early_departure_absence_threshold', 30);
-        if ($earlyDepartureMinutes > $earlyDepartureThreshold && !$hasApprovedExitPermission) {
+        if ($earlyDepartureMinutes > $earlyDepartureThreshold && ! $hasApprovedExitPermission) {
             $status = 'absent';
             $qualifiesForPunctualityBonus = false;
         }
 
-        $requiresReview = !$checkOutTime && $checkInTime;
+        $requiresReview = ! $checkOutTime && $checkInTime;
 
         // Night shift bonus qualification
         $qualifiesForNightShiftBonus = $isNightShift && $workedHours >= 6;
@@ -754,7 +779,7 @@ class ZktecoSyncService
         ]);
 
         // Process late accumulation (FASE 2.2: X retardos = 1 falta)
-        if ($lateMinutes > 0 && !$hasApprovedEntryPermission) {
+        if ($lateMinutes > 0 && ! $hasApprovedEntryPermission) {
             $this->processLateAccumulation($employee, $workDate);
         }
     }
@@ -763,8 +788,8 @@ class ZktecoSyncService
      * Process late accumulation for an employee.
      * When the configured threshold is reached, generates an absence incident.
      *
-     * @param Employee $employee The employee
-     * @param Carbon $workDate The date of the late arrival
+     * @param  Employee  $employee  The employee
+     * @param  Carbon  $workDate  The date of the late arrival
      */
     private function processLateAccumulation(Employee $employee, Carbon $workDate): void
     {
@@ -796,9 +821,9 @@ class ZktecoSyncService
     /**
      * Generate an absence incident from late accumulation.
      *
-     * @param Employee $employee The employee
-     * @param LateAccumulation $accumulation The accumulation record
-     * @param Carbon $workDate The date to use for the incident
+     * @param  Employee  $employee  The employee
+     * @param  LateAccumulation  $accumulation  The accumulation record
+     * @param  Carbon  $workDate  The date to use for the incident
      */
     private function generateAbsenceFromLateAccumulation(
         Employee $employee,
@@ -808,8 +833,9 @@ class ZktecoSyncService
         // Find the incident type for late accumulation absence (code: FRT)
         $incidentType = IncidentType::where('code', 'FRT')->first();
 
-        if (!$incidentType) {
+        if (! $incidentType) {
             Log::warning("IncidentType with code 'FRT' not found. Cannot generate absence from late accumulation.");
+
             return;
         }
 
@@ -897,7 +923,7 @@ class ZktecoSyncService
             ->get();
 
         foreach ($employeesWithoutRecords as $employee) {
-            if (!$employee->schedule) {
+            if (! $employee->schedule) {
                 continue;
             }
 
@@ -905,7 +931,7 @@ class ZktecoSyncService
             $isWorkingDay = $employee->isEffectiveWorkingDay($dayName);
             $isHoliday = Holiday::isHoliday($yesterday);
 
-            if ($isWorkingDay && !$isHoliday) {
+            if ($isWorkingDay && ! $isHoliday) {
                 AttendanceRecord::create([
                     'employee_id' => $employee->id,
                     'work_date' => $yesterday->toDateString(),
@@ -933,8 +959,8 @@ class ZktecoSyncService
      * When employees scan their fingerprint multiple times in quick succession
      * (retries due to failed reads), we need to group these as a single event.
      *
-     * @param array $punches List of punches ordered by timestamp
-     * @param int $windowMinutes Window in minutes to consider as duplicate (default 5)
+     * @param  array  $punches  List of punches ordered by timestamp
+     * @param  int  $windowMinutes  Window in minutes to consider as duplicate (default 5)
      * @return array Array of groups, each containing punches within the window
      */
     private function groupDuplicatePunches(array $punches, int $windowMinutes = 5): array
@@ -973,7 +999,7 @@ class ZktecoSyncService
      * - Entry periods (morning): keep FIRST (arrived at that time)
      * - Exit periods (afternoon): keep LAST (left at that time)
      *
-     * @param array $group Group of duplicate punches
+     * @param  array  $group  Group of duplicate punches
      * @return array The selected punch
      */
     private function selectPunchFromGroup(array $group): array
@@ -1000,8 +1026,8 @@ class ZktecoSyncService
     /**
      * Filter and select correct punches from groups of duplicates.
      *
-     * @param array $punches Raw punches from ZKTeco
-     * @param int $windowMinutes Window for duplicate detection
+     * @param  array  $punches  Raw punches from ZKTeco
+     * @param  int  $windowMinutes  Window for duplicate detection
      * @return array Filtered punches
      */
     private function filterDuplicatePunches(array $punches, int $windowMinutes = 5): array
@@ -1009,7 +1035,7 @@ class ZktecoSyncService
         $groups = $this->groupDuplicatePunches($punches, $windowMinutes);
 
         return array_map(
-            fn($group) => $this->selectPunchFromGroup($group),
+            fn ($group) => $this->selectPunchFromGroup($group),
             $groups
         );
     }
@@ -1022,12 +1048,12 @@ class ZktecoSyncService
      * - Exit time is before 06:00 (crosses midnight)
      * - Exit hour < entry hour (crosses midnight)
      *
-     * @param Schedule|null $schedule Employee's schedule
+     * @param  Schedule|null  $schedule  Employee's schedule
      * @return bool True if night shift schedule
      */
     private function isNightShiftSchedule(?Schedule $schedule): bool
     {
-        if (!$schedule) {
+        if (! $schedule) {
             return false;
         }
 
@@ -1043,8 +1069,8 @@ class ZktecoSyncService
      * Used by the recalculation command to reprocess existing records
      * with the new algorithms.
      *
-     * @param AttendanceRecord $record The record to reprocess
-     * @param array $rawPunches Raw punches data
+     * @param  AttendanceRecord  $record  The record to reprocess
+     * @param  array  $rawPunches  Raw punches data
      */
     public function reprocessAttendanceRecord(AttendanceRecord $record, array $rawPunches): void
     {
@@ -1054,7 +1080,7 @@ class ZktecoSyncService
         $punches = [];
         foreach ($rawPunches as $punch) {
             $punches[] = [
-                'timestamp' => $record->work_date->toDateString() . ' ' . ($punch['time'] ?? '00:00:00'),
+                'timestamp' => $record->work_date->toDateString().' '.($punch['time'] ?? '00:00:00'),
                 'device_id' => $punch['device'] ?? null,
                 'status' => match ($punch['method'] ?? 'fingerprint') {
                     'fingerprint' => 0,
@@ -1064,7 +1090,7 @@ class ZktecoSyncService
             ];
         }
 
-        if (!empty($punches)) {
+        if (! empty($punches)) {
             $this->processEmployeeDayRecords($employee, $record->work_date->toDateString(), $punches);
         }
     }
