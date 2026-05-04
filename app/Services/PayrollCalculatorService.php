@@ -17,7 +17,6 @@ use Illuminate\Support\Collection;
 /**
  * Service for calculating payroll entries for employees in a period.
  */
-
 class PayrollCalculatorService
 {
     private CompensationRateResolverService $resolver;
@@ -36,7 +35,7 @@ class PayrollCalculatorService
 
         // Eager load compensation types to avoid N+1
         $employees = Employee::active()
-            ->with(['compensationTypes' => fn($q) => $q->wherePivot('is_active', true)])
+            ->with(['compensationTypes' => fn ($q) => $q->wherePivot('is_active', true)])
             ->get();
 
         foreach ($employees as $employee) {
@@ -53,7 +52,7 @@ class PayrollCalculatorService
     {
         // Ensure compensation types are loaded for rate resolution
         if (! $employee->relationLoaded('compensationTypes')) {
-            $employee->load(['compensationTypes' => fn($q) => $q->wherePivot('is_active', true)]);
+            $employee->load(['compensationTypes' => fn ($q) => $q->wherePivot('is_active', true)]);
         }
 
         $startDate = Carbon::parse($period->start_date);
@@ -80,12 +79,14 @@ class PayrollCalculatorService
 
         // Get holidays in the period
         $holidays = Holiday::whereBetween('date', [$startDate, $endDate])->get();
-        $holidayDates = $holidays->pluck('date')->map(fn($d) => Carbon::parse($d)->toDateString())->toArray();
+        $holidayDates = $holidays->pluck('date')->map(fn ($d) => Carbon::parse($d)->toDateString())->toArray();
 
-        // Get approved authorizations for the period (for holiday/weekend gating)
+        // Get approved authorizations for the period (for holiday/weekend gating
+        // AND to honor each authorization's specific compensation_type_id).
         $approvedAuthorizations = Authorization::where('employee_id', $employee->id)
             ->whereBetween('date', [$startDate, $endDate])
             ->whereIn('status', [Authorization::STATUS_APPROVED, Authorization::STATUS_PAID])
+            ->with('compensationType')
             ->get();
 
         // Calculate attendance metrics
@@ -130,12 +131,18 @@ class PayrollCalculatorService
         $compensationConcepts = [];
 
         if ($useCompTypes) {
-            $compensationPayments = $this->resolver->calculateAllCompensation($employee, [
-                'overtime_hours' => $authorizedOvertimeHours,
-                'velada_hours' => $veladaMetrics['velada_authorized_hours'],
-                'holiday_hours' => $metrics['holiday_hours'],
-                'weekend_hours' => $metrics['weekend_hours'],
-            ], $hourlyRate, $dailySalary);
+            $compensationPayments = $this->resolver->calculateAllCompensation(
+                $employee,
+                [
+                    'overtime_hours' => $authorizedOvertimeHours,
+                    'velada_hours' => $veladaMetrics['velada_authorized_hours'],
+                    'holiday_hours' => $metrics['holiday_hours'],
+                    'weekend_hours' => $metrics['weekend_hours'],
+                ],
+                $hourlyRate,
+                $dailySalary,
+                $approvedAuthorizations,
+            );
 
             $compensationConcepts = $compensationPayments['concepts'];
 
@@ -292,8 +299,8 @@ class PayrollCalculatorService
     /**
      * FASE 3.1: Calculate absences generated from late accumulation.
      *
-     * @param Employee $employee Employee to check
-     * @param PayrollPeriod $period Payroll period
+     * @param  Employee  $employee  Employee to check
+     * @param  PayrollPeriod  $period  Payroll period
      * @return int Number of absences generated from late accumulation
      */
     private function calculateLateAbsences(Employee $employee, PayrollPeriod $period): int
@@ -306,14 +313,14 @@ class PayrollCalculatorService
             ->where('week', $startDate->weekOfYear)
             ->first();
 
-        if (!$lateAccumulation) {
+        if (! $lateAccumulation) {
             return 0;
         }
 
         // Get configurable threshold
         $lateToAbsenceCount = (int) SystemSetting::get('late_to_absence_count', 6);
 
-        if ($lateAccumulation->late_count >= $lateToAbsenceCount && !$lateAccumulation->absence_generated) {
+        if ($lateAccumulation->late_count >= $lateToAbsenceCount && ! $lateAccumulation->absence_generated) {
             $absencesGenerated = floor($lateAccumulation->late_count / $lateToAbsenceCount);
 
             // Mark the accumulation as processed
@@ -328,9 +335,9 @@ class PayrollCalculatorService
     /**
      * FASE 3.2: Calculate weekly bonus based on perfect attendance.
      *
-     * @param Employee $employee Employee
-     * @param PayrollPeriod $period Payroll period
-     * @param Collection $attendance Attendance records
+     * @param  Employee  $employee  Employee
+     * @param  PayrollPeriod  $period  Payroll period
+     * @param  Collection  $attendance  Attendance records
      * @return float Weekly bonus amount
      */
     private function calculateWeeklyBonus(Employee $employee, PayrollPeriod $period, Collection $attendance): float
@@ -348,7 +355,7 @@ class PayrollCalculatorService
             $hasAbsence = $weekRecords->contains(fn ($r) => $r->status === 'absent');
             $hasLate = $weekRecords->contains(fn ($r) => $r->status === 'late');
 
-            if (!$hasAbsence && !$hasLate) {
+            if (! $hasAbsence && ! $hasLate) {
                 $weeklyPerfect++;
             }
         }
@@ -359,9 +366,9 @@ class PayrollCalculatorService
     /**
      * FASE 3.2: Calculate monthly bonus based on perfect attendance.
      *
-     * @param Employee $employee Employee
-     * @param PayrollPeriod $period Payroll period
-     * @param Collection $attendance Attendance records
+     * @param  Employee  $employee  Employee
+     * @param  PayrollPeriod  $period  Payroll period
+     * @param  Collection  $attendance  Attendance records
      * @return float Monthly bonus amount
      */
     private function calculateMonthlyBonus(Employee $employee, PayrollPeriod $period, Collection $attendance): float
@@ -375,7 +382,7 @@ class PayrollCalculatorService
         $hasAbsence = $attendance->contains(fn ($r) => $r->status === 'absent');
         $hasLate = $attendance->contains(fn ($r) => $r->status === 'late');
 
-        if (!$hasAbsence && !$hasLate) {
+        if (! $hasAbsence && ! $hasLate) {
             return $monthlyBonusAmount;
         }
 
@@ -385,9 +392,9 @@ class PayrollCalculatorService
     /**
      * FASE 3.3: Calculate night shift metrics including hours, bonus, and dinner allowance.
      *
-     * @param Employee $employee Employee
-     * @param Carbon $startDate Start date
-     * @param Carbon $endDate End date
+     * @param  Employee  $employee  Employee
+     * @param  Carbon  $startDate  Start date
+     * @param  Carbon  $endDate  End date
      * @return array Night shift metrics
      */
     private function calculateNightShiftMetrics(Employee $employee, Carbon $startDate, Carbon $endDate): array
@@ -468,6 +475,7 @@ class PayrollCalculatorService
 
             if ($record->status === 'absent') {
                 $daysAbsent++;
+
                 continue;
             }
 
@@ -555,7 +563,9 @@ class PayrollCalculatorService
             $overlapEnd = $incidentEnd->min($endDate);
             $days = $overlapStart->diffInDays($overlapEnd) + 1;
 
-            if ($days <= 0) continue;
+            if ($days <= 0) {
+                continue;
+            }
 
             $category = $incident->incidentType->category;
             $isPaid = $incident->incidentType->is_paid;
@@ -569,7 +579,7 @@ class PayrollCalculatorService
                     break;
                 case 'permission':
                     $permissionDays += $days;
-                    if (!$isPaid) {
+                    if (! $isPaid) {
                         $unpaidDays += $days;
                     }
                     break;

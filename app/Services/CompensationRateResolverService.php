@@ -2,8 +2,10 @@
 
 namespace App\Services;
 
+use App\Models\Authorization;
 use App\Models\CompensationType;
 use App\Models\Employee;
+use Illuminate\Support\Collection;
 
 /**
  * Resolves the effective compensation rate for an employee and compensation type.
@@ -171,7 +173,7 @@ class CompensationRateResolverService
         $remaining = $totalHours;
 
         // Filter out HET (priority 30) — only applied via explicit authorization
-        $autoTiers = $overtimeTypes->filter(fn($ct) => $ct->priority < 30)->values();
+        $autoTiers = $overtimeTypes->filter(fn ($ct) => $ct->priority < 30)->values();
 
         foreach ($autoTiers as $index => $compType) {
             if ($remaining <= 0) {
@@ -214,14 +216,67 @@ class CompensationRateResolverService
         array $metrics,
         float $hourlyRate,
         float $dailySalary,
+        ?Collection $authorizations = null,
     ): array {
         $concepts = [];
         $total = 0;
 
-        // Overtime (tiered: HE/HED)
-        $overtimeHours = $metrics['overtime_hours'] ?? 0;
-        if ($overtimeHours > 0) {
-            $tiers = $this->resolveOvertimeTiers($employee, $overtimeHours);
+        // Split authorizations into explicit (have compensation_type_id) and generic
+        $explicitOvertime = collect();
+        $explicitVelada = collect();
+        if ($authorizations) {
+            $explicitOvertime = $authorizations->filter(
+                fn (Authorization $a) => $a->compensation_type_id
+                    && $a->type === Authorization::TYPE_OVERTIME
+                    && (float) $a->hours > 0
+            );
+            $explicitVelada = $authorizations->filter(
+                fn (Authorization $a) => $a->compensation_type_id
+                    && $a->type === Authorization::TYPE_NIGHT_SHIFT
+                    && (float) $a->hours > 0
+            );
+        }
+
+        // Overtime: explicit auths (HED/HET) consume their hours at their own rate first.
+        $overtimeHours = (float) ($metrics['overtime_hours'] ?? 0);
+        $remainingOvertime = $overtimeHours;
+
+        foreach ($explicitOvertime as $auth) {
+            $compType = $auth->compensationType;
+            if (! $compType) {
+                continue;
+            }
+            // Cap the auth at the actually-worked overtime so we don't pay for hours
+            // that aren't on the timecard.
+            $hours = min((float) $auth->hours, $remainingOvertime);
+            if ($hours <= 0) {
+                continue;
+            }
+            $rate = $this->resolveRate($employee, $compType);
+            $amount = $compType->calculateCompensation(
+                $hourlyRate,
+                $dailySalary,
+                $hours,
+                0,
+                $rate['percentage'],
+                $rate['fixed_amount'],
+            );
+            $concepts[] = [
+                'code' => $compType->code,
+                'name' => $compType->name,
+                'hours' => round($hours, 2),
+                'days' => 0,
+                'rate' => $rate,
+                'amount' => $amount,
+                'source' => 'explicit_authorization',
+            ];
+            $total += $amount;
+            $remainingOvertime -= $hours;
+        }
+
+        // Auto-tier whatever overtime is left (HE up to weekly threshold, then HED).
+        if ($remainingOvertime > 0) {
+            $tiers = $this->resolveOvertimeTiers($employee, $remainingOvertime);
             foreach ($tiers as $tier) {
                 $rate = $this->resolveRate($employee, $tier['comp_type']);
                 $amount = $tier['comp_type']->calculateCompensation(
@@ -239,21 +294,55 @@ class CompensationRateResolverService
                     'days' => 0,
                     'rate' => $rate,
                     'amount' => $amount,
+                    'source' => 'auto_tier',
                 ];
                 $total += $amount;
             }
         }
 
-        // Velada
-        $veladaHours = $metrics['velada_hours'] ?? 0;
-        if ($veladaHours > 0) {
+        // Velada: prefer explicit auth comp_type (allows future variations beyond VEL).
+        $veladaHours = (float) ($metrics['velada_hours'] ?? 0);
+        $remainingVelada = $veladaHours;
+
+        foreach ($explicitVelada as $auth) {
+            $compType = $auth->compensationType;
+            if (! $compType) {
+                continue;
+            }
+            $hours = min((float) $auth->hours, $remainingVelada);
+            if ($hours <= 0) {
+                continue;
+            }
+            $rate = $this->resolveRate($employee, $compType);
+            $amount = $compType->calculateCompensation(
+                $hourlyRate,
+                $dailySalary,
+                $hours,
+                0,
+                $rate['percentage'],
+                $rate['fixed_amount'],
+            );
+            $concepts[] = [
+                'code' => $compType->code,
+                'name' => $compType->name,
+                'hours' => round($hours, 2),
+                'days' => 0,
+                'rate' => $rate,
+                'amount' => $amount,
+                'source' => 'explicit_authorization',
+            ];
+            $total += $amount;
+            $remainingVelada -= $hours;
+        }
+
+        if ($remainingVelada > 0) {
             $veladaType = $this->findApplicableType($employee, 'night_shift');
             if ($veladaType) {
                 $rate = $this->resolveRate($employee, $veladaType);
                 $amount = $veladaType->calculateCompensation(
                     $hourlyRate,
                     $dailySalary,
-                    $veladaHours,
+                    $remainingVelada,
                     0,
                     $rate['percentage'],
                     $rate['fixed_amount'],
@@ -261,10 +350,11 @@ class CompensationRateResolverService
                 $concepts[] = [
                     'code' => $veladaType->code,
                     'name' => $veladaType->name,
-                    'hours' => $veladaHours,
+                    'hours' => round($remainingVelada, 2),
                     'days' => 0,
                     'rate' => $rate,
                     'amount' => $amount,
+                    'source' => 'auto_tier',
                 ];
                 $total += $amount;
             }
@@ -314,7 +404,7 @@ class CompensationRateResolverService
                 );
                 $concepts[] = [
                     'code' => $weekendType->code,
-                    'name' => $weekendType->name . ' (Fin de semana)',
+                    'name' => $weekendType->name.' (Fin de semana)',
                     'hours' => $weekendHours,
                     'days' => 0,
                     'rate' => $rate,
