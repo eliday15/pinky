@@ -15,7 +15,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  */
 class Employee extends Model
 {
-    use HasFactory, SoftDeletes, Auditable;
+    use Auditable, HasFactory, SoftDeletes;
 
     /**
      * Free up unique fields when soft-deleting so they can be reused.
@@ -23,9 +23,12 @@ class Employee extends Model
     protected static function booted(): void
     {
         static::softDeleted(function (Employee $employee) {
-            $suffix = '_deleted_' . $employee->id;
+            $suffix = '_deleted_'.$employee->id;
+            // Also flip status away from "active" so withTrashed-aware reports
+            // never display a deleted employee as if they were still on payroll.
             $employee->updateQuietly([
-                'employee_number' => $employee->employee_number . $suffix,
+                'employee_number' => $employee->employee_number.$suffix,
+                'status' => 'inactive',
             ]);
         });
     }
@@ -236,17 +239,17 @@ class Employee extends Model
      */
     public function getEffectiveScheduleForDay(string $dayName): ?object
     {
-        if (!$this->schedule) {
+        if (! $this->schedule) {
             return null;
         }
 
         $daySchedule = $this->schedule->getScheduleForDay($dayName);
         $overrides = $this->schedule_overrides ?? [];
 
-        if (!empty($overrides['entry_time'])) {
+        if (! empty($overrides['entry_time'])) {
             $daySchedule->entry_time = $overrides['entry_time'];
         }
-        if (!empty($overrides['exit_time'])) {
+        if (! empty($overrides['exit_time'])) {
             $daySchedule->exit_time = $overrides['exit_time'];
         }
         if (isset($overrides['break_minutes'])) {
@@ -266,7 +269,7 @@ class Employee extends Model
     {
         $overrides = $this->schedule_overrides ?? [];
 
-        if (!empty($overrides['working_days'])) {
+        if (! empty($overrides['working_days'])) {
             return in_array(strtolower($dayName), array_map('strtolower', $overrides['working_days']));
         }
 
@@ -396,6 +399,7 @@ class Employee extends Model
         }
 
         $attendedDays = max(0, $workingDaysInPeriod - $absences);
+
         return round($amount * ($attendedDays / $workingDaysInPeriod), 2);
     }
 
