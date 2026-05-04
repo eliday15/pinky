@@ -583,6 +583,15 @@ class ZktecoSyncService
     private function calculateAttendanceMetrics(AttendanceRecord $attendance): void
     {
         $employee = $attendance->employee;
+
+        // Defensive: a record can outlive its employee (soft-delete or orphan FK).
+        // Don't blow up the whole sync — flag the record for review and move on.
+        if (! $employee) {
+            $attendance->update(['requires_review' => true]);
+
+            return;
+        }
+
         $schedule = $employee->schedule;
 
         if (! $schedule) {
