@@ -10,6 +10,7 @@ use App\Models\Incident;
 use App\Models\SystemSetting;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Service for detecting anomalies in attendance records.
@@ -31,7 +32,14 @@ class AnomalyDetectorService
         $anomalyCount = 0;
 
         foreach ($records as $record) {
-            $anomalyCount += $this->detectForRecord($record);
+            // Isolate each record — a single corrupt row must never abort the
+            // whole detection pass (the scheduler runs every 5 min and we want
+            // it to keep healing data, not stall on one bad record).
+            try {
+                $anomalyCount += $this->detectForRecord($record);
+            } catch (\Throwable $e) {
+                Log::warning('AnomalyDetector: skipped record '.$record->id.' due to '.$e->getMessage());
+            }
         }
 
         return $anomalyCount;
