@@ -181,6 +181,13 @@ class ZktecoSyncService
                 continue;
             }
 
+            // Respect bajas: don't generate new attendance for employees the user
+            // marked as inactive/terminated, even if the device still records punches.
+            // Soft-deleted employees are filtered out by the default scope already.
+            if ($employee->status !== 'active') {
+                continue;
+            }
+
             foreach ($dateRecords as $date => $punches) {
                 try {
                     $wasCreated = $this->processEmployeeDayRecords($employee, $date, $punches);
