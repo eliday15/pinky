@@ -199,11 +199,34 @@ class IncidentController extends Controller
             $employee->getEffectiveSchedule()?->working_days ?? ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
         );
 
+        // Reject overlapping incidents for the same employee (any non-rejected status).
+        $overlapExists = Incident::where('employee_id', $validated['employee_id'])
+            ->whereIn('status', ['pending', 'approved'])
+            ->where('start_date', '<=', $validated['end_date'])
+            ->where('end_date', '>=', $validated['start_date'])
+            ->exists();
+        if ($overlapExists) {
+            return redirect()->back()->withErrors([
+                'dates' => 'Ya existe una incidencia activa para este empleado en el rango de fechas seleccionado.',
+            ])->withInput();
+        }
+
         // Check if incident type requires approval
+        $autoApproved = false;
         if (! $incidentType->requires_approval) {
+            // Validate vacation balance before auto-approving a deducts_vacation type.
+            if ($incidentType->deducts_vacation) {
+                $available = $employee->vacation_days_entitled - $employee->vacation_days_used;
+                if ($validated['days_count'] > $available) {
+                    return redirect()->back()->withErrors([
+                        'saldo' => "Saldo insuficiente de vacaciones. Disponibles: {$available} dias, solicitados: {$validated['days_count']} dias.",
+                    ])->withInput();
+                }
+            }
             $validated['status'] = 'approved';
             $validated['approved_by'] = auth()->id();
             $validated['approved_at'] = now();
+            $autoApproved = true;
         }
 
         // Handle file upload
@@ -212,7 +235,13 @@ class IncidentController extends Controller
         }
         unset($validated['document']);
 
-        Incident::create($validated);
+        $incident = Incident::create($validated);
+
+        // Auto-approved + deducts_vacation must charge the balance immediately
+        // (the explicit approve() flow handles this when approval is required).
+        if ($autoApproved && $incidentType->deducts_vacation) {
+            $employee->increment('vacation_days_used', $incident->days_count);
+        }
 
         return redirect()->route('incidents.index')
             ->with('success', 'Incidencia creada exitosamente.');
@@ -222,9 +251,9 @@ class IncidentController extends Controller
      * Calculate working days between two dates based on employee schedule.
      * Excludes weekends (based on schedule) and holidays.
      *
-     * @param Carbon $startDate Start date
-     * @param Carbon $endDate End date
-     * @param array $workingDays Array of working day names (e.g., ['monday', 'tuesday', ...])
+     * @param  Carbon  $startDate  Start date
+     * @param  Carbon  $endDate  End date
+     * @param  array  $workingDays  Array of working day names (e.g., ['monday', 'tuesday', ...])
      * @return int Number of working days
      */
     private function calculateWorkingDays(Carbon $startDate, Carbon $endDate, array $workingDays): int
@@ -259,7 +288,7 @@ class IncidentController extends Controller
             $isWorkingDay = in_array($current->dayOfWeekIso, $workingDayNumbers);
             $isHoliday = in_array($current->toDateString(), $holidays);
 
-            if ($isWorkingDay && !$isHoliday) {
+            if ($isWorkingDay && ! $isHoliday) {
                 $daysCount++;
             }
             $current->addDay();
@@ -320,8 +349,15 @@ class IncidentController extends Controller
         $status = $incidentType->requires_approval ? 'pending' : 'approved';
 
         $count = 0;
+        $skipped = [];
+
         foreach ($validated['employee_ids'] as $employeeId) {
             $employee = Employee::with('schedule')->find($employeeId);
+            if (! $employee || $employee->status !== 'active') {
+                $skipped[] = "{$employeeId} (no activo)";
+
+                continue;
+            }
 
             $startDate = Carbon::parse($validated['start_date']);
             $endDate = Carbon::parse($validated['end_date']);
@@ -331,7 +367,29 @@ class IncidentController extends Controller
                 $employee->getEffectiveSchedule()?->working_days ?? ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
             );
 
-            Incident::create([
+            // Skip overlaps: don't double-book the same employee for these dates.
+            $overlap = Incident::where('employee_id', $employeeId)
+                ->whereIn('status', ['pending', 'approved'])
+                ->where('start_date', '<=', $validated['end_date'])
+                ->where('end_date', '>=', $validated['start_date'])
+                ->exists();
+            if ($overlap) {
+                $skipped[] = "{$employee->full_name} (solapamiento)";
+
+                continue;
+            }
+
+            // Skip if auto-approve + deducts_vacation would overdraft the balance.
+            if ($status === 'approved' && $incidentType->deducts_vacation) {
+                $available = $employee->vacation_days_entitled - $employee->vacation_days_used;
+                if ($daysCount > $available) {
+                    $skipped[] = "{$employee->full_name} (saldo {$available}/{$daysCount})";
+
+                    continue;
+                }
+            }
+
+            $incident = Incident::create([
                 'employee_id' => $employeeId,
                 'incident_type_id' => $validated['incident_type_id'],
                 'start_date' => $validated['start_date'],
@@ -342,11 +400,19 @@ class IncidentController extends Controller
                 'approved_by' => $status === 'approved' ? auth()->id() : null,
                 'approved_at' => $status === 'approved' ? now() : null,
             ]);
+
+            if ($status === 'approved' && $incidentType->deducts_vacation) {
+                $employee->increment('vacation_days_used', $daysCount);
+            }
             $count++;
         }
 
-        return redirect()->route('incidents.index')
-            ->with('success', "Se crearon {$count} incidencias exitosamente.");
+        $msg = "Se crearon {$count} incidencias exitosamente.";
+        if (! empty($skipped)) {
+            $msg .= ' Omitidos: '.implode(', ', $skipped);
+        }
+
+        return redirect()->route('incidents.index')->with('success', $msg);
     }
 
     /**
@@ -436,6 +502,13 @@ class IncidentController extends Controller
     public function destroy(Incident $incident): RedirectResponse
     {
         $this->authorize('delete', $incident);
+
+        // Refund vacation balance if we're deleting an already-approved deducts_vacation incident.
+        // Otherwise the days stay consumed and the employee loses balance silently.
+        $incidentType = $incident->incidentType;
+        if ($incident->status === 'approved' && $incidentType?->deducts_vacation) {
+            $incident->employee?->decrement('vacation_days_used', $incident->days_count);
+        }
 
         $incident->delete();
 

@@ -28,11 +28,12 @@ class ReportExportController extends Controller implements HasMiddleware
         return [
             new Middleware(function ($request, $next) {
                 $user = $request->user();
-                if (!$user->hasPermissionTo('reports.view_all')
-                    && !$user->hasPermissionTo('reports.view_team')
-                    && !$user->hasPermissionTo('reports.view_own')) {
+                if (! $user->hasPermissionTo('reports.view_all')
+                    && ! $user->hasPermissionTo('reports.view_team')
+                    && ! $user->hasPermissionTo('reports.view_own')) {
                     abort(403);
                 }
+
                 return $next($request);
             }),
         ];
@@ -46,6 +47,7 @@ class ReportExportController extends Controller implements HasMiddleware
         $date = $request->get('date', Carbon::today()->toDateString());
 
         $records = AttendanceRecord::with(['employee.department'])
+            ->whereIn('employee_id', Employee::active()->pluck('id'))
             ->where('work_date', $date)
             ->get();
 
@@ -74,6 +76,7 @@ class ReportExportController extends Controller implements HasMiddleware
         $endDate = Carbon::parse($startDate)->endOfWeek()->toDateString();
 
         $records = AttendanceRecord::with(['employee.department'])
+            ->whereIn('employee_id', Employee::active()->pluck('id'))
             ->whereBetween('work_date', [$startDate, $endDate])
             ->orderBy('employee_id')
             ->orderBy('work_date')
@@ -115,6 +118,7 @@ class ReportExportController extends Controller implements HasMiddleware
         $endDate = $startDate->copy()->endOfMonth();
 
         $records = AttendanceRecord::with(['employee.department'])
+            ->whereIn('employee_id', Employee::active()->pluck('id'))
             ->whereBetween('work_date', [$startDate, $endDate])
             ->orderBy('employee_id')
             ->get();
@@ -154,6 +158,7 @@ class ReportExportController extends Controller implements HasMiddleware
         $endDate = $request->get('end_date', Carbon::now()->endOfMonth()->toDateString());
 
         $records = AttendanceRecord::with(['employee.department'])
+            ->whereIn('employee_id', Employee::active()->pluck('id'))
             ->whereBetween('work_date', [$startDate, $endDate])
             ->where('status', 'absent')
             ->orderBy('work_date')
@@ -181,6 +186,7 @@ class ReportExportController extends Controller implements HasMiddleware
         $endDate = $request->get('end_date', Carbon::now()->endOfMonth()->toDateString());
 
         $records = AttendanceRecord::with(['employee.department'])
+            ->whereIn('employee_id', Employee::active()->pluck('id'))
             ->whereBetween('work_date', [$startDate, $endDate])
             ->where('status', 'late')
             ->orderBy('work_date')
@@ -234,6 +240,7 @@ class ReportExportController extends Controller implements HasMiddleware
         $endDate = $request->get('end_date', Carbon::now()->endOfMonth()->toDateString());
 
         $incidents = Incident::with(['employee.department', 'incidentType'])
+            ->whereIn('employee_id', Employee::active()->pluck('id'))
             ->whereBetween('start_date', [$startDate, $endDate])
             ->orderBy('start_date')
             ->get();
@@ -263,6 +270,7 @@ class ReportExportController extends Controller implements HasMiddleware
         $endDate = $request->get('end_date', Carbon::now()->endOfMonth()->toDateString());
 
         $records = AttendanceRecord::with(['employee.department'])
+            ->whereIn('employee_id', Employee::active()->pluck('id'))
             ->whereBetween('work_date', [$startDate, $endDate])
             ->where('overtime_hours', '>', 0)
             ->orderBy('work_date')
@@ -321,7 +329,7 @@ class ReportExportController extends Controller implements HasMiddleware
 
         // Split absent records: true no-shows vs threshold-triggered
         $noShowRecords = $absentRecords->filter(fn ($r) => is_null($r->check_in));
-        $thresholdRecords = $absentRecords->filter(fn ($r) => !is_null($r->check_in));
+        $thresholdRecords = $absentRecords->filter(fn ($r) => ! is_null($r->check_in));
 
         // Combine
         $allEmployeeIds = $absentRecords->pluck('employee_id')
@@ -371,7 +379,7 @@ class ReportExportController extends Controller implements HasMiddleware
         $data = [];
         foreach ($employees as $employee) {
             $effectiveSchedule = $employee->getEffectiveSchedule();
-            if (!$effectiveSchedule) {
+            if (! $effectiveSchedule) {
                 continue;
             }
 
@@ -406,7 +414,7 @@ class ReportExportController extends Controller implements HasMiddleware
             $hasEarlyDeparture = $records->where('early_departure_minutes', '>', 0)->isNotEmpty();
             $hasAbsence = $records->where('status', 'absent')->isNotEmpty();
 
-            if ($presentRecords->count() >= $adjustedExpected && !$hasLate && !$hasEarlyDeparture && !$hasAbsence) {
+            if ($presentRecords->count() >= $adjustedExpected && ! $hasLate && ! $hasEarlyDeparture && ! $hasAbsence) {
                 $data[] = [
                     $employee->full_name,
                     $employee->employee_number ?? '-',
@@ -487,9 +495,9 @@ class ReportExportController extends Controller implements HasMiddleware
     /**
      * Create a CSV export response.
      *
-     * @param string $filename Export filename
-     * @param array $headers Column headers
-     * @param array $data Data rows
+     * @param  string  $filename  Export filename
+     * @param  array  $headers  Column headers
+     * @param  array  $data  Data rows
      * @return StreamedResponse CSV file download response
      */
     private function exportCsv(string $filename, array $headers, array $data): StreamedResponse
@@ -498,7 +506,7 @@ class ReportExportController extends Controller implements HasMiddleware
             $file = fopen('php://output', 'w');
 
             // Add BOM for Excel UTF-8 compatibility
-            fprintf($file, chr(0xEF) . chr(0xBB) . chr(0xBF));
+            fprintf($file, chr(0xEF).chr(0xBB).chr(0xBF));
 
             // Write headers
             fputcsv($file, $headers);

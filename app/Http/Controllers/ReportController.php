@@ -6,7 +6,6 @@ use App\Models\AttendanceRecord;
 use App\Models\Department;
 use App\Models\Employee;
 use App\Models\Incident;
-use App\Models\IncidentType;
 use App\Models\PayrollEntry;
 use App\Models\PayrollPeriod;
 use Carbon\Carbon;
@@ -26,11 +25,12 @@ class ReportController extends Controller implements HasMiddleware
         return [
             new Middleware(function ($request, $next) {
                 $user = $request->user();
-                if (!$user->hasPermissionTo('reports.view_all')
-                    && !$user->hasPermissionTo('reports.view_team')
-                    && !$user->hasPermissionTo('reports.view_own')) {
+                if (! $user->hasPermissionTo('reports.view_all')
+                    && ! $user->hasPermissionTo('reports.view_team')
+                    && ! $user->hasPermissionTo('reports.view_own')) {
                     abort(403);
                 }
+
                 return $next($request);
             }),
         ];
@@ -69,7 +69,7 @@ class ReportController extends Controller implements HasMiddleware
             'sick_leave' => $records->where('status', 'sick_leave')->count(),
         ];
 
-        $byDepartment = $records->groupBy('employee.department.name')->map(function ($group) {
+        $byDepartment = $records->groupBy(fn ($r) => $r->employee?->department?->name ?? 'Sin Departamento')->map(function ($group) {
             return [
                 'total' => $group->count(),
                 'present' => $group->whereIn('status', ['present', 'late'])->count(),
@@ -108,6 +108,7 @@ class ReportController extends Controller implements HasMiddleware
 
         $byEmployee = $records->groupBy('employee_id')->map(function ($group) {
             $employee = $group->first()->employee;
+
             return [
                 'employee' => $employee,
                 'days_worked' => $group->whereIn('status', ['present', 'late', 'partial'])->count(),
@@ -140,7 +141,7 @@ class ReportController extends Controller implements HasMiddleware
      */
     public function monthly(Request $request): Response
     {
-        $month = $request->month ? Carbon::parse($request->month . '-01') : Carbon::now()->startOfMonth();
+        $month = $request->month ? Carbon::parse($request->month.'-01') : Carbon::now()->startOfMonth();
         $startDate = $month->copy()->startOfMonth();
         $endDate = $month->copy()->endOfMonth();
 
@@ -165,8 +166,8 @@ class ReportController extends Controller implements HasMiddleware
             $employee = $group->first()->employee;
             $empIncidents = $incidents->where('employee_id', $employee->id);
 
-            $vacationDays = $empIncidents->filter(fn($i) => $i->incidentType?->category === 'vacation')->sum('days_count');
-            $sickDays = $empIncidents->filter(fn($i) => $i->incidentType?->category === 'sick_leave')->sum('days_count');
+            $vacationDays = $empIncidents->filter(fn ($i) => $i->incidentType?->category === 'vacation')->sum('days_count');
+            $sickDays = $empIncidents->filter(fn ($i) => $i->incidentType?->category === 'sick_leave')->sum('days_count');
 
             return [
                 'employee' => $employee,
@@ -180,7 +181,7 @@ class ReportController extends Controller implements HasMiddleware
             ];
         })->values();
 
-        $byDepartment = $records->groupBy('employee.department.name')->map(function ($group) {
+        $byDepartment = $records->groupBy(fn ($r) => $r->employee?->department?->name ?? 'Sin Departamento')->map(function ($group) {
             return [
                 'employees' => $group->pluck('employee_id')->unique()->count(),
                 'total_hours' => round($group->sum('worked_hours'), 2),
@@ -189,8 +190,8 @@ class ReportController extends Controller implements HasMiddleware
             ];
         });
 
-        $totalVacationDays = $incidents->filter(fn($i) => $i->incidentType?->category === 'vacation')->sum('days_count');
-        $totalSickDays = $incidents->filter(fn($i) => $i->incidentType?->category === 'sick_leave')->sum('days_count');
+        $totalVacationDays = $incidents->filter(fn ($i) => $i->incidentType?->category === 'vacation')->sum('days_count');
+        $totalSickDays = $incidents->filter(fn ($i) => $i->incidentType?->category === 'sick_leave')->sum('days_count');
 
         $summary = [
             'total_employees' => $byEmployee->count(),
@@ -261,18 +262,23 @@ class ReportController extends Controller implements HasMiddleware
         $startDate = $request->start_date ? Carbon::parse($request->start_date) : Carbon::now()->startOfMonth();
         $endDate = $request->end_date ? Carbon::parse($request->end_date) : Carbon::now()->endOfMonth();
 
+        $activeEmployeeIds = Employee::active()->pluck('id');
+
         $records = AttendanceRecord::with(['employee.department'])
+            ->whereIn('employee_id', $activeEmployeeIds)
             ->whereBetween('work_date', [$startDate, $endDate])
             ->where('overtime_hours', '>', 0)
             ->get();
 
         $byEmployee = $records->groupBy('employee_id')->map(function ($group) {
             $employee = $group->first()->employee;
+            $hourlyRate = (float) ($employee?->hourly_rate ?? 0);
+
             return [
                 'employee' => $employee,
                 'days_with_overtime' => $group->count(),
                 'total_overtime' => round($group->sum('overtime_hours'), 2),
-                'estimated_cost' => round($group->sum('overtime_hours') * (($employee->hourly_rate ?? 0) * 1.5), 2),
+                'estimated_cost' => round($group->sum('overtime_hours') * $hourlyRate * 1.5, 2),
             ];
         })->sortByDesc('total_overtime')->values();
 
@@ -298,13 +304,17 @@ class ReportController extends Controller implements HasMiddleware
         $startDate = $request->start_date ? Carbon::parse($request->start_date) : Carbon::now()->startOfMonth();
         $endDate = $request->end_date ? Carbon::parse($request->end_date) : Carbon::now()->endOfMonth();
 
+        $activeEmployeeIds = Employee::active()->pluck('id');
+
         $records = AttendanceRecord::with(['employee.department'])
+            ->whereIn('employee_id', $activeEmployeeIds)
             ->whereBetween('work_date', [$startDate, $endDate])
             ->where('status', 'absent')
             ->get();
 
         // Use whereHas for relationship filtering
         $incidents = Incident::with(['employee.department', 'incidentType'])
+            ->whereIn('employee_id', $activeEmployeeIds)
             ->where('status', 'approved')
             ->whereHas('incidentType', function ($q) {
                 $q->whereIn('category', ['absence', 'late_accumulation']);
@@ -314,6 +324,7 @@ class ReportController extends Controller implements HasMiddleware
 
         $byEmployee = $records->groupBy('employee_id')->map(function ($group) {
             $employee = $group->first()->employee;
+
             return [
                 'employee' => $employee,
                 'absence_days' => $group->count(),
@@ -343,7 +354,10 @@ class ReportController extends Controller implements HasMiddleware
         $startDate = $request->start_date ? Carbon::parse($request->start_date) : Carbon::now()->startOfMonth();
         $endDate = $request->end_date ? Carbon::parse($request->end_date) : Carbon::now()->endOfMonth();
 
+        $activeEmployeeIds = Employee::active()->pluck('id');
+
         $records = AttendanceRecord::with(['employee.department', 'employee.schedule'])
+            ->whereIn('employee_id', $activeEmployeeIds)
             ->whereBetween('work_date', [$startDate, $endDate])
             ->where('status', 'late')
             ->orderBy('late_minutes', 'desc')
@@ -351,12 +365,13 @@ class ReportController extends Controller implements HasMiddleware
 
         $byEmployee = $records->groupBy('employee_id')->map(function ($group) {
             $employee = $group->first()->employee;
+
             return [
                 'employee' => $employee,
                 'late_count' => $group->count(),
                 'total_late_minutes' => $group->sum('late_minutes'),
                 'avg_late_minutes' => round($group->avg('late_minutes'), 0),
-                'dates' => $group->map(fn($r) => [
+                'dates' => $group->map(fn ($r) => [
                     'date' => $r->work_date,
                     'minutes' => $r->late_minutes,
                     'check_in' => $r->check_in,
@@ -365,7 +380,7 @@ class ReportController extends Controller implements HasMiddleware
         })->sortByDesc('late_count')->values();
 
         // Calculate how many have 6+ tardies (generates absence)
-        $criticalCount = $byEmployee->filter(fn($e) => $e['late_count'] >= 6)->count();
+        $criticalCount = $byEmployee->filter(fn ($e) => $e['late_count'] >= 6)->count();
 
         $summary = [
             'total_late_records' => $records->count(),
@@ -439,11 +454,14 @@ class ReportController extends Controller implements HasMiddleware
         $startDate = $request->start_date ? Carbon::parse($request->start_date) : Carbon::now()->startOfMonth();
         $endDate = $request->end_date ? Carbon::parse($request->end_date) : Carbon::now()->endOfMonth();
 
+        $activeEmployeeIds = Employee::active()->pluck('id');
+
         $records = AttendanceRecord::with(['employee.department'])
+            ->whereIn('employee_id', $activeEmployeeIds)
             ->whereBetween('work_date', [$startDate, $endDate])
             ->get();
 
-        $departments = $records->groupBy('employee.department.name')->map(function ($group, $deptName) {
+        $departments = $records->groupBy(fn ($r) => $r->employee?->department?->name ?? 'Sin Departamento')->map(function ($group, $deptName) {
             $uniqueEmployees = $group->pluck('employee_id')->unique()->count();
             $totalDays = $group->count();
             $workedDays = $group->whereIn('status', ['present', 'late', 'partial'])->count();
@@ -488,13 +506,16 @@ class ReportController extends Controller implements HasMiddleware
         $startDate = $request->start_date ? Carbon::parse($request->start_date) : Carbon::now()->startOfMonth();
         $endDate = $request->end_date ? Carbon::parse($request->end_date) : Carbon::now()->endOfMonth();
 
+        $activeEmployeeIds = Employee::active()->pluck('id');
+
         $incidents = Incident::with(['employee.department', 'incidentType', 'approvedBy'])
+            ->whereIn('employee_id', $activeEmployeeIds)
             ->whereBetween('start_date', [$startDate, $endDate])
             ->orderBy('start_date', 'desc')
             ->get();
 
         // By type
-        $byType = $incidents->groupBy('incidentType.name')->map(function ($group, $typeName) {
+        $byType = $incidents->groupBy(fn ($i) => $i->incidentType?->name ?? 'Sin Tipo')->map(function ($group, $typeName) {
             return [
                 'type' => $typeName ?: 'Sin Tipo',
                 'count' => $group->count(),
@@ -506,7 +527,7 @@ class ReportController extends Controller implements HasMiddleware
         })->sortByDesc('count')->values();
 
         // By department
-        $byDepartment = $incidents->groupBy('employee.department.name')->map(function ($group, $deptName) {
+        $byDepartment = $incidents->groupBy(fn ($i) => $i->employee?->department?->name ?? 'Sin Departamento')->map(function ($group, $deptName) {
             return [
                 'department' => $deptName ?: 'Sin Departamento',
                 'count' => $group->count(),
@@ -548,14 +569,17 @@ class ReportController extends Controller implements HasMiddleware
         $startDate = $request->start_date ? Carbon::parse($request->start_date) : Carbon::now()->startOfMonth();
         $endDate = $request->end_date ? Carbon::parse($request->end_date) : Carbon::now()->endOfMonth();
 
+        $activeEmployeeIds = Employee::active()->pluck('id');
+
         $records = AttendanceRecord::with(['employee.department', 'employee.schedule'])
+            ->whereIn('employee_id', $activeEmployeeIds)
             ->whereBetween('work_date', [$startDate, $endDate])
             ->get();
 
         $byEmployee = $records->groupBy('employee_id')->map(function ($group) {
             $employee = $group->first()->employee;
-            $effectiveSchedule = $employee->getEffectiveSchedule();
-            $expectedHoursPerDay = $effectiveSchedule->daily_work_hours ?? 8;
+            $effectiveSchedule = $employee?->getEffectiveSchedule();
+            $expectedHoursPerDay = $effectiveSchedule?->daily_work_hours ?? 8;
 
             $workedDays = $group->whereIn('status', ['present', 'late', 'partial'])->count();
             $totalHours = $group->sum('worked_hours');
