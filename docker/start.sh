@@ -36,5 +36,9 @@ php artisan permission:cache-reset 2>/dev/null || true
 echo "=== Starting scheduler ==="
 php artisan schedule:work >> storage/logs/scheduler.log 2>&1 &
 
+# Stream Laravel log to stderr so errors appear in Coolify's log viewer
+touch storage/logs/laravel.log
+tail -f storage/logs/laravel.log >&2 &
+
 echo "=== Ready ==="
 exec apache2-foreground

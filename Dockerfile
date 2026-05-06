@@ -46,6 +46,9 @@ RUN sed -ri -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/sites-av
 # Allow .htaccess overrides
 RUN sed -i '/<Directory \/var\/www\/>/,/<\/Directory>/ s/AllowOverride None/AllowOverride All/' /etc/apache2/apache2.conf
 
+# Custom PHP settings (memory limit, upload size, etc.)
+COPY docker/php.ini /usr/local/etc/php/conf.d/99-custom.ini
+
 WORKDIR /var/www/html
 
 # Copy application code
