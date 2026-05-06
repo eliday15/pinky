@@ -486,7 +486,9 @@ class ZktecoSyncService
         }
 
         $schedule = $employee->schedule;
-        $isNightShift = $this->isNightShiftSchedule($schedule);
+        $dayName = strtolower(Carbon::parse($date)->format('l'));
+        $daySchedule = $employee->getEffectiveScheduleForDay($dayName);
+        $isNightShift = $this->isNightShiftSchedule($daySchedule);
 
         // Simple logic: first = in, last = out
         $firstPunch = $punches[0];
@@ -622,7 +624,7 @@ class ZktecoSyncService
         $daySchedule = $employee->getEffectiveScheduleForDay($dayName);
         $entryTime = $this->extractTime($daySchedule->entry_time);
         $exitTime = $this->extractTime($daySchedule->exit_time);
-        $isNightShift = $attendance->is_night_shift ?? $this->isNightShiftSchedule($schedule);
+        $isNightShift = $attendance->is_night_shift ?? $this->isNightShiftSchedule($daySchedule);
 
         if (! $checkInTime || ! $entryTime) {
             return;
@@ -1067,7 +1069,7 @@ class ZktecoSyncService
      * @param  Schedule|null  $schedule  Employee's schedule
      * @return bool True if night shift schedule
      */
-    private function isNightShiftSchedule(?Schedule $schedule): bool
+    private function isNightShiftSchedule(?object $schedule): bool
     {
         if (! $schedule) {
             return false;

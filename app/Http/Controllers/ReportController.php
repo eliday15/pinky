@@ -578,16 +578,20 @@ class ReportController extends Controller implements HasMiddleware
 
         $byEmployee = $records->groupBy('employee_id')->map(function ($group) {
             $employee = $group->first()->employee;
-            $effectiveSchedule = $employee?->getEffectiveSchedule();
-            $expectedHoursPerDay = $effectiveSchedule?->daily_work_hours ?? 8;
 
-            $workedDays = $group->whereIn('status', ['present', 'late', 'partial'])->count();
+            $workedRecords = $group->whereIn('status', ['present', 'late', 'partial']);
+            $workedDays = $workedRecords->count();
             $totalHours = $group->sum('worked_hours');
             $overtimeHours = $group->sum('overtime_hours');
             $lateCount = $group->where('status', 'late')->count();
             $absentCount = $group->where('status', 'absent')->count();
 
-            $expectedHours = $workedDays * $expectedHoursPerDay;
+            $expectedHours = $workedRecords->sum(function ($record) use ($employee) {
+                $dayName = strtolower(Carbon::parse($record->work_date)->format('l'));
+                $daySchedule = $employee?->getEffectiveScheduleForDay($dayName);
+
+                return $daySchedule?->daily_work_hours ?? 8;
+            });
             $efficiency = $expectedHours > 0 ? round(($totalHours / $expectedHours) * 100, 1) : 0;
 
             // Punctuality score (100 - penalties)

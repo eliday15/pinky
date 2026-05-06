@@ -246,17 +246,26 @@ class Employee extends Model
         $daySchedule = $this->schedule->getScheduleForDay($dayName);
         $overrides = $this->schedule_overrides ?? [];
 
-        if (! empty($overrides['entry_time'])) {
-            $daySchedule->entry_time = $overrides['entry_time'];
+        // Per-day employee overrides take priority over global overrides
+        $day = strtolower($dayName);
+        $dayOverrides = $overrides['day_schedules'][$day] ?? [];
+
+        $entryOverride = $dayOverrides['entry_time'] ?? $overrides['entry_time'] ?? null;
+        $exitOverride = $dayOverrides['exit_time'] ?? $overrides['exit_time'] ?? null;
+        $breakOverride = $dayOverrides['break_minutes'] ?? $overrides['break_minutes'] ?? null;
+        $hoursOverride = $dayOverrides['daily_work_hours'] ?? $overrides['daily_work_hours'] ?? null;
+
+        if (! empty($entryOverride)) {
+            $daySchedule->entry_time = $entryOverride;
         }
-        if (! empty($overrides['exit_time'])) {
-            $daySchedule->exit_time = $overrides['exit_time'];
+        if (! empty($exitOverride)) {
+            $daySchedule->exit_time = $exitOverride;
         }
-        if (isset($overrides['break_minutes'])) {
-            $daySchedule->break_minutes = (int) $overrides['break_minutes'];
+        if ($breakOverride !== null) {
+            $daySchedule->break_minutes = (int) $breakOverride;
         }
-        if (isset($overrides['daily_work_hours'])) {
-            $daySchedule->daily_work_hours = (float) $overrides['daily_work_hours'];
+        if ($hoursOverride !== null) {
+            $daySchedule->daily_work_hours = (float) $hoursOverride;
         }
 
         return $daySchedule;
