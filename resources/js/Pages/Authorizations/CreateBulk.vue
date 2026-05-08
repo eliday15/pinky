@@ -9,7 +9,6 @@ const props = defineProps({
     employees: Array,
     types: Array,
     departments: Array,
-    departmentHeads: Array,
 });
 
 const today = todayLocal();
@@ -27,7 +26,6 @@ const form = useForm({
     end_time: '',
     hours: '',
     reason: '',
-    department_head_id: '',
 });
 
 /** The application_mode of the currently selected compensation type. */
@@ -94,7 +92,14 @@ const filteredEmployees = computed(() => {
         );
     }
 
-    return employees;
+    // Pin selected employees at the top so the user sees their picks without scrolling.
+    const selected = new Set(form.employee_ids);
+    return [...employees].sort((a, b) => {
+        const aSel = selected.has(a.id) ? 0 : 1;
+        const bSel = selected.has(b.id) ? 0 : 1;
+        if (aSel !== bSel) return aSel - bSel;
+        return (a.full_name || '').localeCompare(b.full_name || '');
+    });
 });
 
 const toggleSelectAll = () => {
@@ -186,12 +191,6 @@ watch(() => form.employee_ids.length, () => {
     }
 });
 
-/** Filtered department heads based on selected department. */
-const filteredDepartmentHeads = computed(() => {
-    if (!departmentFilter.value) return props.departmentHeads;
-    return props.departmentHeads.filter(dh => dh.department_id == departmentFilter.value);
-});
-
 const submit = () => {
     form.post(route('authorizations.storeBulk'));
 };
@@ -230,10 +229,45 @@ const getDepartmentName = (deptId) => {
             <form @submit.prevent="submit" class="space-y-6">
                 <FormErrorBanner :errors="form.errors" />
 
-                <!-- Employee Selection -->
+                <!-- Step 1: Authorization Type -->
                 <div class="bg-white rounded-lg shadow p-6">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-1">
+                        <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-600 text-white text-xs mr-2">1</span>
+                        Tipo de Autorizacion
+                    </h3>
+                    <p class="text-xs text-gray-500 mb-4">Selecciona primero el tipo para ver los empleados elegibles.</p>
+                    <select
+                        :value="selectedOptionValue"
+                        @change="onTypeChange"
+                        class="w-full md:w-1/2 rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                        :class="{ 'border-red-500': form.errors.type }"
+                    >
+                        <option value="">Seleccionar tipo...</option>
+                        <option v-for="type in compensationTypes" :key="type.compensation_type_id" :value="optionValue(type)">
+                            {{ type.label }}
+                        </option>
+                    </select>
+                    <p v-if="form.type && typeDescriptions[form.type]" class="mt-2 text-sm text-gray-500">
+                        {{ typeDescriptions[form.type] }}
+                    </p>
+                    <p v-if="form.errors.type" class="mt-1 text-sm text-red-600">
+                        {{ form.errors.type }}
+                    </p>
+
+                    <!-- Night shift info banner -->
+                    <div v-if="form.type === 'night_shift'" class="mt-4 bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+                        <p class="text-sm text-indigo-800">
+                            <strong>Velada:</strong> Las horas de inicio y fin se han pre-configurado para turno nocturno (22:00 - 06:00).
+                            Puede ajustarlos si es necesario.
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Step 2: Employee Selection -->
+                <div v-if="form.type" class="bg-white rounded-lg shadow p-6">
                     <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-3">
                         <h3 class="text-lg font-semibold text-gray-800">
+                            <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-600 text-white text-xs mr-2">2</span>
                             Seleccionar Empleados
                             <span class="text-sm font-normal text-gray-500 ml-2">
                                 ({{ form.employee_ids.length }} seleccionados)
@@ -314,38 +348,6 @@ const getDepartmentName = (deptId) => {
                     </p>
                 </div>
 
-                <!-- Authorization Type -->
-                <div class="bg-white rounded-lg shadow p-6">
-                    <h3 class="text-lg font-semibold text-gray-800 mb-4">Tipo de Autorizacion</h3>
-                    <div>
-                        <select
-                            :value="selectedOptionValue"
-                            @change="onTypeChange"
-                            class="w-full md:w-1/2 rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                            :class="{ 'border-red-500': form.errors.type }"
-                        >
-                            <option value="">Seleccionar tipo...</option>
-                            <option v-for="type in compensationTypes" :key="type.compensation_type_id" :value="optionValue(type)">
-                                {{ type.label }}
-                            </option>
-                        </select>
-                        <p v-if="form.type && typeDescriptions[form.type]" class="mt-2 text-sm text-gray-500">
-                            {{ typeDescriptions[form.type] }}
-                        </p>
-                        <p v-if="form.errors.type" class="mt-1 text-sm text-red-600">
-                            {{ form.errors.type }}
-                        </p>
-                    </div>
-
-                    <!-- Night shift info banner -->
-                    <div v-if="form.type === 'night_shift'" class="mt-4 bg-indigo-50 border border-indigo-200 rounded-lg p-3">
-                        <p class="text-sm text-indigo-800">
-                            <strong>Velada:</strong> Las horas de inicio y fin se han pre-configurado para turno nocturno (22:00 - 06:00).
-                            Puede ajustarlos si es necesario.
-                        </p>
-                    </div>
-                </div>
-
                 <!-- Date & Time - adapts to application_mode -->
                 <div v-if="selectedApplicationMode" class="bg-white rounded-lg shadow p-6">
                     <h3 class="text-lg font-semibold text-gray-800 mb-4">Fecha y Horario</h3>
@@ -401,31 +403,6 @@ const getDepartmentName = (deptId) => {
                     </div>
                 </div>
 
-                <!-- Department Head -->
-                <div class="bg-white rounded-lg shadow p-6">
-                    <h3 class="text-lg font-semibold text-gray-800 mb-4">Jefe de Departamento</h3>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">
-                            Firmado por (opcional)
-                        </label>
-                        <select
-                            v-model="form.department_head_id"
-                            class="w-full md:w-1/2 rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                        >
-                            <option value="">Sin firma de jefe de departamento</option>
-                            <option v-for="head in filteredDepartmentHeads" :key="head.id" :value="head.id">
-                                {{ head.full_name }}
-                            </option>
-                        </select>
-                        <p class="mt-1 text-xs text-gray-500">
-                            Seleccione el jefe de departamento que autoriza esta operacion masiva
-                        </p>
-                        <p v-if="form.errors.department_head_id" class="mt-1 text-sm text-red-600">
-                            {{ form.errors.department_head_id }}
-                        </p>
-                    </div>
-                </div>
-
                 <!-- Reason -->
                 <div class="bg-white rounded-lg shadow p-6">
                     <h3 class="text-lg font-semibold text-gray-800 mb-4">Justificacion</h3>
@@ -452,7 +429,6 @@ const getDepartmentName = (deptId) => {
                         Se crearan <strong>{{ form.employee_ids.length }}</strong> autorizaciones
                         <span v-if="form.type"> de tipo <strong>{{ form.compensation_type_id ? types.find(t => t.compensation_type_id === form.compensation_type_id)?.label : types.find(t => t.value === form.type && !t.compensation_type_id)?.label }}</strong></span>
                         <span v-if="form.date"> para el <strong>{{ form.date }}</strong></span>
-                        <span v-if="form.department_head_id"> firmadas por <strong>{{ filteredDepartmentHeads.find(h => h.id == form.department_head_id)?.full_name }}</strong></span>
                     </p>
                 </div>
 
