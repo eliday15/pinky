@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Controllers\Concerns\ScopesReportEmployees;
 use App\Models\AttendanceRecord;
 use App\Models\Employee;
 use App\Models\Holiday;
@@ -16,6 +17,8 @@ use Inertia\Response;
 
 class AttendanceReportController extends Controller implements HasMiddleware
 {
+    use ScopesReportEmployees;
+
     public static function middleware(): array
     {
         return [
@@ -34,7 +37,7 @@ class AttendanceReportController extends Controller implements HasMiddleware
     public function faltas(Request $request): Response
     {
         [$startDate, $endDate] = $this->getDateRange($request);
-        $activeEmployeeIds = Employee::active()->pluck('id');
+        $activeEmployeeIds = $this->scopedActiveEmployeeIds();
 
         $lateToAbsenceCount = (int) SystemSetting::get('late_to_absence_count', 6);
         $maxLateBeforeAbsence = (int) SystemSetting::get('max_late_minutes_before_absence', 60);
@@ -162,6 +165,7 @@ class AttendanceReportController extends Controller implements HasMiddleware
 
         $employees = Employee::with(['schedule', 'department'])
             ->active()
+            ->whereIn('id', $this->scopedActiveEmployeeIds())
             ->select('id', 'employee_number', 'full_name', 'department_id', 'schedule_id', 'schedule_overrides')
             ->get();
 
@@ -249,7 +253,7 @@ class AttendanceReportController extends Controller implements HasMiddleware
     public function retardos(Request $request): Response
     {
         [$startDate, $endDate] = $this->getDateRange($request);
-        $activeEmployeeIds = Employee::active()->pluck('id');
+        $activeEmployeeIds = $this->scopedActiveEmployeeIds();
         $lateToAbsenceCount = (int) SystemSetting::get('late_to_absence_count', 6);
 
         $employees = $this->getEmployeeLookup($activeEmployeeIds);
@@ -313,7 +317,7 @@ class AttendanceReportController extends Controller implements HasMiddleware
     public function earlyDepartures(Request $request): Response
     {
         [$startDate, $endDate] = $this->getDateRange($request);
-        $activeEmployeeIds = Employee::active()->pluck('id');
+        $activeEmployeeIds = $this->scopedActiveEmployeeIds();
 
         $earlyDepartureThreshold = (int) SystemSetting::get('early_departure_absence_threshold', 30);
         $earlyDepartureIsAbsence = (bool) SystemSetting::get('early_departure_is_absence', true);

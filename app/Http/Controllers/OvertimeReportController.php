@@ -32,9 +32,10 @@ class OvertimeReportController extends Controller implements HasMiddleware
         return [
             new Middleware(function ($request, $next) {
                 $user = $request->user();
+                // Department-wide weekly overtime report; only roles with team or org-wide
+                // visibility may access it.
                 if (! $user->hasPermissionTo('reports.view_all')
-                    && ! $user->hasPermissionTo('reports.view_team')
-                    && ! $user->hasPermissionTo('reports.view_own')) {
+                    && ! $user->hasPermissionTo('reports.view_team')) {
                     abort(403);
                 }
 

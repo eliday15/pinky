@@ -1,9 +1,21 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head, Link } from '@inertiajs/vue3';
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 
-const reports = [
+const props = defineProps({
+    scope: { type: String, default: 'all' },
+});
+
+// Routes a self-service (view_own) employee is allowed to navigate to.
+const ownAllowedRoutes = new Set([
+    'reports.faltas',
+    'reports.asistencia',
+    'reports.retardos',
+    'reports.overtime',
+]);
+
+const allReports = [
     {
         category: 'Asistencia',
         icon: 'calendar',
@@ -71,6 +83,18 @@ const reports = [
         ],
     },
 ];
+
+const reports = computed(() => {
+    if (props.scope !== 'own') {
+        return allReports;
+    }
+    return allReports
+        .map(section => ({
+            ...section,
+            items: section.items.filter(item => ownAllowedRoutes.has(item.route)),
+        }))
+        .filter(section => section.items.length > 0);
+});
 
 const colorClasses = {
     blue: { bg: 'bg-blue-500', light: 'bg-blue-50', text: 'text-blue-600', hover: 'hover:bg-blue-100', border: 'border-blue-200' },

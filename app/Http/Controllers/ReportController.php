@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Controllers\Concerns\ScopesReportEmployees;
 use App\Models\AttendanceRecord;
 use App\Models\Department;
 use App\Models\Employee;
@@ -18,6 +19,8 @@ use Inertia\Response;
 
 class ReportController extends Controller implements HasMiddleware
 {
+    use ScopesReportEmployees;
+
     /**
      * Get the middleware that should be assigned to the controller.
      */
@@ -40,9 +43,17 @@ class ReportController extends Controller implements HasMiddleware
     /**
      * Reports index / menu.
      */
-    public function index(): Response
+    public function index(Request $request): Response
     {
-        return Inertia::render('Reports/Index');
+        $user = $request->user();
+
+        return Inertia::render('Reports/Index', [
+            'scope' => match (true) {
+                $user->hasPermissionTo('reports.view_all') => 'all',
+                $user->hasPermissionTo('reports.view_team') => 'team',
+                default => 'own',
+            },
+        ]);
     }
 
     /**
@@ -53,7 +64,7 @@ class ReportController extends Controller implements HasMiddleware
         $date = $request->date ? Carbon::parse($request->date) : Carbon::today();
 
         // Only include active employees
-        $activeEmployeeIds = Employee::active()->pluck('id');
+        $activeEmployeeIds = $this->scopedActiveEmployeeIds();
 
         $records = AttendanceRecord::with(['employee.department', 'employee.schedule'])
             ->where('work_date', $date->toDateString())
@@ -100,7 +111,7 @@ class ReportController extends Controller implements HasMiddleware
         $endDate = $startDate->copy()->endOfWeek();
 
         // Only include active employees
-        $activeEmployeeIds = Employee::active()->pluck('id');
+        $activeEmployeeIds = $this->scopedActiveEmployeeIds();
 
         $records = AttendanceRecord::with(['employee.department'])
             ->whereBetween('work_date', [$startDate, $endDate])
@@ -147,7 +158,7 @@ class ReportController extends Controller implements HasMiddleware
         $endDate = $month->copy()->endOfMonth();
 
         // Only include active employees
-        $activeEmployeeIds = Employee::active()->pluck('id');
+        $activeEmployeeIds = $this->scopedActiveEmployeeIds();
 
         $records = AttendanceRecord::with(['employee.department'])
             ->whereBetween('work_date', [$startDate, $endDate])
@@ -263,7 +274,7 @@ class ReportController extends Controller implements HasMiddleware
         $startDate = $request->start_date ? Carbon::parse($request->start_date) : Carbon::now()->startOfMonth();
         $endDate = $request->end_date ? Carbon::parse($request->end_date) : Carbon::now()->endOfMonth();
 
-        $activeEmployeeIds = Employee::active()->pluck('id');
+        $activeEmployeeIds = $this->scopedActiveEmployeeIds();
 
         $records = AttendanceRecord::with(['employee.department'])
             ->whereIn('employee_id', $activeEmployeeIds)
@@ -305,7 +316,7 @@ class ReportController extends Controller implements HasMiddleware
         $startDate = $request->start_date ? Carbon::parse($request->start_date) : Carbon::now()->startOfMonth();
         $endDate = $request->end_date ? Carbon::parse($request->end_date) : Carbon::now()->endOfMonth();
 
-        $activeEmployeeIds = Employee::active()->pluck('id');
+        $activeEmployeeIds = $this->scopedActiveEmployeeIds();
 
         $holidayDates = Holiday::whereBetween('date', [$startDate->toDateString(), $endDate->toDateString()])
             ->pluck('date')
@@ -361,7 +372,7 @@ class ReportController extends Controller implements HasMiddleware
         $startDate = $request->start_date ? Carbon::parse($request->start_date) : Carbon::now()->startOfMonth();
         $endDate = $request->end_date ? Carbon::parse($request->end_date) : Carbon::now()->endOfMonth();
 
-        $activeEmployeeIds = Employee::active()->pluck('id');
+        $activeEmployeeIds = $this->scopedActiveEmployeeIds();
 
         $records = AttendanceRecord::with(['employee.department', 'employee.schedule'])
             ->whereIn('employee_id', $activeEmployeeIds)
@@ -414,6 +425,7 @@ class ReportController extends Controller implements HasMiddleware
 
         $query = Employee::with(['department', 'position'])
             ->active()
+            ->whereIn('id', $this->scopedActiveEmployeeIds())
             ->orderBy('full_name');
 
         if ($departmentId) {
@@ -461,7 +473,7 @@ class ReportController extends Controller implements HasMiddleware
         $startDate = $request->start_date ? Carbon::parse($request->start_date) : Carbon::now()->startOfMonth();
         $endDate = $request->end_date ? Carbon::parse($request->end_date) : Carbon::now()->endOfMonth();
 
-        $activeEmployeeIds = Employee::active()->pluck('id');
+        $activeEmployeeIds = $this->scopedActiveEmployeeIds();
 
         $records = AttendanceRecord::with(['employee.department'])
             ->whereIn('employee_id', $activeEmployeeIds)
@@ -513,7 +525,7 @@ class ReportController extends Controller implements HasMiddleware
         $startDate = $request->start_date ? Carbon::parse($request->start_date) : Carbon::now()->startOfMonth();
         $endDate = $request->end_date ? Carbon::parse($request->end_date) : Carbon::now()->endOfMonth();
 
-        $activeEmployeeIds = Employee::active()->pluck('id');
+        $activeEmployeeIds = $this->scopedActiveEmployeeIds();
 
         $incidents = Incident::with(['employee.department', 'incidentType', 'approvedBy'])
             ->whereIn('employee_id', $activeEmployeeIds)
@@ -576,7 +588,7 @@ class ReportController extends Controller implements HasMiddleware
         $startDate = $request->start_date ? Carbon::parse($request->start_date) : Carbon::now()->startOfMonth();
         $endDate = $request->end_date ? Carbon::parse($request->end_date) : Carbon::now()->endOfMonth();
 
-        $activeEmployeeIds = Employee::active()->pluck('id');
+        $activeEmployeeIds = $this->scopedActiveEmployeeIds();
 
         $records = AttendanceRecord::with(['employee.department', 'employee.schedule'])
             ->whereIn('employee_id', $activeEmployeeIds)

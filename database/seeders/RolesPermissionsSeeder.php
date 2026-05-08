@@ -144,22 +144,12 @@ class RolesPermissionsSeeder extends Seeder
             'anomalies.view_team',
         ]);
 
-        // Create Employee role - Self-service only
+        // Create Employee role - Read-only: own attendance and own reports (faltas, asistencias, retardos, horas extra)
         $employee = Role::firstOrCreate(['name' => 'employee']);
         $employee->syncPermissions([
-            // Empleados - own only
-            'employees.view_own',
-            // Asistencia - own only
+            // Asistencia - own only (read-only)
             'attendance.view_own',
-            // Incidencias - own + create
-            'incidents.view_own',
-            'incidents.create',
-            // Autorizaciones - own + create
-            'authorizations.view_own',
-            'authorizations.create',
-            // Nómina - basic only
-            'payroll.view_basic',
-            // Reportes - own only
+            // Reportes - own only (faltas, asistencias, retardos, horas extra)
             'reports.view_own',
         ]);
     }
