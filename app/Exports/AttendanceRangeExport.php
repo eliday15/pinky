@@ -15,7 +15,7 @@ use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 /**
  * Export attendance records pivoted by employee (one row per employee).
  *
- * Columns: Employee info + per-date Entrada/Salida/Horas/Estado.
+ * Columns: Employee info + per-date Entrada/Salida.
  */
 class AttendanceRangeExport implements FromArray, WithStyles, ShouldAutoSize
 {
@@ -72,8 +72,6 @@ class AttendanceRangeExport implements FromArray, WithStyles, ShouldAutoSize
             $label = Carbon::parse($date)->locale('es')->isoFormat('dd DD/MM');
             $header[] = "{$label} Entrada";
             $header[] = "{$label} Salida";
-            $header[] = "{$label} Horas";
-            $header[] = "{$label} Estado";
         }
         $rows[] = $header;
 
@@ -91,17 +89,6 @@ class AttendanceRangeExport implements FromArray, WithStyles, ShouldAutoSize
         if ($this->departmentId) {
             $employeeQuery->where('department_id', $this->departmentId);
         }
-
-        $statusLabels = [
-            'present' => 'Presente',
-            'late' => 'Retardo',
-            'absent' => 'Ausente',
-            'partial' => 'Parcial',
-            'holiday' => 'Festivo',
-            'vacation' => 'Vacaciones',
-            'sick_leave' => 'Incapacidad',
-            'permission' => 'Permiso',
-        ];
 
         $employees = $employeeQuery->orderBy('full_name')->get();
 
@@ -126,12 +113,8 @@ class AttendanceRangeExport implements FromArray, WithStyles, ShouldAutoSize
                 if ($record) {
                     $row[] = $record->check_in ? substr($record->check_in, 0, 5) : '-';
                     $row[] = $record->check_out ? substr($record->check_out, 0, 5) : '-';
-                    $row[] = (float) ($record->worked_hours ?? 0);
-                    $row[] = $statusLabels[$record->status] ?? $record->status;
                 } else {
                     $row[] = '-';
-                    $row[] = '-';
-                    $row[] = 0;
                     $row[] = '-';
                 }
             }
