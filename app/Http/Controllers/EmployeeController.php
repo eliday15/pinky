@@ -316,6 +316,11 @@ class EmployeeController extends Controller
 
         $currentUser = Auth::user();
 
+        $subordinateIds = Employee::where('supervisor_id', $employee->id)
+            ->where('status', 'active')
+            ->pluck('id')
+            ->toArray();
+
         return Inertia::render('Employees/Edit', [
             'employee' => $employee,
             'departments' => Department::active()->with('compensationTypes')->get(['id', 'name', 'code']),
@@ -333,6 +338,7 @@ class EmployeeController extends Controller
             'vacationTable' => VacationTable::orderBy('years_of_service')->get(),
             'roles' => $currentUser->hasPermissionTo('users.create') ? \Spatie\Permission\Models\Role::orderBy('name')->pluck('name') : [],
             'canCreateUser' => $currentUser->hasPermissionTo('users.create'),
+            'subordinateIds' => $subordinateIds,
         ]);
     }
 
@@ -381,6 +387,8 @@ class EmployeeController extends Controller
             'schedule_overrides.day_schedules.*.break_minutes' => ['nullable', 'integer', 'min:0', 'max:480'],
             'schedule_overrides.day_schedules.*.daily_work_hours' => ['nullable', 'numeric', 'min:0', 'max:24'],
             'supervisor_id' => ['nullable', 'exists:employees,id', Rule::notIn([$employee->id])],
+            'subordinate_ids' => ['nullable', 'array'],
+            'subordinate_ids.*' => ['integer', 'exists:employees,id', Rule::notIn([$employee->id])],
             'hourly_rate' => ['required', 'numeric', 'min:0'],
             'is_minimum_wage' => ['boolean'],
             'is_trial_period' => ['boolean'],
@@ -512,6 +520,24 @@ class EmployeeController extends Controller
         if ($positionChanged && ! $request->has('supervisor_override')) {
             $employee->update(['supervisor_id' => null]);
             app(SupervisorResolutionService::class)->resolveAndAssign($employee->fresh());
+        }
+
+        // Sync subordinates: set supervisor_id of every checked employee to
+        // this one, and unlink those previously reporting here who were
+        // unchecked. Skipped entirely when subordinate_ids is not posted.
+        if ($request->has('subordinate_ids')) {
+            $newIds = collect($request->input('subordinate_ids', []))->map(fn ($id) => (int) $id)->all();
+            $current = Employee::where('supervisor_id', $employee->id)->pluck('id')->all();
+
+            $toAttach = array_diff($newIds, $current);
+            $toDetach = array_diff($current, $newIds);
+
+            if (! empty($toAttach)) {
+                Employee::whereIn('id', $toAttach)->update(['supervisor_id' => $employee->id]);
+            }
+            if (! empty($toDetach)) {
+                Employee::whereIn('id', $toDetach)->update(['supervisor_id' => null]);
+            }
         }
 
         return redirect()->route('employees.index')

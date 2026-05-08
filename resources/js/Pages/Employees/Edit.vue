@@ -16,6 +16,7 @@ const props = defineProps({
     vacationTable: Array,
     roles: Array,
     canCreateUser: Boolean,
+    subordinateIds: Array,
 });
 
 // User account creation form
@@ -100,6 +101,7 @@ const form = useForm({
     schedule_id: props.employee.schedule_id,
     schedule_overrides: props.employee.schedule_overrides || {},
     supervisor_id: props.employee.supervisor_id || '',
+    subordinate_ids: props.subordinateIds || [],
     hourly_rate: props.employee.hourly_rate,
     is_minimum_wage: props.employee.is_minimum_wage || false,
     is_trial_period: props.employee.is_trial_period || false,
@@ -133,6 +135,25 @@ const autoFilledFields = ref({});
 const overrideSupervisor = ref(false);
 const showPositionComparison = ref(false);
 const positionTemplateValues = ref(null);
+
+const subordinateSearch = ref('');
+const filteredCandidatesForSubordinates = computed(() => {
+    const term = subordinateSearch.value.trim().toLowerCase();
+    return props.employees.filter(emp => {
+        if (emp.id === props.employee.id) return false;
+        if (!term) return true;
+        return emp.full_name?.toLowerCase().includes(term);
+    });
+});
+
+const toggleSubordinate = (id) => {
+    const idx = form.subordinate_ids.indexOf(id);
+    if (idx === -1) {
+        form.subordinate_ids.push(id);
+    } else {
+        form.subordinate_ids.splice(idx, 1);
+    }
+};
 
 const scheduleChanged = computed(() => form.schedule_id != originalScheduleId);
 
@@ -1008,57 +1029,94 @@ watch(() => form.hire_date, onHireDateChange);
                         </div>
                     </div>
 
-                    <!-- Supervisor Section -->
-                    <div class="mt-6">
-                        <label class="block text-sm font-medium text-gray-700 mb-1">
-                            Jefe Directo
-                            <span v-if="autoFilledFields.supervisor_id" class="text-blue-500 text-xs">(Auto)</span>
-                        </label>
+                    <!-- Jerarquia: Mi Jefe + Es Jefe De -->
+                    <div class="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <!-- Mi Jefe Directo (single) -->
+                        <div class="border border-gray-200 rounded-lg p-4">
+                            <div class="flex items-center gap-2 mb-1">
+                                <h4 class="text-sm font-semibold text-gray-800">Mi Jefe Directo</h4>
+                                <span class="text-xs px-2 py-0.5 rounded-full bg-pink-100 text-pink-700">1 persona</span>
+                                <span v-if="autoFilledFields.supervisor_id" class="text-blue-500 text-xs">(Auto)</span>
+                            </div>
+                            <p class="text-xs text-gray-500 mb-3">¿De quien depende este empleado? Selecciona una sola persona.</p>
 
-                        <!-- Auto-resolved supervisor from position -->
-                        <div v-if="resolvedSupervisor && !overrideSupervisor" class="p-3 bg-green-50 border border-green-200 rounded-lg mb-3">
-                            <p class="text-sm text-green-700">
-                                <span class="font-medium">Jefe asignado automaticamente via puesto:</span> {{ resolvedSupervisor.full_name }}
-                            </p>
+                            <div v-if="resolvedSupervisor && !overrideSupervisor" class="p-3 bg-green-50 border border-green-200 rounded-lg mb-3">
+                                <p class="text-sm text-green-700">
+                                    <span class="font-medium">Asignado por puesto:</span> {{ resolvedSupervisor.full_name }}
+                                </p>
+                                <button
+                                    @click="overrideSupervisor = true"
+                                    type="button"
+                                    class="mt-2 text-sm text-green-600 hover:text-green-800 underline"
+                                >
+                                    Cambiar manualmente
+                                </button>
+                            </div>
+
+                            <SearchableSelect
+                                v-if="!resolvedSupervisor || overrideSupervisor"
+                                v-model="form.supervisor_id"
+                                :options="employees"
+                                value-key="id"
+                                label-key="full_name"
+                                placeholder="Buscar jefe directo..."
+                                :has-error="!!form.errors.supervisor_id"
+                            />
                             <button
-                                @click="overrideSupervisor = true"
+                                v-if="overrideSupervisor && resolvedSupervisor"
+                                @click="overrideSupervisor = false; form.supervisor_id = resolvedSupervisor.id;"
                                 type="button"
-                                class="mt-2 text-sm text-green-600 hover:text-green-800 underline"
+                                class="mt-2 text-sm text-blue-600 hover:text-blue-800 underline"
                             >
-                                Cambiar manualmente
+                                Restaurar jefe automatico
                             </button>
+                            <p v-if="form.errors.supervisor_id" class="mt-1 text-sm text-red-600">
+                                {{ form.errors.supervisor_id }}
+                            </p>
+
+                            <div v-if="employee.supervisor" class="mt-3 p-2 bg-gray-50 rounded text-xs text-gray-600">
+                                <span class="font-medium">Jefe actual:</span> {{ employee.supervisor.full_name }}
+                            </div>
                         </div>
 
-                        <SearchableSelect
-                            v-if="!resolvedSupervisor || overrideSupervisor"
-                            v-model="form.supervisor_id"
-                            :options="employees"
-                            value-key="id"
-                            label-key="full_name"
-                            placeholder="Buscar supervisor..."
-                            :has-error="!!form.errors.supervisor_id"
-                        />
-                        <p v-if="!resolvedSupervisor && !overrideSupervisor" class="mt-1 text-sm text-gray-500">
-                            Supervisor o jefe inmediato del empleado
-                        </p>
-                        <button
-                            v-if="overrideSupervisor && resolvedSupervisor"
-                            @click="overrideSupervisor = false; form.supervisor_id = resolvedSupervisor.id;"
-                            type="button"
-                            class="mt-2 text-sm text-blue-600 hover:text-blue-800 underline"
-                        >
-                            Restaurar jefe automatico
-                        </button>
-                        <p v-if="form.errors.supervisor_id" class="mt-1 text-sm text-red-600">
-                            {{ form.errors.supervisor_id }}
-                        </p>
-                    </div>
+                        <!-- Es Jefe Directo De (multi) -->
+                        <div class="border border-gray-200 rounded-lg p-4">
+                            <div class="flex items-center gap-2 mb-1">
+                                <h4 class="text-sm font-semibold text-gray-800">Es Jefe Directo De</h4>
+                                <span class="text-xs px-2 py-0.5 rounded-full bg-pink-100 text-pink-700">{{ form.subordinate_ids.length }} {{ form.subordinate_ids.length === 1 ? 'persona' : 'personas' }}</span>
+                            </div>
+                            <p class="text-xs text-gray-500 mb-3">¿A quienes supervisa este empleado? Marca todos sus reportes directos.</p>
 
-                    <!-- Current Supervisor Info -->
-                    <div v-if="employee.supervisor" class="mt-4 p-3 bg-gray-50 rounded-lg">
-                        <p class="text-sm text-gray-600">
-                            <span class="font-medium">Jefe actual:</span> {{ employee.supervisor.full_name }}
-                        </p>
+                            <input
+                                v-model="subordinateSearch"
+                                type="text"
+                                placeholder="Buscar empleado..."
+                                class="w-full mb-2 rounded-md border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 text-sm"
+                            />
+
+                            <div class="max-h-64 overflow-y-auto border border-gray-200 rounded-md divide-y divide-gray-100">
+                                <label
+                                    v-for="emp in filteredCandidatesForSubordinates"
+                                    :key="emp.id"
+                                    class="flex items-center px-3 py-2 hover:bg-pink-50 cursor-pointer text-sm"
+                                >
+                                    <input
+                                        type="checkbox"
+                                        :value="emp.id"
+                                        :checked="form.subordinate_ids.includes(emp.id)"
+                                        @change="toggleSubordinate(emp.id)"
+                                        class="rounded border-gray-300 text-pink-600 focus:ring-pink-500"
+                                    />
+                                    <span class="ml-2 text-gray-700">{{ emp.full_name }}</span>
+                                </label>
+                                <div v-if="!filteredCandidatesForSubordinates.length" class="p-3 text-center text-xs text-gray-400">
+                                    Sin coincidencias
+                                </div>
+                            </div>
+                            <p v-if="form.errors.subordinate_ids" class="mt-1 text-sm text-red-600">
+                                {{ form.errors.subordinate_ids }}
+                            </p>
+                        </div>
                     </div>
 
                     <!-- Schedule Change Evidence -->
