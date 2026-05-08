@@ -127,28 +127,21 @@ class RolesPermissionsSeeder extends Seeder
             'attendance.approve_corrections',
         ]);
 
-        // Create Supervisor role - Direct reports management, attendance, incidents, authorizations, anomalies
+        // Create Supervisor role - Read-only employee access, attendance view, can create incidents/authorizations
         $supervisor = Role::firstOrCreate(['name' => 'supervisor']);
         $supervisor->syncPermissions([
-            // Empleados - team (direct reports only)
+            // Empleados - team view only (no create/edit/delete)
             'employees.view_team',
-            'employees.create',
-            'employees.edit',
             // Asistencia - team (direct reports only)
             'attendance.view_team',
-            // Incidencias - team + approval (supervisors can manage their team's incidents)
+            // Incidencias - team view + create only (no approve/reject)
             'incidents.view_team',
             'incidents.create',
-            'incidents.approve',
-            'incidents.reject',
-            // Autorizaciones - team + approval (supervisors can manage their team's authorizations)
+            // Autorizaciones - team view + create only (no approve/reject)
             'authorizations.view_team',
             'authorizations.create',
-            'authorizations.approve',
-            'authorizations.reject',
-            // Anomalías - team only
+            // Anomalías - team view only (no resolve)
             'anomalies.view_team',
-            'anomalies.resolve',
         ]);
 
         // Create Employee role - Self-service only

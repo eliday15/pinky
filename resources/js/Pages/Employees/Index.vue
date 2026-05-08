@@ -731,12 +731,14 @@ const exportUrl = computed(() => {
                                 Ver
                             </Link>
                             <Link
+                                v-if="can?.update"
                                 :href="route('employees.edit', employee.id)"
                                 class="text-pink-600 hover:text-pink-900 mr-3"
                             >
                                 Editar
                             </Link>
                             <button
+                                v-if="can?.delete"
                                 @click="deleteEmployee(employee)"
                                 class="text-red-600 hover:text-red-900"
                             >

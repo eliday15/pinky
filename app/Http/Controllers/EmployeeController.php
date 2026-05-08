@@ -59,6 +59,8 @@ class EmployeeController extends Controller
             'filters' => $request->only(['search', 'department', 'position', 'schedule', 'supervisor', 'status', 'is_minimum_wage']),
             'can' => [
                 'create' => $user->can('create', Employee::class),
+                'update' => $user->hasPermissionTo('employees.edit'),
+                'delete' => $user->hasPermissionTo('employees.delete'),
                 'bulkEdit' => $user->hasPermissionTo('employees.bulk_edit'),
             ],
         ]);

@@ -240,12 +240,14 @@ const deleteIncident = (incident) => {
                         <td class="px-6 py-4 whitespace-nowrap text-right text-sm space-x-2">
                             <template v-if="incident.status === 'pending'">
                                 <button
+                                    v-if="can?.approve"
                                     @click="approveIncident(incident)"
                                     class="text-green-600 hover:text-green-900"
                                 >
                                     Aprobar
                                 </button>
                                 <button
+                                    v-if="can?.reject"
                                     @click="openRejectModal(incident)"
                                     class="text-red-600 hover:text-red-900"
                                 >
