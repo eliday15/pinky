@@ -9,20 +9,12 @@ use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Routing\Controllers\Middleware;
+use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 use Inertia\Response;
 
-/**
- * Discipline-focused attendance reports.
- *
- * Provides Faltas, Asistencia Perfecta, Retardos, and Salidas Tempranas
- * reports using configurable thresholds from SystemSettings.
- */
 class AttendanceReportController extends Controller implements HasMiddleware
 {
-    /**
-     * Get the middleware that should be assigned to the controller.
-     */
     public static function middleware(): array
     {
         return [
@@ -38,9 +30,6 @@ class AttendanceReportController extends Controller implements HasMiddleware
         ];
     }
 
-    /**
-     * Faltas report: absences from late >= threshold, no-shows, early departures, and retardo accumulation.
-     */
     public function faltas(Request $request): Response
     {
         [$startDate, $endDate] = $this->getDateRange($request);
@@ -51,67 +40,85 @@ class AttendanceReportController extends Controller implements HasMiddleware
         $earlyDepartureThreshold = (int) SystemSetting::get('early_departure_absence_threshold', 30);
         $earlyDepartureIsAbsence = (bool) SystemSetting::get('early_departure_is_absence', true);
 
-        // All records with status 'absent' (covers no-shows, late >= threshold, early departure >= threshold)
-        $absentRecords = AttendanceRecord::with(['employee.department'])
+        $employees = $this->getEmployeeLookup($activeEmployeeIds);
+
+        // Absent records — only fetch columns we need
+        $absentRows = DB::table('attendance_records')
+            ->select('employee_id', 'work_date', 'check_in', 'late_minutes', 'early_departure_minutes')
             ->whereBetween('work_date', [$startDate, $endDate])
             ->whereIn('employee_id', $activeEmployeeIds)
             ->where('status', 'absent')
             ->get();
 
-        // Split absent records: true no-shows vs threshold-triggered (had check_in)
-        $noShowRecords = $absentRecords->filter(fn ($r) => is_null($r->check_in));
-        $thresholdRecords = $absentRecords->filter(fn ($r) => !is_null($r->check_in));
+        $noShowByEmp = [];
+        $thresholdByEmp = [];
 
-        // Retardo records for accumulated faltas
-        $lateRecords = AttendanceRecord::whereBetween('work_date', [$startDate, $endDate])
-            ->whereIn('employee_id', $activeEmployeeIds)
-            ->where('status', 'late')
-            ->get();
-
-        // Calculate retardo-accumulated faltas per employee (monthly reset)
-        $retardoFaltasByEmployee = [];
-        foreach ($lateRecords->groupBy('employee_id') as $employeeId => $empRecords) {
-            $byMonth = $empRecords->groupBy(fn ($r) => Carbon::parse($r->work_date)->format('Y-m'));
-            $totalRetardoFaltas = 0;
-            foreach ($byMonth as $monthRecords) {
-                $totalRetardoFaltas += intdiv($monthRecords->count(), $lateToAbsenceCount);
-            }
-            if ($totalRetardoFaltas > 0) {
-                $retardoFaltasByEmployee[$employeeId] = $totalRetardoFaltas;
+        foreach ($absentRows as $row) {
+            $eid = $row->employee_id;
+            if (is_null($row->check_in)) {
+                $noShowByEmp[$eid][] = ['date' => $row->work_date, 'label' => 'No se presentó'];
+            } else {
+                if (($row->late_minutes ?? 0) >= $maxLateBeforeAbsence) {
+                    $label = "Retardo excesivo ({$row->late_minutes} min)";
+                } elseif ($earlyDepartureIsAbsence && ($row->early_departure_minutes ?? 0) >= $earlyDepartureThreshold) {
+                    $label = "Salida temprana ({$row->early_departure_minutes} min)";
+                } else {
+                    $label = 'Por umbral';
+                }
+                $thresholdByEmp[$eid][] = ['date' => $row->work_date, 'label' => $label];
             }
         }
 
-        // Combine by employee
-        $allEmployeeIds = $absentRecords->pluck('employee_id')
+        // Late counts per employee per month for retardo-accumulated faltas
+        $lateCounts = DB::table('attendance_records')
+            ->select('employee_id', DB::raw("DATE_FORMAT(work_date, '%Y-%m') as month"), DB::raw('COUNT(*) as cnt'))
+            ->whereBetween('work_date', [$startDate, $endDate])
+            ->whereIn('employee_id', $activeEmployeeIds)
+            ->where('status', 'late')
+            ->groupBy('employee_id', DB::raw("DATE_FORMAT(work_date, '%Y-%m')"))
+            ->get();
+
+        $retardoFaltasByEmployee = [];
+        $retardoDetailsByEmployee = [];
+        foreach ($lateCounts as $row) {
+            $faltas = intdiv($row->cnt, $lateToAbsenceCount);
+            if ($faltas > 0) {
+                $retardoFaltasByEmployee[$row->employee_id] = ($retardoFaltasByEmployee[$row->employee_id] ?? 0) + $faltas;
+                $retardoDetailsByEmployee[$row->employee_id][] = [
+                    'month' => $row->month,
+                    'late_count' => $row->cnt,
+                    'faltas' => $faltas,
+                ];
+            }
+        }
+
+        // Combine all employee IDs
+        $allEmployeeIds = collect(array_keys($noShowByEmp))
+            ->merge(array_keys($thresholdByEmp))
             ->merge(array_keys($retardoFaltasByEmployee))
             ->unique();
 
-        $byEmployee = $allEmployeeIds->map(function ($employeeId) use ($noShowRecords, $thresholdRecords, $retardoFaltasByEmployee) {
-            $empNoShow = $noShowRecords->where('employee_id', $employeeId);
-            $empThreshold = $thresholdRecords->where('employee_id', $employeeId);
-            $employee = $empNoShow->first()?->employee ?? $empThreshold->first()?->employee;
-
-            // If employee only has retardo-faltas, load them
-            if (!$employee) {
-                $employee = Employee::with('department')->find($employeeId);
-            }
-
-            $noShowFaltas = $empNoShow->count();
-            $thresholdFaltas = $empThreshold->count();
-            $retardoFaltas = $retardoFaltasByEmployee[$employeeId] ?? 0;
+        $byEmployee = $allEmployeeIds->map(function ($eid) use ($noShowByEmp, $thresholdByEmp, $retardoFaltasByEmployee, $retardoDetailsByEmployee, $employees) {
+            $noShowDates = $noShowByEmp[$eid] ?? [];
+            $thresholdDates = $thresholdByEmp[$eid] ?? [];
+            $noShowFaltas = count($noShowDates);
+            $thresholdFaltas = count($thresholdDates);
+            $retardoFaltas = $retardoFaltasByEmployee[$eid] ?? 0;
 
             return [
-                'employee' => $employee,
+                'employee' => $employees[$eid] ?? null,
                 'no_show_faltas' => $noShowFaltas,
                 'threshold_faltas' => $thresholdFaltas,
                 'direct_faltas' => $noShowFaltas + $thresholdFaltas,
                 'retardo_faltas' => $retardoFaltas,
                 'total_faltas' => $noShowFaltas + $thresholdFaltas + $retardoFaltas,
-                'no_show_dates' => $empNoShow->pluck('work_date')->toArray(),
-                'threshold_dates' => $empThreshold->pluck('work_date')->toArray(),
-                'dates' => $empNoShow->pluck('work_date')->merge($empThreshold->pluck('work_date'))->toArray(),
+                'no_show_dates' => $noShowDates,
+                'threshold_dates' => $thresholdDates,
+                'retardo_details' => $retardoDetailsByEmployee[$eid] ?? [],
             ];
-        })->sortByDesc('total_faltas')->values();
+        })->filter(fn ($e) => $e['employee'] !== null)
+            ->sortByDesc('total_faltas')
+            ->values();
 
         $summary = [
             'total_faltas' => $byEmployee->sum('total_faltas'),
@@ -136,16 +143,17 @@ class AttendanceReportController extends Controller implements HasMiddleware
         ]);
     }
 
-    /**
-     * Asistencia perfecta report: employees who completed the period without issues.
-     */
     public function asistencia(Request $request): Response
     {
         [$startDate, $endDate] = $this->getDateRange($request);
 
-        $employees = Employee::with(['schedule', 'department'])->active()->get();
+        $employees = Employee::with(['schedule', 'department'])
+            ->active()
+            ->select('id', 'employee_number', 'full_name', 'department_id', 'schedule_id', 'schedule_overrides')
+            ->get();
 
-        $allRecords = AttendanceRecord::whereBetween('work_date', [$startDate, $endDate])
+        $allRecords = AttendanceRecord::select('employee_id', 'status', 'worked_hours', 'late_minutes', 'early_departure_minutes')
+            ->whereBetween('work_date', [$startDate, $endDate])
             ->whereIn('employee_id', $employees->pluck('id'))
             ->get();
 
@@ -162,7 +170,6 @@ class AttendanceReportController extends Controller implements HasMiddleware
                 continue;
             }
 
-            // Count expected working days in range
             $expectedDays = 0;
             $currentDate = $startDate->copy();
             while ($currentDate->lte($endDate)) {
@@ -177,8 +184,6 @@ class AttendanceReportController extends Controller implements HasMiddleware
             }
 
             $records = $allRecords->where('employee_id', $employee->id);
-
-            // Excused days don't count against expected
             $excusedDays = $records->whereIn('status', ['holiday', 'vacation', 'sick_leave', 'permission'])->count();
             $adjustedExpected = $expectedDays - $excusedDays;
 
@@ -186,7 +191,6 @@ class AttendanceReportController extends Controller implements HasMiddleware
                 continue;
             }
 
-            // Perfect = present for all adjusted expected days, no late, no early departure
             $presentRecords = $records->where('status', 'present');
             $hasLate = $records->where('late_minutes', '>', 0)->isNotEmpty();
             $hasEarlyDeparture = $records->where('early_departure_minutes', '>', 0)->isNotEmpty();
@@ -194,7 +198,12 @@ class AttendanceReportController extends Controller implements HasMiddleware
 
             if ($presentRecords->count() >= $adjustedExpected && !$hasLate && !$hasEarlyDeparture && !$hasAbsence) {
                 $byEmployee->push([
-                    'employee' => $employee,
+                    'employee' => [
+                        'id' => $employee->id,
+                        'employee_number' => $employee->employee_number,
+                        'full_name' => $employee->full_name,
+                        'department' => $employee->department ? ['name' => $employee->department->name] : null,
+                    ],
                     'days_worked' => $presentRecords->count(),
                     'total_hours' => round($records->sum('worked_hours'), 2),
                 ]);
@@ -204,76 +213,79 @@ class AttendanceReportController extends Controller implements HasMiddleware
         $totalActive = $employees->count();
         $perfectCount = $byEmployee->count();
 
-        $summary = [
-            'perfect_count' => $perfectCount,
-            'total_active' => $totalActive,
-            'percentage' => $totalActive > 0 ? round(($perfectCount / $totalActive) * 100, 1) : 0,
-        ];
-
         return Inertia::render('Reports/Asistencia', [
             'startDate' => $startDate->toDateString(),
             'endDate' => $endDate->toDateString(),
             'byEmployee' => $byEmployee->values(),
-            'summary' => $summary,
+            'summary' => [
+                'perfect_count' => $perfectCount,
+                'total_active' => $totalActive,
+                'percentage' => $totalActive > 0 ? round(($perfectCount / $totalActive) * 100, 1) : 0,
+            ],
         ]);
     }
 
-    /**
-     * Retardos report: late arrivals under the absence threshold.
-     */
     public function retardos(Request $request): Response
     {
         [$startDate, $endDate] = $this->getDateRange($request);
         $activeEmployeeIds = Employee::active()->pluck('id');
         $lateToAbsenceCount = (int) SystemSetting::get('late_to_absence_count', 6);
 
-        $records = AttendanceRecord::with(['employee.department'])
+        $employees = $this->getEmployeeLookup($activeEmployeeIds);
+
+        $rows = DB::table('attendance_records')
+            ->select('employee_id', 'work_date', 'late_minutes', 'check_in')
             ->whereBetween('work_date', [$startDate, $endDate])
             ->whereIn('employee_id', $activeEmployeeIds)
             ->where('status', 'late')
             ->orderBy('late_minutes', 'desc')
             ->get();
 
-        $byEmployee = $records->groupBy('employee_id')->map(function ($group) use ($lateToAbsenceCount) {
-            $employee = $group->first()->employee;
-            $lateCount = $group->count();
+        $grouped = [];
+        foreach ($rows as $row) {
+            $grouped[$row->employee_id][] = $row;
+        }
+
+        $totalRetardos = $rows->count();
+        $totalLateMinutes = $rows->sum('late_minutes');
+
+        $byEmployee = collect($grouped)->map(function ($records, $eid) use ($lateToAbsenceCount, $employees) {
+            $lateCount = count($records);
+            $totalMinutes = array_sum(array_column($records, 'late_minutes'));
 
             return [
-                'employee' => $employee,
+                'employee' => $employees[$eid] ?? null,
                 'late_count' => $lateCount,
-                'total_late_minutes' => $group->sum('late_minutes'),
-                'avg_late_minutes' => round($group->avg('late_minutes'), 0),
+                'total_late_minutes' => $totalMinutes,
+                'avg_late_minutes' => $lateCount > 0 ? round($totalMinutes / $lateCount) : 0,
                 'generates_falta' => $lateCount >= $lateToAbsenceCount,
-                'dates' => $group->map(fn ($r) => [
+                'dates' => array_map(fn ($r) => [
                     'date' => $r->work_date,
                     'minutes' => $r->late_minutes,
                     'check_in' => $r->check_in,
-                ])->toArray(),
+                ], $records),
             ];
-        })->sortByDesc('late_count')->values();
+        })->filter(fn ($e) => $e['employee'] !== null)
+            ->sortByDesc('late_count')
+            ->values();
 
         $faltaCount = $byEmployee->filter(fn ($e) => $e['generates_falta'])->count();
-
-        $summary = [
-            'total_retardos' => $records->count(),
-            'employees_with_retardos' => $byEmployee->count(),
-            'total_late_minutes' => $records->sum('late_minutes'),
-            'avg_late_minutes' => $records->count() > 0 ? round($records->avg('late_minutes'), 0) : 0,
-            'faltas_generated' => $faltaCount,
-        ];
 
         return Inertia::render('Reports/Retardos', [
             'startDate' => $startDate->toDateString(),
             'endDate' => $endDate->toDateString(),
             'byEmployee' => $byEmployee,
-            'summary' => $summary,
+            'summary' => [
+                'total_retardos' => $totalRetardos,
+                'employees_with_retardos' => $byEmployee->count(),
+                'total_late_minutes' => $totalLateMinutes,
+                'avg_late_minutes' => $totalRetardos > 0 ? round($totalLateMinutes / $totalRetardos) : 0,
+                'faltas_generated' => $faltaCount,
+            ],
             'lateToAbsenceCount' => $lateToAbsenceCount,
         ]);
     }
 
-    /**
-     * Salidas tempranas report: employees who left before their scheduled end time.
-     */
     public function earlyDepartures(Request $request): Response
     {
         [$startDate, $endDate] = $this->getDateRange($request);
@@ -282,46 +294,59 @@ class AttendanceReportController extends Controller implements HasMiddleware
         $earlyDepartureThreshold = (int) SystemSetting::get('early_departure_absence_threshold', 30);
         $earlyDepartureIsAbsence = (bool) SystemSetting::get('early_departure_is_absence', true);
 
-        $records = AttendanceRecord::with(['employee.department'])
+        $employees = $this->getEmployeeLookup($activeEmployeeIds);
+
+        $rows = DB::table('attendance_records')
+            ->select('employee_id', 'work_date', 'early_departure_minutes', 'check_out')
             ->whereBetween('work_date', [$startDate, $endDate])
             ->whereIn('employee_id', $activeEmployeeIds)
             ->where('early_departure_minutes', '>', 0)
             ->orderBy('early_departure_minutes', 'desc')
             ->get();
 
-        $byEmployee = $records->groupBy('employee_id')->map(function ($group) use ($earlyDepartureThreshold, $earlyDepartureIsAbsence) {
-            $employee = $group->first()->employee;
+        $grouped = [];
+        foreach ($rows as $row) {
+            $grouped[$row->employee_id][] = $row;
+        }
+
+        $totalEarlyDepartures = $rows->count();
+        $totalEarlyMinutes = $rows->sum('early_departure_minutes');
+
+        $byEmployee = collect($grouped)->map(function ($records, $eid) use ($earlyDepartureThreshold, $earlyDepartureIsAbsence, $employees) {
+            $count = count($records);
+            $totalMinutes = array_sum(array_column($records, 'early_departure_minutes'));
+            $faltasCount = $earlyDepartureIsAbsence
+                ? count(array_filter($records, fn ($r) => $r->early_departure_minutes >= $earlyDepartureThreshold))
+                : 0;
 
             return [
-                'employee' => $employee,
-                'departure_count' => $group->count(),
-                'total_early_minutes' => $group->sum('early_departure_minutes'),
-                'avg_early_minutes' => round($group->avg('early_departure_minutes'), 0),
-                'faltas_count' => $earlyDepartureIsAbsence
-                    ? $group->where('early_departure_minutes', '>=', $earlyDepartureThreshold)->count()
-                    : 0,
-                'dates' => $group->map(fn ($r) => [
+                'employee' => $employees[$eid] ?? null,
+                'departure_count' => $count,
+                'total_early_minutes' => $totalMinutes,
+                'avg_early_minutes' => $count > 0 ? round($totalMinutes / $count) : 0,
+                'faltas_count' => $faltasCount,
+                'dates' => array_map(fn ($r) => [
                     'date' => $r->work_date,
                     'minutes' => $r->early_departure_minutes,
                     'check_out' => $r->check_out,
                     'is_falta' => $earlyDepartureIsAbsence && $r->early_departure_minutes >= $earlyDepartureThreshold,
-                ])->toArray(),
+                ], $records),
             ];
-        })->sortByDesc('departure_count')->values();
-
-        $summary = [
-            'total_early_departures' => $records->count(),
-            'employees_with_early_departures' => $byEmployee->count(),
-            'total_early_minutes' => $records->sum('early_departure_minutes'),
-            'avg_early_minutes' => $records->count() > 0 ? round($records->avg('early_departure_minutes'), 0) : 0,
-            'faltas_generated' => $byEmployee->sum('faltas_count'),
-        ];
+        })->filter(fn ($e) => $e['employee'] !== null)
+            ->sortByDesc('departure_count')
+            ->values();
 
         return Inertia::render('Reports/SalidasTempranas', [
             'startDate' => $startDate->toDateString(),
             'endDate' => $endDate->toDateString(),
             'byEmployee' => $byEmployee,
-            'summary' => $summary,
+            'summary' => [
+                'total_early_departures' => $totalEarlyDepartures,
+                'employees_with_early_departures' => $byEmployee->count(),
+                'total_early_minutes' => $totalEarlyMinutes,
+                'avg_early_minutes' => $totalEarlyDepartures > 0 ? round($totalEarlyMinutes / $totalEarlyDepartures) : 0,
+                'faltas_generated' => $byEmployee->sum('faltas_count'),
+            ],
             'settings' => [
                 'earlyThreshold' => $earlyDepartureThreshold,
                 'earlyIsAbsence' => $earlyDepartureIsAbsence,
@@ -329,12 +354,6 @@ class AttendanceReportController extends Controller implements HasMiddleware
         ]);
     }
 
-    /**
-     * Get date range from request, defaulting to current week.
-     *
-     * @param Request $request HTTP request with optional start_date and end_date
-     * @return array{0: Carbon, 1: Carbon} Start and end dates
-     */
     private function getDateRange(Request $request): array
     {
         $startDate = $request->start_date
@@ -345,5 +364,26 @@ class AttendanceReportController extends Controller implements HasMiddleware
             : Carbon::now()->endOfWeek();
 
         return [$startDate, $endDate];
+    }
+
+    /**
+     * Build a lightweight employee lookup keyed by ID.
+     * Only includes fields needed for report display.
+     */
+    private function getEmployeeLookup($employeeIds): array
+    {
+        return Employee::with('department:id,name')
+            ->select('id', 'employee_number', 'full_name', 'department_id')
+            ->whereIn('id', $employeeIds)
+            ->get()
+            ->mapWithKeys(fn ($e) => [
+                $e->id => [
+                    'id' => $e->id,
+                    'employee_number' => $e->employee_number,
+                    'full_name' => $e->full_name,
+                    'department' => $e->department ? ['id' => $e->department->id, 'name' => $e->department->name] : null,
+                ],
+            ])
+            ->toArray();
     }
 }
