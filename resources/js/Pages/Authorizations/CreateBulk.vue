@@ -35,6 +35,23 @@ const selectedApplicationMode = computed(() => {
     return t?.application_mode || null;
 });
 
+/** Human-readable label of the selected type (e.g., "Hora Extra Triple"). */
+const selectedTypeLabel = computed(() => {
+    if (!form.compensation_type_id) return '';
+    const t = props.types.find(t => t.compensation_type_id === form.compensation_type_id);
+    return t?.label || '';
+});
+
+/** Card title for the date/time step, adapted to the selected type's input mode. */
+const dateCardTitle = computed(() => {
+    switch (selectedApplicationMode.value) {
+        case 'per_hour': return 'Fecha y Horario';
+        case 'per_day': return 'Rango de Fechas';
+        case 'one_time': return 'Fecha y Cantidad';
+        default: return 'Fecha y Horario';
+    }
+});
+
 /** Auto-calculate hours when datetimes change (per_hour mode). */
 watch([startDatetime, endDatetime], ([start, end]) => {
     if (start && end && selectedApplicationMode.value === 'per_hour') {
@@ -77,15 +94,6 @@ const departmentFilter = ref('');
 
 const filteredEmployees = computed(() => {
     let employees = props.employees;
-
-    // Eligibility: when a compensation-type-backed type is chosen, only show
-    // employees who actually have that type assigned. For non-comp types
-    // (e.g., night_shift, holiday_worked) any active employee is eligible.
-    if (form.compensation_type_id) {
-        employees = employees.filter(emp =>
-            emp.active_compensation_type_ids?.includes(form.compensation_type_id)
-        );
-    }
 
     // Filter by department
     if (departmentFilter.value) {
@@ -138,8 +146,15 @@ const selectDepartment = () => {
     selectAll.value = true;
 };
 
-/** All compensation-backed authorization types (filtering by employee happens the other way around). */
-const compensationTypes = computed(() => props.types.filter(t => t.group === 'compensation'));
+/** Authorization types available for ALL the currently-selected employees (intersection). */
+const compensationTypes = computed(() => {
+    const all = props.types.filter(t => t.group === 'compensation');
+    if (form.employee_ids.length === 0) return all;
+    const selectedEmps = props.employees.filter(e => form.employee_ids.includes(e.id));
+    return all.filter(t => selectedEmps.every(emp =>
+        emp.active_compensation_type_ids?.includes(t.compensation_type_id)
+    ));
+});
 
 const optionValue = (type) => {
     return `comp_${type.compensation_type_id}`;
@@ -182,13 +197,14 @@ watch(departmentFilter, () => {
     selectAll.value = false;
 });
 
-/** When the type changes, drop any selected employees that no longer qualify for it. */
-watch(() => form.compensation_type_id, (newId) => {
-    if (!newId) return;
-    form.employee_ids = form.employee_ids.filter(id => {
-        const emp = props.employees.find(e => e.id === id);
-        return emp?.active_compensation_type_ids?.includes(newId);
-    });
+/** When the employee selection changes, drop the type if it's no longer common to all picked employees. */
+watch(() => form.employee_ids.length, () => {
+    if (!form.compensation_type_id) return;
+    const stillValid = compensationTypes.value.some(t => t.compensation_type_id === form.compensation_type_id);
+    if (!stillValid) {
+        form.type = '';
+        form.compensation_type_id = null;
+    }
 });
 
 const submit = () => {
@@ -229,103 +245,11 @@ const getDepartmentName = (deptId) => {
             <form @submit.prevent="submit" class="space-y-6">
                 <FormErrorBanner :errors="form.errors" />
 
-                <!-- Step 1: Authorization Type -->
+                <!-- Step 1: Employee Selection -->
                 <div class="bg-white rounded-lg shadow p-6">
-                    <h3 class="text-lg font-semibold text-gray-800 mb-1">
-                        <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-600 text-white text-xs mr-2">1</span>
-                        Tipo de Autorizacion
-                    </h3>
-                    <p class="text-xs text-gray-500 mb-4">Selecciona primero el tipo para ver los empleados elegibles.</p>
-                    <select
-                        :value="selectedOptionValue"
-                        @change="onTypeChange"
-                        class="w-full md:w-1/2 rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                        :class="{ 'border-red-500': form.errors.type }"
-                    >
-                        <option value="">Seleccionar tipo...</option>
-                        <option v-for="type in compensationTypes" :key="type.compensation_type_id" :value="optionValue(type)">
-                            {{ type.label }}
-                        </option>
-                    </select>
-                    <p v-if="form.type && typeDescriptions[form.type]" class="mt-2 text-sm text-gray-500">
-                        {{ typeDescriptions[form.type] }}
-                    </p>
-                    <p v-if="form.errors.type" class="mt-1 text-sm text-red-600">
-                        {{ form.errors.type }}
-                    </p>
-
-                    <!-- Night shift info banner -->
-                    <div v-if="form.type === 'night_shift'" class="mt-4 bg-indigo-50 border border-indigo-200 rounded-lg p-3">
-                        <p class="text-sm text-indigo-800">
-                            <strong>Velada:</strong> Las horas de inicio y fin se han pre-configurado para turno nocturno (22:00 - 06:00).
-                            Puede ajustarlos si es necesario.
-                        </p>
-                    </div>
-                </div>
-
-                <!-- Step 2: Date & Time - adapts to application_mode -->
-                <div v-if="selectedApplicationMode" class="bg-white rounded-lg shadow p-6">
-                    <h3 class="text-lg font-semibold text-gray-800 mb-4">
-                        <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-600 text-white text-xs mr-2">2</span>
-                        Fecha y Horario
-                    </h3>
-
-                    <!-- per_hour -->
-                    <div v-if="selectedApplicationMode === 'per_hour'" class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Fecha/Hora Inicio *</label>
-                            <input v-model="startDatetime" type="datetime-local" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.date || form.errors.start_time }" />
-                            <p v-if="form.errors.date" class="mt-1 text-sm text-red-600">{{ form.errors.date }}</p>
-                            <p v-if="form.errors.start_time" class="mt-1 text-sm text-red-600">{{ form.errors.start_time }}</p>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Fecha/Hora Fin *</label>
-                            <input v-model="endDatetime" type="datetime-local" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.end_time }" />
-                            <p v-if="form.errors.end_time" class="mt-1 text-sm text-red-600">{{ form.errors.end_time }}</p>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Horas Totales</label>
-                            <input v-model="form.hours" type="number" step="0.5" min="0" max="48" placeholder="Auto" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.hours }" />
-                            <p v-if="form.errors.hours" class="mt-1 text-sm text-red-600">{{ form.errors.hours }}</p>
-                            <p class="mt-1 text-xs text-gray-500">Se calcula automaticamente</p>
-                        </div>
-                    </div>
-
-                    <!-- per_day -->
-                    <div v-else-if="selectedApplicationMode === 'per_day'" class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Fecha Inicio *</label>
-                            <input v-model="startDate" type="date" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.date }" />
-                            <p v-if="form.errors.date" class="mt-1 text-sm text-red-600">{{ form.errors.date }}</p>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Fecha Fin *</label>
-                            <input v-model="endDate" type="date" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" />
-                            <p v-if="form.hours" class="mt-1 text-sm text-gray-500">{{ form.hours }} dia(s)</p>
-                        </div>
-                    </div>
-
-                    <!-- one_time: date + quantity -->
-                    <div v-else-if="selectedApplicationMode === 'one_time'" class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Fecha *</label>
-                            <input v-model="startDate" type="date" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.date }" />
-                            <p v-if="form.errors.date" class="mt-1 text-sm text-red-600">{{ form.errors.date }}</p>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Cantidad</label>
-                            <input v-model="form.hours" type="number" step="1" min="1" placeholder="1" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.hours }" />
-                            <p v-if="form.errors.hours" class="mt-1 text-sm text-red-600">{{ form.errors.hours }}</p>
-                            <p class="mt-1 text-xs text-gray-500">Numero de unidades (el monto se calcula del valor asignado al empleado)</p>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Step 3: Employee Selection -->
-                <div v-if="form.type" class="bg-white rounded-lg shadow p-6">
                     <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-3">
                         <h3 class="text-lg font-semibold text-gray-800">
-                            <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-600 text-white text-xs mr-2">3</span>
+                            <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-600 text-white text-xs mr-2">1</span>
                             Seleccionar Empleados
                             <span class="text-sm font-normal text-gray-500 ml-2">
                                 ({{ form.employee_ids.length }} seleccionados)
@@ -404,6 +328,105 @@ const getDepartmentName = (deptId) => {
                     <p v-if="form.errors.employee_ids" class="mt-2 text-sm text-red-600">
                         {{ form.errors.employee_ids }}
                     </p>
+                </div>
+
+                <!-- Step 2: Authorization Type -->
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-1">
+                        <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-600 text-white text-xs mr-2">2</span>
+                        Tipo de Autorizacion
+                    </h3>
+                    <p class="text-xs text-gray-500 mb-4">
+                        {{ form.employee_ids.length === 0 ? 'Selecciona primero los empleados.' : 'Solo aparecen los tipos compartidos por todos los empleados seleccionados.' }}
+                    </p>
+                    <select
+                        :value="selectedOptionValue"
+                        @change="onTypeChange"
+                        :disabled="form.employee_ids.length === 0"
+                        class="w-full md:w-1/2 rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
+                        :class="{ 'border-red-500': form.errors.type }"
+                    >
+                        <option value="">{{ form.employee_ids.length === 0 ? 'Selecciona primero los empleados' : 'Seleccionar tipo...' }}</option>
+                        <option v-for="type in compensationTypes" :key="type.compensation_type_id" :value="optionValue(type)">
+                            {{ type.label }}
+                        </option>
+                    </select>
+                    <p v-if="form.employee_ids.length > 0 && compensationTypes.length === 0" class="mt-2 text-xs text-amber-600">
+                        Los empleados seleccionados no comparten ningun tipo de autorizacion.
+                    </p>
+                    <p v-if="form.type && typeDescriptions[form.type]" class="mt-2 text-sm text-gray-500">
+                        {{ typeDescriptions[form.type] }}
+                    </p>
+                    <p v-if="form.errors.type" class="mt-1 text-sm text-red-600">
+                        {{ form.errors.type }}
+                    </p>
+
+                    <!-- Night shift info banner -->
+                    <div v-if="form.type === 'night_shift'" class="mt-4 bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+                        <p class="text-sm text-indigo-800">
+                            <strong>Velada:</strong> Las horas de inicio y fin se han pre-configurado para turno nocturno (22:00 - 06:00).
+                            Puede ajustarlos si es necesario.
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Step 3: Date & Time - adapts to application_mode -->
+                <div v-if="selectedApplicationMode" class="bg-white rounded-lg shadow p-6">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-1">
+                        <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-600 text-white text-xs mr-2">3</span>
+                        {{ dateCardTitle }}
+                    </h3>
+                    <p v-if="selectedTypeLabel" class="text-xs text-gray-500 mb-4">Aplicara como <strong>{{ selectedTypeLabel }}</strong></p>
+
+                    <!-- per_hour -->
+                    <div v-if="selectedApplicationMode === 'per_hour'" class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Fecha/Hora Inicio *</label>
+                            <input v-model="startDatetime" type="datetime-local" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.date || form.errors.start_time }" />
+                            <p v-if="form.errors.date" class="mt-1 text-sm text-red-600">{{ form.errors.date }}</p>
+                            <p v-if="form.errors.start_time" class="mt-1 text-sm text-red-600">{{ form.errors.start_time }}</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Fecha/Hora Fin *</label>
+                            <input v-model="endDatetime" type="datetime-local" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.end_time }" />
+                            <p v-if="form.errors.end_time" class="mt-1 text-sm text-red-600">{{ form.errors.end_time }}</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Horas Totales</label>
+                            <input v-model="form.hours" type="number" step="0.5" min="0" max="48" placeholder="Auto" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.hours }" />
+                            <p v-if="form.errors.hours" class="mt-1 text-sm text-red-600">{{ form.errors.hours }}</p>
+                            <p class="mt-1 text-xs text-gray-500">Se calcula automaticamente</p>
+                        </div>
+                    </div>
+
+                    <!-- per_day -->
+                    <div v-else-if="selectedApplicationMode === 'per_day'" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Fecha Inicio *</label>
+                            <input v-model="startDate" type="date" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.date }" />
+                            <p v-if="form.errors.date" class="mt-1 text-sm text-red-600">{{ form.errors.date }}</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Fecha Fin *</label>
+                            <input v-model="endDate" type="date" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" />
+                            <p v-if="form.hours" class="mt-1 text-sm text-gray-500">{{ form.hours }} dia(s)</p>
+                        </div>
+                    </div>
+
+                    <!-- one_time: date + quantity -->
+                    <div v-else-if="selectedApplicationMode === 'one_time'" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Fecha *</label>
+                            <input v-model="startDate" type="date" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.date }" />
+                            <p v-if="form.errors.date" class="mt-1 text-sm text-red-600">{{ form.errors.date }}</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Cantidad</label>
+                            <input v-model="form.hours" type="number" step="1" min="1" placeholder="1" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.hours }" />
+                            <p v-if="form.errors.hours" class="mt-1 text-sm text-red-600">{{ form.errors.hours }}</p>
+                            <p class="mt-1 text-xs text-gray-500">Numero de unidades</p>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Reason -->

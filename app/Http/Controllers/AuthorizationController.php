@@ -529,14 +529,15 @@ class AuthorizationController extends Controller
      */
     private function getAuthorizationTypes(): array
     {
-        // Compensation-linked types from catalog
+        // All active compensation types in the catalog. Those without an explicit
+        // authorization_type fall back to 'special' so they remain valid against
+        // the type validation rule and still appear in the dropdown.
         $compTypes = CompensationType::active()
-            ->whereNotNull('authorization_type')
             ->orderBy('priority')
             ->get(['id', 'name', 'code', 'authorization_type', 'application_mode']);
 
         $types = $compTypes->map(fn(CompensationType $ct) => [
-            'value' => $ct->authorization_type,
+            'value' => $ct->authorization_type ?: 'special',
             'label' => $ct->name,
             'compensation_type_id' => $ct->id,
             'application_mode' => $ct->application_mode,

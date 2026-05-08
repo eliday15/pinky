@@ -36,6 +36,23 @@ const selectedApplicationMode = computed(() => {
     return t?.application_mode || null;
 });
 
+/** Human-readable label of the selected type. */
+const selectedTypeLabel = computed(() => {
+    if (!form.compensation_type_id) return '';
+    const t = props.types.find(t => t.compensation_type_id === form.compensation_type_id);
+    return t?.label || '';
+});
+
+/** Card title for the date/time step, adapted to the selected type's input mode. */
+const dateCardTitle = computed(() => {
+    switch (selectedApplicationMode.value) {
+        case 'per_hour': return 'Fecha y Horario';
+        case 'per_day': return 'Rango de Fechas';
+        case 'one_time': return 'Fecha y Cantidad';
+        default: return 'Fecha y Horario';
+    }
+});
+
 /** Auto-calculate hours when datetimes change (per_hour mode). */
 watch([startDatetime, endDatetime], ([start, end]) => {
     if (start && end && selectedApplicationMode.value === 'per_hour') {
@@ -187,14 +204,18 @@ const typeDescriptions = {
                             <select
                                 :value="selectedOptionValue"
                                 @change="onTypeChange"
-                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                :disabled="!form.employee_id"
+                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
                                 :class="{ 'border-red-500': form.errors.type }"
                             >
-                                <option value="">Seleccionar...</option>
+                                <option value="">{{ form.employee_id ? 'Seleccionar...' : 'Selecciona primero un empleado' }}</option>
                                 <option v-for="type in compensationTypes" :key="type.compensation_type_id" :value="optionValue(type)">
                                     {{ type.label }}
                                 </option>
                             </select>
+                            <p v-if="form.employee_id && compensationTypes.length === 0" class="mt-1 text-xs text-amber-600">
+                                Este empleado no tiene tipos de autorizacion habilitados.
+                            </p>
                             <p v-if="form.type && typeDescriptions[form.type]" class="mt-1 text-sm text-gray-500">
                                 {{ typeDescriptions[form.type] }}
                             </p>
@@ -207,7 +228,8 @@ const typeDescriptions = {
 
                 <!-- Date & Time - adapts to application_mode -->
                 <div v-if="selectedApplicationMode" class="bg-white rounded-lg shadow p-6">
-                    <h3 class="text-lg font-semibold text-gray-800 mb-4">Fecha y Horario</h3>
+                    <h3 class="text-lg font-semibold text-gray-800 mb-1">{{ dateCardTitle }}</h3>
+                    <p v-if="selectedTypeLabel" class="text-xs text-gray-500 mb-4">Aplicara como <strong>{{ selectedTypeLabel }}</strong></p>
 
                     <!-- per_hour: datetime-local start + end + auto hours -->
                     <div v-if="selectedApplicationMode === 'per_hour'" class="grid grid-cols-1 md:grid-cols-3 gap-6">
