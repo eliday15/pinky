@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\AttendanceRecord;
 use App\Models\Employee;
+use App\Models\Holiday;
 use App\Models\SystemSetting;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -41,13 +42,16 @@ class AttendanceReportController extends Controller implements HasMiddleware
         $earlyDepartureIsAbsence = (bool) SystemSetting::get('early_departure_is_absence', true);
 
         $employees = $this->getEmployeeLookup($activeEmployeeIds);
+        $holidayDates = $this->getHolidayDates($startDate, $endDate);
 
-        // Absent records — only fetch columns we need
+        // Absent records — only fetch columns we need. Holidays never count
+        // as faltas regardless of how the row was originally classified.
         $absentRows = DB::table('attendance_records')
             ->select('employee_id', 'work_date', 'check_in', 'late_minutes', 'early_departure_minutes')
             ->whereBetween('work_date', [$startDate, $endDate])
             ->whereIn('employee_id', $activeEmployeeIds)
             ->where('status', 'absent')
+            ->when(! empty($holidayDates), fn ($q) => $q->whereNotIn('work_date', $holidayDates))
             ->get();
 
         $noShowByEmp = [];
@@ -69,12 +73,14 @@ class AttendanceReportController extends Controller implements HasMiddleware
             }
         }
 
-        // Late counts per employee per month for retardo-accumulated faltas
+        // Late counts per employee per month for retardo-accumulated faltas.
+        // Lates that fall on a holiday don't accumulate toward a generated falta.
         $lateCounts = DB::table('attendance_records')
             ->select('employee_id', DB::raw("DATE_FORMAT(work_date, '%Y-%m') as month"), DB::raw('COUNT(*) as cnt'))
             ->whereBetween('work_date', [$startDate, $endDate])
             ->whereIn('employee_id', $activeEmployeeIds)
             ->where('status', 'late')
+            ->when(! empty($holidayDates), fn ($q) => $q->whereNotIn('work_date', $holidayDates))
             ->groupBy('employee_id', DB::raw("DATE_FORMAT(work_date, '%Y-%m')"))
             ->get();
 
@@ -152,10 +158,12 @@ class AttendanceReportController extends Controller implements HasMiddleware
             ->select('id', 'employee_number', 'full_name', 'department_id', 'schedule_id', 'schedule_overrides')
             ->get();
 
-        $allRecords = AttendanceRecord::select('employee_id', 'status', 'worked_hours', 'late_minutes', 'early_departure_minutes')
+        $allRecords = AttendanceRecord::select('employee_id', 'work_date', 'status', 'worked_hours', 'late_minutes', 'early_departure_minutes')
             ->whereBetween('work_date', [$startDate, $endDate])
             ->whereIn('employee_id', $employees->pluck('id'))
             ->get();
+
+        $holidayDates = $this->getHolidayDates($startDate, $endDate);
 
         $byEmployee = collect();
 
@@ -173,7 +181,8 @@ class AttendanceReportController extends Controller implements HasMiddleware
             $expectedDays = 0;
             $currentDate = $startDate->copy();
             while ($currentDate->lte($endDate)) {
-                if (in_array($currentDate->englishDayOfWeek, $workingDays)) {
+                if (in_array($currentDate->englishDayOfWeek, $workingDays)
+                    && ! in_array($currentDate->toDateString(), $holidayDates)) {
                     $expectedDays++;
                 }
                 $currentDate->addDay();
@@ -184,17 +193,22 @@ class AttendanceReportController extends Controller implements HasMiddleware
             }
 
             $records = $allRecords->where('employee_id', $employee->id);
-            $excusedDays = $records->whereIn('status', ['holiday', 'vacation', 'sick_leave', 'permission'])->count();
+            // A record on a holiday date is excused regardless of status,
+            // so a stale 'absent' row on a now-registered holiday doesn't break perfect attendance.
+            $excusedDays = $records->filter(fn ($r) => in_array($r->status, ['holiday', 'vacation', 'sick_leave', 'permission'])
+                || in_array(Carbon::parse($r->work_date)->toDateString(), $holidayDates))->count();
             $adjustedExpected = $expectedDays - $excusedDays;
 
             if ($adjustedExpected <= 0) {
                 continue;
             }
 
-            $presentRecords = $records->where('status', 'present');
-            $hasLate = $records->where('late_minutes', '>', 0)->isNotEmpty();
-            $hasEarlyDeparture = $records->where('early_departure_minutes', '>', 0)->isNotEmpty();
-            $hasAbsence = $records->where('status', 'absent')->isNotEmpty();
+            // Filter out holiday-dated rows so a stale absent/late on a holiday can't break the streak.
+            $nonHolidayRecords = $records->filter(fn ($r) => ! in_array(Carbon::parse($r->work_date)->toDateString(), $holidayDates));
+            $presentRecords = $nonHolidayRecords->where('status', 'present');
+            $hasLate = $nonHolidayRecords->where('late_minutes', '>', 0)->isNotEmpty();
+            $hasEarlyDeparture = $nonHolidayRecords->where('early_departure_minutes', '>', 0)->isNotEmpty();
+            $hasAbsence = $nonHolidayRecords->where('status', 'absent')->isNotEmpty();
 
             if ($presentRecords->count() >= $adjustedExpected && !$hasLate && !$hasEarlyDeparture && !$hasAbsence) {
                 $byEmployee->push([
@@ -232,12 +246,14 @@ class AttendanceReportController extends Controller implements HasMiddleware
         $lateToAbsenceCount = (int) SystemSetting::get('late_to_absence_count', 6);
 
         $employees = $this->getEmployeeLookup($activeEmployeeIds);
+        $holidayDates = $this->getHolidayDates($startDate, $endDate);
 
         $rows = DB::table('attendance_records')
             ->select('employee_id', 'work_date', 'late_minutes', 'check_in')
             ->whereBetween('work_date', [$startDate, $endDate])
             ->whereIn('employee_id', $activeEmployeeIds)
             ->where('status', 'late')
+            ->when(! empty($holidayDates), fn ($q) => $q->whereNotIn('work_date', $holidayDates))
             ->orderBy('late_minutes', 'desc')
             ->get();
 
@@ -295,12 +311,14 @@ class AttendanceReportController extends Controller implements HasMiddleware
         $earlyDepartureIsAbsence = (bool) SystemSetting::get('early_departure_is_absence', true);
 
         $employees = $this->getEmployeeLookup($activeEmployeeIds);
+        $holidayDates = $this->getHolidayDates($startDate, $endDate);
 
         $rows = DB::table('attendance_records')
             ->select('employee_id', 'work_date', 'early_departure_minutes', 'check_out')
             ->whereBetween('work_date', [$startDate, $endDate])
             ->whereIn('employee_id', $activeEmployeeIds)
             ->where('early_departure_minutes', '>', 0)
+            ->when(! empty($holidayDates), fn ($q) => $q->whereNotIn('work_date', $holidayDates))
             ->orderBy('early_departure_minutes', 'desc')
             ->get();
 
@@ -352,6 +370,18 @@ class AttendanceReportController extends Controller implements HasMiddleware
                 'earlyIsAbsence' => $earlyDepartureIsAbsence,
             ],
         ]);
+    }
+
+    /**
+     * Return DOF + Yom Tov holiday dates (as YYYY-MM-DD strings) within range.
+     * Used to exclude holidays from absence/late/early-departure counts.
+     */
+    private function getHolidayDates(Carbon $startDate, Carbon $endDate): array
+    {
+        return Holiday::whereBetween('date', [$startDate->toDateString(), $endDate->toDateString()])
+            ->pluck('date')
+            ->map(fn ($d) => Carbon::parse($d)->toDateString())
+            ->all();
     }
 
     private function getDateRange(Request $request): array

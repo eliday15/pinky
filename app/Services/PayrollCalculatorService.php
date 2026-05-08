@@ -470,10 +470,16 @@ class PayrollCalculatorService
 
         foreach ($attendance as $record) {
             $workDate = Carbon::parse($record->work_date);
-            $isHoliday = in_array($record->work_date, $holidayDates);
+            $workDateStr = $workDate->toDateString();
+            $isHoliday = in_array($workDateStr, $holidayDates);
             $isWeekend = $workDate->isWeekend();
 
             if ($record->status === 'absent') {
+                // Holidays never count as ausencias even if a stale row was
+                // synced with status='absent' before the holiday was registered.
+                if ($isHoliday) {
+                    continue;
+                }
                 $daysAbsent++;
 
                 continue;

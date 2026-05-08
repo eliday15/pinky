@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\AttendanceRecord;
 use App\Models\Department;
 use App\Models\Employee;
+use App\Models\Holiday;
 use App\Models\Incident;
 use App\Models\PayrollEntry;
 use App\Models\PayrollPeriod;
@@ -306,10 +307,16 @@ class ReportController extends Controller implements HasMiddleware
 
         $activeEmployeeIds = Employee::active()->pluck('id');
 
+        $holidayDates = Holiday::whereBetween('date', [$startDate->toDateString(), $endDate->toDateString()])
+            ->pluck('date')
+            ->map(fn ($d) => Carbon::parse($d)->toDateString())
+            ->all();
+
         $records = AttendanceRecord::with(['employee.department'])
             ->whereIn('employee_id', $activeEmployeeIds)
             ->whereBetween('work_date', [$startDate, $endDate])
             ->where('status', 'absent')
+            ->when(! empty($holidayDates), fn ($q) => $q->whereNotIn('work_date', $holidayDates))
             ->get();
 
         // Use whereHas for relationship filtering

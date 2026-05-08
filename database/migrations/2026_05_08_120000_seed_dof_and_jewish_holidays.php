@@ -1,20 +1,25 @@
 <?php
 
-namespace Database\Seeders;
-
 use App\Models\Holiday;
-use Illuminate\Database\Seeder;
+use Illuminate\Database\Migrations\Migration;
 
-class HolidaysSeeder extends Seeder
+/**
+ * Idempotently seeds the holidays table with:
+ *   - Mexican federal holidays (Article 74 LFT, published in the DOF) 2025-2030
+ *   - Jewish high-holiday Yom Tov days (Rosh Hashana 1-2 and Yom Kippur) 2025-2030
+ *
+ * Used by the absence/payroll engine so a holiday date is never counted as a
+ * "falta" or "ausencia" — see ZktecoSyncService::calculateAttendanceMetrics
+ * and PayrollCalculatorService::calculateAttendanceMetrics.
+ */
+return new class extends Migration
 {
-    /**
-     * Seeds Mexican federal holidays (Article 74 LFT, published in the DOF) and
-     * the Yom Tov days requested for HR purposes (Rosh Hashaná 1-2, Yom Kipur).
-     * Idempotent — safe to re-run when adding new years.
-     */
-    public function run(): void
+    public function up(): void
     {
-        $rows = array_merge($this->mexicanDof(), $this->jewishYomTov());
+        $rows = array_merge(
+            $this->mexicanDofHolidays(),
+            $this->jewishYomTovDays(),
+        );
 
         foreach ($rows as $row) {
             Holiday::updateOrCreate(
@@ -28,7 +33,17 @@ class HolidaysSeeder extends Seeder
         }
     }
 
-    private function mexicanDof(): array
+    public function down(): void
+    {
+        // No-op: removing seed rows could orphan attendance flags. If reseeding
+        // is needed, edit the holidays table directly.
+    }
+
+    /**
+     * Article 74 LFT holidays for 2025-2030.
+     * Source: Diario Oficial de la Federación.
+     */
+    private function mexicanDofHolidays(): array
     {
         return [
             ['date' => '2025-01-01', 'name' => 'Año Nuevo'],
@@ -81,9 +96,13 @@ class HolidaysSeeder extends Seeder
         ];
     }
 
-    private function jewishYomTov(): array
+    /**
+     * Yom Tov days the user requested: Rosh Hashana day 1, day 2, and Yom Kippur.
+     * Civil dates align with the Hebrew calendar 5786-5791.
+     */
+    private function jewishYomTovDays(): array
     {
-        return [
+        $rows = [
             ['date' => '2025-09-23', 'name' => 'Rosh Hashaná (día 1)'],
             ['date' => '2025-09-24', 'name' => 'Rosh Hashaná (día 2)'],
             ['date' => '2025-10-02', 'name' => 'Yom Kipur'],
@@ -108,5 +127,7 @@ class HolidaysSeeder extends Seeder
             ['date' => '2030-09-29', 'name' => 'Rosh Hashaná (día 2)'],
             ['date' => '2030-10-07', 'name' => 'Yom Kipur'],
         ];
+
+        return $rows;
     }
-}
+};
