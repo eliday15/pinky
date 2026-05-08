@@ -607,7 +607,12 @@ watch(() => form.hire_date, onHireDateChange);
                         <div class="border border-gray-200 rounded-lg p-4">
                             <div class="flex items-center gap-2 mb-1">
                                 <h4 class="text-sm font-semibold text-gray-800">Mi Jefe Directo</h4>
-                                <span class="text-xs px-2 py-0.5 rounded-full bg-pink-100 text-pink-700">1 persona</span>
+                                <span
+                                    class="text-xs px-2 py-0.5 rounded-full"
+                                    :class="form.supervisor_id ? 'bg-pink-100 text-pink-700' : 'bg-gray-100 text-gray-500'"
+                                >
+                                    {{ form.supervisor_id ? '1 persona' : 'Sin asignar' }}
+                                </span>
                                 <span v-if="autoFilledFields.supervisor_id" class="text-blue-500 text-xs">(Auto)</span>
                             </div>
                             <p class="text-xs text-gray-500 mb-3">¿De quien depende este empleado? Selecciona una sola persona.</p>
@@ -671,7 +676,12 @@ watch(() => form.hire_date, onHireDateChange);
                         <div class="border border-gray-200 rounded-lg p-4">
                             <div class="flex items-center gap-2 mb-1">
                                 <h4 class="text-sm font-semibold text-gray-800">Es Jefe Directo De</h4>
-                                <span class="text-xs px-2 py-0.5 rounded-full bg-pink-100 text-pink-700">{{ form.subordinate_ids.length }} {{ form.subordinate_ids.length === 1 ? 'persona' : 'personas' }}</span>
+                                <span
+                                    class="text-xs px-2 py-0.5 rounded-full"
+                                    :class="form.subordinate_ids.length ? 'bg-pink-100 text-pink-700' : 'bg-gray-100 text-gray-500'"
+                                >
+                                    {{ form.subordinate_ids.length ? `${form.subordinate_ids.length} ${form.subordinate_ids.length === 1 ? 'persona' : 'personas'}` : 'Sin asignar' }}
+                                </span>
                             </div>
                             <p class="text-xs text-gray-500 mb-3">¿A quienes supervisa este empleado? Marca todos sus reportes directos.</p>
 
