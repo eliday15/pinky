@@ -103,7 +103,7 @@ class AttendanceRecordPolicy
             return false;
         }
 
-        return $recordEmployee->supervisor_id === $userEmployee->id;
+        return in_array($recordEmployee->id, $userEmployee->allSubordinateIds(), true);
     }
 
     /**

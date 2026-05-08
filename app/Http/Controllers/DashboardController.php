@@ -131,9 +131,9 @@ class DashboardController extends Controller
     {
         $userEmployee = $user->employee;
 
-        // Team employee IDs (direct reports only)
+        // Team employee IDs (full subtree — every descendant in the hierarchy).
         $teamEmployeeIds = Employee::active()
-            ->where('supervisor_id', $userEmployee->id)
+            ->whereIn('id', $userEmployee->allSubordinateIds())
             ->pluck('id');
         $totalTeam = $teamEmployeeIds->count();
 

@@ -162,6 +162,45 @@ const supervisorIsAutoResolved = props.employee.position?.supervisor_position_id
                     </div>
                 </div>
 
+                <!-- Subordinates (Es jefe directo de) -->
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">
+                        Es jefe directo de
+                        <span class="text-sm font-normal text-gray-400">({{ employee.subordinates?.length || 0 }})</span>
+                    </h3>
+                    <div v-if="employee.subordinates?.length" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <component
+                            :is="can?.editSubordinates?.[sub.id] ? 'Link' : 'div'"
+                            v-for="sub in employee.subordinates"
+                            :key="sub.id"
+                            :href="can?.editSubordinates?.[sub.id] ? route('employees.edit', sub.id) : undefined"
+                            class="flex items-center p-3 bg-gray-50 rounded-lg"
+                            :class="can?.editSubordinates?.[sub.id] ? 'hover:bg-pink-50 cursor-pointer transition-colors' : 'cursor-default'"
+                        >
+                            <div class="w-10 h-10 rounded-full bg-pink-100 flex items-center justify-center overflow-hidden flex-shrink-0">
+                                <img v-if="sub.photo_path" :src="`/storage/${sub.photo_path}`" class="w-full h-full object-cover" />
+                                <span v-else class="text-pink-600 font-bold">
+                                    {{ sub.full_name?.charAt(0)?.toUpperCase() || '?' }}
+                                </span>
+                            </div>
+                            <div class="ml-3 flex-1 min-w-0">
+                                <p class="text-sm font-medium text-gray-800 truncate">{{ sub.full_name }}</p>
+                                <p class="text-xs text-gray-500 truncate">
+                                    {{ sub.position?.name || 'Sin puesto' }}<span v-if="sub.department"> &middot; {{ sub.department.name }}</span>
+                                </p>
+                            </div>
+                            <Link
+                                v-if="!can?.editSubordinates?.[sub.id]"
+                                :href="route('employees.show', sub.id)"
+                                class="ml-2 text-xs text-pink-600 hover:text-pink-800"
+                            >
+                                Ver
+                            </Link>
+                        </component>
+                    </div>
+                    <p v-else class="text-gray-500 text-center py-4">Sin subordinados directos</p>
+                </div>
+
                 <!-- Contact & Compensation -->
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div class="bg-white rounded-lg shadow p-6">

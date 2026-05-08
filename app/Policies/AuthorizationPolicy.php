@@ -156,7 +156,7 @@ class AuthorizationPolicy
             return false;
         }
 
-        return $authEmployee->supervisor_id === $userEmployee->id;
+        return in_array($authEmployee->id, $userEmployee->allSubordinateIds(), true);
     }
 
     /**

@@ -38,8 +38,9 @@ class AnomalyResolutionController extends Controller
         if (!$user->hasPermissionTo('anomalies.view_all')) {
             $userEmployee = $user->employee;
             if ($userEmployee) {
-                $query->whereHas('employee', function ($q) use ($userEmployee) {
-                    $q->where('supervisor_id', $userEmployee->id);
+                $allowedIds = $userEmployee->allSubordinateIds();
+                $query->whereHas('employee', function ($q) use ($allowedIds) {
+                    $q->whereIn('id', $allowedIds);
                 });
             } else {
                 $query->whereRaw('1 = 0');
@@ -232,7 +233,7 @@ class AnomalyResolutionController extends Controller
         if (!$user->hasPermissionTo('anomalies.view_all')) {
             $userEmployee = $user->employee;
             $allowedEmployeeIds = $userEmployee
-                ? Employee::where('supervisor_id', $userEmployee->id)->pluck('id')->toArray()
+                ? $userEmployee->allSubordinateIds()
                 : [];
         }
 
@@ -281,7 +282,7 @@ class AnomalyResolutionController extends Controller
         if (!$user->hasPermissionTo('anomalies.view_all')) {
             $userEmployee = $user->employee;
             $allowedEmployeeIds = $userEmployee
-                ? Employee::where('supervisor_id', $userEmployee->id)->pluck('id')->toArray()
+                ? $userEmployee->allSubordinateIds()
                 : [];
         }
 

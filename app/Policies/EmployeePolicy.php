@@ -124,7 +124,7 @@ class EmployeePolicy
             return false;
         }
 
-        return $employee->supervisor_id === $userEmployee->id;
+        return in_array($employee->id, $userEmployee->allSubordinateIds(), true);
     }
 
     /**

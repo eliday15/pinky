@@ -158,7 +158,7 @@ class IncidentPolicy
             return false;
         }
 
-        return $incidentEmployee->supervisor_id === $userEmployee->id;
+        return in_array($incidentEmployee->id, $userEmployee->allSubordinateIds(), true);
     }
 
     /**

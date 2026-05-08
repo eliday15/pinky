@@ -249,6 +249,11 @@ class EmployeeController extends Controller
             'position',
             'schedule',
             'supervisor',
+            'subordinates' => function ($q) {
+                $q->where('status', 'active')
+                    ->with(['department:id,name', 'position:id,name'])
+                    ->orderBy('full_name');
+            },
             'compensationTypes',
             'emergencyContacts',
             'attendanceRecords' => function ($q) {
@@ -258,6 +263,10 @@ class EmployeeController extends Controller
                 $q->with('incidentType')->orderBy('start_date', 'desc')->limit(10);
             },
         ]);
+
+        $canEditSubordinates = $employee->subordinates
+            ->mapWithKeys(fn ($sub) => [$sub->id => $user->can('update', $sub)])
+            ->all();
 
         $auditHistory = AuditLog::where('auditable_type', Employee::class)
             ->where('auditable_id', $employee->id)
@@ -284,6 +293,7 @@ class EmployeeController extends Controller
                 'edit' => $user->can('update', $employee),
                 'delete' => $user->can('delete', $employee),
                 'viewSalary' => $user->can('viewSalary', $employee),
+                'editSubordinates' => $canEditSubordinates,
             ],
         ]);
     }
@@ -670,7 +680,7 @@ class EmployeeController extends Controller
             if ($user->hasPermissionTo('employees.view_team')) {
                 $userEmployee = $user->employee;
                 if ($userEmployee) {
-                    $query->where('supervisor_id', $userEmployee->id);
+                    $query->whereIn('id', $userEmployee->allSubordinateIds());
                 } else {
                     $query->whereRaw('1 = 0');
                 }

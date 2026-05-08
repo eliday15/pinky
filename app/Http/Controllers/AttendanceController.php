@@ -69,7 +69,7 @@ class AttendanceController extends Controller
             if ($user->hasPermissionTo('attendance.view_team')) {
                 $userEmployee = $user->employee;
                 if ($userEmployee) {
-                    $employeeQuery->where('supervisor_id', $userEmployee->id);
+                    $employeeQuery->whereIn('id', $userEmployee->allSubordinateIds());
                 } else {
                     $employeeQuery->whereRaw('1 = 0');
                 }
@@ -122,7 +122,7 @@ class AttendanceController extends Controller
                 $userEmployee = $user->employee;
                 if ($userEmployee) {
                     $teamEmployeeIds = Employee::active()
-                        ->where('supervisor_id', $userEmployee->id)
+                        ->whereIn('id', $userEmployee->allSubordinateIds())
                         ->pluck('id');
                     $allRecords->whereIn('employee_id', $teamEmployeeIds);
                 }
@@ -187,7 +187,7 @@ class AttendanceController extends Controller
                 $userEmployee = $user->employee;
                 if ($userEmployee) {
                     $scopedEmployeeIds = Employee::active()
-                        ->where('supervisor_id', $userEmployee->id)
+                        ->whereIn('id', $userEmployee->allSubordinateIds())
                         ->pluck('id');
                 } else {
                     $scopedEmployeeIds = collect();

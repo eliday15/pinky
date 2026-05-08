@@ -39,9 +39,9 @@ class IncidentController extends Controller
             if ($user->hasPermissionTo('incidents.view_team')) {
                 $userEmployee = $user->employee;
                 if ($userEmployee) {
-                    // Supervisors only see employees they directly supervise
-                    $query->whereHas('employee', function ($q) use ($userEmployee) {
-                        $q->where('supervisor_id', $userEmployee->id);
+                    $allowedIds = $userEmployee->allSubordinateIds();
+                    $query->whereHas('employee', function ($q) use ($allowedIds) {
+                        $q->whereIn('id', $allowedIds);
                     });
                 } else {
                     $query->whereRaw('1 = 0');
@@ -77,9 +77,9 @@ class IncidentController extends Controller
             if ($user->hasPermissionTo('incidents.view_team')) {
                 $userEmployee = $user->employee;
                 if ($userEmployee) {
-                    // Supervisors only see employees they directly supervise
-                    $pendingQuery->whereHas('employee', function ($q) use ($userEmployee) {
-                        $q->where('supervisor_id', $userEmployee->id);
+                    $allowedIds = $userEmployee->allSubordinateIds();
+                    $pendingQuery->whereHas('employee', function ($q) use ($allowedIds) {
+                        $q->whereIn('id', $allowedIds);
                     });
                 }
             } elseif ($user->hasPermissionTo('incidents.view_own')) {
@@ -94,8 +94,7 @@ class IncidentController extends Controller
             if ($user->hasPermissionTo('incidents.view_team')) {
                 $userEmployee = $user->employee;
                 if ($userEmployee) {
-                    // Supervisors only see employees they directly supervise
-                    $employeesQuery->where('supervisor_id', $userEmployee->id);
+                    $employeesQuery->whereIn('id', $userEmployee->allSubordinateIds());
                 }
             } elseif ($user->hasPermissionTo('incidents.view_own')) {
                 $employeesQuery->where('id', $user->employee?->id);
@@ -132,10 +131,8 @@ class IncidentController extends Controller
                 $userEmployee = $user->employee;
                 if ($userEmployee) {
                     // Supervisors only see employees they directly supervise (plus themselves)
-                    $employeesQuery->where(function ($q) use ($userEmployee) {
-                        $q->where('supervisor_id', $userEmployee->id)
-                            ->orWhere('id', $userEmployee->id);
-                    });
+                    $allowedIds = array_merge([$userEmployee->id], $userEmployee->allSubordinateIds());
+                    $employeesQuery->whereIn('id', $allowedIds);
                 }
             } else {
                 // Can only create for themselves
@@ -313,10 +310,8 @@ class IncidentController extends Controller
                 $userEmployee = $user->employee;
                 if ($userEmployee) {
                     // Supervisors only see employees they directly supervise (plus themselves)
-                    $employeesQuery->where(function ($q) use ($userEmployee) {
-                        $q->where('supervisor_id', $userEmployee->id)
-                            ->orWhere('id', $userEmployee->id);
-                    });
+                    $allowedIds = array_merge([$userEmployee->id], $userEmployee->allSubordinateIds());
+                    $employeesQuery->whereIn('id', $allowedIds);
                 }
             } else {
                 $employeesQuery->where('id', $user->employee?->id);

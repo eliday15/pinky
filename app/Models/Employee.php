@@ -149,6 +149,45 @@ class Employee extends Model
     }
 
     /**
+     * Cached transitive subordinate id list for the current request.
+     */
+    private ?array $cachedSubtree = null;
+
+    /**
+     * Get every subordinate id under this employee, recursively (full subtree).
+     *
+     * Cycle-safe via visited set. Cached per-instance for the request.
+     * Returns ids only — does NOT include the employee's own id.
+     */
+    public function allSubordinateIds(): array
+    {
+        if ($this->cachedSubtree !== null) {
+            return $this->cachedSubtree;
+        }
+
+        $visited = [$this->id => true];
+        $queue = [$this->id];
+        $result = [];
+
+        while (! empty($queue)) {
+            $batch = $queue;
+            $queue = [];
+
+            $children = Employee::whereIn('supervisor_id', $batch)->pluck('id', 'id');
+            foreach ($children as $childId) {
+                if (isset($visited[$childId])) {
+                    continue;
+                }
+                $visited[$childId] = true;
+                $result[] = $childId;
+                $queue[] = $childId;
+            }
+        }
+
+        return $this->cachedSubtree = $result;
+    }
+
+    /**
      * Get all attendance records for this employee.
      */
     public function attendanceRecords(): HasMany
