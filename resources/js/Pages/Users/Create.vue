@@ -7,7 +7,7 @@ import PrimaryButton from '@/Components/PrimaryButton.vue';
 import SearchableSelect from '@/Components/SearchableSelect.vue';
 import TextInput from '@/Components/TextInput.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 
 const props = defineProps({
     roles: Array,
@@ -23,6 +23,29 @@ const form = useForm({
 });
 
 const showPassword = ref(false);
+const autoFilled = ref({ name: false, email: false });
+
+watch(() => form.employee_id, (newId) => {
+    if (!newId) {
+        if (autoFilled.value.name) { form.name = ''; autoFilled.value.name = false; }
+        if (autoFilled.value.email) { form.email = ''; autoFilled.value.email = false; }
+        return;
+    }
+    const emp = props.employees.find(e => e.id === newId);
+    if (!emp) return;
+
+    if (!form.name || autoFilled.value.name) {
+        form.name = emp.full_name || '';
+        autoFilled.value.name = true;
+    }
+    if ((!form.email || autoFilled.value.email) && emp.email) {
+        form.email = emp.email;
+        autoFilled.value.email = true;
+    }
+});
+
+const onNameInput = () => { autoFilled.value.name = false; };
+const onEmailInput = () => { autoFilled.value.email = false; };
 
 const generatePassword = () => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%';
@@ -56,14 +79,34 @@ const submit = () => {
                 <form @submit.prevent="submit" class="space-y-6">
                     <FormErrorBanner :errors="form.errors" />
 
+                    <!-- Link Employee (first: drives autofill) -->
+                    <div>
+                        <InputLabel for="employee_id" value="Vincular a Empleado (Opcional)" />
+                        <SearchableSelect
+                            v-model="form.employee_id"
+                            :options="employees"
+                            value-key="id"
+                            label-key="full_name"
+                            placeholder="Buscar empleado..."
+                            :has-error="!!form.errors.employee_id"
+                            class="mt-1"
+                        />
+                        <p class="mt-1 text-xs text-gray-500">Selecciona primero al empleado para autorrellenar nombre y email. Solo se muestran empleados activos sin usuario.</p>
+                        <InputError class="mt-2" :message="form.errors.employee_id" />
+                    </div>
+
                     <!-- Name -->
                     <div>
-                        <InputLabel for="name" value="Nombre" />
+                        <InputLabel for="name">
+                            Nombre
+                            <span v-if="autoFilled.name" class="text-blue-500 text-xs font-normal">(Auto)</span>
+                        </InputLabel>
                         <TextInput
                             id="name"
                             type="text"
                             class="mt-1 block w-full"
                             v-model="form.name"
+                            @input="onNameInput"
                             required
                             autofocus
                         />
@@ -72,12 +115,16 @@ const submit = () => {
 
                     <!-- Email -->
                     <div>
-                        <InputLabel for="email" value="Correo Electronico" />
+                        <InputLabel for="email">
+                            Correo Electronico
+                            <span v-if="autoFilled.email" class="text-blue-500 text-xs font-normal">(Auto)</span>
+                        </InputLabel>
                         <TextInput
                             id="email"
                             type="email"
                             class="mt-1 block w-full"
                             v-model="form.email"
+                            @input="onEmailInput"
                             required
                         />
                         <InputError class="mt-2" :message="form.errors.email" />
@@ -134,22 +181,6 @@ const submit = () => {
                             </option>
                         </select>
                         <InputError class="mt-2" :message="form.errors.role" />
-                    </div>
-
-                    <!-- Link Employee -->
-                    <div>
-                        <InputLabel for="employee_id" value="Vincular a Empleado (Opcional)" />
-                        <SearchableSelect
-                            v-model="form.employee_id"
-                            :options="employees"
-                            value-key="id"
-                            label-key="full_name"
-                            placeholder="Buscar empleado..."
-                            :has-error="!!form.errors.employee_id"
-                            class="mt-1"
-                        />
-                        <p class="mt-1 text-xs text-gray-500">Solo se muestran empleados activos que no estan vinculados a ningun usuario.</p>
-                        <InputError class="mt-2" :message="form.errors.employee_id" />
                     </div>
 
                     <!-- Info box -->

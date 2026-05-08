@@ -92,7 +92,7 @@ class UserController extends Controller
             'roles' => Role::orderBy('name')->pluck('name'),
             'employees' => Employee::active()
                 ->whereNull('user_id')
-                ->get(['id', 'full_name']),
+                ->get(['id', 'full_name', 'email']),
         ]);
     }
 
