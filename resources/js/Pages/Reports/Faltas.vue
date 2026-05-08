@@ -22,6 +22,7 @@ const applyFilter = () => {
 };
 
 const formatDate = (date) => fmtDate(date, { day: 'numeric', month: 'short', year: 'numeric' });
+const formatTime = (t) => t ? t.substring(0, 5) : '—';
 const formatShortDate = (date) => fmtDate(date, { day: 'numeric', month: 'short' });
 const formatMonth = (ym) => {
     const [y, m] = ym.split('-');
@@ -103,6 +104,7 @@ const formatMonth = (ym) => {
                                 <div class="ml-3">
                                     <p class="text-sm font-medium text-gray-900">{{ row.employee?.full_name }}</p>
                                     <p class="text-xs text-gray-500">{{ row.employee?.department?.name }}</p>
+                                    <p class="text-xs text-gray-400">Horario: {{ formatTime(row.employee?.entry_time) }} – {{ formatTime(row.employee?.exit_time) }}</p>
                                 </div>
                             </div>
                         </td>
