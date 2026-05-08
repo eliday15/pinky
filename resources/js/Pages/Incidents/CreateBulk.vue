@@ -22,12 +22,21 @@ const searchQuery = ref('');
 const selectAll = ref(false);
 
 const filteredEmployees = computed(() => {
-    if (!searchQuery.value) return props.employees;
-    const query = searchQuery.value.toLowerCase();
-    return props.employees.filter(emp =>
-        emp.full_name.toLowerCase().includes(query) ||
-        emp.employee_number.toLowerCase().includes(query)
-    );
+    let employees = props.employees;
+    if (searchQuery.value) {
+        const query = searchQuery.value.toLowerCase();
+        employees = employees.filter(emp =>
+            emp.full_name.toLowerCase().includes(query) ||
+            emp.employee_number.toLowerCase().includes(query)
+        );
+    }
+    const selected = new Set(form.employee_ids);
+    return [...employees].sort((a, b) => {
+        const aSel = selected.has(a.id) ? 0 : 1;
+        const bSel = selected.has(b.id) ? 0 : 1;
+        if (aSel !== bSel) return aSel - bSel;
+        return (a.full_name || '').localeCompare(b.full_name || '');
+    });
 });
 
 const toggleSelectAll = () => {
@@ -80,10 +89,66 @@ const submit = () => {
             <form @submit.prevent="submit" class="space-y-6">
                 <FormErrorBanner :errors="form.errors" />
 
-                <!-- Employee Selection -->
+                <!-- Step 1: Incident Type -->
                 <div class="bg-white rounded-lg shadow p-6">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-1">
+                        <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-600 text-white text-xs mr-2">1</span>
+                        Tipo de Incidencia
+                    </h3>
+                    <p class="text-xs text-gray-500 mb-4">Selecciona primero el tipo para continuar.</p>
+                    <select
+                        v-model="form.incident_type_id"
+                        class="w-full md:w-1/2 rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                        :class="{ 'border-red-500': form.errors.incident_type_id }"
+                    >
+                        <option value="">Seleccionar tipo...</option>
+                        <option v-for="type in incidentTypes" :key="type.id" :value="type.id">
+                            {{ type.name }}
+                        </option>
+                    </select>
+                    <p v-if="selectedType && !selectedType.requires_approval" class="mt-2 text-sm text-green-600">
+                        Este tipo no requiere aprobacion - se aplicara automaticamente.
+                    </p>
+                    <p v-if="form.errors.incident_type_id" class="mt-1 text-sm text-red-600">
+                        {{ form.errors.incident_type_id }}
+                    </p>
+                </div>
+
+                <!-- Step 2: Dates -->
+                <div v-if="form.incident_type_id" class="bg-white rounded-lg shadow p-6">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">
+                        <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-600 text-white text-xs mr-2">2</span>
+                        Fechas
+                    </h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Fecha Inicio *</label>
+                            <input
+                                v-model="form.start_date"
+                                type="date"
+                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                :class="{ 'border-red-500': form.errors.start_date }"
+                            />
+                            <p v-if="form.errors.start_date" class="mt-1 text-sm text-red-600">{{ form.errors.start_date }}</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Fecha Fin *</label>
+                            <input
+                                v-model="form.end_date"
+                                type="date"
+                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                :class="{ 'border-red-500': form.errors.end_date }"
+                            />
+                            <p v-if="form.errors.end_date" class="mt-1 text-sm text-red-600">{{ form.errors.end_date }}</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 3: Employee Selection -->
+                <div v-if="form.incident_type_id" class="bg-white rounded-lg shadow p-6">
                     <div class="flex justify-between items-center mb-4">
                         <h3 class="text-lg font-semibold text-gray-800">
+                            <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-600 text-white text-xs mr-2">3</span>
                             Seleccionar Empleados
                             <span class="text-sm font-normal text-gray-500 ml-2">
                                 ({{ form.employee_ids.length }} seleccionados)
@@ -98,7 +163,6 @@ const submit = () => {
                     </div>
 
                     <div class="border rounded-lg overflow-hidden">
-                        <!-- Header -->
                         <div class="bg-gray-50 px-4 py-3 border-b flex items-center">
                             <input
                                 type="checkbox"
@@ -109,12 +173,12 @@ const submit = () => {
                             <span class="ml-3 text-sm font-medium text-gray-700">Seleccionar todos</span>
                         </div>
 
-                        <!-- Employee List -->
                         <div class="max-h-64 overflow-y-auto">
                             <div
                                 v-for="emp in filteredEmployees"
                                 :key="emp.id"
-                                class="px-4 py-3 border-b hover:bg-gray-50 flex items-center cursor-pointer"
+                                class="px-4 py-3 border-b flex items-center cursor-pointer"
+                                :class="isSelected(emp.id) ? 'bg-pink-50 hover:bg-pink-100' : 'hover:bg-gray-50'"
                                 @click="toggleEmployee(emp.id)"
                             >
                                 <input
@@ -136,65 +200,6 @@ const submit = () => {
                     <p v-if="form.errors.employee_ids" class="mt-2 text-sm text-red-600">
                         {{ form.errors.employee_ids }}
                     </p>
-                </div>
-
-                <!-- Incident Type -->
-                <div class="bg-white rounded-lg shadow p-6">
-                    <h3 class="text-lg font-semibold text-gray-800 mb-4">Tipo de Incidencia</h3>
-                    <div>
-                        <select
-                            v-model="form.incident_type_id"
-                            class="w-full md:w-1/2 rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                            :class="{ 'border-red-500': form.errors.incident_type_id }"
-                        >
-                            <option value="">Seleccionar tipo...</option>
-                            <option v-for="type in incidentTypes" :key="type.id" :value="type.id">
-                                {{ type.name }}
-                            </option>
-                        </select>
-                        <p v-if="selectedType && !selectedType.requires_approval" class="mt-2 text-sm text-green-600">
-                            Este tipo no requiere aprobacion - se aplicara automaticamente.
-                        </p>
-                        <p v-if="form.errors.incident_type_id" class="mt-1 text-sm text-red-600">
-                            {{ form.errors.incident_type_id }}
-                        </p>
-                    </div>
-                </div>
-
-                <!-- Dates -->
-                <div class="bg-white rounded-lg shadow p-6">
-                    <h3 class="text-lg font-semibold text-gray-800 mb-4">Fechas</h3>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">
-                                Fecha Inicio *
-                            </label>
-                            <input
-                                v-model="form.start_date"
-                                type="date"
-                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                                :class="{ 'border-red-500': form.errors.start_date }"
-                            />
-                            <p v-if="form.errors.start_date" class="mt-1 text-sm text-red-600">
-                                {{ form.errors.start_date }}
-                            </p>
-                        </div>
-
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">
-                                Fecha Fin *
-                            </label>
-                            <input
-                                v-model="form.end_date"
-                                type="date"
-                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                                :class="{ 'border-red-500': form.errors.end_date }"
-                            />
-                            <p v-if="form.errors.end_date" class="mt-1 text-sm text-red-600">
-                                {{ form.errors.end_date }}
-                            </p>
-                        </div>
-                    </div>
                 </div>
 
                 <!-- Reason -->
