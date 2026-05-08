@@ -47,7 +47,7 @@ class AttendanceReportController extends Controller implements HasMiddleware
         // Absent records — only fetch columns we need. Holidays never count
         // as faltas regardless of how the row was originally classified.
         $absentRows = DB::table('attendance_records')
-            ->select('employee_id', 'work_date', 'check_in', 'late_minutes', 'early_departure_minutes')
+            ->select('employee_id', 'work_date', 'check_in', 'check_out', 'late_minutes', 'early_departure_minutes')
             ->whereBetween('work_date', [$startDate, $endDate])
             ->whereIn('employee_id', $activeEmployeeIds)
             ->where('status', 'absent')
@@ -60,12 +60,19 @@ class AttendanceReportController extends Controller implements HasMiddleware
         foreach ($absentRows as $row) {
             $eid = $row->employee_id;
             if (is_null($row->check_in)) {
-                $noShowByEmp[$eid][] = ['date' => $row->work_date, 'label' => 'No se presentó'];
+                $emp = $employees[$eid] ?? null;
+                $expected = $this->formatTime($emp['entry_time'] ?? null);
+                $noShowByEmp[$eid][] = ['date' => $row->work_date, 'label' => "Entrada esperada: {$expected}"];
             } else {
+                $emp = $employees[$eid] ?? null;
                 if (($row->late_minutes ?? 0) >= $maxLateBeforeAbsence) {
-                    $label = "Retardo excesivo ({$row->late_minutes} min)";
+                    $expected = $this->formatTime($emp['entry_time'] ?? null);
+                    $actual = $this->formatTime($row->check_in);
+                    $label = "Entrada esperada: {$expected}, llegó: {$actual}";
                 } elseif ($earlyDepartureIsAbsence && ($row->early_departure_minutes ?? 0) >= $earlyDepartureThreshold) {
-                    $label = "Salida temprana ({$row->early_departure_minutes} min)";
+                    $expected = $this->formatTime($emp['exit_time'] ?? null);
+                    $actual = $this->formatTime($row->check_out);
+                    $label = "Salida esperada: {$expected}, salió: {$actual}";
                 } else {
                     $label = 'Por umbral';
                 }
@@ -279,6 +286,7 @@ class AttendanceReportController extends Controller implements HasMiddleware
                     'date' => $r->work_date,
                     'minutes' => $r->late_minutes,
                     'check_in' => $r->check_in,
+                    'expected_entry' => $employees[$eid]['entry_time'] ?? null,
                 ], $records),
             ];
         })->filter(fn ($e) => $e['employee'] !== null)
@@ -347,6 +355,7 @@ class AttendanceReportController extends Controller implements HasMiddleware
                     'date' => $r->work_date,
                     'minutes' => $r->early_departure_minutes,
                     'check_out' => $r->check_out,
+                    'expected_exit' => $employees[$eid]['exit_time'] ?? null,
                     'is_falta' => $earlyDepartureIsAbsence && $r->early_departure_minutes >= $earlyDepartureThreshold,
                 ], $records),
             ];
@@ -402,18 +411,33 @@ class AttendanceReportController extends Controller implements HasMiddleware
      */
     private function getEmployeeLookup($employeeIds): array
     {
-        return Employee::with('department:id,name')
-            ->select('id', 'employee_number', 'full_name', 'department_id')
+        return Employee::with(['department:id,name', 'schedule:id,entry_time,exit_time'])
+            ->select('id', 'employee_number', 'full_name', 'department_id', 'schedule_id', 'schedule_overrides')
             ->whereIn('id', $employeeIds)
             ->get()
-            ->mapWithKeys(fn ($e) => [
-                $e->id => [
-                    'id' => $e->id,
-                    'employee_number' => $e->employee_number,
-                    'full_name' => $e->full_name,
-                    'department' => $e->department ? ['id' => $e->department->id, 'name' => $e->department->name] : null,
-                ],
-            ])
+            ->mapWithKeys(function ($e) {
+                $overrides = $e->schedule_overrides ?? [];
+
+                return [
+                    $e->id => [
+                        'id' => $e->id,
+                        'employee_number' => $e->employee_number,
+                        'full_name' => $e->full_name,
+                        'department' => $e->department ? ['id' => $e->department->id, 'name' => $e->department->name] : null,
+                        'entry_time' => $overrides['entry_time'] ?? $e->schedule?->entry_time,
+                        'exit_time' => $overrides['exit_time'] ?? $e->schedule?->exit_time,
+                    ],
+                ];
+            })
             ->toArray();
+    }
+
+    private function formatTime(?string $time): string
+    {
+        if (! $time) {
+            return '—';
+        }
+
+        return Carbon::parse($time)->format('H:i');
     }
 }

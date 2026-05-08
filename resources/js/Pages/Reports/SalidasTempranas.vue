@@ -22,6 +22,7 @@ const applyFilter = () => {
 };
 
 const formatShortDate = (date) => fmtDate(date, { day: 'numeric', month: 'short' });
+const formatTime = (t) => t ? t.substring(0, 5) : '—';
 </script>
 
 <template>
@@ -107,15 +108,15 @@ const formatShortDate = (date) => fmtDate(date, { day: 'numeric', month: 'short'
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900 font-medium">{{ row.total_early_minutes }} min</td>
                         <td class="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-500">{{ row.avg_early_minutes }} min</td>
-                        <td class="px-6 py-4">
-                            <div class="flex flex-wrap gap-1 max-w-xs">
-                                <span v-for="d in row.dates.slice(0, 5)" :key="d.date"
-                                      :class="['px-2 py-0.5 text-xs rounded', d.is_falta ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-700']"
-                                      :title="`${d.minutes} min - Salida: ${d.check_out}`">
-                                    {{ formatShortDate(d.date) }}
-                                    <span v-if="d.is_falta" class="font-bold ml-0.5">F</span>
-                                </span>
-                                <span v-if="row.dates.length > 5" class="px-2 py-0.5 bg-gray-200 text-gray-600 text-xs rounded">+{{ row.dates.length - 5 }}</span>
+                        <td class="px-4 py-3">
+                            <div class="space-y-1">
+                                <div v-for="d in row.dates.slice(0, 8)" :key="d.date" class="flex items-center gap-1.5 text-xs">
+                                    <span :class="['w-2 h-2 rounded-full shrink-0', d.is_falta ? 'bg-red-500' : 'bg-orange-500']"></span>
+                                    <span class="text-gray-700 whitespace-nowrap">{{ formatShortDate(d.date) }}</span>
+                                    <span :class="d.is_falta ? 'text-red-700' : 'text-orange-700'">— Esperada: {{ formatTime(d.expected_exit) }}, salió: {{ formatTime(d.check_out) }}</span>
+                                    <span v-if="d.is_falta" class="text-red-600 font-bold">F</span>
+                                </div>
+                                <div v-if="row.dates.length > 8" class="text-xs text-gray-400 pl-3.5">+{{ row.dates.length - 8 }} más</div>
                             </div>
                         </td>
                     </tr>

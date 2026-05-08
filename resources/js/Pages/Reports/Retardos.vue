@@ -22,6 +22,7 @@ const applyFilter = () => {
 };
 
 const formatShortDate = (date) => fmtDate(date, { day: 'numeric', month: 'short' });
+const formatTime = (t) => t ? t.substring(0, 5) : '—';
 </script>
 
 <template>
@@ -107,12 +108,15 @@ const formatShortDate = (date) => fmtDate(date, { day: 'numeric', month: 'short'
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900 font-medium">{{ row.total_late_minutes }} min</td>
                         <td class="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-500">{{ row.avg_late_minutes }} min</td>
-                        <td class="px-6 py-4">
-                            <div class="flex flex-wrap gap-1 max-w-xs">
-                                <span v-for="d in row.dates.slice(0, 5)" :key="d.date" class="px-2 py-0.5 bg-gray-100 text-gray-700 text-xs rounded" :title="`${d.minutes} min - ${d.check_in}`">
-                                    {{ formatShortDate(d.date) }}
-                                </span>
-                                <span v-if="row.dates.length > 5" class="px-2 py-0.5 bg-gray-200 text-gray-600 text-xs rounded">+{{ row.dates.length - 5 }}</span>
+                        <td class="px-4 py-3">
+                            <div class="space-y-1">
+                                <div v-for="d in row.dates.slice(0, 8)" :key="d.date" class="flex items-center gap-1.5 text-xs">
+                                    <span class="w-2 h-2 rounded-full bg-yellow-500 shrink-0"></span>
+                                    <span class="text-gray-700 whitespace-nowrap">{{ formatShortDate(d.date) }}</span>
+                                    <span class="text-yellow-700">— Esperada: {{ formatTime(d.expected_entry) }}, llegó: {{ formatTime(d.check_in) }}</span>
+                                    <span class="text-gray-400">({{ d.minutes }} min)</span>
+                                </div>
+                                <div v-if="row.dates.length > 8" class="text-xs text-gray-400 pl-3.5">+{{ row.dates.length - 8 }} más</div>
                             </div>
                         </td>
                     </tr>

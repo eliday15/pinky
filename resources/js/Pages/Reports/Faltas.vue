@@ -134,7 +134,7 @@ const formatMonth = (ym) => {
                                 <div v-for="d in row.no_show_dates" :key="'ns-'+d.date" class="flex items-center gap-1.5 text-xs">
                                     <span class="w-2 h-2 rounded-full bg-red-500 shrink-0"></span>
                                     <span class="text-gray-700 whitespace-nowrap">{{ formatShortDate(d.date) }}</span>
-                                    <span class="text-red-600">— No se presentó</span>
+                                    <span class="text-red-600">— No se presentó ({{ d.label }})</span>
                                 </div>
                                 <div v-for="d in row.threshold_dates" :key="'th-'+d.date" class="flex items-center gap-1.5 text-xs">
                                     <span class="w-2 h-2 rounded-full bg-orange-500 shrink-0"></span>
