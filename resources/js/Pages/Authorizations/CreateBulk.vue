@@ -93,7 +93,7 @@ const selectAll = ref(false);
 const departmentFilter = ref('');
 
 const filteredEmployees = computed(() => {
-    let employees = props.employees;
+    let employees = employeesForSelectedType.value;
 
     // Filter by department
     if (departmentFilter.value) {
@@ -146,14 +146,17 @@ const selectDepartment = () => {
     selectAll.value = true;
 };
 
-/** Authorization types available for ALL the currently-selected employees (intersection). */
+/** All authorization types from the compensation catalog. */
 const compensationTypes = computed(() => {
-    const all = props.types.filter(t => t.group === 'compensation');
-    if (form.employee_ids.length === 0) return all;
-    const selectedEmps = props.employees.filter(e => form.employee_ids.includes(e.id));
-    return all.filter(t => selectedEmps.every(emp =>
-        emp.active_compensation_type_ids?.includes(t.compensation_type_id)
-    ));
+    return props.types.filter(t => t.group === 'compensation');
+});
+
+/** Employees who can receive the currently selected authorization type. */
+const employeesForSelectedType = computed(() => {
+    if (!form.compensation_type_id) return props.employees;
+    return props.employees.filter(emp =>
+        emp.active_compensation_type_ids?.includes(form.compensation_type_id)
+    );
 });
 
 const optionValue = (type) => {
@@ -197,14 +200,12 @@ watch(departmentFilter, () => {
     selectAll.value = false;
 });
 
-/** When the employee selection changes, drop the type if it's no longer common to all picked employees. */
-watch(() => form.employee_ids.length, () => {
-    if (!form.compensation_type_id) return;
-    const stillValid = compensationTypes.value.some(t => t.compensation_type_id === form.compensation_type_id);
-    if (!stillValid) {
-        form.type = '';
-        form.compensation_type_id = null;
-    }
+/** When the type changes, drop any selected employees who can't receive that type. */
+watch(() => form.compensation_type_id, (newCompId) => {
+    if (!newCompId) return;
+    const allowedIds = new Set(employeesForSelectedType.value.map(e => e.id));
+    form.employee_ids = form.employee_ids.filter(id => allowedIds.has(id));
+    selectAll.value = false;
 });
 
 const submit = () => {
@@ -245,11 +246,47 @@ const getDepartmentName = (deptId) => {
             <form @submit.prevent="submit" class="space-y-6">
                 <FormErrorBanner :errors="form.errors" />
 
-                <!-- Step 1: Employee Selection -->
+                <!-- Step 1: Authorization Type -->
                 <div class="bg-white rounded-lg shadow p-6">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-1">
+                        <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-600 text-white text-xs mr-2">1</span>
+                        Tipo de Autorizacion
+                    </h3>
+                    <p class="text-xs text-gray-500 mb-4">
+                        Elige el tipo de autorizacion. Despues podras seleccionar a los empleados que apliquen.
+                    </p>
+                    <select
+                        :value="selectedOptionValue"
+                        @change="onTypeChange"
+                        class="w-full md:w-1/2 rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                        :class="{ 'border-red-500': form.errors.type }"
+                    >
+                        <option value="">Seleccionar tipo...</option>
+                        <option v-for="type in compensationTypes" :key="type.compensation_type_id" :value="optionValue(type)">
+                            {{ type.label }}
+                        </option>
+                    </select>
+                    <p v-if="form.type && typeDescriptions[form.type]" class="mt-2 text-sm text-gray-500">
+                        {{ typeDescriptions[form.type] }}
+                    </p>
+                    <p v-if="form.errors.type" class="mt-1 text-sm text-red-600">
+                        {{ form.errors.type }}
+                    </p>
+
+                    <!-- Night shift info banner -->
+                    <div v-if="form.type === 'night_shift'" class="mt-4 bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+                        <p class="text-sm text-indigo-800">
+                            <strong>Velada:</strong> Las horas de inicio y fin se han pre-configurado para turno nocturno (22:00 - 06:00).
+                            Puede ajustarlos si es necesario.
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Step 2: Employee Selection -->
+                <div v-if="form.compensation_type_id" class="bg-white rounded-lg shadow p-6">
                     <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-3">
                         <h3 class="text-lg font-semibold text-gray-800">
-                            <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-600 text-white text-xs mr-2">1</span>
+                            <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-600 text-white text-xs mr-2">2</span>
                             Seleccionar Empleados
                             <span class="text-sm font-normal text-gray-500 ml-2">
                                 ({{ form.employee_ids.length }} seleccionados)
@@ -282,6 +319,10 @@ const getDepartmentName = (deptId) => {
                             />
                         </div>
                     </div>
+
+                    <p class="text-xs text-gray-500 mb-3">
+                        Solo aparecen empleados con <strong>{{ selectedTypeLabel }}</strong> habilitado.
+                    </p>
 
                     <div class="border rounded-lg overflow-hidden">
                         <!-- Header -->
@@ -320,7 +361,7 @@ const getDepartmentName = (deptId) => {
                                 </span>
                             </div>
                             <div v-if="filteredEmployees.length === 0" class="px-4 py-8 text-center text-gray-500">
-                                No se encontraron empleados
+                                No hay empleados habilitados para este tipo.
                             </div>
                         </div>
                     </div>
@@ -330,48 +371,8 @@ const getDepartmentName = (deptId) => {
                     </p>
                 </div>
 
-                <!-- Step 2: Authorization Type -->
-                <div class="bg-white rounded-lg shadow p-6">
-                    <h3 class="text-lg font-semibold text-gray-800 mb-1">
-                        <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-600 text-white text-xs mr-2">2</span>
-                        Tipo de Autorizacion
-                    </h3>
-                    <p class="text-xs text-gray-500 mb-4">
-                        {{ form.employee_ids.length === 0 ? 'Selecciona primero los empleados.' : 'Solo aparecen los tipos compartidos por todos los empleados seleccionados.' }}
-                    </p>
-                    <select
-                        :value="selectedOptionValue"
-                        @change="onTypeChange"
-                        :disabled="form.employee_ids.length === 0"
-                        class="w-full md:w-1/2 rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
-                        :class="{ 'border-red-500': form.errors.type }"
-                    >
-                        <option value="">{{ form.employee_ids.length === 0 ? 'Selecciona primero los empleados' : 'Seleccionar tipo...' }}</option>
-                        <option v-for="type in compensationTypes" :key="type.compensation_type_id" :value="optionValue(type)">
-                            {{ type.label }}
-                        </option>
-                    </select>
-                    <p v-if="form.employee_ids.length > 0 && compensationTypes.length === 0" class="mt-2 text-xs text-amber-600">
-                        Los empleados seleccionados no comparten ningun tipo de autorizacion.
-                    </p>
-                    <p v-if="form.type && typeDescriptions[form.type]" class="mt-2 text-sm text-gray-500">
-                        {{ typeDescriptions[form.type] }}
-                    </p>
-                    <p v-if="form.errors.type" class="mt-1 text-sm text-red-600">
-                        {{ form.errors.type }}
-                    </p>
-
-                    <!-- Night shift info banner -->
-                    <div v-if="form.type === 'night_shift'" class="mt-4 bg-indigo-50 border border-indigo-200 rounded-lg p-3">
-                        <p class="text-sm text-indigo-800">
-                            <strong>Velada:</strong> Las horas de inicio y fin se han pre-configurado para turno nocturno (22:00 - 06:00).
-                            Puede ajustarlos si es necesario.
-                        </p>
-                    </div>
-                </div>
-
                 <!-- Step 3: Date & Time - adapts to application_mode -->
-                <div v-if="selectedApplicationMode" class="bg-white rounded-lg shadow p-6">
+                <div v-if="selectedApplicationMode && form.employee_ids.length > 0" class="bg-white rounded-lg shadow p-6">
                     <h3 class="text-lg font-semibold text-gray-800 mb-1">
                         <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-600 text-white text-xs mr-2">3</span>
                         {{ dateCardTitle }}

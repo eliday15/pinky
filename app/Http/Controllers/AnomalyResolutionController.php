@@ -131,6 +131,7 @@ class AnomalyResolutionController extends Controller
             'can' => [
                 'resolve' => $user->hasPermissionTo('anomalies.resolve'),
                 'dismiss' => $user->hasPermissionTo('anomalies.dismiss'),
+                'createAuthorization' => $user->hasPermissionTo('authorizations.create'),
             ],
         ]);
     }

@@ -11,6 +11,12 @@ const props = defineProps({
     can: Object,
 });
 
+const canCreateAuthorizationFromAnomaly = computed(() => {
+    if (props.anomaly.status !== 'open') return false;
+    if (!props.can?.createAuthorization) return false;
+    return ['unauthorized_overtime', 'unauthorized_velada'].includes(props.anomaly.anomaly_type);
+});
+
 const hasTwoFactor = computed(() => usePage().props.auth.has_two_factor);
 
 const severityColors = {
@@ -284,6 +290,19 @@ const linkToAuthorization = () => {
                 <!-- Action Card -->
                 <div v-if="anomaly.status === 'open'" class="bg-white rounded-lg shadow p-6">
                     <h3 class="text-lg font-semibold text-gray-800 mb-4">Acciones</h3>
+
+                    <!-- Create Authorization from Anomaly -->
+                    <div v-if="canCreateAuthorizationFromAnomaly" class="mb-6">
+                        <Link
+                            :href="route('authorizations.create', { anomaly: anomaly.id })"
+                            class="block w-full px-4 py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700 text-center"
+                        >
+                            Crear Autorizacion
+                        </Link>
+                        <p class="mt-2 text-xs text-gray-500">
+                            Se abrira el formulario con horarios sugeridos a partir de las checadas reales.
+                        </p>
+                    </div>
 
                     <!-- Resolve -->
                     <div v-if="can.resolve" class="mb-6">

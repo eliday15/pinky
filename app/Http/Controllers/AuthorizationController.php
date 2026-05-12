@@ -154,11 +154,99 @@ class AuthorizationController extends Controller
         $employees = $employeesQuery->get(['id', 'full_name', 'employee_number']);
         $this->appendActiveCompensationTypeIds($employees);
 
+        $types = $this->getAuthorizationTypes();
+        $prefill = null;
+        $selectedEmployee = $request->employee ?? $user->employee?->id;
+
+        if ($request->filled('anomaly')) {
+            $anomaly = AttendanceAnomaly::with('attendanceRecord')->find($request->anomaly);
+
+            if ($anomaly && $employees->contains('id', $anomaly->employee_id)) {
+                $prefill = $this->buildPrefillFromAnomaly($anomaly, $employees, $types);
+                if ($prefill) {
+                    $selectedEmployee = $anomaly->employee_id;
+                }
+            }
+        }
+
         return Inertia::render('Authorizations/Create', [
             'employees' => $employees,
-            'selectedEmployee' => $request->employee ?? $user->employee?->id,
-            'types' => $this->getAuthorizationTypes(),
+            'selectedEmployee' => $selectedEmployee,
+            'types' => $types,
+            'prefill' => $prefill,
         ]);
+    }
+
+    /**
+     * Build a prefill payload from an attendance anomaly for the Create form.
+     *
+     * Maps unauthorized_overtime -> overtime, unauthorized_velada -> night_shift,
+     * suggesting start/end times derived from the attendance record. Returns
+     * null when the anomaly type is not eligible for retroactive authorization.
+     */
+    private function buildPrefillFromAnomaly(AttendanceAnomaly $anomaly, $employees, array $types): ?array
+    {
+        $typeMap = [
+            'unauthorized_overtime' => Authorization::TYPE_OVERTIME,
+            'unauthorized_velada' => Authorization::TYPE_NIGHT_SHIFT,
+        ];
+
+        if (!isset($typeMap[$anomaly->anomaly_type])) {
+            return null;
+        }
+
+        $authType = $typeMap[$anomaly->anomaly_type];
+        $employee = $employees->firstWhere('id', $anomaly->employee_id);
+        $activeIds = $employee?->getAttribute('active_compensation_type_ids') ?? collect();
+
+        $matchedType = collect($types)->first(function ($t) use ($authType, $activeIds) {
+            return $t['value'] === $authType && $activeIds->contains($t['compensation_type_id']);
+        });
+
+        $record = $anomaly->attendanceRecord;
+        $hours = $authType === Authorization::TYPE_OVERTIME
+            ? (float) ($record?->overtime_hours ?? 0)
+            : (float) ($record?->velada_hours ?? 0);
+
+        [$startTime, $endTime] = $this->suggestTimeRange($record, $hours);
+
+        $reasonPrefix = $authType === Authorization::TYPE_OVERTIME
+            ? 'Autorizacion retroactiva por horas extra detectadas'
+            : 'Autorizacion retroactiva por velada detectada';
+
+        return [
+            'anomaly_id' => $anomaly->id,
+            'anomaly_summary' => $anomaly->description,
+            'employee_id' => $anomaly->employee_id,
+            'type' => $authType,
+            'compensation_type_id' => $matchedType['compensation_type_id'] ?? null,
+            'date' => $anomaly->work_date->format('Y-m-d'),
+            'start_time' => $startTime,
+            'end_time' => $endTime,
+            'hours' => $hours > 0 ? number_format($hours, 2, '.', '') : '',
+            'reason' => "{$reasonPrefix} el {$anomaly->work_date->format('Y-m-d')}.",
+        ];
+    }
+
+    /**
+     * Suggest a start/end time pair from an attendance record and overtime/velada hours.
+     *
+     * Uses the real check-out as the end and back-calculates start by subtracting
+     * the hours. Returns ['HH:MM', 'HH:MM'] or [null, null] when data is missing.
+     */
+    private function suggestTimeRange(?\App\Models\AttendanceRecord $record, float $hours): array
+    {
+        if (!$record || !$record->check_out || $hours <= 0) {
+            return [null, null];
+        }
+
+        try {
+            $end = Carbon::parse($record->check_out);
+            $start = $end->copy()->subMinutes((int) round($hours * 60));
+            return [$start->format('H:i'), $end->format('H:i')];
+        } catch (\Throwable $e) {
+            return [null, null];
+        }
     }
 
     /**
@@ -183,7 +271,11 @@ class AuthorizationController extends Controller
             'hours' => ['nullable', 'numeric', 'min:0', 'max:24'],
             'reason' => ['required', 'string', 'max:1000'],
             'evidence' => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
+            'anomaly_id' => ['nullable', 'exists:attendance_anomalies,id'],
         ]);
+
+        $anomalyId = $validated['anomaly_id'] ?? null;
+        unset($validated['anomaly_id']);
 
         $validated['requested_by'] = Auth::id();
         $validated['is_pre_authorization'] = Carbon::parse($validated['date'])->isFuture()
@@ -202,7 +294,14 @@ class AuthorizationController extends Controller
         }
         unset($validated['evidence']);
 
-        Authorization::create($validated);
+        $authorization = Authorization::create($validated);
+
+        if ($anomalyId) {
+            $anomaly = AttendanceAnomaly::find($anomalyId);
+            if ($anomaly && $anomaly->employee_id === $authorization->employee_id && $anomaly->status === AttendanceAnomaly::STATUS_OPEN) {
+                $anomaly->linkToAuthorization($authorization);
+            }
+        }
 
         return redirect()->route('authorizations.index')
             ->with('success', 'Autorizacion creada exitosamente.');
@@ -504,6 +603,140 @@ class AuthorizationController extends Controller
         $authorization->markAsPaid();
 
         return redirect()->back()->with('success', 'Autorizacion marcada como pagada.');
+    }
+
+    /**
+     * Suggest authorization times based on employee schedule vs actual punches.
+     *
+     * Given employee + date + type, compares the scheduled exit time against the
+     * real check-out from attendance records. If the employee stayed longer than
+     * scheduled, returns the excess as a suggested start/end/hours range that
+     * the user can apply to the create form.
+     *
+     * Pure read-only: never creates anomalies, authorizations, or records.
+     */
+    public function suggest(Request $request): \Illuminate\Http\JsonResponse
+    {
+        $this->authorize('create', Authorization::class);
+
+        $validated = $request->validate([
+            'employee_id' => ['required', 'exists:employees,id'],
+            'date' => ['required', 'date'],
+            'type' => ['required', Rule::in([Authorization::TYPE_OVERTIME, Authorization::TYPE_NIGHT_SHIFT])],
+        ]);
+
+        $user = Auth::user();
+        $employee = Employee::find($validated['employee_id']);
+
+        // Permission scoping mirrors create().
+        if (! $user->hasPermissionTo('authorizations.view_all')) {
+            $allowed = [];
+            if ($user->hasPermissionTo('authorizations.view_team') && $user->employee) {
+                $allowed = array_merge([$user->employee->id], $user->employee->allSubordinateIds());
+            } elseif ($user->employee) {
+                $allowed = [$user->employee->id];
+            }
+            if (! in_array($employee->id, $allowed, true)) {
+                return response()->json(['found' => false, 'message' => 'No autorizado.'], 403);
+            }
+        }
+
+        $record = AttendanceRecord::where('employee_id', $employee->id)
+            ->where('work_date', $validated['date'])
+            ->first();
+
+        if (! $record || ! $record->check_in || ! $record->check_out) {
+            return response()->json([
+                'found' => false,
+                'message' => 'No hay checadas registradas para esa fecha.',
+            ]);
+        }
+
+        $dayName = Carbon::parse($validated['date'])->format('l');
+        $schedule = $employee->getEffectiveScheduleForDay($dayName);
+
+        if ($validated['type'] === Authorization::TYPE_OVERTIME) {
+            return $this->suggestOvertime($record, $schedule, $validated['date']);
+        }
+
+        return $this->suggestVelada($record);
+    }
+
+    /**
+     * Build an overtime suggestion from schedule + actual punches.
+     *
+     * Compares scheduled exit_time to actual check_out and computes the excess.
+     */
+    private function suggestOvertime(AttendanceRecord $record, ?object $schedule, string $date): \Illuminate\Http\JsonResponse
+    {
+        $scheduledExit = $schedule->exit_time ?? null;
+        $checkOut = Carbon::parse($record->check_out);
+
+        if (! $scheduledExit) {
+            $hours = (float) ($record->overtime_hours ?? 0);
+            if ($hours <= 0) {
+                return response()->json([
+                    'found' => false,
+                    'message' => 'El empleado no tiene horario asignado y no hay horas extra calculadas.',
+                ]);
+            }
+            $start = $checkOut->copy()->subMinutes((int) round($hours * 60));
+            return response()->json([
+                'found' => true,
+                'start_time' => $start->format('H:i'),
+                'end_time' => $checkOut->format('H:i'),
+                'hours' => number_format($hours, 2, '.', ''),
+                'summary' => "Salida real {$checkOut->format('H:i')}. Horas extra calculadas: {$hours}h.",
+            ]);
+        }
+
+        $scheduledExitDt = Carbon::parse($date . ' ' . $scheduledExit);
+
+        if ($checkOut->lte($scheduledExitDt)) {
+            return response()->json([
+                'found' => false,
+                'message' => "El empleado salio {$checkOut->format('H:i')}, dentro de su horario (sale {$scheduledExit}). No hay tiempo extra.",
+            ]);
+        }
+
+        $minutes = $scheduledExitDt->diffInMinutes($checkOut);
+        $hours = round($minutes / 60, 2);
+
+        return response()->json([
+            'found' => true,
+            'start_time' => $scheduledExitDt->format('H:i'),
+            'end_time' => $checkOut->format('H:i'),
+            'hours' => number_format($hours, 2, '.', ''),
+            'summary' => "Horario {$scheduledExit} - salida real {$checkOut->format('H:i')} = {$hours}h extra.",
+        ]);
+    }
+
+    /**
+     * Build a velada (night-shift) suggestion from actual punches.
+     *
+     * Uses the velada_hours field calculated by the attendance pipeline,
+     * back-extending from check_out to derive a start time.
+     */
+    private function suggestVelada(AttendanceRecord $record): \Illuminate\Http\JsonResponse
+    {
+        $hours = (float) ($record->velada_hours ?? 0);
+        if ($hours <= 0) {
+            return response()->json([
+                'found' => false,
+                'message' => 'No se detectaron horas de velada en las checadas de esa fecha.',
+            ]);
+        }
+
+        $checkOut = Carbon::parse($record->check_out);
+        $start = $checkOut->copy()->subMinutes((int) round($hours * 60));
+
+        return response()->json([
+            'found' => true,
+            'start_time' => $start->format('H:i'),
+            'end_time' => $checkOut->format('H:i'),
+            'hours' => number_format($hours, 2, '.', ''),
+            'summary' => "Velada detectada: {$hours}h hasta la salida real {$checkOut->format('H:i')}.",
+        ]);
     }
 
     /**
