@@ -86,6 +86,7 @@ Route::middleware(['auth', 'verified', 'password-changed', 'two-factor-setup'])-
     Route::get('/authorizations/create-bulk', [AuthorizationController::class, 'createBulk'])->name('authorizations.createBulk');
     Route::post('/authorizations/store-bulk', [AuthorizationController::class, 'storeBulk'])->name('authorizations.storeBulk');
     Route::get('/authorizations/suggest', [AuthorizationController::class, 'suggest'])->name('authorizations.suggest');
+    Route::get('/authorizations/suggest-bulk', [AuthorizationController::class, 'suggestBulk'])->name('authorizations.suggestBulk');
     Route::resource('authorizations', AuthorizationController::class);
     Route::post('/authorizations/{authorization}/approve', [AuthorizationController::class, 'approve'])->name('authorizations.approve');
     Route::post('/authorizations/{authorization}/reject', [AuthorizationController::class, 'reject'])->name('authorizations.reject');

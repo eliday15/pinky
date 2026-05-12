@@ -3,6 +3,7 @@ import AppLayout from '@/Layouts/AppLayout.vue';
 import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
 import { ref, computed, watch } from 'vue';
+import axios from 'axios';
 import { todayLocal } from '@/utils/date';
 
 const props = defineProps({
@@ -26,6 +27,7 @@ const form = useForm({
     end_time: '',
     hours: '',
     reason: '',
+    employee_times: {}, // { [employee_id]: { start_time, end_time, hours } }
 });
 
 /** The application_mode of the currently selected compensation type. */
@@ -208,6 +210,77 @@ watch(() => form.compensation_type_id, (newCompId) => {
     selectAll.value = false;
 });
 
+/** Reset cached suggestions whenever the inputs that drive them change. */
+watch(
+    () => [form.type, form.date, form.employee_ids.length],
+    () => {
+        if (suggestionsApplied.value || suggestions.value.length > 0) {
+            suggestions.value = [];
+            suggestionsApplied.value = false;
+            form.employee_times = {};
+        }
+    },
+);
+
+/* ----- Bulk live suggestions from schedule + attendance ----- */
+const suggestions = ref([]); // [{ employee_id, employee_name, found, start_time, end_time, hours, summary, message }]
+const suggestionsLoading = ref(false);
+const suggestionsApplied = ref(false);
+
+const canSuggestBulk = computed(() => {
+    return form.employee_ids.length > 0
+        && form.date
+        && (form.type === 'overtime' || form.type === 'night_shift');
+});
+
+const fetchBulkSuggestions = async () => {
+    if (!canSuggestBulk.value) return;
+    suggestionsLoading.value = true;
+    suggestionsApplied.value = false;
+    try {
+        const { data } = await axios.get(route('authorizations.suggestBulk'), {
+            params: {
+                employee_ids: form.employee_ids,
+                date: form.date,
+                type: form.type,
+            },
+        });
+        suggestions.value = data.suggestions || [];
+    } catch {
+        suggestions.value = [];
+    } finally {
+        suggestionsLoading.value = false;
+    }
+};
+
+const eligibleSuggestions = computed(() => suggestions.value.filter(s => s.found));
+
+const totalSuggestedHours = computed(() => {
+    return eligibleSuggestions.value.reduce((sum, s) => sum + parseFloat(s.hours || 0), 0).toFixed(2);
+});
+
+const applyBulkSuggestions = () => {
+    if (eligibleSuggestions.value.length === 0) return;
+    // Replace selection with only the eligible employees and pre-fill per-employee times.
+    form.employee_ids = eligibleSuggestions.value.map(s => s.employee_id);
+    const map = {};
+    for (const s of eligibleSuggestions.value) {
+        map[s.employee_id] = {
+            start_time: s.start_time,
+            end_time: s.end_time,
+            hours: s.hours,
+        };
+    }
+    form.employee_times = map;
+    suggestionsApplied.value = true;
+};
+
+const clearBulkSuggestions = () => {
+    suggestions.value = [];
+    suggestionsApplied.value = false;
+    form.employee_times = {};
+};
+
 const submit = () => {
     form.post(route('authorizations.storeBulk'));
 };
@@ -371,8 +444,69 @@ const getDepartmentName = (deptId) => {
                     </p>
                 </div>
 
+                <!-- Live suggestions from schedule + attendance -->
+                <div v-if="(form.type === 'overtime' || form.type === 'night_shift') && form.employee_ids.length > 0" class="bg-amber-50 border-l-4 border-amber-400 rounded-lg p-4">
+                    <div class="flex items-start justify-between gap-3 mb-3">
+                        <div class="flex-1">
+                            <h4 class="text-sm font-semibold text-amber-800">Sugerencia desde checadas reales</h4>
+                            <p class="text-xs text-amber-700 mt-1">
+                                Comparar horario vs checadas reales y pre-llenar horas individuales.
+                            </p>
+                            <div class="mt-2 flex items-center gap-2">
+                                <label class="text-xs text-amber-700 font-medium">Fecha a revisar:</label>
+                                <input type="date" v-model="form.date"
+                                    class="text-xs rounded border-amber-300 focus:border-amber-500 focus:ring-amber-500 py-1" />
+                            </div>
+                        </div>
+                        <div class="flex gap-2">
+                            <button v-if="suggestions.length === 0"
+                                type="button" @click="fetchBulkSuggestions"
+                                :disabled="suggestionsLoading"
+                                class="px-3 py-1.5 bg-amber-600 text-white text-xs rounded hover:bg-amber-700 disabled:opacity-50">
+                                {{ suggestionsLoading ? 'Calculando...' : 'Cargar sugerencias' }}
+                            </button>
+                            <button v-else
+                                type="button" @click="clearBulkSuggestions"
+                                class="px-3 py-1.5 border border-amber-400 text-amber-700 text-xs rounded hover:bg-amber-100">
+                                Limpiar
+                            </button>
+                        </div>
+                    </div>
+
+                    <div v-if="suggestions.length > 0" class="bg-white rounded-lg border border-amber-200 overflow-hidden">
+                        <div class="px-4 py-2 bg-amber-100 text-xs text-amber-800 flex justify-between">
+                            <span><strong>{{ eligibleSuggestions.length }}</strong> de {{ suggestions.length }} elegibles ({{ totalSuggestedHours }}h totales)</span>
+                            <button v-if="!suggestionsApplied && eligibleSuggestions.length > 0"
+                                type="button" @click="applyBulkSuggestions"
+                                class="font-semibold hover:underline">
+                                Aplicar a los {{ eligibleSuggestions.length }} elegibles
+                            </button>
+                            <span v-if="suggestionsApplied" class="font-semibold text-green-700">
+                                ✓ Aplicado
+                            </span>
+                        </div>
+                        <div class="max-h-72 overflow-y-auto divide-y divide-gray-100">
+                            <div v-for="s in suggestions" :key="s.employee_id"
+                                class="px-4 py-2 flex items-center justify-between text-sm"
+                                :class="s.found ? 'bg-white' : 'bg-gray-50 text-gray-500'">
+                                <div class="flex-1 min-w-0">
+                                    <div class="font-medium text-gray-900 truncate">{{ s.employee_name }}</div>
+                                    <div class="text-xs" :class="s.found ? 'text-amber-700' : 'text-gray-500'">
+                                        {{ s.summary || s.message }}
+                                    </div>
+                                </div>
+                                <div v-if="s.found" class="text-right text-xs ml-3 flex-shrink-0">
+                                    <div class="font-mono text-gray-700">{{ s.start_time }} - {{ s.end_time }}</div>
+                                    <div class="font-semibold text-amber-700">{{ s.hours }}h</div>
+                                </div>
+                                <div v-else class="text-xs text-gray-400 ml-3 flex-shrink-0">—</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Step 3: Date & Time - adapts to application_mode -->
-                <div v-if="selectedApplicationMode && form.employee_ids.length > 0" class="bg-white rounded-lg shadow p-6">
+                <div v-if="selectedApplicationMode && form.employee_ids.length > 0 && !suggestionsApplied" class="bg-white rounded-lg shadow p-6">
                     <h3 class="text-lg font-semibold text-gray-800 mb-1">
                         <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-600 text-white text-xs mr-2">3</span>
                         {{ dateCardTitle }}

@@ -368,31 +368,48 @@ class AuthorizationController extends Controller
             'hours' => ['nullable', 'numeric', 'min:0', 'max:24'],
             'reason' => ['required', 'string', 'max:1000'],
             'department_head_id' => ['nullable', 'exists:employees,id'],
+            // Optional per-employee overrides (keyed by employee_id)
+            'employee_times' => ['nullable', 'array'],
+            'employee_times.*.start_time' => ['nullable', 'date_format:H:i'],
+            'employee_times.*.end_time' => ['nullable', 'date_format:H:i'],
+            'employee_times.*.hours' => ['nullable', 'numeric', 'min:0', 'max:24'],
         ]);
 
-        // Calculate hours if start and end time provided
-        $hours = $validated['hours'] ?? null;
-        if (! empty($validated['start_time']) && ! empty($validated['end_time']) && empty($hours)) {
+        // Global hours fallback when no per-employee override is provided.
+        $globalHours = $validated['hours'] ?? null;
+        if (! empty($validated['start_time']) && ! empty($validated['end_time']) && empty($globalHours)) {
             $start = Carbon::parse($validated['start_time']);
             $end = Carbon::parse($validated['end_time']);
-            $hours = $end->diffInMinutes($start) / 60;
+            $globalHours = $end->diffInMinutes($start) / 60;
         }
 
         $isPreAuthorization = Carbon::parse($validated['date'])->isFuture()
             || Carbon::parse($validated['date'])->isToday();
 
         $bulkGroupId = 'bulk_' . now()->format('YmdHis') . '_' . Auth::id();
+        $employeeTimes = $validated['employee_times'] ?? [];
 
         $count = 0;
         foreach ($validated['employee_ids'] as $employeeId) {
+            $override = $employeeTimes[$employeeId] ?? null;
+
+            $startTime = $override['start_time'] ?? ($validated['start_time'] ?? null);
+            $endTime = $override['end_time'] ?? ($validated['end_time'] ?? null);
+            $hours = $override['hours'] ?? $globalHours;
+
+            // Calculate per-employee hours from override times when not given explicitly.
+            if (! empty($startTime) && ! empty($endTime) && empty($hours)) {
+                $hours = Carbon::parse($endTime)->diffInMinutes(Carbon::parse($startTime)) / 60;
+            }
+
             Authorization::create([
                 'employee_id' => $employeeId,
                 'requested_by' => Auth::id(),
                 'type' => $validated['type'],
                 'compensation_type_id' => $validated['compensation_type_id'] ?? null,
                 'date' => $validated['date'],
-                'start_time' => $validated['start_time'] ?? null,
-                'end_time' => $validated['end_time'] ?? null,
+                'start_time' => $startTime,
+                'end_time' => $endTime,
                 'hours' => $hours,
                 'reason' => $validated['reason'],
                 'is_pre_authorization' => $isPreAuthorization,
@@ -652,22 +669,96 @@ class AuthorizationController extends Controller
             ]);
         }
 
-        $dayName = Carbon::parse($validated['date'])->format('l');
-        $schedule = $employee->getEffectiveScheduleForDay($dayName);
-
-        if ($validated['type'] === Authorization::TYPE_OVERTIME) {
-            return $this->suggestOvertime($record, $schedule, $validated['date']);
-        }
-
-        return $this->suggestVelada($record);
+        return response()->json($this->buildSuggestion($employee, $validated['date'], $validated['type'], $record));
     }
 
     /**
-     * Build an overtime suggestion from schedule + actual punches.
+     * Suggest authorization times for multiple employees on the same date+type.
      *
-     * Compares scheduled exit_time to actual check_out and computes the excess.
+     * Returns one suggestion entry per requested employee_id so the bulk form
+     * can pre-fill per-employee start/end/hours from each one's real punches.
      */
-    private function suggestOvertime(AttendanceRecord $record, ?object $schedule, string $date): \Illuminate\Http\JsonResponse
+    public function suggestBulk(Request $request): \Illuminate\Http\JsonResponse
+    {
+        $this->authorize('create', Authorization::class);
+
+        $validated = $request->validate([
+            'employee_ids' => ['required', 'array', 'min:1'],
+            'employee_ids.*' => ['required', 'integer', 'exists:employees,id'],
+            'date' => ['required', 'date'],
+            'type' => ['required', Rule::in([Authorization::TYPE_OVERTIME, Authorization::TYPE_NIGHT_SHIFT])],
+        ]);
+
+        $user = Auth::user();
+        $allowed = null;
+        if (! $user->hasPermissionTo('authorizations.view_all')) {
+            if ($user->hasPermissionTo('authorizations.view_team') && $user->employee) {
+                $allowed = array_merge([$user->employee->id], $user->employee->allSubordinateIds());
+            } elseif ($user->employee) {
+                $allowed = [$user->employee->id];
+            } else {
+                $allowed = [];
+            }
+        }
+
+        $employees = Employee::whereIn('id', $validated['employee_ids'])->get();
+        $records = AttendanceRecord::whereIn('employee_id', $validated['employee_ids'])
+            ->where('work_date', $validated['date'])
+            ->get()
+            ->keyBy('employee_id');
+
+        $suggestions = $employees->map(function (Employee $employee) use ($allowed, $validated, $records) {
+            $base = [
+                'employee_id' => $employee->id,
+                'employee_name' => $employee->full_name,
+                'employee_number' => $employee->employee_number,
+            ];
+
+            if ($allowed !== null && ! in_array($employee->id, $allowed, true)) {
+                return $base + ['found' => false, 'message' => 'No autorizado.'];
+            }
+
+            $record = $records->get($employee->id);
+            if (! $record || ! $record->check_in || ! $record->check_out) {
+                return $base + ['found' => false, 'message' => 'Sin checadas registradas.'];
+            }
+
+            return $base + $this->buildSuggestion($employee, $validated['date'], $validated['type'], $record);
+        });
+
+        return response()->json([
+            'suggestions' => $suggestions->values(),
+            'eligible_count' => $suggestions->where('found', true)->count(),
+        ]);
+    }
+
+    /**
+     * Build a single-employee suggestion as an array (no JsonResponse wrapper).
+     *
+     * Pure function shared by suggest() and suggestBulk(). Returns the same
+     * shape the frontend expects: { found, start_time?, end_time?, hours?, summary?, message? }.
+     */
+    private function buildSuggestion(Employee $employee, string $date, string $type, AttendanceRecord $record): array
+    {
+        $dayName = Carbon::parse($date)->format('l');
+        $schedule = $employee->getEffectiveScheduleForDay($dayName);
+
+        if ($type === Authorization::TYPE_OVERTIME) {
+            return $this->buildOvertimeSuggestion($record, $schedule, $date);
+        }
+
+        return $this->buildVeladaSuggestion($record);
+    }
+
+    /**
+     * Overtime suggestion: compare schedule.exit_time vs actual check_out.
+     *
+     * Hours uses the calculated overtime_hours (which already discounts the
+     * lunch break and daily_work_hours threshold) so the value matches what
+     * payroll will see, while the displayed range spans scheduled exit to
+     * real check_out.
+     */
+    private function buildOvertimeSuggestion(AttendanceRecord $record, ?object $schedule, string $date): array
     {
         $scheduledExit = $schedule->exit_time ?? null;
         $checkOut = Carbon::parse($record->check_out);
@@ -675,79 +766,68 @@ class AuthorizationController extends Controller
         if (! $scheduledExit) {
             $hours = (float) ($record->overtime_hours ?? 0);
             if ($hours <= 0) {
-                return response()->json([
-                    'found' => false,
-                    'message' => 'El empleado no tiene horario asignado y no hay horas extra calculadas.',
-                ]);
+                return ['found' => false, 'message' => 'Sin horario asignado y sin horas extra calculadas.'];
             }
             $start = $checkOut->copy()->subMinutes((int) round($hours * 60));
-            return response()->json([
+            return [
                 'found' => true,
                 'start_time' => $start->format('H:i'),
                 'end_time' => $checkOut->format('H:i'),
                 'hours' => number_format($hours, 2, '.', ''),
                 'summary' => "Salida real {$checkOut->format('H:i')}. Horas extra calculadas: {$hours}h.",
-            ]);
+            ];
         }
 
         $scheduledExitDt = Carbon::parse($date . ' ' . $scheduledExit);
 
         if ($checkOut->lte($scheduledExitDt)) {
-            return response()->json([
+            return [
                 'found' => false,
-                'message' => "El empleado salio {$checkOut->format('H:i')}, dentro de su horario (sale {$scheduledExit}). No hay tiempo extra.",
-            ]);
+                'message' => "Salio {$checkOut->format('H:i')} (horario {$scheduledExit}). Sin tiempo extra.",
+            ];
         }
 
-        // Use the calculated overtime_hours (already accounts for break + daily_work_hours).
-        // Fall back to the raw exit-to-checkout difference when the calculation is missing.
         $calculatedOt = (float) ($record->overtime_hours ?? 0);
         $hours = $calculatedOt > 0
             ? round($calculatedOt, 2)
             : round($scheduledExitDt->diffInMinutes($checkOut) / 60, 2);
 
         if ($hours <= 0) {
-            return response()->json([
+            return [
                 'found' => false,
-                'message' => "Salida {$checkOut->format('H:i')} excede el horario {$scheduledExit}, pero al descontar comida y jornada base no hay tiempo extra.",
-            ]);
+                'message' => "Salida {$checkOut->format('H:i')} excede {$scheduledExit}, pero descontando comida no hay tiempo extra.",
+            ];
         }
 
-        return response()->json([
+        return [
             'found' => true,
             'start_time' => $scheduledExitDt->format('H:i'),
             'end_time' => $checkOut->format('H:i'),
             'hours' => number_format($hours, 2, '.', ''),
-            'summary' => "Horario {$scheduledExit} - salida real {$checkOut->format('H:i')}. Tiempo extra neto: {$hours}h.",
-        ]);
+            'summary' => "Horario {$scheduledExit} -> salida {$checkOut->format('H:i')}. Tiempo extra neto: {$hours}h.",
+        ];
     }
 
     /**
-     * Build a velada (night-shift) suggestion from actual punches.
-     *
-     * Uses the velada_hours field calculated by the attendance pipeline,
-     * back-extending from check_out to derive a start time.
+     * Velada suggestion: back-extend velada_hours from the real check_out.
      */
-    private function suggestVelada(AttendanceRecord $record): \Illuminate\Http\JsonResponse
+    private function buildVeladaSuggestion(AttendanceRecord $record): array
     {
         $hours = (float) ($record->velada_hours ?? 0);
         if ($hours <= 0) {
-            return response()->json([
-                'found' => false,
-                'message' => 'No se detectaron horas de velada en las checadas de esa fecha.',
-            ]);
+            return ['found' => false, 'message' => 'Sin horas de velada detectadas.'];
         }
 
         $checkOut = Carbon::parse($record->check_out);
         $start = $checkOut->copy()->subMinutes((int) round($hours * 60));
 
-        return response()->json([
+        return [
             'found' => true,
             'start_time' => $start->format('H:i'),
             'end_time' => $checkOut->format('H:i'),
             'hours' => number_format($hours, 2, '.', ''),
-            'summary' => "Velada detectada: {$hours}h hasta la salida real {$checkOut->format('H:i')}.",
-        ]);
+            'summary' => "Velada: {$hours}h hasta salida {$checkOut->format('H:i')}.",
+        ];
     }
 
     /**
