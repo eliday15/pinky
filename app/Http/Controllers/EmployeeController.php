@@ -52,10 +52,7 @@ class EmployeeController extends Controller
             'positions' => Position::active()->get(['id', 'name']),
             'schedules' => Schedule::active()->get(['id', 'name']),
             'compensationTypes' => CompensationType::active()->get(['id', 'name', 'code', 'calculation_type']),
-            'supervisors' => Employee::active()->where(function ($q) {
-                $q->whereNotNull('supervisor_id')
-                    ->orWhereIn('id', Employee::whereNotNull('supervisor_id')->pluck('supervisor_id'));
-            })->get(['id', 'full_name']),
+            'supervisors' => Employee::active()->orderBy('full_name')->get(['id', 'full_name']),
             'filters' => $request->only(['search', 'department', 'position', 'schedule', 'supervisor', 'status', 'is_minimum_wage']),
             'can' => [
                 'create' => $user->can('create', Employee::class),

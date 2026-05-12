@@ -1,5 +1,6 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
+import SearchableSelect from '@/Components/SearchableSelect.vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import { ref, watch, computed } from 'vue';
 import debounce from 'lodash/debounce';
@@ -425,16 +426,13 @@ const exportUrl = computed(() => {
                                         {{ sch.name }}
                                     </option>
                                 </select>
-                                <select
+                                <SearchableSelect
                                     v-else-if="bulkField === 'supervisor_id'"
                                     v-model="bulkValue"
-                                    class="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
-                                >
-                                    <option value="">Seleccionar jefe...</option>
-                                    <option v-for="sup in supervisors" :key="sup.id" :value="sup.id">
-                                        {{ sup.full_name }}
-                                    </option>
-                                </select>
+                                    :options="supervisors"
+                                    label-key="full_name"
+                                    placeholder="Buscar jefe..."
+                                />
                                 <select
                                     v-else-if="bulkField === 'status'"
                                     v-model="bulkValue"
