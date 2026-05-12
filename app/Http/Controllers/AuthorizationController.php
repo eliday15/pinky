@@ -707,28 +707,34 @@ class AuthorizationController extends Controller
             ->get()
             ->keyBy('employee_id');
 
+        // Only return employees with actual overtime/velada to authorize. Empty rows
+        // (no punches, no extra time) clutter the UI, so we drop them here.
         $suggestions = $employees->map(function (Employee $employee) use ($allowed, $validated, $records) {
-            $base = [
-                'employee_id' => $employee->id,
-                'employee_name' => $employee->full_name,
-                'employee_number' => $employee->employee_number,
-            ];
-
             if ($allowed !== null && ! in_array($employee->id, $allowed, true)) {
-                return $base + ['found' => false, 'message' => 'No autorizado.'];
+                return null;
             }
 
             $record = $records->get($employee->id);
             if (! $record || ! $record->check_in || ! $record->check_out) {
-                return $base + ['found' => false, 'message' => 'Sin checadas registradas.'];
+                return null;
             }
 
-            return $base + $this->buildSuggestion($employee, $validated['date'], $validated['type'], $record);
-        });
+            $built = $this->buildSuggestion($employee, $validated['date'], $validated['type'], $record);
+            if (empty($built['found'])) {
+                return null;
+            }
+
+            return [
+                'employee_id' => $employee->id,
+                'employee_name' => $employee->full_name,
+                'employee_number' => $employee->employee_number,
+            ] + $built;
+        })->filter()->values();
 
         return response()->json([
-            'suggestions' => $suggestions->values(),
-            'eligible_count' => $suggestions->where('found', true)->count(),
+            'suggestions' => $suggestions,
+            'eligible_count' => $suggestions->count(),
+            'skipped_count' => $employees->count() - $suggestions->count(),
         ]);
     }
 

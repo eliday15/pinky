@@ -223,15 +223,35 @@ watch(
 );
 
 /* ----- Bulk live suggestions from schedule + attendance ----- */
-const suggestions = ref([]); // [{ employee_id, employee_name, found, start_time, end_time, hours, summary, message }]
+const suggestions = ref([]); // backend now only returns eligible (found=true) entries
 const suggestionsLoading = ref(false);
 const suggestionsApplied = ref(false);
+const skippedCount = ref(0);
 
 const canSuggestBulk = computed(() => {
     return form.employee_ids.length > 0
         && form.date
         && (form.type === 'overtime' || form.type === 'night_shift');
 });
+
+const totalSuggestedHours = computed(() => {
+    return suggestions.value.reduce((sum, s) => sum + parseFloat(s.hours || 0), 0).toFixed(2);
+});
+
+const applyBulkSuggestions = () => {
+    if (suggestions.value.length === 0) return;
+    form.employee_ids = suggestions.value.map(s => s.employee_id);
+    const map = {};
+    for (const s of suggestions.value) {
+        map[s.employee_id] = {
+            start_time: s.start_time,
+            end_time: s.end_time,
+            hours: s.hours,
+        };
+    }
+    form.employee_times = map;
+    suggestionsApplied.value = true;
+};
 
 const fetchBulkSuggestions = async () => {
     if (!canSuggestBulk.value) return;
@@ -246,37 +266,23 @@ const fetchBulkSuggestions = async () => {
             },
         });
         suggestions.value = data.suggestions || [];
+        skippedCount.value = data.skipped_count || 0;
+        // Auto-apply: the user already filtered to a specific date+type, so the
+        // intent is clear. They can still "Limpiar" if they want manual entry.
+        if (suggestions.value.length > 0) {
+            applyBulkSuggestions();
+        }
     } catch {
         suggestions.value = [];
+        skippedCount.value = 0;
     } finally {
         suggestionsLoading.value = false;
     }
 };
 
-const eligibleSuggestions = computed(() => suggestions.value.filter(s => s.found));
-
-const totalSuggestedHours = computed(() => {
-    return eligibleSuggestions.value.reduce((sum, s) => sum + parseFloat(s.hours || 0), 0).toFixed(2);
-});
-
-const applyBulkSuggestions = () => {
-    if (eligibleSuggestions.value.length === 0) return;
-    // Replace selection with only the eligible employees and pre-fill per-employee times.
-    form.employee_ids = eligibleSuggestions.value.map(s => s.employee_id);
-    const map = {};
-    for (const s of eligibleSuggestions.value) {
-        map[s.employee_id] = {
-            start_time: s.start_time,
-            end_time: s.end_time,
-            hours: s.hours,
-        };
-    }
-    form.employee_times = map;
-    suggestionsApplied.value = true;
-};
-
 const clearBulkSuggestions = () => {
     suggestions.value = [];
+    skippedCount.value = 0;
     suggestionsApplied.value = false;
     form.employee_times = {};
 };
@@ -474,34 +480,31 @@ const getDepartmentName = (deptId) => {
                     </div>
 
                     <div v-if="suggestions.length > 0" class="bg-white rounded-lg border border-amber-200 overflow-hidden">
-                        <div class="px-4 py-2 bg-amber-100 text-xs text-amber-800 flex justify-between">
-                            <span><strong>{{ eligibleSuggestions.length }}</strong> de {{ suggestions.length }} elegibles ({{ totalSuggestedHours }}h totales)</span>
-                            <button v-if="!suggestionsApplied && eligibleSuggestions.length > 0"
-                                type="button" @click="applyBulkSuggestions"
-                                class="font-semibold hover:underline">
-                                Aplicar a los {{ eligibleSuggestions.length }} elegibles
-                            </button>
-                            <span v-if="suggestionsApplied" class="font-semibold text-green-700">
-                                ✓ Aplicado
+                        <div class="px-4 py-2 bg-green-50 border-b border-green-200 text-xs text-green-800 flex items-center justify-between">
+                            <span>
+                                ✓ <strong>{{ suggestions.length }}</strong> autorizaciones listas con horas individuales
+                                ({{ totalSuggestedHours }}h totales)
+                                <span v-if="skippedCount > 0" class="text-gray-500 ml-2">
+                                    • {{ skippedCount }} sin tiempo extra (omitidos)
+                                </span>
                             </span>
                         </div>
                         <div class="max-h-72 overflow-y-auto divide-y divide-gray-100">
                             <div v-for="s in suggestions" :key="s.employee_id"
-                                class="px-4 py-2 flex items-center justify-between text-sm"
-                                :class="s.found ? 'bg-white' : 'bg-gray-50 text-gray-500'">
+                                class="px-4 py-2 flex items-center justify-between text-sm bg-white">
                                 <div class="flex-1 min-w-0">
                                     <div class="font-medium text-gray-900 truncate">{{ s.employee_name }}</div>
-                                    <div class="text-xs" :class="s.found ? 'text-amber-700' : 'text-gray-500'">
-                                        {{ s.summary || s.message }}
-                                    </div>
+                                    <div class="text-xs text-amber-700">{{ s.summary }}</div>
                                 </div>
-                                <div v-if="s.found" class="text-right text-xs ml-3 flex-shrink-0">
+                                <div class="text-right text-xs ml-3 flex-shrink-0">
                                     <div class="font-mono text-gray-700">{{ s.start_time }} - {{ s.end_time }}</div>
                                     <div class="font-semibold text-amber-700">{{ s.hours }}h</div>
                                 </div>
-                                <div v-else class="text-xs text-gray-400 ml-3 flex-shrink-0">—</div>
                             </div>
                         </div>
+                    </div>
+                    <div v-else-if="suggestionsApplied || (skippedCount > 0 && !suggestionsLoading)" class="bg-gray-50 rounded-lg p-3 text-sm text-gray-600">
+                        No se encontraron empleados con tiempo extra para esa fecha.
                     </div>
                 </div>
 
