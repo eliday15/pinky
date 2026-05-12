@@ -699,15 +699,26 @@ class AuthorizationController extends Controller
             ]);
         }
 
-        $minutes = $scheduledExitDt->diffInMinutes($checkOut);
-        $hours = round($minutes / 60, 2);
+        // Use the calculated overtime_hours (already accounts for break + daily_work_hours).
+        // Fall back to the raw exit-to-checkout difference when the calculation is missing.
+        $calculatedOt = (float) ($record->overtime_hours ?? 0);
+        $hours = $calculatedOt > 0
+            ? round($calculatedOt, 2)
+            : round($scheduledExitDt->diffInMinutes($checkOut) / 60, 2);
+
+        if ($hours <= 0) {
+            return response()->json([
+                'found' => false,
+                'message' => "Salida {$checkOut->format('H:i')} excede el horario {$scheduledExit}, pero al descontar comida y jornada base no hay tiempo extra.",
+            ]);
+        }
 
         return response()->json([
             'found' => true,
             'start_time' => $scheduledExitDt->format('H:i'),
             'end_time' => $checkOut->format('H:i'),
             'hours' => number_format($hours, 2, '.', ''),
-            'summary' => "Horario {$scheduledExit} - salida real {$checkOut->format('H:i')} = {$hours}h extra.",
+            'summary' => "Horario {$scheduledExit} - salida real {$checkOut->format('H:i')}. Tiempo extra neto: {$hours}h.",
         ]);
     }
 
