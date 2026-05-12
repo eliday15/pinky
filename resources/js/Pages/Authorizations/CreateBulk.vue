@@ -335,6 +335,25 @@ const findSuggestionSummary = (empId) => {
     return s?.summary || '';
 };
 
+/** Compose a datetime-local string from form.date and the row's time field. */
+const getRowDatetime = (empId, field) => {
+    const t = form.employee_times[empId]?.[field];
+    if (!t) return '';
+    const datePart = form.date || today;
+    return `${datePart}T${t}`;
+};
+
+/** Split a datetime-local input into form.date (shared) and the row's time field. */
+const setRowDatetime = (empId, field, value) => {
+    if (!value) {
+        setEmployeeRowField(empId, field, '');
+        return;
+    }
+    const [datePart, timePart] = value.split('T');
+    if (datePart) form.date = datePart;
+    if (timePart) setEmployeeRowField(empId, field, timePart);
+};
+
 const submit = () => {
     form.post(route('authorizations.storeBulk'));
 };
@@ -509,23 +528,27 @@ const getDepartmentName = (deptId) => {
                             <p class="text-xs text-gray-500">
                                 Cada empleado tiene su propio horario. Puedes editarlos manualmente o cargarlos desde checadas.
                             </p>
-                            <div class="mt-2 flex items-center gap-3">
-                                <label class="text-xs text-gray-700 font-medium">Fecha:</label>
+                            <p class="mt-2 text-xs text-gray-500">
+                                Total: <strong>{{ totalEditableHours }}h</strong>
+                            </p>
+                        </div>
+                        <div class="flex flex-col items-end gap-2 flex-shrink-0">
+                            <div class="flex items-center gap-2">
+                                <label class="text-xs text-gray-600">Fecha checadas:</label>
                                 <input type="date" v-model="form.date"
                                     class="text-xs rounded border-gray-300 focus:border-pink-500 focus:ring-pink-500 py-1" />
-                                <span class="text-xs text-gray-500">Total: <strong>{{ totalEditableHours }}h</strong></span>
                             </div>
-                        </div>
-                        <div class="flex gap-2 flex-shrink-0">
-                            <button type="button" @click="fetchBulkSuggestions"
-                                :disabled="suggestionsLoading || !form.date"
-                                class="px-3 py-1.5 bg-amber-600 text-white text-xs rounded hover:bg-amber-700 disabled:opacity-50">
-                                {{ suggestionsLoading ? 'Calculando...' : 'Cargar desde checadas' }}
-                            </button>
-                            <button v-if="suggestionsApplied" type="button" @click="clearBulkSuggestions"
-                                class="px-3 py-1.5 border border-gray-300 text-gray-700 text-xs rounded hover:bg-gray-50">
-                                Limpiar
-                            </button>
+                            <div class="flex gap-2">
+                                <button type="button" @click="fetchBulkSuggestions"
+                                    :disabled="suggestionsLoading || !form.date"
+                                    class="px-3 py-1.5 bg-amber-600 text-white text-xs rounded hover:bg-amber-700 disabled:opacity-50">
+                                    {{ suggestionsLoading ? 'Calculando...' : 'Cargar desde checadas' }}
+                                </button>
+                                <button v-if="suggestionsApplied" type="button" @click="clearBulkSuggestions"
+                                    class="px-3 py-1.5 border border-gray-300 text-gray-700 text-xs rounded hover:bg-gray-50">
+                                    Limpiar
+                                </button>
+                            </div>
                         </div>
                     </div>
 
@@ -535,16 +558,16 @@ const getDepartmentName = (deptId) => {
 
                     <div class="border rounded-lg overflow-hidden">
                         <div class="bg-gray-50 px-4 py-2 grid grid-cols-12 gap-2 text-xs font-medium text-gray-700">
-                            <div class="col-span-5">Empleado</div>
-                            <div class="col-span-2">Inicio</div>
-                            <div class="col-span-2">Fin</div>
-                            <div class="col-span-2">Horas</div>
+                            <div class="col-span-4">Empleado</div>
+                            <div class="col-span-3">Fecha/Hora Inicio</div>
+                            <div class="col-span-3">Fecha/Hora Fin</div>
+                            <div class="col-span-1">Horas</div>
                             <div class="col-span-1"></div>
                         </div>
                         <div class="max-h-96 overflow-y-auto divide-y divide-gray-100">
                             <div v-for="empId in form.employee_ids" :key="empId"
                                 class="px-4 py-2 grid grid-cols-12 gap-2 items-center text-sm bg-white">
-                                <div class="col-span-5 min-w-0">
+                                <div class="col-span-4 min-w-0">
                                     <div class="font-medium text-gray-900 truncate">{{ findEmployeeName(empId) }}</div>
                                     <div class="text-xs text-gray-500 truncate">
                                         {{ findEmployeeNumber(empId) }}
@@ -553,20 +576,20 @@ const getDepartmentName = (deptId) => {
                                         </span>
                                     </div>
                                 </div>
-                                <input type="time"
-                                    :value="getEmployeeRow(empId).start_time"
-                                    @input="setEmployeeRowField(empId, 'start_time', $event.target.value)"
-                                    class="col-span-2 rounded border-gray-300 text-xs focus:border-pink-500 focus:ring-pink-500" />
-                                <input type="time"
-                                    :value="getEmployeeRow(empId).end_time"
-                                    @input="setEmployeeRowField(empId, 'end_time', $event.target.value)"
-                                    class="col-span-2 rounded border-gray-300 text-xs focus:border-pink-500 focus:ring-pink-500" />
+                                <input type="datetime-local"
+                                    :value="getRowDatetime(empId, 'start_time')"
+                                    @input="setRowDatetime(empId, 'start_time', $event.target.value)"
+                                    class="col-span-3 rounded border-gray-300 text-xs focus:border-pink-500 focus:ring-pink-500" />
+                                <input type="datetime-local"
+                                    :value="getRowDatetime(empId, 'end_time')"
+                                    @input="setRowDatetime(empId, 'end_time', $event.target.value)"
+                                    class="col-span-3 rounded border-gray-300 text-xs focus:border-pink-500 focus:ring-pink-500" />
                                 <input type="number" step="0.25" min="0" max="24"
                                     :value="getEmployeeRow(empId).hours"
                                     @input="setEmployeeRowField(empId, 'hours', $event.target.value)"
-                                    class="col-span-2 rounded border-gray-300 text-xs focus:border-pink-500 focus:ring-pink-500" />
+                                    class="col-span-1 rounded border-gray-300 text-xs focus:border-pink-500 focus:ring-pink-500" />
                                 <button type="button" @click="removeEmployeeFromBulk(empId)"
-                                    class="col-span-1 text-gray-400 hover:text-red-600 text-xs">
+                                    class="col-span-1 text-gray-400 hover:text-red-600 text-xs text-left">
                                     Quitar
                                 </button>
                             </div>
