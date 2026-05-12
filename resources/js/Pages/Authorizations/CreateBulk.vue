@@ -287,6 +287,54 @@ const clearBulkSuggestions = () => {
     form.employee_times = {};
 };
 
+/* ----- Per-employee editable rows ----- */
+const isPerHour = computed(() => selectedApplicationMode.value === 'per_hour');
+
+const getEmployeeRow = (empId) => form.employee_times[empId] || { start_time: '', end_time: '', hours: '' };
+
+const setEmployeeRowField = (empId, field, value) => {
+    const current = { ...(form.employee_times[empId] || { start_time: '', end_time: '', hours: '' }) };
+    current[field] = value;
+    // Auto-calc hours when both times are present and user edited a time field.
+    if ((field === 'start_time' || field === 'end_time') && current.start_time && current.end_time) {
+        const [sh, sm] = current.start_time.split(':').map(Number);
+        const [eh, em] = current.end_time.split(':').map(Number);
+        if (!isNaN(sh) && !isNaN(eh)) {
+            const diff = (eh * 60 + em) - (sh * 60 + sm);
+            if (diff > 0) current.hours = (diff / 60).toFixed(2);
+        }
+    }
+    form.employee_times = { ...form.employee_times, [empId]: current };
+};
+
+const removeEmployeeFromBulk = (empId) => {
+    form.employee_ids = form.employee_ids.filter(id => id !== empId);
+    const { [empId]: _, ...rest } = form.employee_times;
+    form.employee_times = rest;
+};
+
+const totalEditableHours = computed(() => {
+    return form.employee_ids.reduce((sum, id) => {
+        const row = form.employee_times[id];
+        return sum + (parseFloat(row?.hours || 0) || 0);
+    }, 0).toFixed(2);
+});
+
+const findEmployeeName = (empId) => {
+    const emp = props.employees.find(e => e.id === empId);
+    return emp ? emp.full_name : `Empleado #${empId}`;
+};
+
+const findEmployeeNumber = (empId) => {
+    const emp = props.employees.find(e => e.id === empId);
+    return emp?.employee_number || '';
+};
+
+const findSuggestionSummary = (empId) => {
+    const s = suggestions.value.find(x => x.employee_id === empId);
+    return s?.summary || '';
+};
+
 const submit = () => {
     form.post(route('authorizations.storeBulk'));
 };
@@ -450,66 +498,84 @@ const getDepartmentName = (deptId) => {
                     </p>
                 </div>
 
-                <!-- Live suggestions from schedule + attendance -->
-                <div v-if="(form.type === 'overtime' || form.type === 'night_shift') && form.employee_ids.length > 0" class="bg-amber-50 border-l-4 border-amber-400 rounded-lg p-4">
-                    <div class="flex items-start justify-between gap-3 mb-3">
+                <!-- Step 3: Per-employee details (per_hour types only) -->
+                <div v-if="isPerHour && form.employee_ids.length > 0" class="bg-white rounded-lg shadow p-6">
+                    <div class="flex items-start justify-between gap-3 mb-4">
                         <div class="flex-1">
-                            <h4 class="text-sm font-semibold text-amber-800">Sugerencia desde checadas reales</h4>
-                            <p class="text-xs text-amber-700 mt-1">
-                                Comparar horario vs checadas reales y pre-llenar horas individuales.
+                            <h3 class="text-lg font-semibold text-gray-800 mb-1">
+                                <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-600 text-white text-xs mr-2">3</span>
+                                Horas por Empleado
+                            </h3>
+                            <p class="text-xs text-gray-500">
+                                Cada empleado tiene su propio horario. Puedes editarlos manualmente o cargarlos desde checadas.
                             </p>
-                            <div class="mt-2 flex items-center gap-2">
-                                <label class="text-xs text-amber-700 font-medium">Fecha a revisar:</label>
+                            <div class="mt-2 flex items-center gap-3">
+                                <label class="text-xs text-gray-700 font-medium">Fecha:</label>
                                 <input type="date" v-model="form.date"
-                                    class="text-xs rounded border-amber-300 focus:border-amber-500 focus:ring-amber-500 py-1" />
+                                    class="text-xs rounded border-gray-300 focus:border-pink-500 focus:ring-pink-500 py-1" />
+                                <span class="text-xs text-gray-500">Total: <strong>{{ totalEditableHours }}h</strong></span>
                             </div>
                         </div>
-                        <div class="flex gap-2">
-                            <button v-if="suggestions.length === 0"
-                                type="button" @click="fetchBulkSuggestions"
-                                :disabled="suggestionsLoading"
+                        <div class="flex gap-2 flex-shrink-0">
+                            <button type="button" @click="fetchBulkSuggestions"
+                                :disabled="suggestionsLoading || !form.date"
                                 class="px-3 py-1.5 bg-amber-600 text-white text-xs rounded hover:bg-amber-700 disabled:opacity-50">
-                                {{ suggestionsLoading ? 'Calculando...' : 'Cargar sugerencias' }}
+                                {{ suggestionsLoading ? 'Calculando...' : 'Cargar desde checadas' }}
                             </button>
-                            <button v-else
-                                type="button" @click="clearBulkSuggestions"
-                                class="px-3 py-1.5 border border-amber-400 text-amber-700 text-xs rounded hover:bg-amber-100">
+                            <button v-if="suggestionsApplied" type="button" @click="clearBulkSuggestions"
+                                class="px-3 py-1.5 border border-gray-300 text-gray-700 text-xs rounded hover:bg-gray-50">
                                 Limpiar
                             </button>
                         </div>
                     </div>
 
-                    <div v-if="suggestions.length > 0" class="bg-white rounded-lg border border-amber-200 overflow-hidden">
-                        <div class="px-4 py-2 bg-green-50 border-b border-green-200 text-xs text-green-800 flex items-center justify-between">
-                            <span>
-                                ✓ <strong>{{ suggestions.length }}</strong> autorizaciones listas con horas individuales
-                                ({{ totalSuggestedHours }}h totales)
-                                <span v-if="skippedCount > 0" class="text-gray-500 ml-2">
-                                    • {{ skippedCount }} sin tiempo extra (omitidos)
-                                </span>
-                            </span>
+                    <div v-if="suggestionsApplied && skippedCount > 0" class="mb-3 bg-amber-50 border border-amber-200 rounded-lg p-2 text-xs text-amber-800">
+                        Se recortaron {{ skippedCount }} empleados sin tiempo extra detectado en esa fecha.
+                    </div>
+
+                    <div class="border rounded-lg overflow-hidden">
+                        <div class="bg-gray-50 px-4 py-2 grid grid-cols-12 gap-2 text-xs font-medium text-gray-700">
+                            <div class="col-span-5">Empleado</div>
+                            <div class="col-span-2">Inicio</div>
+                            <div class="col-span-2">Fin</div>
+                            <div class="col-span-2">Horas</div>
+                            <div class="col-span-1"></div>
                         </div>
-                        <div class="max-h-72 overflow-y-auto divide-y divide-gray-100">
-                            <div v-for="s in suggestions" :key="s.employee_id"
-                                class="px-4 py-2 flex items-center justify-between text-sm bg-white">
-                                <div class="flex-1 min-w-0">
-                                    <div class="font-medium text-gray-900 truncate">{{ s.employee_name }}</div>
-                                    <div class="text-xs text-amber-700">{{ s.summary }}</div>
+                        <div class="max-h-96 overflow-y-auto divide-y divide-gray-100">
+                            <div v-for="empId in form.employee_ids" :key="empId"
+                                class="px-4 py-2 grid grid-cols-12 gap-2 items-center text-sm bg-white">
+                                <div class="col-span-5 min-w-0">
+                                    <div class="font-medium text-gray-900 truncate">{{ findEmployeeName(empId) }}</div>
+                                    <div class="text-xs text-gray-500 truncate">
+                                        {{ findEmployeeNumber(empId) }}
+                                        <span v-if="findSuggestionSummary(empId)" class="text-amber-700 ml-2">
+                                            • {{ findSuggestionSummary(empId) }}
+                                        </span>
+                                    </div>
                                 </div>
-                                <div class="text-right text-xs ml-3 flex-shrink-0">
-                                    <div class="font-mono text-gray-700">{{ s.start_time }} - {{ s.end_time }}</div>
-                                    <div class="font-semibold text-amber-700">{{ s.hours }}h</div>
-                                </div>
+                                <input type="time"
+                                    :value="getEmployeeRow(empId).start_time"
+                                    @input="setEmployeeRowField(empId, 'start_time', $event.target.value)"
+                                    class="col-span-2 rounded border-gray-300 text-xs focus:border-pink-500 focus:ring-pink-500" />
+                                <input type="time"
+                                    :value="getEmployeeRow(empId).end_time"
+                                    @input="setEmployeeRowField(empId, 'end_time', $event.target.value)"
+                                    class="col-span-2 rounded border-gray-300 text-xs focus:border-pink-500 focus:ring-pink-500" />
+                                <input type="number" step="0.25" min="0" max="24"
+                                    :value="getEmployeeRow(empId).hours"
+                                    @input="setEmployeeRowField(empId, 'hours', $event.target.value)"
+                                    class="col-span-2 rounded border-gray-300 text-xs focus:border-pink-500 focus:ring-pink-500" />
+                                <button type="button" @click="removeEmployeeFromBulk(empId)"
+                                    class="col-span-1 text-gray-400 hover:text-red-600 text-xs">
+                                    Quitar
+                                </button>
                             </div>
                         </div>
                     </div>
-                    <div v-else-if="suggestionsApplied || (skippedCount > 0 && !suggestionsLoading)" class="bg-gray-50 rounded-lg p-3 text-sm text-gray-600">
-                        No se encontraron empleados con tiempo extra para esa fecha.
-                    </div>
                 </div>
 
-                <!-- Step 3: Date & Time - adapts to application_mode -->
-                <div v-if="selectedApplicationMode && form.employee_ids.length > 0 && !suggestionsApplied" class="bg-white rounded-lg shadow p-6">
+                <!-- Step 3 (legacy): Date & Time for per_day / one_time -->
+                <div v-if="selectedApplicationMode && !isPerHour && form.employee_ids.length > 0" class="bg-white rounded-lg shadow p-6">
                     <h3 class="text-lg font-semibold text-gray-800 mb-1">
                         <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-600 text-white text-xs mr-2">3</span>
                         {{ dateCardTitle }}
