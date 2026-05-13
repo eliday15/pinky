@@ -67,15 +67,15 @@ class AttendanceReportController extends Controller implements HasMiddleware
                 continue;
             }
             if (is_null($row->check_in)) {
-                $expected = $this->formatTime($emp['entry_time'] ?? null);
+                $expected = $this->formatTime($this->entryTimeForDate($emp, $row->work_date));
                 $noShowByEmp[$eid][] = ['date' => $row->work_date, 'label' => "Entrada esperada: {$expected}"];
             } else {
                 if (($row->late_minutes ?? 0) >= $maxLateBeforeAbsence) {
-                    $expected = $this->formatTime($emp['entry_time'] ?? null);
+                    $expected = $this->formatTime($this->entryTimeForDate($emp, $row->work_date));
                     $actual = $this->formatTime($row->check_in);
                     $label = "Entrada esperada: {$expected}, llegó: {$actual}";
                 } elseif ($earlyDepartureIsAbsence && ($row->early_departure_minutes ?? 0) >= $earlyDepartureThreshold) {
-                    $expected = $this->formatTime($emp['exit_time'] ?? null);
+                    $expected = $this->formatTime($this->exitTimeForDate($emp, $row->work_date));
                     $actual = $this->formatTime($row->check_out);
                     $label = "Salida esperada: {$expected}, salió: {$actual}";
                 } else {
@@ -307,7 +307,7 @@ class AttendanceReportController extends Controller implements HasMiddleware
                     'date' => $r->work_date,
                     'minutes' => $r->late_minutes,
                     'check_in' => $r->check_in,
-                    'expected_entry' => $employees[$eid]['entry_time'] ?? null,
+                    'expected_entry' => $this->entryTimeForDate($employees[$eid], $r->work_date),
                 ], $records),
             ];
         })->filter(fn ($e) => $e['employee'] !== null)
@@ -379,7 +379,7 @@ class AttendanceReportController extends Controller implements HasMiddleware
                     'date' => $r->work_date,
                     'minutes' => $r->early_departure_minutes,
                     'check_out' => $r->check_out,
-                    'expected_exit' => $employees[$eid]['exit_time'] ?? null,
+                    'expected_exit' => $this->exitTimeForDate($employees[$eid], $r->work_date),
                     'is_falta' => $earlyDepartureIsAbsence && $r->early_departure_minutes >= $earlyDepartureThreshold,
                 ], $records),
             ];
@@ -435,13 +435,14 @@ class AttendanceReportController extends Controller implements HasMiddleware
      */
     private function getEmployeeLookup($employeeIds): array
     {
-        return Employee::with(['department:id,name', 'schedule:id,entry_time,exit_time,working_days'])
+        return Employee::with(['department:id,name', 'schedule:id,entry_time,exit_time,working_days,day_schedules'])
             ->select('id', 'employee_number', 'full_name', 'department_id', 'schedule_id', 'schedule_overrides')
             ->whereIn('id', $employeeIds)
             ->get()
             ->mapWithKeys(function ($e) {
                 $overrides = $e->schedule_overrides ?? [];
-                $workingDays = $overrides['working_days'] ?? $e->schedule?->working_days ?? [];
+                $schedule = $e->schedule;
+                $workingDays = $overrides['working_days'] ?? $schedule?->working_days ?? [];
 
                 return [
                     $e->id => [
@@ -449,13 +450,58 @@ class AttendanceReportController extends Controller implements HasMiddleware
                         'employee_number' => $e->employee_number,
                         'full_name' => $e->full_name,
                         'department' => $e->department ? ['id' => $e->department->id, 'name' => $e->department->name] : null,
-                        'entry_time' => $overrides['entry_time'] ?? $e->schedule?->entry_time,
-                        'exit_time' => $overrides['exit_time'] ?? $e->schedule?->exit_time,
+                        // entry_time / exit_time hold the global override or schedule base.
+                        // Per-date resolution (with day_schedules) happens via entryTimeForDate / exitTimeForDate.
+                        'entry_time' => $overrides['entry_time'] ?? $schedule?->entry_time,
+                        'exit_time' => $overrides['exit_time'] ?? $schedule?->exit_time,
+                        'has_entry_override' => isset($overrides['entry_time']),
+                        'has_exit_override' => isset($overrides['exit_time']),
                         'working_days' => array_map('strtolower', $workingDays),
+                        'day_schedules' => $schedule?->day_schedules ?? [],
+                        'override_day_schedules' => $overrides['day_schedules'] ?? [],
                     ],
                 ];
             })
             ->toArray();
+    }
+
+    /**
+     * Effective entry/exit time for a specific date. Priority order (highest first):
+     * 1. Employee per-day override (schedule_overrides.day_schedules.{day}.{field})
+     * 2. Employee global override (schedule_overrides.{field})
+     * 3. Schedule per-day (schedules.day_schedules.{day}.{field})
+     * 4. Schedule base (schedules.{field})
+     * Mirrors Employee::getEffectiveScheduleForDay.
+     */
+    private function entryTimeForDate(array $emp, string $workDate): ?string
+    {
+        return $this->timeForDate($emp, $workDate, 'entry_time', 'has_entry_override');
+    }
+
+    private function exitTimeForDate(array $emp, string $workDate): ?string
+    {
+        return $this->timeForDate($emp, $workDate, 'exit_time', 'has_exit_override');
+    }
+
+    private function timeForDate(array $emp, string $workDate, string $field, string $hasOverrideKey): ?string
+    {
+        $day = strtolower(Carbon::parse($workDate)->englishDayOfWeek);
+
+        $perDayOverride = $emp['override_day_schedules'][$day][$field] ?? null;
+        if (! empty($perDayOverride)) {
+            return $perDayOverride;
+        }
+
+        if (! empty($emp[$hasOverrideKey])) {
+            return $emp[$field];
+        }
+
+        $perDaySchedule = $emp['day_schedules'][$day][$field] ?? null;
+        if (! empty($perDaySchedule)) {
+            return $perDaySchedule;
+        }
+
+        return $emp[$field];
     }
 
     /**
