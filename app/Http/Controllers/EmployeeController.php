@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Traits\VerifiesTwoFactor;
 use App\Models\AuditLog;
 use App\Models\CompensationType;
 use App\Models\Department;
@@ -27,6 +28,8 @@ use Inertia\Response;
  */
 class EmployeeController extends Controller
 {
+    use VerifiesTwoFactor;
+
     /**
      * Display a listing of employees.
      *
@@ -332,6 +335,7 @@ class EmployeeController extends Controller
 
         $subordinateIds = Employee::where('supervisor_id', $employee->id)
             ->where('status', 'active')
+            ->where('id', '!=', $employee->id)
             ->pluck('id')
             ->toArray();
 
@@ -373,6 +377,20 @@ class EmployeeController extends Controller
         }
 
         $scheduleChanging = $request->schedule_id != $employee->schedule_id;
+
+        $currentCompIds = $employee->compensationTypes()->pluck('compensation_types.id')->sort()->values()->all();
+        $newCompIds = collect($request->input('compensation_type_ids', []))
+            ->map(fn ($id) => (int) $id)
+            ->sort()
+            ->values()
+            ->all();
+        $compensationChanging = $currentCompIds !== $newCompIds;
+
+        // Sensitive changes require a 2FA code from the user's authenticator
+        // app. No-op for users without 2FA enabled.
+        if ($scheduleChanging || $compensationChanging) {
+            $this->verifyTwoFactorCode($request);
+        }
 
         $rules = [
             'employee_number' => ['required', 'string', 'max:50', Rule::unique('employees')->ignore($employee->id)->whereNull('deleted_at')],
@@ -436,17 +454,10 @@ class EmployeeController extends Controller
             'emergency_contacts.*.address' => ['nullable', 'string', 'max:255'],
         ];
 
+        $validated = $request->validate($rules);
+
+        // Audit the schedule change (no evidence file: 2FA replaces it).
         if ($scheduleChanging) {
-            $rules['schedule_change_evidence'] = ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'];
-        }
-
-        $validated = $request->validate($rules, [
-            'schedule_change_evidence.required' => 'Se requiere evidencia al cambiar el horario del empleado.',
-        ]);
-
-        // Handle evidence file upload
-        if ($scheduleChanging && $request->hasFile('schedule_change_evidence')) {
-            $path = $request->file('schedule_change_evidence')->store('schedule-changes', 'public');
             AuditLog::create([
                 'user_id' => Auth::id(),
                 'auditable_type' => Employee::class,
@@ -454,7 +465,21 @@ class EmployeeController extends Controller
                 'action' => 'schedule_change',
                 'module' => 'employees',
                 'old_values' => ['schedule_id' => $employee->schedule_id],
-                'new_values' => ['schedule_id' => $validated['schedule_id'], 'evidence_path' => $path],
+                'new_values' => ['schedule_id' => $validated['schedule_id']],
+                'ip_address' => $request->ip(),
+                'user_agent' => $request->userAgent(),
+            ]);
+        }
+
+        if ($compensationChanging) {
+            AuditLog::create([
+                'user_id' => Auth::id(),
+                'auditable_type' => Employee::class,
+                'auditable_id' => $employee->id,
+                'action' => 'compensation_change',
+                'module' => 'employees',
+                'old_values' => ['compensation_type_ids' => $currentCompIds],
+                'new_values' => ['compensation_type_ids' => $newCompIds],
                 'ip_address' => $request->ip(),
                 'user_agent' => $request->userAgent(),
             ]);
@@ -492,7 +517,6 @@ class EmployeeController extends Controller
         $validated['monthly_bonus_amount'] = $validated['monthly_bonus_amount'] ?? 0;
         $validated['vacation_days_reserved'] = $validated['vacation_days_reserved'] ?? 0;
         $validated['vacation_premium_percentage'] = $validated['vacation_premium_percentage'] ?? 25.00;
-        unset($validated['schedule_change_evidence']);
 
         // Handle photo upload
         if ($request->hasFile('photo')) {

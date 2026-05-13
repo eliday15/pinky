@@ -3,8 +3,10 @@ import AppLayout from '@/Layouts/AppLayout.vue';
 import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import InputError from '@/Components/InputError.vue';
 import SearchableSelect from '@/Components/SearchableSelect.vue';
-import { Head, Link, useForm } from '@inertiajs/vue3';
+import { Head, Link, useForm, usePage } from '@inertiajs/vue3';
 import { computed, ref, watch } from 'vue';
+
+const hasTwoFactor = computed(() => usePage().props.auth?.has_two_factor ?? false);
 
 const props = defineProps({
     employee: Object,
@@ -116,9 +118,9 @@ const form = useForm({
     vacation_days_reserved: props.employee.vacation_days_reserved || 0,
     vacation_premium_percentage: props.employee.vacation_premium_percentage ?? 25.00,
     status: props.employee.status,
-    schedule_change_evidence: null,
     compensation_type_ids: initialCompensationTypeIds,
     compensation_type_overrides: initialCompensationTypeOverrides,
+    two_factor_code: '',
 });
 
 const photoPreview = ref(props.employee.photo_path ? `/storage/${props.employee.photo_path}` : null);
@@ -170,6 +172,14 @@ const toggleSubordinate = (id) => {
 };
 
 const scheduleChanged = computed(() => form.schedule_id != originalScheduleId);
+
+const initialCompensationKey = JSON.stringify([...initialCompensationTypeIds].sort((a, b) => a - b));
+const compensationChanged = computed(() => {
+    const currentKey = JSON.stringify([...(form.compensation_type_ids || [])].map(Number).sort((a, b) => a - b));
+    return currentKey !== initialCompensationKey;
+});
+
+const requiresTwoFactor = computed(() => hasTwoFactor.value && (scheduleChanged.value || compensationChanged.value));
 
 const selectedSchedule = computed(() => {
     return props.schedules.find(s => s.id === form.schedule_id);
@@ -396,10 +406,6 @@ const vacationCalcInfo = computed(() => {
     return { years, days };
 });
 
-const handleFileChange = (e) => {
-    form.schedule_change_evidence = e.target.files[0];
-};
-
 const onPositionChange = () => {
     const position = props.positions.find(p => p.id === form.position_id);
     if (!position) {
@@ -535,14 +541,19 @@ const relationshipOptions = [
     'Otro',
 ];
 
-const submit = () => {
-    // Filter out empty emergency contacts before submitting
+const showTwoFactorModal = ref(false);
+
+const doSubmit = () => {
     const filledContacts = form.emergency_contacts.filter(c => c.name || c.phone || c.relationship);
     form.emergency_contacts = filledContacts;
 
     form.put(route('employees.update', props.employee.id), {
         forceFormData: true,
         onError: (errors) => {
+            if (errors.two_factor_code) {
+                showTwoFactorModal.value = true;
+                return;
+            }
             if (errors.zkteco_user_id?.startsWith('zkteco_conflict_inactive:')) {
                 const parts = errors.zkteco_user_id.split(':');
                 zktecoConflict.value = {
@@ -554,20 +565,38 @@ const submit = () => {
                 form.clearErrors('zkteco_user_id');
             }
         },
+        onSuccess: () => {
+            showTwoFactorModal.value = false;
+            form.two_factor_code = '';
+        },
     });
+};
+
+const submit = () => {
+    if (requiresTwoFactor.value && !form.two_factor_code) {
+        showTwoFactorModal.value = true;
+        return;
+    }
+    doSubmit();
+};
+
+const confirmTwoFactor = () => {
+    if (!form.two_factor_code || form.two_factor_code.length !== 6) return;
+    showTwoFactorModal.value = false;
+    doSubmit();
+};
+
+const cancelTwoFactor = () => {
+    showTwoFactorModal.value = false;
+    form.two_factor_code = '';
+    form.clearErrors('two_factor_code');
 };
 
 const confirmZktecoReassign = () => {
     showZktecoModal.value = false;
     zktecoConflict.value = null;
     form.confirm_zkteco_reassign = true;
-
-    const filledContacts = form.emergency_contacts.filter(c => c.name || c.phone || c.relationship);
-    form.emergency_contacts = filledContacts;
-
-    form.put(route('employees.update', props.employee.id), {
-        forceFormData: true,
-    });
+    submit();
 };
 
 const cancelZktecoReassign = () => {
@@ -1162,24 +1191,11 @@ watch(() => form.hire_date, onHireDateChange);
                         </div>
                     </div>
 
-                    <!-- Schedule Change Evidence -->
-                    <div v-if="scheduleChanged" class="mt-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-                        <label class="block text-sm font-medium text-yellow-800 mb-2">
-                            Evidencia de Cambio de Horario *
-                        </label>
-                        <input
-                            type="file"
-                            @change="handleFileChange"
-                            accept=".pdf,.jpg,.jpeg,.png"
-                            class="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-yellow-100 file:text-yellow-700 hover:file:bg-yellow-200"
-                            :class="{ 'border-red-500': form.errors.schedule_change_evidence }"
-                        />
-                        <p class="mt-1 text-xs text-yellow-600">
-                            Sube un documento que justifique el cambio de horario (PDF, JPG, PNG - Max 5MB)
-                        </p>
-                        <p v-if="form.errors.schedule_change_evidence" class="mt-1 text-sm text-red-600">
-                            {{ form.errors.schedule_change_evidence }}
-                        </p>
+                    <!-- Schedule change confirmation note (2FA captured via modal on submit) -->
+                    <div v-if="scheduleChanged" class="mt-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-800">
+                        <span class="font-medium">Cambio de horario detectado.</span>
+                        <span v-if="hasTwoFactor">Al guardar se te pedira tu codigo del autenticador para confirmar.</span>
+                        <span v-else>El cambio quedara registrado en el historial de auditoria.</span>
                     </div>
                 </div>
 
@@ -1540,6 +1556,63 @@ watch(() => form.hire_date, onHireDateChange);
                             Reasignar y Guardar
                         </button>
                     </div>
+                </div>
+            </div>
+        </Teleport>
+
+        <!-- 2FA Modal: required when schedule and/or compensation changes -->
+        <Teleport to="body">
+            <div v-if="showTwoFactorModal" class="fixed inset-0 z-50 flex items-center justify-center">
+                <div class="fixed inset-0 bg-black/50" @click="cancelTwoFactor"></div>
+                <div class="relative bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+                    <div class="px-6 py-4 border-b border-gray-200 flex items-center">
+                        <div class="flex-shrink-0 flex items-center justify-center h-10 w-10 rounded-full bg-pink-100">
+                            <svg class="h-5 w-5 text-pink-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                            </svg>
+                        </div>
+                        <h3 class="ml-3 text-lg font-semibold text-gray-900">Confirma con tu autenticador</h3>
+                    </div>
+                    <form @submit.prevent="confirmTwoFactor">
+                        <div class="px-6 py-4">
+                            <p class="text-sm text-gray-600 mb-3">
+                                Estas
+                                <span v-if="scheduleChanged && compensationChanged">cambiando el horario y las compensaciones</span>
+                                <span v-else-if="scheduleChanged">cambiando el horario</span>
+                                <span v-else>cambiando las compensaciones</span>
+                                del empleado. Ingresa el codigo de 6 digitos de tu app de autenticacion para confirmar.
+                            </p>
+                            <input
+                                v-model="form.two_factor_code"
+                                type="text"
+                                inputmode="numeric"
+                                autocomplete="one-time-code"
+                                maxlength="6"
+                                class="w-full text-center text-2xl tracking-widest rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                placeholder="000000"
+                                autofocus
+                            />
+                            <p v-if="form.errors.two_factor_code" class="mt-2 text-sm text-red-600">
+                                {{ form.errors.two_factor_code }}
+                            </p>
+                        </div>
+                        <div class="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
+                            <button
+                                type="button"
+                                class="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
+                                @click="cancelTwoFactor"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                type="submit"
+                                :disabled="form.processing || (form.two_factor_code || '').length !== 6"
+                                class="px-4 py-2 text-sm font-medium text-white bg-pink-600 rounded-lg hover:bg-pink-700 disabled:opacity-50"
+                            >
+                                {{ form.processing ? 'Verificando...' : 'Confirmar y guardar' }}
+                            </button>
+                        </div>
+                    </form>
                 </div>
             </div>
         </Teleport>
