@@ -323,12 +323,23 @@ class ReportController extends Controller implements HasMiddleware
             ->map(fn ($d) => Carbon::parse($d)->toDateString())
             ->all();
 
-        $records = AttendanceRecord::with(['employee.department'])
+        $records = AttendanceRecord::with(['employee.department', 'employee.schedule:id,working_days'])
             ->whereIn('employee_id', $activeEmployeeIds)
             ->whereBetween('work_date', [$startDate, $endDate])
             ->where('status', 'absent')
             ->when(! empty($holidayDates), fn ($q) => $q->whereNotIn('work_date', $holidayDates))
-            ->get();
+            ->get()
+            // Drop absences on days the employee isn't scheduled to work
+            // (e.g. a stale absent row on Saturday for a Mon-Fri employee).
+            ->filter(function ($r) {
+                if (! $r->employee) {
+                    return false;
+                }
+                $dayName = Carbon::parse($r->work_date)->englishDayOfWeek;
+
+                return $r->employee->isEffectiveWorkingDay($dayName);
+            })
+            ->values();
 
         // Use whereHas for relationship filtering
         $incidents = Incident::with(['employee.department', 'incidentType'])

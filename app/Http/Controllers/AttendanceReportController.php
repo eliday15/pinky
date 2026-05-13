@@ -62,12 +62,14 @@ class AttendanceReportController extends Controller implements HasMiddleware
 
         foreach ($absentRows as $row) {
             $eid = $row->employee_id;
+            $emp = $employees[$eid] ?? null;
+            if (! $emp || ! $this->isWorkingDayForEmployee($emp, $row->work_date)) {
+                continue;
+            }
             if (is_null($row->check_in)) {
-                $emp = $employees[$eid] ?? null;
                 $expected = $this->formatTime($emp['entry_time'] ?? null);
                 $noShowByEmp[$eid][] = ['date' => $row->work_date, 'label' => "Entrada esperada: {$expected}"];
             } else {
-                $emp = $employees[$eid] ?? null;
                 if (($row->late_minutes ?? 0) >= $maxLateBeforeAbsence) {
                     $expected = $this->formatTime($emp['entry_time'] ?? null);
                     $actual = $this->formatTime($row->check_in);
@@ -83,28 +85,40 @@ class AttendanceReportController extends Controller implements HasMiddleware
             }
         }
 
-        // Late counts per employee per month for retardo-accumulated faltas.
-        // Lates that fall on a holiday don't accumulate toward a generated falta.
-        $lateCounts = DB::table('attendance_records')
-            ->select('employee_id', DB::raw("DATE_FORMAT(work_date, '%Y-%m') as month"), DB::raw('COUNT(*) as cnt'))
+        // Late records per employee — aggregated in PHP so we can drop lates
+        // on non-working days (e.g. a Saturday late for a Mon-Fri employee).
+        // Lates that fall on a holiday don't accumulate either.
+        $lateRows = DB::table('attendance_records')
+            ->select('employee_id', 'work_date')
             ->whereBetween('work_date', [$startDate, $endDate])
             ->whereIn('employee_id', $activeEmployeeIds)
             ->where('status', 'late')
             ->when(! empty($holidayDates), fn ($q) => $q->whereNotIn('work_date', $holidayDates))
-            ->groupBy('employee_id', DB::raw("DATE_FORMAT(work_date, '%Y-%m')"))
             ->get();
+
+        $lateByEmpMonth = [];
+        foreach ($lateRows as $row) {
+            $emp = $employees[$row->employee_id] ?? null;
+            if (! $emp || ! $this->isWorkingDayForEmployee($emp, $row->work_date)) {
+                continue;
+            }
+            $month = Carbon::parse($row->work_date)->format('Y-m');
+            $lateByEmpMonth[$row->employee_id][$month] = ($lateByEmpMonth[$row->employee_id][$month] ?? 0) + 1;
+        }
 
         $retardoFaltasByEmployee = [];
         $retardoDetailsByEmployee = [];
-        foreach ($lateCounts as $row) {
-            $faltas = intdiv($row->cnt, $lateToAbsenceCount);
-            if ($faltas > 0) {
-                $retardoFaltasByEmployee[$row->employee_id] = ($retardoFaltasByEmployee[$row->employee_id] ?? 0) + $faltas;
-                $retardoDetailsByEmployee[$row->employee_id][] = [
-                    'month' => $row->month,
-                    'late_count' => $row->cnt,
-                    'faltas' => $faltas,
-                ];
+        foreach ($lateByEmpMonth as $eid => $months) {
+            foreach ($months as $month => $cnt) {
+                $faltas = intdiv($cnt, $lateToAbsenceCount);
+                if ($faltas > 0) {
+                    $retardoFaltasByEmployee[$eid] = ($retardoFaltasByEmployee[$eid] ?? 0) + $faltas;
+                    $retardoDetailsByEmployee[$eid][] = [
+                        'month' => $month,
+                        'late_count' => $cnt,
+                        'faltas' => $faltas,
+                    ];
+                }
             }
         }
 
@@ -266,7 +280,10 @@ class AttendanceReportController extends Controller implements HasMiddleware
             ->where('status', 'late')
             ->when(! empty($holidayDates), fn ($q) => $q->whereNotIn('work_date', $holidayDates))
             ->orderBy('late_minutes', 'desc')
-            ->get();
+            ->get()
+            ->filter(fn ($r) => isset($employees[$r->employee_id])
+                && $this->isWorkingDayForEmployee($employees[$r->employee_id], $r->work_date))
+            ->values();
 
         $grouped = [];
         foreach ($rows as $row) {
@@ -332,7 +349,10 @@ class AttendanceReportController extends Controller implements HasMiddleware
             ->where('early_departure_minutes', '>', 0)
             ->when(! empty($holidayDates), fn ($q) => $q->whereNotIn('work_date', $holidayDates))
             ->orderBy('early_departure_minutes', 'desc')
-            ->get();
+            ->get()
+            ->filter(fn ($r) => isset($employees[$r->employee_id])
+                && $this->isWorkingDayForEmployee($employees[$r->employee_id], $r->work_date))
+            ->values();
 
         $grouped = [];
         foreach ($rows as $row) {
@@ -415,12 +435,13 @@ class AttendanceReportController extends Controller implements HasMiddleware
      */
     private function getEmployeeLookup($employeeIds): array
     {
-        return Employee::with(['department:id,name', 'schedule:id,entry_time,exit_time'])
+        return Employee::with(['department:id,name', 'schedule:id,entry_time,exit_time,working_days'])
             ->select('id', 'employee_number', 'full_name', 'department_id', 'schedule_id', 'schedule_overrides')
             ->whereIn('id', $employeeIds)
             ->get()
             ->mapWithKeys(function ($e) {
                 $overrides = $e->schedule_overrides ?? [];
+                $workingDays = $overrides['working_days'] ?? $e->schedule?->working_days ?? [];
 
                 return [
                     $e->id => [
@@ -430,10 +451,28 @@ class AttendanceReportController extends Controller implements HasMiddleware
                         'department' => $e->department ? ['id' => $e->department->id, 'name' => $e->department->name] : null,
                         'entry_time' => $overrides['entry_time'] ?? $e->schedule?->entry_time,
                         'exit_time' => $overrides['exit_time'] ?? $e->schedule?->exit_time,
+                        'working_days' => array_map('strtolower', $workingDays),
                     ],
                 ];
             })
             ->toArray();
+    }
+
+    /**
+     * True when work_date falls on a day the employee is scheduled to work.
+     * If working_days is empty (no schedule), default to true so we don't
+     * silently swallow records.
+     */
+    private function isWorkingDayForEmployee(array $employee, string $workDate): bool
+    {
+        $workingDays = $employee['working_days'] ?? [];
+        if (empty($workingDays)) {
+            return true;
+        }
+
+        $dayName = strtolower(Carbon::parse($workDate)->englishDayOfWeek);
+
+        return in_array($dayName, $workingDays, true);
     }
 
     private function formatTime(?string $time): string

@@ -480,6 +480,12 @@ class PayrollCalculatorService
                 if ($isHoliday) {
                     continue;
                 }
+                // Non-working days for this employee (e.g. Saturday for a
+                // Mon-Fri schedule) never count as ausencia regardless of how
+                // the row was originally classified.
+                if (! $employee->isEffectiveWorkingDay($workDate->englishDayOfWeek)) {
+                    continue;
+                }
                 $daysAbsent++;
 
                 continue;
