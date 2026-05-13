@@ -94,6 +94,15 @@ const onClear = () => {
     emit('update:modelValue', '');
     query.value = '';
 };
+
+const buttonEl = ref(null);
+
+const openOnFocus = () => {
+    query.value = '';
+    if (buttonEl.value?.$el && buttonEl.value.$el.getAttribute('aria-expanded') !== 'true') {
+        buttonEl.value.$el.click();
+    }
+};
 </script>
 
 <template>
@@ -102,13 +111,17 @@ const onClear = () => {
         @update:model-value="onSelect"
         :disabled="disabled"
         :nullable="nullable"
+        immediate
         as="div"
         class="relative"
     >
         <div class="relative">
             <ComboboxInput
+                ref="inputEl"
                 :display-value="displayValue"
                 @change="query = $event.target.value"
+                @focus="openOnFocus"
+                @click="openOnFocus"
                 :placeholder="placeholder"
                 :disabled="disabled"
                 class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 pr-16 disabled:bg-gray-100"
@@ -127,7 +140,7 @@ const onClear = () => {
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                     </svg>
                 </button>
-                <ComboboxButton class="p-1 text-gray-400 hover:text-gray-600">
+                <ComboboxButton ref="buttonEl" class="p-1 text-gray-400 hover:text-gray-600">
                     <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l4-4 4 4m0 6l-4 4-4-4" />
                     </svg>

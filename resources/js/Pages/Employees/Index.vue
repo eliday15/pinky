@@ -396,36 +396,27 @@ const exportUrl = computed(() => {
                             </div>
                             <div>
                                 <label class="block text-xs font-medium text-gray-700 mb-1">Valor</label>
-                                <select
+                                <SearchableSelect
                                     v-if="bulkField === 'department_id'"
                                     v-model="bulkValue"
-                                    class="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
-                                >
-                                    <option value="">Seleccionar departamento...</option>
-                                    <option v-for="dept in departments" :key="dept.id" :value="dept.id">
-                                        {{ dept.name }}
-                                    </option>
-                                </select>
-                                <select
+                                    :options="departments"
+                                    label-key="name"
+                                    placeholder="Buscar departamento..."
+                                />
+                                <SearchableSelect
                                     v-else-if="bulkField === 'position_id'"
                                     v-model="bulkValue"
-                                    class="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
-                                >
-                                    <option value="">Seleccionar puesto...</option>
-                                    <option v-for="pos in positions" :key="pos.id" :value="pos.id">
-                                        {{ pos.name }}
-                                    </option>
-                                </select>
-                                <select
+                                    :options="positions"
+                                    label-key="name"
+                                    placeholder="Buscar puesto..."
+                                />
+                                <SearchableSelect
                                     v-else-if="bulkField === 'schedule_id'"
                                     v-model="bulkValue"
-                                    class="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
-                                >
-                                    <option value="">Seleccionar horario...</option>
-                                    <option v-for="sch in schedules" :key="sch.id" :value="sch.id">
-                                        {{ sch.name }}
-                                    </option>
-                                </select>
+                                    :options="schedules"
+                                    label-key="name"
+                                    placeholder="Buscar horario..."
+                                />
                                 <SearchableSelect
                                     v-else-if="bulkField === 'supervisor_id'"
                                     v-model="bulkValue"
@@ -557,51 +548,39 @@ const exportUrl = computed(() => {
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Departamento</label>
-                    <select
+                    <SearchableSelect
                         v-model="department"
-                        class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                    >
-                        <option value="">Todos</option>
-                        <option v-for="dept in departments" :key="dept.id" :value="dept.id">
-                            {{ dept.name }}
-                        </option>
-                    </select>
+                        :options="departments"
+                        label-key="name"
+                        placeholder="Todos"
+                    />
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Puesto</label>
-                    <select
+                    <SearchableSelect
                         v-model="position"
-                        class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                    >
-                        <option value="">Todos</option>
-                        <option v-for="pos in positions" :key="pos.id" :value="pos.id">
-                            {{ pos.name }}
-                        </option>
-                    </select>
+                        :options="positions"
+                        label-key="name"
+                        placeholder="Todos"
+                    />
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Horario</label>
-                    <select
+                    <SearchableSelect
                         v-model="schedule"
-                        class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                    >
-                        <option value="">Todos</option>
-                        <option v-for="sch in schedules" :key="sch.id" :value="sch.id">
-                            {{ sch.name }}
-                        </option>
-                    </select>
+                        :options="schedules"
+                        label-key="name"
+                        placeholder="Todos"
+                    />
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Jefe</label>
-                    <select
+                    <SearchableSelect
                         v-model="supervisor"
-                        class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                    >
-                        <option value="">Todos</option>
-                        <option v-for="sup in supervisors" :key="sup.id" :value="sup.id">
-                            {{ sup.full_name }}
-                        </option>
-                    </select>
+                        :options="supervisors"
+                        label-key="full_name"
+                        placeholder="Todos"
+                    />
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Estado</label>
