@@ -144,7 +144,10 @@ const copyRecoveryCodes = () => {
 
 const formatDate = (dateStr) => {
     if (!dateStr) return 'Nunca';
-    return fmtDate(dateStr, {
+    const d = new Date(dateStr);
+    if (Number.isNaN(d.getTime())) return 'Nunca';
+    return d.toLocaleString('es-MX', {
+        timeZone: 'America/Mexico_City',
         year: 'numeric',
         month: 'short',
         day: 'numeric',
