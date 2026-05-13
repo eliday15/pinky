@@ -55,7 +55,10 @@ const deleteForm = useForm({
     two_factor_code: '',
 });
 
-const regenerateForm = useForm({});
+const regenerateForm = useForm({
+    two_factor_code: '',
+});
+const showRegenerateModal = ref(false);
 
 // Pending device from flash (after store)
 const pendingDevice = computed(() => flash.value?.pendingDevice || null);
@@ -133,12 +136,20 @@ const submitDeleteDevice = () => {
     });
 };
 
+const openRegenerateModal = () => {
+    regenerateForm.reset();
+    regenerateForm.clearErrors();
+    showRegenerateModal.value = true;
+};
+
 const submitRegenerate = () => {
-    if (confirm('Los codigos anteriores dejaran de funcionar. ¿Continuar?')) {
-        regenerateForm.post(route('settings.security.recovery-codes.regenerate'), {
-            preserveScroll: true,
-        });
-    }
+    regenerateForm.post(route('settings.security.recovery-codes.regenerate'), {
+        preserveScroll: true,
+        onSuccess: () => {
+            showRegenerateModal.value = false;
+            regenerateForm.reset();
+        },
+    });
 };
 
 const copyRecoveryCodes = () => {
@@ -147,6 +158,27 @@ const copyRecoveryCodes = () => {
         copiedCodes.value = true;
         setTimeout(() => { copiedCodes.value = false; }, 2000);
     });
+};
+
+const downloadRecoveryCodes = () => {
+    const stamp = new Date().toISOString().slice(0, 10);
+    const body = [
+        'Pinky ERP - Codigos de recuperacion 2FA',
+        `Generados: ${new Date().toLocaleString('es-MX', { timeZone: 'America/Mexico_City' })}`,
+        '',
+        'Cada codigo sirve una sola vez. Guardalos en un lugar seguro.',
+        '',
+        ...recoveryCodes.value,
+    ].join('\n');
+    const blob = new Blob([body], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `pinky-recovery-codes-${stamp}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
 };
 
 const formatDate = (dateStr) => {
@@ -483,12 +515,22 @@ const formatDate = (dateStr) => {
                 </div>
             </div>
 
-            <button
-                @click="copyRecoveryCodes"
-                class="w-full px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition"
-            >
-                {{ copiedCodes ? 'Copiado!' : 'Copiar codigos' }}
-            </button>
+            <div class="flex flex-col sm:flex-row gap-2">
+                <button
+                    type="button"
+                    @click="copyRecoveryCodes"
+                    class="flex-1 px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition"
+                >
+                    {{ copiedCodes ? 'Copiado!' : 'Copiar codigos' }}
+                </button>
+                <button
+                    type="button"
+                    @click="downloadRecoveryCodes"
+                    class="flex-1 px-4 py-2 text-sm bg-gray-800 text-white rounded-lg hover:bg-gray-700 transition"
+                >
+                    Descargar .txt
+                </button>
+            </div>
         </div>
 
         <!-- Recovery Codes Management (when 2FA is enabled) -->
@@ -509,12 +551,56 @@ const formatDate = (dateStr) => {
             </div>
 
             <button
-                @click="submitRegenerate"
-                :disabled="regenerateForm.processing"
-                class="w-full px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition"
+                @click="openRegenerateModal"
+                class="w-full px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition"
             >
-                {{ regenerateForm.processing ? 'Regenerando...' : 'Regenerar codigos de recuperacion' }}
+                Regenerar codigos de recuperacion
             </button>
+        </div>
+
+        <!-- Regenerate Recovery Codes Modal -->
+        <div v-if="showRegenerateModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-sm mx-4">
+                <h4 class="text-lg font-semibold text-gray-800 mb-2">Regenerar codigos de recuperacion</h4>
+                <p class="text-sm text-gray-600 mb-4">
+                    Los codigos anteriores dejaran de funcionar. Ingresa un codigo de 6 digitos de tu autenticador para confirmar.
+                </p>
+
+                <form @submit.prevent="submitRegenerate">
+                    <FormErrorBanner :errors="regenerateForm.errors" />
+
+                    <InputLabel for="regen_two_factor_code" value="Codigo de verificacion" />
+                    <TextInput
+                        id="regen_two_factor_code"
+                        v-model="regenerateForm.two_factor_code"
+                        type="text"
+                        inputmode="numeric"
+                        autocomplete="one-time-code"
+                        maxlength="6"
+                        class="mt-1 block w-full text-center text-2xl tracking-widest"
+                        placeholder="000000"
+                        autofocus
+                    />
+                    <InputError :message="regenerateForm.errors.two_factor_code" class="mt-2" />
+
+                    <div class="flex gap-3 mt-4">
+                        <button
+                            type="submit"
+                            :disabled="regenerateForm.processing || (regenerateForm.two_factor_code || '').length !== 6"
+                            class="flex-1 px-4 py-2 text-sm bg-pink-600 text-white rounded-lg hover:bg-pink-700 disabled:opacity-50"
+                        >
+                            {{ regenerateForm.processing ? 'Regenerando...' : 'Regenerar' }}
+                        </button>
+                        <button
+                            type="button"
+                            @click="showRegenerateModal = false; regenerateForm.reset()"
+                            class="px-4 py-2 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50"
+                        >
+                            Cancelar
+                        </button>
+                    </div>
+                </form>
+            </div>
         </div>
     </div>
 </template>

@@ -160,7 +160,8 @@ class SecurityDeviceController extends Controller
     }
 
     /**
-     * Regenerate recovery codes and redirect back to settings.
+     * Regenerate recovery codes (requires a fresh TOTP code; recovery codes
+     * are the break-glass for 2FA so rotating them is sensitive).
      */
     public function regenerateRecoveryCodes(Request $request): RedirectResponse
     {
@@ -168,6 +169,19 @@ class SecurityDeviceController extends Controller
 
         if (!$user->hasTwoFactorEnabled()) {
             return redirect()->back()->with('error', 'No tienes autenticacion de dos pasos activa.');
+        }
+
+        $request->validate([
+            'two_factor_code' => ['required', 'string', 'size:6'],
+        ], [
+            'two_factor_code.required' => 'El codigo de verificacion es obligatorio.',
+            'two_factor_code.size' => 'El codigo debe tener 6 digitos.',
+        ]);
+
+        if (!$this->twoFactorService->verifyCode($user, $request->two_factor_code)) {
+            return redirect()->back()->withErrors([
+                'two_factor_code' => 'El codigo de verificacion es incorrecto.',
+            ]);
         }
 
         $recoveryCodes = $this->twoFactorService->generateRecoveryCodes();
