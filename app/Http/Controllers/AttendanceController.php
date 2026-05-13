@@ -238,7 +238,9 @@ class AttendanceController extends Controller
                     'date' => $dateStr,
                     'day' => $currentDate->day,
                     'dayName' => $currentDate->locale('es')->dayName,
-                    'isWeekend' => $currentDate->isWeekend(),
+                    // Highlight only days outside THIS employee's schedule.
+                    'isWeekend' => $currentDate->isWeekend()
+                        && ! $employee->isEffectiveWorkingDay($currentDate->englishDayOfWeek),
                     'record' => $record ? [
                         'id' => $record->id,
                         'check_in' => $record->check_in,

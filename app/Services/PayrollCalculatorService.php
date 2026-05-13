@@ -471,8 +471,12 @@ class PayrollCalculatorService
         foreach ($attendance as $record) {
             $workDate = Carbon::parse($record->work_date);
             $workDateStr = $workDate->toDateString();
+            $dayName = $workDate->englishDayOfWeek;
             $isHoliday = in_array($workDateStr, $holidayDates);
-            $isWeekend = $workDate->isWeekend();
+            // A Saturday/Sunday only counts as "weekend premium" when it
+            // falls OUTSIDE the employee's normal schedule. An employee
+            // whose schedule includes Saturday gets regular pay on Saturdays.
+            $isWeekend = $workDate->isWeekend() && ! $employee->isEffectiveWorkingDay($dayName);
 
             if ($record->status === 'absent') {
                 // Holidays never count as ausencias even if a stale row was

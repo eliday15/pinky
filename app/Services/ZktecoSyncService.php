@@ -565,7 +565,11 @@ class ZktecoSyncService
         $attendance->is_night_shift = $isNightShift;
         $attendance->raw_punches = $rawPunches;
         $attendance->is_holiday = Holiday::isHoliday($date);
-        $attendance->is_weekend_work = Carbon::parse($date)->isWeekend();
+        // is_weekend_work flags only Sat/Sun that fall OUTSIDE the employee's
+        // schedule. An employee with a L-S schedule gets regular pay on Saturday.
+        $dateObj = Carbon::parse($date);
+        $attendance->is_weekend_work = $dateObj->isWeekend()
+            && ! $employee->isEffectiveWorkingDay($dateObj->englishDayOfWeek);
 
         $attendance->save();
 
@@ -927,7 +931,10 @@ class ZktecoSyncService
     {
         $yesterday = Carbon::yesterday();
 
-        if ($yesterday->lt($fromDate) || $yesterday->isWeekend()) {
+        // Don't short-circuit on Sat/Sun — per-employee isEffectiveWorkingDay()
+        // below decides whether yesterday was actually a working day for each
+        // employee (some have L-S or L-D schedules).
+        if ($yesterday->lt($fromDate)) {
             return;
         }
 
