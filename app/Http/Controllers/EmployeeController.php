@@ -56,7 +56,7 @@ class EmployeeController extends Controller
             'filters' => $request->only(['search', 'department', 'position', 'schedule', 'supervisor', 'status', 'is_minimum_wage']),
             'can' => [
                 'create' => $user->can('create', Employee::class),
-                'update' => $user->hasPermissionTo('employees.edit'),
+                'update' => $user->hasAnyPermission(['employees.edit', 'employees.edit_personal']),
                 'delete' => $user->hasPermissionTo('employees.delete'),
                 'bulkEdit' => $user->hasPermissionTo('employees.bulk_edit'),
             ],
@@ -85,6 +85,7 @@ class EmployeeController extends Controller
             'employees' => Employee::active()->get(['id', 'full_name', 'position_id']),
             'compensationTypes' => CompensationType::active()->get(),
             'vacationTable' => VacationTable::orderBy('years_of_service')->get(),
+            'canEditAll' => Auth::user()->hasPermissionTo('employees.edit'),
         ]);
     }
 
@@ -94,6 +95,20 @@ class EmployeeController extends Controller
     public function store(Request $request): RedirectResponse
     {
         $this->authorize('create', Employee::class);
+
+        // RRHH (employees.edit_personal) sólo captura datos personales — el alta queda con
+        // valores mínimos en los campos laborales para que admin los complete después.
+        $canEditAll = Auth::user()->hasPermissionTo('employees.edit');
+
+        if (! $canEditAll) {
+            $request->merge([
+                'department_id' => $request->input('department_id') ?: optional(Department::active()->first())->id,
+                'position_id' => $request->input('position_id') ?: optional(Position::active()->first())->id,
+                'schedule_id' => $request->input('schedule_id') ?: optional(Schedule::active()->first())->id,
+                'hire_date' => $request->input('hire_date') ?: now()->toDateString(),
+                'hourly_rate' => $request->input('hourly_rate') ?? 0,
+            ]);
+        }
 
         $validated = $request->validate([
             'employee_number' => ['required', 'string', 'max:50', Rule::unique('employees')->whereNull('deleted_at')],
@@ -338,6 +353,7 @@ class EmployeeController extends Controller
             'roles' => $currentUser->hasPermissionTo('users.create') ? \Spatie\Permission\Models\Role::orderBy('name')->pluck('name') : [],
             'canCreateUser' => $currentUser->hasPermissionTo('users.create'),
             'subordinateIds' => $subordinateIds,
+            'canEditAll' => $currentUser->hasPermissionTo('employees.edit'),
         ]);
     }
 
@@ -347,6 +363,14 @@ class EmployeeController extends Controller
     public function update(Request $request, Employee $employee): RedirectResponse
     {
         $this->authorize('update', $employee);
+
+        // RRHH (sólo employees.edit_personal) tiene un flujo recortado: valida sólo
+        // los campos personales/contacto/domicilio/credenciales/IMSS y omite el resto.
+        $canEditAll = Auth::user()->hasPermissionTo('employees.edit');
+
+        if (! $canEditAll) {
+            return $this->updatePersonalOnly($request, $employee);
+        }
 
         $scheduleChanging = $request->schedule_id != $employee->schedule_id;
 
@@ -541,6 +565,62 @@ class EmployeeController extends Controller
 
         return redirect()->route('employees.index')
             ->with('success', 'Empleado actualizado exitosamente.');
+    }
+
+    /**
+     * Update sólo los datos personales / contacto / domicilio / credenciales / IMSS.
+     *
+     * Usado por usuarios con permiso `employees.edit_personal` pero sin `employees.edit`
+     * (rol RRHH). Ignora cualquier intento de modificar departamento, puesto, horario,
+     * sueldo, compensaciones, supervisor, vacaciones, etc.
+     */
+    private function updatePersonalOnly(Request $request, Employee $employee): RedirectResponse
+    {
+        $validated = $request->validate([
+            'first_name' => ['required', 'string', 'max:100'],
+            'last_name' => ['required', 'string', 'max:100'],
+            'email' => ['nullable', 'email', 'max:255'],
+            'phone' => ['nullable', 'string', 'max:20'],
+            'photo' => ['nullable', 'image', 'mimes:jpg,jpeg,png', 'max:5120'],
+            'address_street' => ['nullable', 'string', 'max:255'],
+            'address_city' => ['nullable', 'string', 'max:100'],
+            'address_state' => ['nullable', 'string', 'max:100'],
+            'address_zip' => ['nullable', 'string', 'max:10'],
+            'emergency_phone' => ['nullable', 'string', 'max:20'],
+            'credential_type' => ['nullable', 'string', 'max:50'],
+            'credential_number' => ['nullable', 'string', 'max:100'],
+            'imss_number' => ['nullable', 'string', 'max:50'],
+            'emergency_contacts' => ['nullable', 'array'],
+            'emergency_contacts.*.name' => ['required_with:emergency_contacts', 'nullable', 'string', 'max:100'],
+            'emergency_contacts.*.phone' => ['required_with:emergency_contacts', 'nullable', 'string', 'max:20'],
+            'emergency_contacts.*.email' => ['nullable', 'email', 'max:255'],
+            'emergency_contacts.*.relationship' => ['required_with:emergency_contacts', 'nullable', 'string', 'max:50'],
+            'emergency_contacts.*.address' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        $validated['full_name'] = $validated['first_name'] . ' ' . $validated['last_name'];
+
+        if ($request->hasFile('photo')) {
+            if ($employee->photo_path) {
+                Storage::disk('public')->delete($employee->photo_path);
+            }
+            $validated['photo_path'] = $request->file('photo')->store('employees/photos', 'public');
+        }
+        unset($validated['photo']);
+
+        $emergencyContacts = $validated['emergency_contacts'] ?? null;
+        $employeeData = collect($validated)->except(['emergency_contacts'])->toArray();
+        $employee->update($employeeData);
+
+        if ($emergencyContacts !== null) {
+            $employee->emergencyContacts()->delete();
+            if (! empty($emergencyContacts)) {
+                $employee->emergencyContacts()->createMany($emergencyContacts);
+            }
+        }
+
+        return redirect()->route('employees.index')
+            ->with('success', 'Datos personales del empleado actualizados.');
     }
 
     /**

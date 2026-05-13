@@ -33,6 +33,7 @@ class RolesPermissionsSeeder extends Seeder
             'employees.view_own',
             'employees.create',
             'employees.edit',
+            'employees.edit_personal',
             'employees.delete',
             'employees.view_salary',
             'employees.bulk_edit',
@@ -110,21 +111,15 @@ class RolesPermissionsSeeder extends Seeder
         $admin = Role::firstOrCreate(['name' => 'admin']);
         $admin->syncPermissions(Permission::all());
 
-        // Create RRHH role - Employee management and attendance only
+        // Create RRHH role - HR data entry: create + edit personal-only fields, read attendance
         $rrhh = Role::firstOrCreate(['name' => 'rrhh']);
         $rrhh->syncPermissions([
-            // Empleados - full access
+            // Empleados - alta + edicion sólo de datos personales / contacto / domicilio / credenciales
             'employees.view_all',
             'employees.create',
-            'employees.edit',
-            'employees.delete',
-            'employees.view_salary',
-            'employees.bulk_edit',
-            // Asistencia - full access
+            'employees.edit_personal',
+            // Asistencia - solo lectura
             'attendance.view_all',
-            'attendance.edit',
-            'attendance.sync',
-            'attendance.approve_corrections',
         ]);
 
         // Create Supervisor role - Read-only employee access, attendance view, can create incidents/authorizations

@@ -63,7 +63,7 @@ class EmployeePolicy
      */
     public function update(User $user, Employee $employee): bool
     {
-        if (! $user->hasPermissionTo('employees.edit')) {
+        if (! $user->hasAnyPermission(['employees.edit', 'employees.edit_personal'])) {
             return false;
         }
 

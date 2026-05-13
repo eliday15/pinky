@@ -13,6 +13,7 @@ const props = defineProps({
     employees: Array,
     compensationTypes: Array,
     vacationTable: Array,
+    canEditAll: { type: Boolean, default: true },
 });
 
 const zktecoConflict = ref(null);
@@ -593,7 +594,7 @@ watch(() => form.hire_date, onHireDateChange);
                             />
                         </div>
 
-                        <div>
+                        <div v-if="canEditAll">
                             <label class="block text-sm font-medium text-gray-700 mb-1">
                                 Fecha de Ingreso *
                             </label>
@@ -608,7 +609,7 @@ watch(() => form.hire_date, onHireDateChange);
                             </p>
                         </div>
 
-                        <div>
+                        <div v-if="canEditAll">
                             <label class="block text-sm font-medium text-gray-700 mb-1">
                                 Fecha de Baja
                             </label>
@@ -772,14 +773,14 @@ watch(() => form.hire_date, onHireDateChange);
                 <div class="bg-white rounded-lg shadow p-6">
                     <h3 class="text-lg font-semibold text-gray-800 mb-4">Registro Laboral</h3>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div>
+                        <div v-if="canEditAll">
                             <label class="inline-flex items-center">
                                 <input v-model="form.is_trial_period" type="checkbox" class="rounded border-gray-300 text-pink-600 shadow-sm focus:border-pink-500 focus:ring-pink-500" />
                                 <span class="ml-2 text-sm font-medium text-gray-700">Periodo de Prueba</span>
                             </label>
                             <p class="mt-1 text-sm text-gray-500">Indica si el empleado esta en periodo de prueba (antes de alta en IMSS)</p>
                         </div>
-                        <div v-if="form.is_trial_period">
+                        <div v-if="canEditAll && form.is_trial_period">
                             <label class="block text-sm font-medium text-gray-700 mb-1">Fecha Fin Periodo de Prueba</label>
                             <input v-model="form.trial_period_end_date" type="date" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" />
                         </div>
@@ -787,7 +788,7 @@ watch(() => form.hire_date, onHireDateChange);
                             <label class="block text-sm font-medium text-gray-700 mb-1">Numero IMSS</label>
                             <input v-model="form.imss_number" type="text" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" placeholder="Numero de seguridad social" />
                         </div>
-                        <div>
+                        <div v-if="canEditAll">
                             <label class="block text-sm font-medium text-gray-700 mb-1">Salario Diario Integrado</label>
                             <input v-model="form.daily_salary" type="number" step="0.01" min="0" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" placeholder="Opcional - se calcula de tarifa/hr si no se indica" />
                             <p class="mt-1 text-sm text-gray-500">Si no se indica, se calcula como tarifa por hora x horas de jornada</p>
@@ -796,7 +797,7 @@ watch(() => form.hire_date, onHireDateChange);
                 </div>
 
                 <!-- Work Information -->
-                <div class="bg-white rounded-lg shadow p-6">
+                <div v-if="canEditAll" class="bg-white rounded-lg shadow p-6">
                     <h3 class="text-lg font-semibold text-gray-800 mb-4">Informacion Laboral</h3>
                     <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
                         <div>
@@ -1051,7 +1052,7 @@ watch(() => form.hire_date, onHireDateChange);
                 </div>
 
                 <!-- Compensation -->
-                <div class="bg-white rounded-lg shadow p-6">
+                <div v-if="canEditAll" class="bg-white rounded-lg shadow p-6">
                     <h3 class="text-lg font-semibold text-gray-800 mb-4">Compensacion y Tarifas</h3>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div>
@@ -1138,7 +1139,7 @@ watch(() => form.hire_date, onHireDateChange);
                 </div>
 
                 <!-- Monthly Bonus -->
-                <div class="bg-white rounded-lg shadow p-6">
+                <div v-if="canEditAll" class="bg-white rounded-lg shadow p-6">
                     <h3 class="text-lg font-semibold text-gray-800 mb-4">Bonos Mensuales</h3>
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                         <div>
@@ -1160,7 +1161,7 @@ watch(() => form.hire_date, onHireDateChange);
                 </div>
 
                 <!-- Vacations -->
-                <div class="bg-white rounded-lg shadow p-6">
+                <div v-if="canEditAll" class="bg-white rounded-lg shadow p-6">
                     <h3 class="text-lg font-semibold text-gray-800 mb-4">Dias de Vacaciones</h3>
 
                     <!-- Auto-calculation info -->
