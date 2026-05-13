@@ -43,6 +43,7 @@ const deleteDeviceId = ref(null);
 
 const addDeviceForm = useForm({
     name: '',
+    two_factor_code: '',
 });
 
 const confirmForm = useForm({
@@ -299,7 +300,7 @@ const formatDate = (dateStr) => {
                 </button>
             </div>
 
-            <!-- Step 1: Name the device -->
+            <!-- Step 1: Name the device (+ confirm with existing 2FA if any) -->
             <div v-if="showAddDevice && !pendingDevice" class="border border-gray-200 rounded-lg p-4">
                 <h4 class="text-sm font-medium text-gray-800 mb-3">Nuevo autenticador</h4>
                 <form @submit.prevent="submitAddDevice" class="space-y-3">
@@ -315,8 +316,23 @@ const formatDate = (dateStr) => {
                         />
                         <InputError :message="addDeviceForm.errors.name" class="mt-2" />
                     </div>
+                    <div v-if="security.twoFactorEnabled">
+                        <InputLabel for="add_two_factor_code" value="Codigo de tu autenticador actual" />
+                        <TextInput
+                            id="add_two_factor_code"
+                            v-model="addDeviceForm.two_factor_code"
+                            type="text"
+                            inputmode="numeric"
+                            autocomplete="one-time-code"
+                            maxlength="6"
+                            class="mt-1 block w-full max-w-sm text-center text-2xl tracking-widest"
+                            placeholder="000000"
+                        />
+                        <p class="mt-1 text-xs text-gray-500">Confirma con un codigo de un dispositivo ya activo.</p>
+                        <InputError :message="addDeviceForm.errors.two_factor_code" class="mt-2" />
+                    </div>
                     <div class="flex gap-3">
-                        <PrimaryButton :disabled="addDeviceForm.processing">
+                        <PrimaryButton :disabled="addDeviceForm.processing || (security.twoFactorEnabled && (addDeviceForm.two_factor_code || '').length !== 6)">
                             {{ addDeviceForm.processing ? 'Creando...' : 'Continuar' }}
                         </PrimaryButton>
                         <button

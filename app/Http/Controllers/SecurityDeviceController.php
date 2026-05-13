@@ -20,18 +20,34 @@ class SecurityDeviceController extends Controller
     ) {}
 
     /**
-     * Create a new unconfirmed 2FA device and return QR data.
+     * Create a new unconfirmed 2FA device and return QR data. When the user
+     * already has at least one confirmed authenticator we require a TOTP code
+     * from it so a hijacked session can't quietly enroll a new device.
      */
     public function store(Request $request): RedirectResponse
     {
-        $request->validate([
-            'name' => ['required', 'string', 'max:100'],
-        ], [
+        $rules = ['name' => ['required', 'string', 'max:100']];
+        $messages = [
             'name.required' => 'El nombre del dispositivo es obligatorio.',
             'name.max' => 'El nombre no puede exceder 100 caracteres.',
-        ]);
+        ];
 
         $user = Auth::user();
+
+        if ($user->hasTwoFactorEnabled()) {
+            $rules['two_factor_code'] = ['required', 'string', 'size:6'];
+            $messages['two_factor_code.required'] = 'Ingresa un codigo de tu autenticador actual para confirmar.';
+            $messages['two_factor_code.size'] = 'El codigo debe tener 6 digitos.';
+        }
+
+        $request->validate($rules, $messages);
+
+        if ($user->hasTwoFactorEnabled()
+            && !$this->twoFactorService->verifyCode($user, $request->two_factor_code)) {
+            return redirect()->back()->withErrors([
+                'two_factor_code' => 'El codigo de verificacion es incorrecto.',
+            ]);
+        }
 
         // Enforce maximum device limit
         $confirmedCount = $user->twoFactorDevices()->whereNotNull('confirmed_at')->count();
