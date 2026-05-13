@@ -91,8 +91,11 @@ class TwoFactorService
     public function verifyCodeForDevice(TwoFactorDevice $device, string $code): bool
     {
         $secret = Crypt::decryptString($device->secret);
+        $code = preg_replace('/\s+/', '', $code);
 
-        return (bool) $this->google2fa->verifyKey($secret, $code, 1);
+        // Window of 2 = +/- 60s; covers small clock skew between server and
+        // authenticator without meaningfully weakening the second factor.
+        return (bool) $this->google2fa->verifyKey($secret, $code, 2);
     }
 
     /**

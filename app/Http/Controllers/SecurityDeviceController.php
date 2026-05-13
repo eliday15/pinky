@@ -104,7 +104,9 @@ class SecurityDeviceController extends Controller
     }
 
     /**
-     * Remove a single confirmed 2FA device.
+     * Remove a single confirmed 2FA device. Requires a valid TOTP code from
+     * any of the user's confirmed authenticators (password is weaker than the
+     * 2FA layer it protects, so we ask for the second factor instead).
      */
     public function destroy(Request $request, TwoFactorDevice $device): RedirectResponse
     {
@@ -114,17 +116,25 @@ class SecurityDeviceController extends Controller
         $device = $user->twoFactorDevices()->findOrFail($device->id);
 
         $request->validate([
-            'password' => ['required', 'current_password'],
+            'two_factor_code' => ['required', 'string', 'size:6'],
         ], [
-            'password.required' => 'La contrasena es obligatoria.',
-            'password.current_password' => 'La contrasena es incorrecta.',
+            'two_factor_code.required' => 'El codigo de verificacion es obligatorio.',
+            'two_factor_code.size' => 'El codigo debe tener 6 digitos.',
         ]);
 
-        // Prevent removing the last device if role requires 2FA
+        if (!$this->twoFactorService->verifyCode($user, $request->two_factor_code)) {
+            return redirect()->back()->withErrors([
+                'two_factor_code' => 'El codigo de verificacion es incorrecto.',
+            ]);
+        }
+
+        // Prevent removing the last confirmed device when 2FA is required
         if ($user->requiresTwoFactor()) {
             $confirmedCount = $user->twoFactorDevices()->whereNotNull('confirmed_at')->count();
             if ($confirmedCount <= 1 && $device->isConfirmed()) {
-                return redirect()->back()->with('error', 'No puedes eliminar tu ultimo autenticador. Tu rol requiere autenticacion de dos pasos.');
+                return redirect()->back()->withErrors([
+                    'two_factor_code' => 'Este es tu unico autenticador y tu rol requiere 2FA. Agrega otro antes de eliminar este.',
+                ]);
             }
         }
 

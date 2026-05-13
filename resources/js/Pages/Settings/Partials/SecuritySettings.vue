@@ -51,13 +51,19 @@ const confirmForm = useForm({
 });
 
 const deleteForm = useForm({
-    password: '',
+    two_factor_code: '',
 });
 
 const regenerateForm = useForm({});
 
 // Pending device from flash (after store)
 const pendingDevice = computed(() => flash.value?.pendingDevice || null);
+
+// When the role requires 2FA and only one device is confirmed, the user cannot
+// delete it until they add a second one. Hide the Eliminar button to make this
+// explicit instead of failing silently after entering a code.
+const confirmedDeviceCount = computed(() => (props.security?.devices || []).filter(d => d.confirmed_at).length);
+const isLastRequiredDevice = computed(() => !!props.security?.requiresTwoFactor && confirmedDeviceCount.value <= 1);
 
 // Recovery codes from flash (after first device confirmation)
 const recoveryCodes = computed(() => flash.value?.recoveryCodes || []);
@@ -255,11 +261,19 @@ const formatDate = (dateStr) => {
                         </div>
                     </div>
                     <button
+                        v-if="!isLastRequiredDevice"
                         @click="openDeleteModal(device.id)"
                         class="text-sm text-red-600 hover:text-red-800 font-medium"
                     >
                         Eliminar
                     </button>
+                    <span
+                        v-else
+                        class="text-xs text-gray-500 italic"
+                        title="Agrega otro autenticador antes de eliminar este"
+                    >
+                        Unico activo
+                    </span>
                 </div>
             </div>
 
@@ -385,25 +399,31 @@ const formatDate = (dateStr) => {
             <div v-if="deleteDeviceId !== null" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
                 <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-sm mx-4">
                     <h4 class="text-lg font-semibold text-gray-800 mb-2">Eliminar autenticador</h4>
-                    <p class="text-sm text-gray-600 mb-4">Ingresa tu contrasena para confirmar la eliminacion.</p>
+                    <p class="text-sm text-gray-600 mb-4">
+                        Ingresa un codigo de 6 digitos de cualquiera de tus autenticadores activos para confirmar.
+                    </p>
 
                     <form @submit.prevent="submitDeleteDevice">
                         <FormErrorBanner :errors="deleteForm.errors" />
 
-                        <InputLabel for="delete_password" value="Contrasena" />
+                        <InputLabel for="delete_two_factor_code" value="Codigo de verificacion" />
                         <TextInput
-                            id="delete_password"
-                            v-model="deleteForm.password"
-                            type="password"
-                            class="mt-1 block w-full"
+                            id="delete_two_factor_code"
+                            v-model="deleteForm.two_factor_code"
+                            type="text"
+                            inputmode="numeric"
+                            autocomplete="one-time-code"
+                            maxlength="6"
+                            class="mt-1 block w-full text-center text-2xl tracking-widest"
+                            placeholder="000000"
                             autofocus
                         />
-                        <InputError :message="deleteForm.errors.password" class="mt-2" />
+                        <InputError :message="deleteForm.errors.two_factor_code" class="mt-2" />
 
                         <div class="flex gap-3 mt-4">
                             <button
                                 type="submit"
-                                :disabled="deleteForm.processing"
+                                :disabled="deleteForm.processing || (deleteForm.two_factor_code || '').length !== 6"
                                 class="flex-1 px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
                             >
                                 {{ deleteForm.processing ? 'Eliminando...' : 'Eliminar' }}

@@ -31,6 +31,10 @@ trait VerifiesTwoFactor
             return;
         }
 
+        // Normalize: strip whitespace so a pasted code like "555 117" passes.
+        $code = preg_replace('/\s+/', '', (string) $request->input('two_factor_code', ''));
+        $request->merge(['two_factor_code' => $code]);
+
         $request->validate([
             'two_factor_code' => ['required', 'string', 'size:6'],
         ], [
@@ -38,7 +42,7 @@ trait VerifiesTwoFactor
             'two_factor_code.size' => 'El codigo debe tener 6 digitos.',
         ]);
 
-        if (!app(TwoFactorService::class)->verifyCode($user, $request->two_factor_code)) {
+        if (!app(TwoFactorService::class)->verifyCode($user, $code)) {
             throw ValidationException::withMessages([
                 'two_factor_code' => 'El codigo de verificacion es incorrecto.',
             ]);
