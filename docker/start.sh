@@ -26,15 +26,25 @@ chmod -R ug+rwX storage bootstrap/cache
 # during a previous boot before this fix landed.
 rm -rf storage/framework/cache/data/* bootstrap/cache/*.php 2>/dev/null || true
 
-php artisan storage:link 2>/dev/null || true
-php artisan migrate --force 2>&1 || echo "Migration failed but continuing..."
-php artisan config:cache
-php artisan route:cache
-php artisan view:cache
-php artisan permission:cache-reset 2>/dev/null || true
+# Run artisan commands as www-data so any cache files they create (config,
+# route, view, permission caches) are owned by the same user Apache runs as.
+# Otherwise root-owned cache files leak in and break later HTTP writes.
+run_as_web() {
+    su -s /bin/bash www-data -c "$*"
+}
+
+run_as_web "php artisan storage:link" 2>/dev/null || true
+run_as_web "php artisan migrate --force" 2>&1 || echo "Migration failed but continuing..."
+run_as_web "php artisan config:cache"
+run_as_web "php artisan route:cache"
+run_as_web "php artisan view:cache"
+run_as_web "php artisan permission:cache-reset" 2>/dev/null || true
 
 echo "=== Starting scheduler ==="
-php artisan schedule:work >> storage/logs/scheduler.log 2>&1 &
+# Scheduler MUST run as www-data; otherwise it writes cache files as root and
+# Apache workers (www-data) get "Permission denied" when they later try to
+# overwrite the same hashed cache subdirectory.
+su -s /bin/bash www-data -c "php artisan schedule:work >> storage/logs/scheduler.log 2>&1" &
 
 # Stream Laravel log to stderr so errors appear in Coolify's log viewer
 touch storage/logs/laravel.log
