@@ -5,6 +5,7 @@ import { Head, Link, useForm } from '@inertiajs/vue3';
 import { ref, computed, watch } from 'vue';
 import axios from 'axios';
 import { todayLocal } from '@/utils/date';
+import { diffMinutes, formatRoundedHours } from '@/utils/overtime';
 
 const props = defineProps({
     employees: Array,
@@ -342,14 +343,8 @@ const totalEntryHours = computed(() => {
 const setEntryField = (index, field, value) => {
     const next = [...form.entries];
     const row = { ...next[index], [field]: value };
-    // Auto-calc hours when both times are set and user just edited a time field.
-    if ((field === 'start_time' || field === 'end_time') && row.start_time && row.end_time) {
-        const [sh, sm] = row.start_time.split(':').map(Number);
-        const [eh, em] = row.end_time.split(':').map(Number);
-        if (!isNaN(sh) && !isNaN(eh)) {
-            const diff = (eh * 60 + em) - (sh * 60 + sm);
-            if (diff > 0) row.hours = (diff / 60).toFixed(2);
-        }
+    if (field === 'start_time' || field === 'end_time') {
+        row.hours = formatRoundedHours(diffMinutes(row.start_time, row.end_time));
     }
     next[index] = row;
     form.entries = next;
@@ -398,14 +393,7 @@ const setEntryDatetime = (index, field, value) => {
     const row = { ...next[index] };
     if (datePart) row.date = datePart;
     if (timePart) row[field] = timePart;
-    if (row.start_time && row.end_time) {
-        const [sh, sm] = row.start_time.split(':').map(Number);
-        const [eh, em] = row.end_time.split(':').map(Number);
-        if (!isNaN(sh) && !isNaN(eh)) {
-            const diff = (eh * 60 + em) - (sh * 60 + sm);
-            if (diff > 0) row.hours = (diff / 60).toFixed(2);
-        }
-    }
+    row.hours = formatRoundedHours(diffMinutes(row.start_time, row.end_time));
     next[index] = row;
     form.entries = next;
 };
@@ -677,10 +665,10 @@ const canSubmit = computed(() => {
                                         :value="getEntryDatetime(entry, 'end_time')"
                                         @input="setEntryDatetime(entry._index, 'end_time', $event.target.value)"
                                         class="col-span-4 rounded border-gray-300 text-xs focus:border-pink-500 focus:ring-pink-500" />
-                                    <input type="number" step="0.25" min="0" max="24"
+                                    <input type="text" readonly
                                         :value="entry.hours"
-                                        @input="setEntryField(entry._index, 'hours', $event.target.value)"
-                                        class="col-span-1 rounded border-gray-300 text-xs focus:border-pink-500 focus:ring-pink-500" />
+                                        title="Calculado automáticamente desde inicio/fin con la regla escalonada"
+                                        class="col-span-1 rounded border-gray-200 bg-gray-50 text-xs text-gray-700 text-right cursor-not-allowed" />
                                 </div>
                             </div>
                         </div>

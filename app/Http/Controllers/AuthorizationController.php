@@ -404,14 +404,21 @@ class AuthorizationController extends Controller
         $count = 0;
         $autoApprovedCount = 0;
 
+        $rounder = new OvertimeRoundingService();
+
         if (! empty($validated['entries'])) {
             foreach ($validated['entries'] as $entry) {
                 $startTime = $entry['start_time'] ?? null;
                 $endTime = $entry['end_time'] ?? null;
                 $hours = $entry['hours'] ?? null;
 
-                if (! empty($startTime) && ! empty($endTime) && empty($hours)) {
-                    $hours = Carbon::parse($endTime)->diffInMinutes(Carbon::parse($startTime)) / 60;
+                // Always derive hours from start/end with the company rounding
+                // ladder when both times are present — the frontend input is
+                // read-only, but this guards against API-direct submissions
+                // and keeps the stored value canonical.
+                if (! empty($startTime) && ! empty($endTime)) {
+                    $minutes = (int) Carbon::parse($endTime)->diffInMinutes(Carbon::parse($startTime));
+                    $hours = $rounder->roundMinutes($minutes);
                 }
 
                 $isPreAuth = Carbon::parse($entry['date'])->isFuture()
