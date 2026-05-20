@@ -210,9 +210,12 @@ watch(() => form.compensation_type_id, (newCompId) => {
     selectAll.value = false;
 });
 
-/** Reset cached suggestions whenever the inputs that drive them change. */
+/** Reset cached suggestions when type or date change (those invalidate the
+ *  fetched data). Selection changes do NOT invalidate — applyBulkSuggestions
+ *  itself trims the selection to eligible employees, so watching the length
+ *  here would clobber the freshly applied times in the same tick. */
 watch(
-    () => [form.type, form.date, form.employee_ids.length],
+    [() => form.type, () => form.date],
     () => {
         if (suggestionsApplied.value || suggestions.value.length > 0) {
             suggestions.value = [];
