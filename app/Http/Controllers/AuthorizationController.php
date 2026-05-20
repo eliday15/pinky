@@ -951,6 +951,12 @@ class AuthorizationController extends Controller
      */
     private function autoApproveIfDetected(Authorization $authorization): void
     {
+        // Reload so DB column defaults (status='pending') and any cast
+        // normalization land on the in-memory model. A just-created instance
+        // has status='' (the default isn't backfilled until reload), which
+        // would otherwise bail out at the status guard below.
+        $authorization->refresh();
+
         if ($authorization->status !== Authorization::STATUS_PENDING) {
             return;
         }
