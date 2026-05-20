@@ -152,7 +152,7 @@ class AuthorizationController extends Controller
             }
         }
 
-        $employees = $employeesQuery->get(['id', 'full_name', 'employee_number']);
+        $employees = $employeesQuery->get(['id', 'full_name', 'employee_number', 'department_id']);
         $this->appendActiveCompensationTypeIds($employees);
 
         $types = $this->getAuthorizationTypes();
@@ -175,6 +175,7 @@ class AuthorizationController extends Controller
             'selectedEmployee' => $selectedEmployee,
             'types' => $types,
             'prefill' => $prefill,
+            'departments' => \App\Models\Department::active()->orderBy('name')->get(['id', 'name']),
         ]);
     }
 

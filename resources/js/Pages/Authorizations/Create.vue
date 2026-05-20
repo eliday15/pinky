@@ -12,6 +12,16 @@ const props = defineProps({
     selectedEmployee: [Number, String],
     types: Array,
     prefill: { type: Object, default: null },
+    departments: { type: Array, default: () => [] },
+});
+
+/** Department filter narrows the SearchableSelect options so users with many
+ *  employees can jump straight to the right team before searching. */
+const departmentFilter = ref('');
+
+const filteredEmployees = computed(() => {
+    if (!departmentFilter.value) return props.employees;
+    return props.employees.filter(e => e.department_id == departmentFilter.value);
 });
 
 const today = todayLocal();
@@ -284,6 +294,18 @@ const onTypeChange = (event) => {
     }
 };
 
+/** Department filter change: drop the current employee if it no longer
+ *  fits the filter, so the SearchableSelect doesn't display a value that
+ *  isn't in its options. */
+watch(departmentFilter, () => {
+    if (!form.employee_id) return;
+    if (!filteredEmployees.value.some(e => e.id == form.employee_id)) {
+        form.employee_id = '';
+        form.type = '';
+        form.compensation_type_id = null;
+    }
+});
+
 /** When the chosen employee drops the currently selected type, reset it. */
 watch(() => form.employee_id, () => {
     if (form.compensation_type_id) {
@@ -363,12 +385,27 @@ const submitCount = computed(() => (isPerHour.value ? form.entries.length : 1));
                         <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-600 text-white text-xs mr-2">1</span>
                         Empleado y Tipo
                     </h3>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Departamento</label>
+                            <select
+                                v-model="departmentFilter"
+                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                            >
+                                <option value="">Todos</option>
+                                <option v-for="dept in departments" :key="dept.id" :value="dept.id">
+                                    {{ dept.name }}
+                                </option>
+                            </select>
+                            <p v-if="departmentFilter" class="mt-1 text-xs text-gray-500">
+                                {{ filteredEmployees.length }} empleado(s) en este departamento
+                            </p>
+                        </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Empleado *</label>
                             <SearchableSelect
                                 v-model="form.employee_id"
-                                :options="employees"
+                                :options="filteredEmployees"
                                 value-key="id"
                                 label-key="full_name"
                                 secondary-key="employee_number"
