@@ -296,6 +296,7 @@ class AuthorizationController extends Controller
         unset($validated['evidence']);
 
         $authorization = Authorization::create($validated);
+        $this->autoApproveIfDetected($authorization);
 
         if ($anomalyId) {
             $anomaly = AttendanceAnomaly::find($anomalyId);
@@ -304,8 +305,11 @@ class AuthorizationController extends Controller
             }
         }
 
-        return redirect()->route('authorizations.index')
-            ->with('success', 'Autorizacion creada exitosamente.');
+        $msg = $authorization->fresh()->status === Authorization::STATUS_APPROVED
+            ? 'Autorización creada y auto-aprobada (coincide con las checadas).'
+            : 'Autorización creada exitosamente.';
+
+        return redirect()->route('authorizations.index')->with('success', $msg);
     }
 
     /**
@@ -383,6 +387,7 @@ class AuthorizationController extends Controller
 
         $bulkGroupId = 'bulk_' . now()->format('YmdHis') . '_' . Auth::id();
         $count = 0;
+        $autoApprovedCount = 0;
 
         if (! empty($validated['entries'])) {
             foreach ($validated['entries'] as $entry) {
@@ -397,7 +402,7 @@ class AuthorizationController extends Controller
                 $isPreAuth = Carbon::parse($entry['date'])->isFuture()
                     || Carbon::parse($entry['date'])->isToday();
 
-                Authorization::create([
+                $auth = Authorization::create([
                     'employee_id' => $entry['employee_id'],
                     'requested_by' => Auth::id(),
                     'type' => $validated['type'],
@@ -412,6 +417,10 @@ class AuthorizationController extends Controller
                     'is_bulk_generated' => true,
                     'bulk_group_id' => $bulkGroupId,
                 ]);
+                $this->autoApproveIfDetected($auth);
+                if ($auth->fresh()->status === Authorization::STATUS_APPROVED) {
+                    $autoApprovedCount++;
+                }
                 $count++;
             }
         } else {
@@ -426,7 +435,7 @@ class AuthorizationController extends Controller
                 || Carbon::parse($validated['date'])->isToday();
 
             foreach ($validated['employee_ids'] as $employeeId) {
-                Authorization::create([
+                $auth = Authorization::create([
                     'employee_id' => $employeeId,
                     'requested_by' => Auth::id(),
                     'type' => $validated['type'],
@@ -441,12 +450,19 @@ class AuthorizationController extends Controller
                     'is_bulk_generated' => true,
                     'bulk_group_id' => $bulkGroupId,
                 ]);
+                $this->autoApproveIfDetected($auth);
+                if ($auth->fresh()->status === Authorization::STATUS_APPROVED) {
+                    $autoApprovedCount++;
+                }
                 $count++;
             }
         }
 
-        return redirect()->route('authorizations.index')
-            ->with('success', "Se crearon {$count} autorizaciones exitosamente.");
+        $msg = $autoApprovedCount > 0
+            ? "Se crearon {$count} autorizaciones, {$autoApprovedCount} auto-aprobadas (coinciden con checadas)."
+            : "Se crearon {$count} autorizaciones exitosamente.";
+
+        return redirect()->route('authorizations.index')->with('success', $msg);
     }
 
     /**
@@ -924,6 +940,66 @@ class AuthorizationController extends Controller
     private function roundOvertimeMinutes(int $minutes): float
     {
         return (new OvertimeRoundingService())->roundMinutes($minutes);
+    }
+
+    /**
+     * Auto-approve an authorization when its (start, end, hours) exactly match
+     * a detected segment for that employee/date. The intent is: if the supervisor
+     * loaded the row from real checadas and didn't touch it, the system already
+     * agrees with itself — no second human review needed. Manual edits or hand-
+     * typed entries that don't match a detected segment stay pending.
+     */
+    private function autoApproveIfDetected(Authorization $authorization): void
+    {
+        if ($authorization->status !== Authorization::STATUS_PENDING) {
+            return;
+        }
+        if (! in_array($authorization->type, [Authorization::TYPE_OVERTIME, Authorization::TYPE_NIGHT_SHIFT], true)) {
+            return;
+        }
+        if (! $authorization->start_time || ! $authorization->end_time || ! $authorization->hours) {
+            return;
+        }
+
+        $dateString = $authorization->date instanceof Carbon
+            ? $authorization->date->toDateString()
+            : (string) $authorization->date;
+
+        $record = AttendanceRecord::where('employee_id', $authorization->employee_id)
+            ->where('work_date', $dateString)
+            ->first();
+        if (! $record || ! $record->check_in || ! $record->check_out) {
+            return;
+        }
+
+        $employee = $authorization->employee ?? Employee::find($authorization->employee_id);
+        if (! $employee) {
+            return;
+        }
+
+        $segments = $this->buildSuggestionSegments($employee, $dateString, $authorization->type, $record);
+        if (empty($segments)) {
+            return;
+        }
+
+        $authStart = $authorization->start_time->format('H:i');
+        $authEnd = $authorization->end_time->format('H:i');
+        $authHours = round((float) $authorization->hours, 2);
+
+        foreach ($segments as $seg) {
+            if (
+                $seg['start_time'] === $authStart
+                && $seg['end_time'] === $authEnd
+                && abs((float) $seg['hours'] - $authHours) < 0.01
+            ) {
+                $authorization->update([
+                    'status' => Authorization::STATUS_APPROVED,
+                    'approved_by' => Auth::id(),
+                    'approved_at' => now(),
+                ]);
+                return;
+            }
+        }
     }
 
     /**

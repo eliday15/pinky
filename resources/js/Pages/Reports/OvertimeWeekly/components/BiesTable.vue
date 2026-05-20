@@ -1,19 +1,27 @@
 <script setup>
 import { computed } from 'vue';
 import { dayLabel, formatDate, formatHours } from '../format';
+import OvertimeCell from './OvertimeCell.vue';
+import OvertimeLegend from './OvertimeLegend.vue';
+import { cellApproved, cellPending } from '../cells';
 
 const props = defineProps({ report: Object });
 
 const dailyCells = computed(() => {
     return props.report.dates.map((date) => {
-        const cells = props.report.rows.map((r) => r.days[date].overtime_hours + r.days[date].velada_hours);
-        const sum = cells.reduce((a, b) => a + b, 0);
+        const cells = props.report.rows.map((r) => ({
+            approved: cellApproved(r.days[date]),
+            pending: cellPending(r.days[date]),
+        }));
+        const approvedSum = cells.reduce((a, c) => a + c.approved, 0);
+        const pendingSum = cells.reduce((a, c) => a + c.pending, 0);
         return {
             date,
             label: dayLabel(date),
             short: formatDate(date).slice(0, 5),
             cells,
-            sum,
+            approvedSum,
+            pendingSum,
         };
     });
 });
@@ -40,6 +48,7 @@ const obsRows = computed(() => props.report.rows.filter((r) => (r.observations |
 
 <template>
     <div class="space-y-6 p-4">
+        <OvertimeLegend />
         <table class="min-w-full text-sm border-collapse">
             <thead class="bg-gray-50">
                 <tr>
@@ -55,15 +64,12 @@ const obsRows = computed(() => props.report.rows.filter((r) => (r.observations |
                     <td class="border px-3 py-2 font-medium">
                         {{ day.label }} <span class="text-xs text-gray-500">({{ day.short }})</span>
                     </td>
-                    <td
-                        v-for="(value, idx) in day.cells"
-                        :key="idx"
-                        class="border px-3 py-2 text-right"
-                        :class="value <= 0 ? 'text-gray-300' : ''"
-                    >
-                        {{ formatHours(value) }}
+                    <td v-for="(cell, idx) in day.cells" :key="idx" class="border px-2 py-2 text-right align-top">
+                        <OvertimeCell :approved="cell.approved" :pending="cell.pending" />
                     </td>
-                    <td class="border px-3 py-2 text-right font-medium">{{ formatHours(day.sum) }}</td>
+                    <td class="border px-2 py-2 text-right align-top">
+                        <OvertimeCell :approved="day.approvedSum" :pending="day.pendingSum" />
+                    </td>
                 </tr>
                 <tr v-for="(srow, idx) in summaryRows" :key="`s-${idx}`" class="bg-gray-50 font-semibold">
                     <td class="border px-3 py-2">{{ srow.label }}</td>
