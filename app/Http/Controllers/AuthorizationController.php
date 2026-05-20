@@ -8,6 +8,7 @@ use App\Models\AttendanceRecord;
 use App\Models\Authorization;
 use App\Models\CompensationType;
 use App\Models\Employee;
+use App\Services\OvertimeRoundingService;
 use App\Services\ZktecoSyncService;
 use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
@@ -919,30 +920,10 @@ class AuthorizationController extends Controller
         ]];
     }
 
-    /**
-     * Company rounding rule for overtime minutes -> hours.
-     *
-     *   minute mark   →  rounded hours
-     *   0  – 29       →  truncates to h (or 0 when h = 0, since <30min is not OT)
-     *   30 – 49       →  h + 0.5
-     *   50 – 59       →  h + 1
-     *
-     * So 25 min → 0, 35 min → 0.5, 55 min → 1.0, 1h 35 min → 1.5, 1h 55 min → 2.0.
-     */
+    /** Delegate the rounding rule to the shared service. */
     private function roundOvertimeMinutes(int $minutes): float
     {
-        if ($minutes < 30) {
-            return 0.0;
-        }
-        $h = intdiv($minutes, 60);
-        $m = $minutes % 60;
-        if ($m < 30) {
-            return (float) $h;
-        }
-        if ($m < 50) {
-            return $h + 0.5;
-        }
-        return (float) ($h + 1);
+        return (new OvertimeRoundingService())->roundMinutes($minutes);
     }
 
     /**

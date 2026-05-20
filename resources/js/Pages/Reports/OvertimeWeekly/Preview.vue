@@ -77,14 +77,18 @@ const excelHref = computed(() => route('reports.overtime-weekly.export.excel', e
         </div>
 
         <!-- Summary chips -->
-        <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+        <div class="grid grid-cols-2 md:grid-cols-6 gap-3 mb-4">
             <div class="bg-white rounded-lg shadow p-3 text-center">
                 <p class="text-2xl font-bold text-gray-800">{{ report.totals.employee_count }}</p>
                 <p class="text-xs text-gray-500">Empleados</p>
             </div>
             <div class="bg-white rounded-lg shadow p-3 text-center">
-                <p class="text-2xl font-bold text-blue-600">{{ report.totals.total_hours }}h</p>
-                <p class="text-xs text-gray-500">Total Extra</p>
+                <p class="text-2xl font-bold text-emerald-600">{{ report.totals.total_hours }}h <span class="text-base">✓</span></p>
+                <p class="text-xs text-gray-500">Aprobadas</p>
+            </div>
+            <div class="bg-white rounded-lg shadow p-3 text-center">
+                <p class="text-2xl font-bold text-amber-600">+{{ report.totals.pending_hours || 0 }}h</p>
+                <p class="text-xs text-gray-500">Pendientes por aprobar</p>
             </div>
             <div class="bg-white rounded-lg shadow p-3 text-center">
                 <p class="text-2xl font-bold text-amber-600">{{ report.totals.weekend_hours }}h</p>

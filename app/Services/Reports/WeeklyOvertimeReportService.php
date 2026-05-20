@@ -6,6 +6,7 @@ use App\Models\AttendanceRecord;
 use App\Models\Authorization;
 use App\Models\Department;
 use App\Models\Employee;
+use App\Services\OvertimeRoundingService;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 
@@ -28,6 +29,10 @@ use Illuminate\Support\Collection;
  */
 class WeeklyOvertimeReportService
 {
+    public function __construct(
+        private readonly OvertimeRoundingService $rounding = new OvertimeRoundingService(),
+    ) {}
+
     /**
      * Compensation type codes that count as "horas extra" in daily cells.
      */
@@ -125,15 +130,20 @@ class WeeklyOvertimeReportService
         $cenaCount = 0;
         $comidaCount = 0;
 
+        $weeklyDetected = 0.0;
+        $weeklyPending = 0.0;
+
         foreach ($dates as $date) {
             $record = $recordsByDate->get($date);
             $dayAuths = $authsByDate->get($date, collect());
 
-            $day = $this->buildDay($date, $record, $dayAuths);
+            $day = $this->buildDay($employee, $date, $record, $dayAuths);
 
             $days[$date] = $day;
             $weeklyExtra += $day['overtime_hours'];
             $weeklyWeekend += $day['weekend_hours'];
+            $weeklyDetected += $day['detected_overtime_hours'];
+            $weeklyPending += $day['pending_overtime_hours'];
             $veladaCount += $day['velada_marker'];
             $cenaCount += $day['cena_marker'];
             $comidaCount += $day['comida_marker'];
@@ -150,6 +160,8 @@ class WeeklyOvertimeReportService
             'totals' => [
                 'total_hours' => round($weeklyExtra, 2),
                 'weekend_hours' => round($weeklyWeekend, 2),
+                'detected_hours' => round($weeklyDetected, 2),
+                'pending_hours' => round($weeklyPending, 2),
                 'velada_count' => $veladaCount,
                 'cena_count' => $cenaCount,
                 'comida_count' => $comidaCount,
@@ -161,10 +173,14 @@ class WeeklyOvertimeReportService
     /**
      * Build per-day metrics, classifying authorized hours by compensation_type.code.
      *
-     * Day with no check-in/check-out yields all zeros — we only count hours
-     * that are both authorized AND backed by an actual checada.
+     * Day with no check-in/check-out yields all zeros for authorized columns.
+     * Also computes `detected_overtime_hours` from real punches vs schedule using
+     * the company rounding rule, and `pending_overtime_hours` (detected − approved,
+     * floored at 0) so the report can surface OT that was worked but not yet
+     * approved.
      */
     private function buildDay(
+        Employee $employee,
         string $date,
         ?AttendanceRecord $record,
         Collection $dayAuthorizations,
@@ -179,6 +195,8 @@ class WeeklyOvertimeReportService
             'velada_hours' => 0.0,
             'weekend_hours' => 0.0,
             'worked_hours' => 0.0,
+            'detected_overtime_hours' => 0.0,
+            'pending_overtime_hours' => 0.0,
             'is_night_shift' => false,
             'is_weekend_work' => false,
             'm_hours' => 0.0,
@@ -209,9 +227,17 @@ class WeeklyOvertimeReportService
         $isNightShift = (bool) $record->is_night_shift;
         $isWeekendWork = (bool) $record->is_weekend_work;
 
-        // M/V split for DISEÑO: morning shift hours go to M, night shift to V.
         $mHours = $isNightShift ? 0.0 : $overtimeHours;
         $vHours = $isNightShift ? $overtimeHours : 0.0;
+
+        $dayName = $dateObj->format('l');
+        $schedule = $employee->getEffectiveScheduleForDay($dayName);
+        $detectedHours = $this->rounding->detectOvertimeHours($record, $schedule, $date);
+        // Approved is what the supervisor signed off on (HE codes + Velada).
+        // Pending = detected minus approved-overtime — so we don't double-count
+        // hours that were already authorized.
+        $approvedForGap = $overtimeHours + $veladaHours;
+        $pendingHours = max($detectedHours - $approvedForGap, 0.0);
 
         return [
             'date' => $date,
@@ -220,6 +246,8 @@ class WeeklyOvertimeReportService
             'velada_hours' => round($veladaHours, 2),
             'weekend_hours' => round($weekendHours, 2),
             'worked_hours' => round((float) ($record->worked_hours ?? 0), 2),
+            'detected_overtime_hours' => round($detectedHours, 2),
+            'pending_overtime_hours' => round($pendingHours, 2),
             'is_night_shift' => $isNightShift,
             'is_weekend_work' => $isWeekendWork,
             'm_hours' => round($mHours, 2),
@@ -279,6 +307,8 @@ class WeeklyOvertimeReportService
     {
         $totalHours = 0.0;
         $weekendHours = 0.0;
+        $detectedHours = 0.0;
+        $pendingHours = 0.0;
         $veladaCount = 0;
         $cenaCount = 0;
         $comidaCount = 0;
@@ -286,6 +316,8 @@ class WeeklyOvertimeReportService
         foreach ($rows as $row) {
             $totalHours += $row['totals']['total_hours'];
             $weekendHours += $row['totals']['weekend_hours'];
+            $detectedHours += $row['totals']['detected_hours'] ?? 0;
+            $pendingHours += $row['totals']['pending_hours'] ?? 0;
             $veladaCount += $row['totals']['velada_count'];
             $cenaCount += $row['totals']['cena_count'];
             $comidaCount += $row['totals']['comida_count'];
@@ -294,6 +326,8 @@ class WeeklyOvertimeReportService
         return [
             'total_hours' => round($totalHours, 2),
             'weekend_hours' => round($weekendHours, 2),
+            'detected_hours' => round($detectedHours, 2),
+            'pending_hours' => round($pendingHours, 2),
             'velada_count' => $veladaCount,
             'cena_count' => $cenaCount,
             'comida_count' => $comidaCount,
