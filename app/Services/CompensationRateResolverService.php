@@ -102,19 +102,18 @@ class CompensationRateResolverService
     /**
      * Find the applicable compensation type for a given authorization type.
      *
-     * Looks for active comp types assigned to the employee (via employee, position,
-     * or department) that match the authorization type, ordered by priority.
+     * Only returns a comp type the employee is explicitly assigned to (via the
+     * employee_compensation_type pivot). No global/priority fallback.
      *
      * Args:
      *     employee: The employee to check
      *     authType: The authorization type (e.g., 'overtime', 'night_shift')
      *
      * Returns:
-     *     The best-matching CompensationType or null
+     *     The best-matching CompensationType or null when the employee has none
      */
     public function findApplicableType(Employee $employee, string $authType): ?CompensationType
     {
-        // Get all active comp types for this auth type (with relations for rate resolution)
         $compTypes = CompensationType::active()
             ->forAuthorizationType($authType)
             ->with(['positions', 'departments'])
@@ -125,21 +124,18 @@ class CompensationRateResolverService
             return null;
         }
 
-        // Check if employee has any of these assigned (directly or via position/department)
         $employeeCompTypeIds = $employee->compensationTypes
             ->where('pivot.is_active', true)
             ->pluck('id')
             ->toArray();
 
-        // Return first matching by priority
         foreach ($compTypes as $ct) {
             if (in_array($ct->id, $employeeCompTypeIds)) {
                 return $ct;
             }
         }
 
-        // Fallback to first available by priority (global assignment)
-        return $compTypes->first();
+        return null;
     }
 
     /**
@@ -169,11 +165,24 @@ class CompensationRateResolverService
             return [];
         }
 
+        // Only auto-tier comp types the employee is explicitly assigned to.
+        $assignedIds = $employee->compensationTypes
+            ->where('pivot.is_active', true)
+            ->pluck('id')
+            ->toArray();
+
         $tiers = [];
         $remaining = $totalHours;
 
-        // Filter out HET (priority 30) — only applied via explicit authorization
-        $autoTiers = $overtimeTypes->filter(fn ($ct) => $ct->priority < 30)->values();
+        // Filter out HET (priority 30) — only applied via explicit authorization —
+        // and any comp type not assigned to this employee.
+        $autoTiers = $overtimeTypes
+            ->filter(fn ($ct) => $ct->priority < 30 && in_array($ct->id, $assignedIds))
+            ->values();
+
+        if ($autoTiers->isEmpty()) {
+            return [];
+        }
 
         foreach ($autoTiers as $index => $compType) {
             if ($remaining <= 0) {
@@ -431,18 +440,9 @@ class CompensationRateResolverService
      */
     public function hasCompensationTypes(Employee $employee): bool
     {
-        // Check direct assignment
-        $hasDirectAssignment = $employee->compensationTypes
+        // Only count explicit assignments — no global/position/department fallback.
+        return $employee->compensationTypes
             ->where('pivot.is_active', true)
             ->isNotEmpty();
-
-        if ($hasDirectAssignment) {
-            return true;
-        }
-
-        // Check via position or department (any active comp type with authorization_type)
-        return CompensationType::active()
-            ->whereNotNull('authorization_type')
-            ->exists();
     }
 }
