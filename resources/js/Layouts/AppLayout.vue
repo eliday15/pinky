@@ -161,9 +161,13 @@ const hasRoute = (routeName) => {
             ]"
         >
             <!-- Logo -->
-            <div class="shrink-0 flex items-center justify-center h-16 border-b border-gray-200 bg-pink-600">
-                <Link :href="route('dashboard')" class="text-xl font-bold text-white">
-                    Pinky ERP
+            <div class="shrink-0 flex items-center justify-center h-16 border-b border-gray-200 bg-pink-600 px-4">
+                <Link :href="route('dashboard')" class="flex items-center">
+                    <img
+                        src="/pinky-logo-white.svg"
+                        alt="Pinky"
+                        class="h-9 w-auto"
+                    />
                 </Link>
             </div>
 
