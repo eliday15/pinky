@@ -310,12 +310,29 @@ const clearBulkSuggestions = () => {
 /* ----- Per-row table for per_hour types ----- */
 const isPerHour = computed(() => selectedApplicationMode.value === 'per_hour');
 
-/** Sort entries by date, then by employee name, so rows read naturally. */
-const sortedEntries = computed(() => {
-    return [...form.entries].sort((a, b) => {
-        if (a.date !== b.date) return a.date.localeCompare(b.date);
-        return (a.employee_name || '').localeCompare(b.employee_name || '');
-    });
+/** Group rows by employee so the table reads as one block per person,
+ *  with their days stacked beneath the name. */
+const entriesGroupedByEmployee = computed(() => {
+    const groups = new Map();
+    for (let i = 0; i < form.entries.length; i++) {
+        const e = form.entries[i];
+        if (!groups.has(e.employee_id)) {
+            groups.set(e.employee_id, {
+                employee_id: e.employee_id,
+                employee_name: e.employee_name || `Empleado #${e.employee_id}`,
+                employee_number: e.employee_number || '',
+                entries: [],
+            });
+        }
+        groups.get(e.employee_id).entries.push({ ...e, _index: i });
+    }
+    return [...groups.values()]
+        .map(g => ({
+            ...g,
+            entries: g.entries.sort((a, b) => (a.date || '').localeCompare(b.date || '')),
+            total_hours: g.entries.reduce((s, e) => s + (parseFloat(e.hours) || 0), 0).toFixed(2),
+        }))
+        .sort((a, b) => a.employee_name.localeCompare(b.employee_name));
 });
 
 const totalEntryHours = computed(() => {
@@ -363,9 +380,6 @@ const addManualEntry = () => {
         },
     ];
 };
-
-/** Find the index in form.entries that matches a sorted-entry reference. */
-const realIndexOf = (entry) => form.entries.indexOf(entry);
 
 /** Compose a datetime-local string from row date + row time. */
 const getEntryDatetime = (entry, field) => {
@@ -619,45 +633,55 @@ const canSubmit = computed(() => {
                         No hay filas todavía. Define un rango y carga desde checadas, o agrega una manualmente.
                     </div>
 
-                    <div v-else class="border rounded-lg overflow-hidden">
-                        <div class="bg-gray-50 px-4 py-2 grid grid-cols-12 gap-2 text-xs font-medium text-gray-700">
-                            <div class="col-span-4">Empleado / Día</div>
-                            <div class="col-span-3">Fecha/Hora Inicio</div>
-                            <div class="col-span-3">Fecha/Hora Fin</div>
-                            <div class="col-span-1">Horas</div>
-                            <div class="col-span-1"></div>
-                        </div>
-                        <div class="max-h-96 overflow-y-auto divide-y divide-gray-100">
-                            <div v-for="entry in sortedEntries" :key="`${entry.employee_id}_${entry.date}_${entry.kind}_${realIndexOf(entry)}`"
-                                class="px-4 py-2 grid grid-cols-12 gap-2 items-center text-sm bg-white">
-                                <div class="col-span-4 min-w-0">
-                                    <div class="font-medium text-gray-900 truncate">
-                                        {{ entry.employee_name }}
-                                        <span class="text-xs font-normal text-pink-700 ml-1">· {{ formatDateShort(entry.date) }}</span>
-                                    </div>
-                                    <div class="text-xs text-gray-500 truncate">
-                                        {{ entry.employee_number }}
-                                        <span v-if="entry.summary" class="text-amber-700 ml-2">
-                                            • {{ entry.summary }}
-                                        </span>
+                    <div v-else class="max-h-[32rem] overflow-y-auto space-y-3 pr-1">
+                        <div v-for="group in entriesGroupedByEmployee" :key="group.employee_id"
+                            class="border rounded-lg overflow-hidden">
+                            <!-- Employee header -->
+                            <div class="bg-gray-50 px-4 py-2 flex items-center justify-between border-b">
+                                <div class="min-w-0">
+                                    <div class="text-sm font-semibold text-gray-900 truncate">
+                                        {{ group.employee_name }}
+                                        <span class="ml-2 text-xs font-normal text-gray-500">{{ group.employee_number }}</span>
                                     </div>
                                 </div>
-                                <input type="datetime-local"
-                                    :value="getEntryDatetime(entry, 'start_time')"
-                                    @input="setEntryDatetime(realIndexOf(entry), 'start_time', $event.target.value)"
-                                    class="col-span-3 rounded border-gray-300 text-xs focus:border-pink-500 focus:ring-pink-500" />
-                                <input type="datetime-local"
-                                    :value="getEntryDatetime(entry, 'end_time')"
-                                    @input="setEntryDatetime(realIndexOf(entry), 'end_time', $event.target.value)"
-                                    class="col-span-3 rounded border-gray-300 text-xs focus:border-pink-500 focus:ring-pink-500" />
-                                <input type="number" step="0.25" min="0" max="24"
-                                    :value="entry.hours"
-                                    @input="setEntryField(realIndexOf(entry), 'hours', $event.target.value)"
-                                    class="col-span-1 rounded border-gray-300 text-xs focus:border-pink-500 focus:ring-pink-500" />
-                                <button type="button" @click="removeEntry(realIndexOf(entry))"
-                                    class="col-span-1 text-gray-400 hover:text-red-600 text-xs text-left">
-                                    Quitar
-                                </button>
+                                <div class="text-xs text-gray-700 whitespace-nowrap">
+                                    {{ group.entries.length }} día(s) · Total <strong>{{ group.total_hours }}h</strong>
+                                </div>
+                            </div>
+                            <!-- Column headers shown once per group -->
+                            <div class="bg-gray-50 px-4 py-1 grid grid-cols-12 gap-2 text-[10px] font-medium uppercase tracking-wide text-gray-500 border-b">
+                                <div class="col-span-3">Día</div>
+                                <div class="col-span-4">Inicio</div>
+                                <div class="col-span-4">Fin</div>
+                                <div class="col-span-1">h</div>
+                            </div>
+                            <!-- Day rows for this employee -->
+                            <div class="divide-y divide-gray-100">
+                                <div v-for="entry in group.entries" :key="`${entry.employee_id}_${entry.date}_${entry.kind}_${entry._index}`"
+                                    class="px-4 py-2 grid grid-cols-12 gap-2 items-center text-sm bg-white">
+                                    <div class="col-span-3 min-w-0">
+                                        <div class="text-xs font-semibold text-pink-700">{{ formatDateShort(entry.date) }}</div>
+                                        <div v-if="entry.summary" class="text-[10px] text-amber-700 truncate" :title="entry.summary">
+                                            {{ entry.summary }}
+                                        </div>
+                                        <button type="button" @click="removeEntry(entry._index)"
+                                            class="text-[10px] text-gray-400 hover:text-red-600">
+                                            Quitar
+                                        </button>
+                                    </div>
+                                    <input type="datetime-local"
+                                        :value="getEntryDatetime(entry, 'start_time')"
+                                        @input="setEntryDatetime(entry._index, 'start_time', $event.target.value)"
+                                        class="col-span-4 rounded border-gray-300 text-xs focus:border-pink-500 focus:ring-pink-500" />
+                                    <input type="datetime-local"
+                                        :value="getEntryDatetime(entry, 'end_time')"
+                                        @input="setEntryDatetime(entry._index, 'end_time', $event.target.value)"
+                                        class="col-span-4 rounded border-gray-300 text-xs focus:border-pink-500 focus:ring-pink-500" />
+                                    <input type="number" step="0.25" min="0" max="24"
+                                        :value="entry.hours"
+                                        @input="setEntryField(entry._index, 'hours', $event.target.value)"
+                                        class="col-span-1 rounded border-gray-300 text-xs focus:border-pink-500 focus:ring-pink-500" />
+                                </div>
                             </div>
                         </div>
                     </div>

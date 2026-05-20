@@ -824,11 +824,15 @@ class AuthorizationController extends Controller
      * Overtime segments: detect early-arrival and late-exit minutes separately,
      * round each one using the company's stepped rule, and emit one segment per
      * qualifying chunk. A segment is omitted when it rounds to zero (< 30 min).
+     *
+     * check_in / check_out are stored as TIME (no date). We anchor them to the
+     * record's work_date so comparisons against the schedule's entry/exit don't
+     * mix "today" with the historical date.
      */
     private function buildOvertimeSegments(AttendanceRecord $record, ?object $schedule, string $date): array
     {
-        $checkIn = Carbon::parse($record->check_in);
-        $checkOut = Carbon::parse($record->check_out);
+        $checkIn = Carbon::parse($date . ' ' . $record->check_in);
+        $checkOut = Carbon::parse($date . ' ' . $record->check_out);
         $scheduledEntry = $schedule->entry_time ?? null;
         $scheduledExit = $schedule->exit_time ?? null;
 
