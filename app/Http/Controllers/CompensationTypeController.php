@@ -67,6 +67,9 @@ class CompensationTypeController extends Controller
         return Inertia::render('CompensationTypes/Create', [
             'positions' => Position::active()->get(['id', 'name', 'code']),
             'departments' => Department::active()->get(['id', 'name', 'code']),
+            'employees' => Employee::active()
+                ->orderBy('full_name')
+                ->get(['id', 'full_name', 'employee_number', 'department_id', 'position_id']),
         ]);
     }
 
@@ -99,6 +102,10 @@ class CompensationTypeController extends Controller
             'department_ids.*' => ['exists:departments,id'],
             'department_percentages' => ['nullable', 'array'],
             'department_fixed_amounts' => ['nullable', 'array'],
+            'employee_ids' => ['nullable', 'array'],
+            'employee_ids.*' => ['exists:employees,id'],
+            'employee_percentages' => ['nullable', 'array'],
+            'employee_fixed_amounts' => ['nullable', 'array'],
         ]);
 
         $compensationType = CompensationType::create(
@@ -109,14 +116,9 @@ class CompensationTypeController extends Controller
             ])->toArray()
         );
 
-        // Sync positions
         $this->syncPositions($compensationType, $request);
-
-        // Sync departments
         $this->syncDepartments($compensationType, $request);
-
-        // Auto-assign to employees matching the positions/departments
-        $this->syncEmployeesFromAssignments($compensationType, $request);
+        $this->syncEmployees($compensationType, $request);
 
         return redirect()->route('compensation-types.index')
             ->with('success', 'Concepto de compensacion creado exitosamente.');
@@ -132,12 +134,15 @@ class CompensationTypeController extends Controller
             abort(403);
         }
 
-        $compensationType->load(['positions', 'departments']);
+        $compensationType->load(['positions', 'departments', 'employees']);
 
         return Inertia::render('CompensationTypes/Edit', [
             'compensationType' => $compensationType,
             'positions' => Position::active()->get(['id', 'name', 'code']),
             'departments' => Department::active()->get(['id', 'name', 'code']),
+            'employees' => Employee::active()
+                ->orderBy('full_name')
+                ->get(['id', 'full_name', 'employee_number', 'department_id', 'position_id']),
         ]);
     }
 
@@ -170,6 +175,10 @@ class CompensationTypeController extends Controller
             'department_ids.*' => ['exists:departments,id'],
             'department_percentages' => ['nullable', 'array'],
             'department_fixed_amounts' => ['nullable', 'array'],
+            'employee_ids' => ['nullable', 'array'],
+            'employee_ids.*' => ['exists:employees,id'],
+            'employee_percentages' => ['nullable', 'array'],
+            'employee_fixed_amounts' => ['nullable', 'array'],
         ]);
 
         $compensationType->update(
@@ -180,14 +189,9 @@ class CompensationTypeController extends Controller
             ])->toArray()
         );
 
-        // Sync positions
         $this->syncPositions($compensationType, $request);
-
-        // Sync departments
         $this->syncDepartments($compensationType, $request);
-
-        // Auto-assign to employees matching the positions/departments
-        $this->syncEmployeesFromAssignments($compensationType, $request);
+        $this->syncEmployees($compensationType, $request);
 
         return redirect()->route('compensation-types.index')
             ->with('success', 'Concepto de compensacion actualizado exitosamente.');
@@ -211,95 +215,78 @@ class CompensationTypeController extends Controller
 
     /**
      * Sync position assignments with pivot data.
+     *
+     * Only acts when the request actually submitted `position_ids` so forms
+     * that don't manage positions won't accidentally detach existing data.
      */
     private function syncPositions(CompensationType $compensationType, Request $request): void
     {
-        if ($request->has('position_ids') && ! empty($request->position_ids)) {
-            $syncData = [];
-            foreach ($request->position_ids as $positionId) {
-                $syncData[$positionId] = [
-                    'default_percentage' => $request->position_percentages[$positionId] ?? null,
-                    'default_fixed_amount' => $request->position_fixed_amounts[$positionId] ?? null,
-                ];
-            }
-            $compensationType->positions()->sync($syncData);
-        } else {
-            $compensationType->positions()->detach();
-        }
-    }
-
-    /**
-     * Auto-assign compensation type to all active employees matching assigned positions/departments.
-     *
-     * Uses syncWithoutDetaching so manually assigned employees are preserved.
-     * Position-level overrides take priority over department-level overrides.
-     */
-    private function syncEmployeesFromAssignments(CompensationType $compensationType, Request $request): void
-    {
-        $positionIds = $request->position_ids ?? [];
-        $departmentIds = $request->department_ids ?? [];
-
-        if (empty($positionIds) && empty($departmentIds)) {
+        if (! $request->has('position_ids')) {
             return;
         }
 
-        $employees = Employee::active()
-            ->where(function ($q) use ($positionIds, $departmentIds) {
-                $q->whereIn('position_id', $positionIds)
-                    ->orWhereIn('department_id', $departmentIds);
-            })
-            ->get(['id', 'position_id', 'department_id']);
-
+        $positionIds = $request->position_ids ?? [];
         $syncData = [];
-        foreach ($employees as $employee) {
-            $pivotData = ['is_active' => true];
-
-            // Apply position-level override if the employee's position was assigned
-            if (in_array($employee->position_id, $positionIds)) {
-                $posPercentage = $request->position_percentages[$employee->position_id] ?? null;
-                $posFixed = $request->position_fixed_amounts[$employee->position_id] ?? null;
-                if ($posPercentage !== null) {
-                    $pivotData['custom_percentage'] = $posPercentage;
-                }
-                if ($posFixed !== null) {
-                    $pivotData['custom_fixed_amount'] = $posFixed;
-                }
-            } elseif (in_array($employee->department_id, $departmentIds)) {
-                // Fall back to department-level override
-                $deptPercentage = $request->department_percentages[$employee->department_id] ?? null;
-                $deptFixed = $request->department_fixed_amounts[$employee->department_id] ?? null;
-                if ($deptPercentage !== null) {
-                    $pivotData['custom_percentage'] = $deptPercentage;
-                }
-                if ($deptFixed !== null) {
-                    $pivotData['custom_fixed_amount'] = $deptFixed;
-                }
-            }
-
-            $syncData[$employee->id] = $pivotData;
+        foreach ($positionIds as $positionId) {
+            $syncData[$positionId] = [
+                'default_percentage' => $request->position_percentages[$positionId] ?? null,
+                'default_fixed_amount' => $request->position_fixed_amounts[$positionId] ?? null,
+            ];
         }
-
-        if (! empty($syncData)) {
-            $compensationType->employees()->syncWithoutDetaching($syncData);
-        }
+        $compensationType->positions()->sync($syncData);
     }
 
     /**
      * Sync department assignments with pivot data.
+     *
+     * Only acts when the request actually submitted `department_ids` so forms
+     * that don't manage departments won't accidentally detach existing data.
      */
     private function syncDepartments(CompensationType $compensationType, Request $request): void
     {
-        if ($request->has('department_ids') && ! empty($request->department_ids)) {
-            $syncData = [];
-            foreach ($request->department_ids as $departmentId) {
-                $syncData[$departmentId] = [
-                    'default_percentage' => $request->department_percentages[$departmentId] ?? null,
-                    'default_fixed_amount' => $request->department_fixed_amounts[$departmentId] ?? null,
-                ];
-            }
-            $compensationType->departments()->sync($syncData);
-        } else {
-            $compensationType->departments()->detach();
+        if (! $request->has('department_ids')) {
+            return;
         }
+
+        $departmentIds = $request->department_ids ?? [];
+        $syncData = [];
+        foreach ($departmentIds as $departmentId) {
+            $syncData[$departmentId] = [
+                'default_percentage' => $request->department_percentages[$departmentId] ?? null,
+                'default_fixed_amount' => $request->department_fixed_amounts[$departmentId] ?? null,
+            ];
+        }
+        $compensationType->departments()->sync($syncData);
+    }
+
+    /**
+     * Sync direct employee assignments with pivot overrides.
+     *
+     * Uses sync() so deselected employees are detached on save.
+     * Only acts when the request submitted `employee_ids`.
+     */
+    private function syncEmployees(CompensationType $compensationType, Request $request): void
+    {
+        if (! $request->has('employee_ids')) {
+            return;
+        }
+
+        $employeeIds = (array) $request->input('employee_ids', []);
+        $percentages = (array) $request->input('employee_percentages', []);
+        $fixedAmounts = (array) $request->input('employee_fixed_amounts', []);
+
+        $syncData = [];
+        foreach ($employeeIds as $employeeId) {
+            $employeeId = (int) $employeeId;
+            // JSON object keys arrive as strings; check both int and string keys.
+            $percentage = $percentages[$employeeId] ?? $percentages[(string) $employeeId] ?? null;
+            $fixedAmount = $fixedAmounts[$employeeId] ?? $fixedAmounts[(string) $employeeId] ?? null;
+            $syncData[$employeeId] = [
+                'is_active' => true,
+                'custom_percentage' => $percentage === '' ? null : $percentage,
+                'custom_fixed_amount' => $fixedAmount === '' ? null : $fixedAmount,
+            ];
+        }
+        $compensationType->employees()->sync($syncData);
     }
 }

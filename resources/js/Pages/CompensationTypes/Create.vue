@@ -2,10 +2,12 @@
 import AppLayout from '@/Layouts/AppLayout.vue';
 import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
+import { ref, computed } from 'vue';
 
 const props = defineProps({
     positions: Array,
     departments: Array,
+    employees: Array,
 });
 
 const form = useForm({
@@ -19,12 +21,9 @@ const form = useForm({
     application_mode: 'per_hour',
     authorization_type: '',
     priority: 0,
-    position_ids: [],
-    position_percentages: {},
-    position_fixed_amounts: {},
-    department_ids: [],
-    department_percentages: {},
-    department_fixed_amounts: {},
+    employee_ids: [],
+    employee_percentages: {},
+    employee_fixed_amounts: {},
 });
 
 const applicationModeOptions = [
@@ -41,26 +40,80 @@ const authorizationTypeOptions = [
     { value: 'special', label: 'Especial' },
 ];
 
-const togglePosition = (posId) => {
-    const idx = form.position_ids.indexOf(posId);
-    if (idx > -1) {
-        form.position_ids.splice(idx, 1);
-        delete form.position_percentages[posId];
-        delete form.position_fixed_amounts[posId];
+/* ---- Employee selection (department-filtered) ---- */
+const departmentFilter = ref('');
+const employeeSearch = ref('');
+
+const departmentName = (deptId) => {
+    const d = props.departments.find(d => d.id == deptId);
+    return d ? d.name : '';
+};
+
+const filteredEmployees = computed(() => {
+    let list = props.employees || [];
+    if (departmentFilter.value) {
+        list = list.filter(e => e.department_id == departmentFilter.value);
+    }
+    if (employeeSearch.value) {
+        const q = employeeSearch.value.toLowerCase();
+        list = list.filter(e =>
+            (e.full_name || '').toLowerCase().includes(q) ||
+            (e.employee_number || '').toLowerCase().includes(q)
+        );
+    }
+    const selected = new Set(form.employee_ids);
+    return [...list].sort((a, b) => {
+        const sA = selected.has(a.id) ? 0 : 1;
+        const sB = selected.has(b.id) ? 0 : 1;
+        if (sA !== sB) return sA - sB;
+        return (a.full_name || '').localeCompare(b.full_name || '');
+    });
+});
+
+const visibleAllSelected = computed(() => {
+    if (filteredEmployees.value.length === 0) return false;
+    return filteredEmployees.value.every(e => form.employee_ids.includes(e.id));
+});
+
+const omitKey = (obj, key) => {
+    const next = { ...obj };
+    delete next[key];
+    return next;
+};
+
+const toggleEmployee = (empId) => {
+    if (form.employee_ids.includes(empId)) {
+        form.employee_ids = form.employee_ids.filter(id => id !== empId);
+        form.employee_percentages = omitKey(form.employee_percentages, empId);
+        form.employee_fixed_amounts = omitKey(form.employee_fixed_amounts, empId);
     } else {
-        form.position_ids.push(posId);
+        form.employee_ids = [...form.employee_ids, empId];
     }
 };
 
-const toggleDepartment = (deptId) => {
-    const idx = form.department_ids.indexOf(deptId);
-    if (idx > -1) {
-        form.department_ids.splice(idx, 1);
-        delete form.department_percentages[deptId];
-        delete form.department_fixed_amounts[deptId];
+const toggleSelectAllVisible = () => {
+    if (visibleAllSelected.value) {
+        const visibleIds = new Set(filteredEmployees.value.map(e => e.id));
+        form.employee_ids = form.employee_ids.filter(id => !visibleIds.has(id));
+        let percentages = { ...form.employee_percentages };
+        let fixed = { ...form.employee_fixed_amounts };
+        visibleIds.forEach(id => {
+            delete percentages[id];
+            delete fixed[id];
+        });
+        form.employee_percentages = percentages;
+        form.employee_fixed_amounts = fixed;
     } else {
-        form.department_ids.push(deptId);
+        const merged = new Set(form.employee_ids);
+        filteredEmployees.value.forEach(e => merged.add(e.id));
+        form.employee_ids = [...merged];
     }
+};
+
+const clearAllEmployees = () => {
+    form.employee_ids = [];
+    form.employee_percentages = {};
+    form.employee_fixed_amounts = {};
 };
 
 const submit = () => {
@@ -122,7 +175,6 @@ const submit = () => {
                             </p>
                         </div>
 
-                        <!-- Calculation Type -->
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-2">
                                 Tipo de Calculo *
@@ -152,7 +204,6 @@ const submit = () => {
                             </p>
                         </div>
 
-                        <!-- Percentage Value (shown when calculation_type is percentage) -->
                         <div v-if="form.calculation_type === 'percentage'">
                             <label class="block text-sm font-medium text-gray-700 mb-1">
                                 Porcentaje del Salario (%) *
@@ -172,7 +223,6 @@ const submit = () => {
                             </p>
                         </div>
 
-                        <!-- Fixed Amount (shown when calculation_type is fixed) -->
                         <div v-if="form.calculation_type === 'fixed'">
                             <label class="block text-sm font-medium text-gray-700 mb-1">
                                 Monto Fijo (MXN) *
@@ -203,7 +253,6 @@ const submit = () => {
                             </label>
                         </div>
 
-                        <!-- Application Mode -->
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-2">
                                 Modo de Aplicacion *
@@ -228,7 +277,6 @@ const submit = () => {
                             </p>
                         </div>
 
-                        <!-- Authorization Type -->
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">
                                 Tipo de Autorizacion
@@ -250,7 +298,6 @@ const submit = () => {
                             </p>
                         </div>
 
-                        <!-- Priority -->
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">
                                 Prioridad
@@ -287,116 +334,130 @@ const submit = () => {
                     </div>
                 </div>
 
-                <!-- Position Assignments -->
+                <!-- Employee Assignments -->
                 <div class="bg-white rounded-lg shadow p-6">
-                    <h3 class="text-lg font-semibold text-gray-800 mb-2">Puestos Asignados</h3>
-                    <p class="text-sm text-gray-500 mb-4">
-                        Asigna este concepto a puestos especificos. Opcionalmente define un valor diferente por puesto.
-                    </p>
-
-                    <div v-if="positions.length === 0" class="text-center py-6 text-gray-500">
-                        No hay puestos activos registrados
+                    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-2 gap-3">
+                        <div>
+                            <h3 class="text-lg font-semibold text-gray-800">
+                                Empleados Asignados
+                                <span class="text-sm font-normal text-gray-500 ml-2">
+                                    ({{ form.employee_ids.length }} seleccionados)
+                                </span>
+                            </h3>
+                            <p class="text-sm text-gray-500 mt-1">
+                                Filtra por departamento, luego selecciona los empleados a los que aplica este concepto.
+                            </p>
+                        </div>
+                        <button
+                            v-if="form.employee_ids.length > 0"
+                            type="button"
+                            @click="clearAllEmployees"
+                            class="px-3 py-2 text-xs border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 whitespace-nowrap"
+                        >
+                            Quitar todos
+                        </button>
                     </div>
 
-                    <div v-else class="space-y-3">
-                        <div
-                            v-for="pos in positions"
-                            :key="pos.id"
-                            class="flex items-center justify-between p-3 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors"
-                            :class="{ 'border-pink-300 bg-pink-50': form.position_ids.includes(pos.id) }"
+                    <div class="flex flex-col md:flex-row gap-3 mb-4">
+                        <select
+                            v-model="departmentFilter"
+                            class="md:w-1/3 rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 text-sm"
                         >
-                            <div class="flex items-center">
-                                <input
-                                    type="checkbox"
-                                    :checked="form.position_ids.includes(pos.id)"
-                                    @change="togglePosition(pos.id)"
-                                    class="rounded border-gray-300 text-pink-600 focus:ring-pink-500"
-                                />
-                                <div class="ml-3">
-                                    <p class="text-sm font-medium text-gray-900">{{ pos.name }}</p>
-                                    <p class="text-xs text-gray-500">{{ pos.code }}</p>
+                            <option value="">Todos los departamentos</option>
+                            <option v-for="dept in departments" :key="dept.id" :value="dept.id">
+                                {{ dept.name }}
+                            </option>
+                        </select>
+                        <input
+                            v-model="employeeSearch"
+                            type="text"
+                            placeholder="Buscar empleado..."
+                            class="flex-1 rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 text-sm"
+                        />
+                    </div>
+
+                    <div v-if="(employees || []).length === 0" class="text-center py-6 text-gray-500">
+                        No hay empleados activos registrados
+                    </div>
+
+                    <div v-else class="border rounded-lg overflow-hidden">
+                        <div class="bg-gray-50 px-4 py-3 border-b flex items-center">
+                            <input
+                                type="checkbox"
+                                :checked="visibleAllSelected"
+                                @change="toggleSelectAllVisible"
+                                class="rounded border-gray-300 text-pink-600 focus:ring-pink-500"
+                            />
+                            <span class="ml-3 text-sm font-medium text-gray-700">
+                                Seleccionar todos los visibles
+                            </span>
+                            <span class="ml-2 text-xs text-gray-500">
+                                ({{ filteredEmployees.length }} resultado{{ filteredEmployees.length === 1 ? '' : 's' }})
+                            </span>
+                        </div>
+
+                        <div class="max-h-96 overflow-y-auto divide-y divide-gray-100">
+                            <div
+                                v-for="emp in filteredEmployees"
+                                :key="emp.id"
+                                class="px-4 py-3 flex items-center justify-between hover:bg-gray-50 cursor-pointer"
+                                :class="{ 'bg-pink-50': form.employee_ids.includes(emp.id) }"
+                                @click="toggleEmployee(emp.id)"
+                            >
+                                <div class="flex items-center flex-1 min-w-0">
+                                    <input
+                                        type="checkbox"
+                                        :checked="form.employee_ids.includes(emp.id)"
+                                        class="rounded border-gray-300 text-pink-600 focus:ring-pink-500"
+                                        @click.stop
+                                        @change="toggleEmployee(emp.id)"
+                                    />
+                                    <div class="ml-3 min-w-0">
+                                        <p class="text-sm font-medium text-gray-900 truncate">{{ emp.full_name }}</p>
+                                        <p class="text-xs text-gray-500 truncate">
+                                            {{ emp.employee_number }}
+                                            <span v-if="emp.department_id" class="ml-1">
+                                                - {{ departmentName(emp.department_id) }}
+                                            </span>
+                                        </p>
+                                    </div>
+                                </div>
+                                <div
+                                    v-if="form.employee_ids.includes(emp.id)"
+                                    class="flex items-center space-x-2 ml-3"
+                                    @click.stop
+                                >
+                                    <template v-if="form.calculation_type === 'percentage'">
+                                        <label class="text-xs text-gray-500">% especifico:</label>
+                                        <input
+                                            v-model="form.employee_percentages[emp.id]"
+                                            type="number"
+                                            step="0.01"
+                                            :placeholder="form.percentage_value || '0.00'"
+                                            class="w-24 rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 text-sm"
+                                        />
+                                    </template>
+                                    <template v-else>
+                                        <label class="text-xs text-gray-500">Monto:</label>
+                                        <input
+                                            v-model="form.employee_fixed_amounts[emp.id]"
+                                            type="number"
+                                            step="0.01"
+                                            :placeholder="form.fixed_amount || '0.00'"
+                                            class="w-28 rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 text-sm"
+                                        />
+                                    </template>
                                 </div>
                             </div>
-                            <div v-if="form.position_ids.includes(pos.id)" class="flex items-center space-x-2">
-                                <template v-if="form.calculation_type === 'percentage'">
-                                    <label class="text-xs text-gray-500">% especifico:</label>
-                                    <input
-                                        v-model="form.position_percentages[pos.id]"
-                                        type="number"
-                                        step="0.01"
-                                        :placeholder="form.percentage_value || '0.00'"
-                                        class="w-24 rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 text-sm"
-                                    />
-                                </template>
-                                <template v-else>
-                                    <label class="text-xs text-gray-500">Monto especifico:</label>
-                                    <input
-                                        v-model="form.position_fixed_amounts[pos.id]"
-                                        type="number"
-                                        step="0.01"
-                                        :placeholder="form.fixed_amount || '0.00'"
-                                        class="w-28 rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 text-sm"
-                                    />
-                                </template>
+                            <div v-if="filteredEmployees.length === 0" class="px-4 py-8 text-center text-gray-500 text-sm">
+                                No hay empleados que coincidan con el filtro.
                             </div>
                         </div>
                     </div>
-                </div>
 
-                <!-- Department Assignments -->
-                <div class="bg-white rounded-lg shadow p-6">
-                    <h3 class="text-lg font-semibold text-gray-800 mb-2">Departamentos Asignados</h3>
-                    <p class="text-sm text-gray-500 mb-4">
-                        Asigna este concepto a departamentos especificos. Opcionalmente define un valor diferente por departamento.
+                    <p v-if="form.errors.employee_ids" class="mt-2 text-sm text-red-600">
+                        {{ form.errors.employee_ids }}
                     </p>
-
-                    <div v-if="departments.length === 0" class="text-center py-6 text-gray-500">
-                        No hay departamentos activos registrados
-                    </div>
-
-                    <div v-else class="space-y-3">
-                        <div
-                            v-for="dept in departments"
-                            :key="dept.id"
-                            class="flex items-center justify-between p-3 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors"
-                            :class="{ 'border-pink-300 bg-pink-50': form.department_ids.includes(dept.id) }"
-                        >
-                            <div class="flex items-center">
-                                <input
-                                    type="checkbox"
-                                    :checked="form.department_ids.includes(dept.id)"
-                                    @change="toggleDepartment(dept.id)"
-                                    class="rounded border-gray-300 text-pink-600 focus:ring-pink-500"
-                                />
-                                <div class="ml-3">
-                                    <p class="text-sm font-medium text-gray-900">{{ dept.name }}</p>
-                                    <p class="text-xs text-gray-500">{{ dept.code }}</p>
-                                </div>
-                            </div>
-                            <div v-if="form.department_ids.includes(dept.id)" class="flex items-center space-x-2">
-                                <template v-if="form.calculation_type === 'percentage'">
-                                    <label class="text-xs text-gray-500">% especifico:</label>
-                                    <input
-                                        v-model="form.department_percentages[dept.id]"
-                                        type="number"
-                                        step="0.01"
-                                        :placeholder="form.percentage_value || '0.00'"
-                                        class="w-24 rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 text-sm"
-                                    />
-                                </template>
-                                <template v-else>
-                                    <label class="text-xs text-gray-500">Monto especifico:</label>
-                                    <input
-                                        v-model="form.department_fixed_amounts[dept.id]"
-                                        type="number"
-                                        step="0.01"
-                                        :placeholder="form.fixed_amount || '0.00'"
-                                        class="w-28 rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 text-sm"
-                                    />
-                                </template>
-                            </div>
-                        </div>
-                    </div>
                 </div>
 
                 <!-- Actions -->
