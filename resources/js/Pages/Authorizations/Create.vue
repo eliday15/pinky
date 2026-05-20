@@ -135,10 +135,28 @@ const fetchSuggestion = async () => {
     }
 };
 
+/** Track when the current times were filled from a suggestion (vs typed by hand). */
+const appliedFromSuggestion = ref(false);
+let isApplyingSuggestion = false;
+
 watch(
     () => [form.employee_id, form.date, form.type],
     () => {
         suggestion.value = null;
+        // If the user had auto-applied a suggestion, the times are no longer
+        // valid for the new tuple — drop them. Manual entries are preserved.
+        if (appliedFromSuggestion.value) {
+            form.start_time = '';
+            form.end_time = '';
+            form.hours = '';
+            appliedFromSuggestion.value = false;
+            if (form.date) {
+                isApplyingSuggestion = true;
+                startDatetime.value = `${form.date}T08:00`;
+                endDatetime.value = `${form.date}T16:00`;
+                Promise.resolve().then(() => { isApplyingSuggestion = false; });
+            }
+        }
         clearTimeout(suggestTimer);
         suggestTimer = setTimeout(fetchSuggestion, 300);
     },
@@ -148,12 +166,22 @@ watch(
 const applySuggestion = () => {
     if (!suggestion.value?.found) return;
     const date = form.date;
+    isApplyingSuggestion = true;
     startDatetime.value = `${date}T${suggestion.value.start_time}`;
     endDatetime.value = `${date}T${suggestion.value.end_time}`;
     form.start_time = suggestion.value.start_time;
     form.end_time = suggestion.value.end_time;
     form.hours = suggestion.value.hours;
+    appliedFromSuggestion.value = true;
+    // Release the guard after the datetime watchers have flushed.
+    Promise.resolve().then(() => { isApplyingSuggestion = false; });
 };
+
+/** Manual edits cancel the "auto-applied" flag so future type/date changes don't wipe them. */
+watch([startDatetime, endDatetime], () => {
+    if (isApplyingSuggestion) return;
+    appliedFromSuggestion.value = false;
+});
 
 /** Active compensation type IDs for the selected employee. */
 const selectedEmployeeData = computed(() => {

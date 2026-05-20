@@ -13,21 +13,29 @@ const props = defineProps({
 });
 
 const today = todayLocal();
+
+// Legacy single-date inputs for per_day / one_time. Per_hour uses entries[].
 const startDatetime = ref(`${today}T08:00`);
 const endDatetime = ref(`${today}T16:00`);
 const startDate = ref(today);
 const endDate = ref(today);
 
+// Date range for "Cargar desde checadas" — only relevant for per_hour types.
+const rangeStart = ref(today);
+const rangeEnd = ref(today);
+
 const form = useForm({
     employee_ids: [],
     type: '',
     compensation_type_id: null,
+    // Legacy single-date submit (per_day / one_time).
     date: today,
     start_time: '',
     end_time: '',
     hours: '',
     reason: '',
-    employee_times: {}, // { [employee_id]: { start_time, end_time, hours } }
+    // Per-hour submit shape: flat list of {employee_id, date, start_time, end_time, hours}.
+    entries: [],
 });
 
 /** The application_mode of the currently selected compensation type. */
@@ -37,14 +45,12 @@ const selectedApplicationMode = computed(() => {
     return t?.application_mode || null;
 });
 
-/** Human-readable label of the selected type (e.g., "Hora Extra Triple"). */
 const selectedTypeLabel = computed(() => {
     if (!form.compensation_type_id) return '';
     const t = props.types.find(t => t.compensation_type_id === form.compensation_type_id);
     return t?.label || '';
 });
 
-/** Card title for the date/time step, adapted to the selected type's input mode. */
 const dateCardTitle = computed(() => {
     switch (selectedApplicationMode.value) {
         case 'per_hour': return 'Fecha y Horario';
@@ -54,7 +60,7 @@ const dateCardTitle = computed(() => {
     }
 });
 
-/** Auto-calculate hours when datetimes change (per_hour mode). */
+/** Auto-calculate hours when datetimes change (legacy per_hour single submit). */
 watch([startDatetime, endDatetime], ([start, end]) => {
     if (start && end && selectedApplicationMode.value === 'per_hour') {
         const s = new Date(start);
@@ -94,15 +100,26 @@ const searchQuery = ref('');
 const selectAll = ref(false);
 const departmentFilter = ref('');
 
+/** All authorization types from the compensation catalog. */
+const compensationTypes = computed(() => {
+    return props.types.filter(t => t.group === 'compensation');
+});
+
+/** Employees who can receive the currently selected authorization type. */
+const employeesForSelectedType = computed(() => {
+    if (!form.compensation_type_id) return props.employees;
+    return props.employees.filter(emp =>
+        emp.active_compensation_type_ids?.includes(form.compensation_type_id)
+    );
+});
+
 const filteredEmployees = computed(() => {
     let employees = employeesForSelectedType.value;
 
-    // Filter by department
     if (departmentFilter.value) {
         employees = employees.filter(emp => emp.department_id == departmentFilter.value);
     }
 
-    // Filter by search query
     if (searchQuery.value) {
         const query = searchQuery.value.toLowerCase();
         employees = employees.filter(emp =>
@@ -111,7 +128,6 @@ const filteredEmployees = computed(() => {
         );
     }
 
-    // Pin selected employees at the top so the user sees their picks without scrolling.
     const selected = new Set(form.employee_ids);
     return [...employees].sort((a, b) => {
         const aSel = selected.has(a.id) ? 0 : 1;
@@ -141,36 +157,19 @@ const toggleEmployee = (empId) => {
 
 const isSelected = (empId) => form.employee_ids.includes(empId);
 
-/** Select all employees from a specific department. */
 const selectDepartment = () => {
     if (!departmentFilter.value) return;
     form.employee_ids = filteredEmployees.value.map(e => e.id);
     selectAll.value = true;
 };
 
-/** All authorization types from the compensation catalog. */
-const compensationTypes = computed(() => {
-    return props.types.filter(t => t.group === 'compensation');
-});
-
-/** Employees who can receive the currently selected authorization type. */
-const employeesForSelectedType = computed(() => {
-    if (!form.compensation_type_id) return props.employees;
-    return props.employees.filter(emp =>
-        emp.active_compensation_type_ids?.includes(form.compensation_type_id)
-    );
-});
-
-const optionValue = (type) => {
-    return `comp_${type.compensation_type_id}`;
-};
+const optionValue = (type) => `comp_${type.compensation_type_id}`;
 
 const selectedOptionValue = computed(() => {
     if (form.compensation_type_id) return `comp_${form.compensation_type_id}`;
     return form.type;
 });
 
-/** When user selects a type, parse and set both type and compensation_type_id. */
 const onTypeChange = (event) => {
     const raw = event.target.value;
     if (raw.startsWith('comp_')) {
@@ -184,12 +183,11 @@ const onTypeChange = (event) => {
     }
 };
 
-/** Pre-set night shift defaults when type changes. */
+/** Pre-set night shift datetime defaults the first time the type changes to it. */
 watch(() => form.type, (newType) => {
     if (newType === 'night_shift' && !form.start_time && !form.end_time) {
         const dateStr = startDatetime.value.split('T')[0] || today;
         startDatetime.value = `${dateStr}T22:00`;
-        // Next day for end
         const nextDay = new Date(dateStr);
         nextDay.setDate(nextDay.getDate() + 1);
         const nextDayStr = nextDay.toISOString().split('T')[0];
@@ -197,62 +195,72 @@ watch(() => form.type, (newType) => {
     }
 });
 
-/** Reset select-all when department filter changes. */
+/* -----------------------------------------------------------
+ * State reset rules
+ *   Changing what's being authorized invalidates everything
+ *   downstream. We treat each lever separately so the user can
+ *   tune one filter without losing unrelated picks.
+ * ----------------------------------------------------------- */
+
+/** Type change clears employee picks + downstream state. */
+watch(() => form.compensation_type_id, (newCompId, oldCompId) => {
+    if (newCompId === oldCompId) return;
+    // Prune selection to the new type's eligible set (or wipe if no type).
+    if (newCompId) {
+        const allowedIds = new Set(employeesForSelectedType.value.map(e => e.id));
+        form.employee_ids = form.employee_ids.filter(id => allowedIds.has(id));
+    } else {
+        form.employee_ids = [];
+    }
+    selectAll.value = false;
+    resetBulkState();
+});
+
+/** Department filter change clears the prior bulk fetch — different scope. */
 watch(departmentFilter, () => {
     selectAll.value = false;
+    resetBulkState();
 });
 
-/** When the type changes, drop any selected employees who can't receive that type. */
-watch(() => form.compensation_type_id, (newCompId) => {
-    if (!newCompId) return;
-    const allowedIds = new Set(employeesForSelectedType.value.map(e => e.id));
-    form.employee_ids = form.employee_ids.filter(id => allowedIds.has(id));
-    selectAll.value = false;
+/** Date-range change for "Cargar desde checadas" invalidates cached data. */
+watch([rangeStart, rangeEnd], () => {
+    resetBulkState();
 });
 
-/** Reset cached suggestions when type or date change (those invalidate the
- *  fetched data). Selection changes do NOT invalidate — applyBulkSuggestions
- *  itself trims the selection to eligible employees, so watching the length
- *  here would clobber the freshly applied times in the same tick. */
-watch(
-    [() => form.type, () => form.date],
-    () => {
-        if (suggestionsApplied.value || suggestions.value.length > 0) {
-            suggestions.value = [];
-            suggestionsApplied.value = false;
-            form.employee_times = {};
-        }
-    },
-);
+/** Legacy single-date change also clears cached data (per_day / one_time path). */
+watch(() => form.date, () => {
+    resetBulkState();
+});
 
 /* ----- Bulk live suggestions from schedule + attendance ----- */
-const suggestions = ref([]); // backend now only returns eligible (found=true) entries
+const suggestions = ref([]);
 const suggestionsLoading = ref(false);
 const suggestionsApplied = ref(false);
 const skippedCount = ref(0);
+const eligibleEmployeeCount = ref(0);
 
 const canSuggestBulk = computed(() => {
     return form.employee_ids.length > 0
-        && form.date
+        && rangeStart.value
+        && rangeEnd.value
         && (form.type === 'overtime' || form.type === 'night_shift');
-});
-
-const totalSuggestedHours = computed(() => {
-    return suggestions.value.reduce((sum, s) => sum + parseFloat(s.hours || 0), 0).toFixed(2);
 });
 
 const applyBulkSuggestions = () => {
     if (suggestions.value.length === 0) return;
-    form.employee_ids = suggestions.value.map(s => s.employee_id);
-    const map = {};
-    for (const s of suggestions.value) {
-        map[s.employee_id] = {
-            start_time: s.start_time,
-            end_time: s.end_time,
-            hours: s.hours,
-        };
-    }
-    form.employee_times = map;
+    const uniqueEmployeeIds = [...new Set(suggestions.value.map(s => s.employee_id))];
+    form.employee_ids = uniqueEmployeeIds;
+    form.entries = suggestions.value.map(s => ({
+        employee_id: s.employee_id,
+        employee_name: s.employee_name,
+        employee_number: s.employee_number,
+        date: s.date,
+        start_time: s.start_time,
+        end_time: s.end_time,
+        hours: s.hours,
+        summary: s.summary,
+        kind: s.kind,
+    }));
     suggestionsApplied.value = true;
 };
 
@@ -264,97 +272,139 @@ const fetchBulkSuggestions = async () => {
         const { data } = await axios.get(route('authorizations.suggestBulk'), {
             params: {
                 employee_ids: form.employee_ids,
-                date: form.date,
+                start_date: rangeStart.value,
+                end_date: rangeEnd.value,
                 type: form.type,
             },
         });
         suggestions.value = data.suggestions || [];
         skippedCount.value = data.skipped_count || 0;
-        // Auto-apply: the user already filtered to a specific date+type, so the
-        // intent is clear. They can still "Limpiar" if they want manual entry.
+        eligibleEmployeeCount.value = data.eligible_employee_count || 0;
         if (suggestions.value.length > 0) {
             applyBulkSuggestions();
         }
-    } catch {
+    } catch (err) {
         suggestions.value = [];
         skippedCount.value = 0;
+        eligibleEmployeeCount.value = 0;
+        if (err?.response?.data?.message) {
+            alert(err.response.data.message);
+        }
     } finally {
         suggestionsLoading.value = false;
     }
 };
 
-const clearBulkSuggestions = () => {
+function resetBulkState() {
     suggestions.value = [];
-    skippedCount.value = 0;
     suggestionsApplied.value = false;
-    form.employee_times = {};
+    skippedCount.value = 0;
+    eligibleEmployeeCount.value = 0;
+    form.entries = [];
+}
+
+const clearBulkSuggestions = () => {
+    resetBulkState();
 };
 
-/* ----- Per-employee editable rows ----- */
+/* ----- Per-row table for per_hour types ----- */
 const isPerHour = computed(() => selectedApplicationMode.value === 'per_hour');
 
-const getEmployeeRow = (empId) => form.employee_times[empId] || { start_time: '', end_time: '', hours: '' };
-
-const setEmployeeRowField = (empId, field, value) => {
-    const current = { ...(form.employee_times[empId] || { start_time: '', end_time: '', hours: '' }) };
-    current[field] = value;
-    // Auto-calc hours when both times are present and user edited a time field.
-    if ((field === 'start_time' || field === 'end_time') && current.start_time && current.end_time) {
-        const [sh, sm] = current.start_time.split(':').map(Number);
-        const [eh, em] = current.end_time.split(':').map(Number);
-        if (!isNaN(sh) && !isNaN(eh)) {
-            const diff = (eh * 60 + em) - (sh * 60 + sm);
-            if (diff > 0) current.hours = (diff / 60).toFixed(2);
-        }
-    }
-    form.employee_times = { ...form.employee_times, [empId]: current };
-};
-
-const removeEmployeeFromBulk = (empId) => {
-    form.employee_ids = form.employee_ids.filter(id => id !== empId);
-    const { [empId]: _, ...rest } = form.employee_times;
-    form.employee_times = rest;
-};
-
-const totalEditableHours = computed(() => {
-    return form.employee_ids.reduce((sum, id) => {
-        const row = form.employee_times[id];
-        return sum + (parseFloat(row?.hours || 0) || 0);
-    }, 0).toFixed(2);
+/** Sort entries by date, then by employee name, so rows read naturally. */
+const sortedEntries = computed(() => {
+    return [...form.entries].sort((a, b) => {
+        if (a.date !== b.date) return a.date.localeCompare(b.date);
+        return (a.employee_name || '').localeCompare(b.employee_name || '');
+    });
 });
 
-const findEmployeeName = (empId) => {
+const totalEntryHours = computed(() => {
+    return form.entries.reduce((sum, e) => sum + (parseFloat(e.hours) || 0), 0).toFixed(2);
+});
+
+const setEntryField = (index, field, value) => {
+    const next = [...form.entries];
+    const row = { ...next[index], [field]: value };
+    // Auto-calc hours when both times are set and user just edited a time field.
+    if ((field === 'start_time' || field === 'end_time') && row.start_time && row.end_time) {
+        const [sh, sm] = row.start_time.split(':').map(Number);
+        const [eh, em] = row.end_time.split(':').map(Number);
+        if (!isNaN(sh) && !isNaN(eh)) {
+            const diff = (eh * 60 + em) - (sh * 60 + sm);
+            if (diff > 0) row.hours = (diff / 60).toFixed(2);
+        }
+    }
+    next[index] = row;
+    form.entries = next;
+};
+
+const removeEntry = (index) => {
+    const next = [...form.entries];
+    next.splice(index, 1);
+    form.entries = next;
+};
+
+const addManualEntry = () => {
+    if (form.employee_ids.length === 0) return;
+    const empId = form.employee_ids[0];
     const emp = props.employees.find(e => e.id === empId);
-    return emp ? emp.full_name : `Empleado #${empId}`;
+    form.entries = [
+        ...form.entries,
+        {
+            employee_id: empId,
+            employee_name: emp?.full_name || `Empleado #${empId}`,
+            employee_number: emp?.employee_number || '',
+            date: rangeStart.value || today,
+            start_time: '',
+            end_time: '',
+            hours: '',
+            summary: '',
+            kind: 'manual',
+        },
+    ];
 };
 
-const findEmployeeNumber = (empId) => {
-    const emp = props.employees.find(e => e.id === empId);
-    return emp?.employee_number || '';
+/** Find the index in form.entries that matches a sorted-entry reference. */
+const realIndexOf = (entry) => form.entries.indexOf(entry);
+
+/** Compose a datetime-local string from row date + row time. */
+const getEntryDatetime = (entry, field) => {
+    if (!entry[field]) return '';
+    return `${entry.date}T${entry[field]}`;
 };
 
-const findSuggestionSummary = (empId) => {
-    const s = suggestions.value.find(x => x.employee_id === empId);
-    return s?.summary || '';
-};
-
-/** Compose a datetime-local string from form.date and the row's time field. */
-const getRowDatetime = (empId, field) => {
-    const t = form.employee_times[empId]?.[field];
-    if (!t) return '';
-    const datePart = form.date || today;
-    return `${datePart}T${t}`;
-};
-
-/** Split a datetime-local input into form.date (shared) and the row's time field. */
-const setRowDatetime = (empId, field, value) => {
+/** Update both date and time portions of a row from a datetime-local input. */
+const setEntryDatetime = (index, field, value) => {
     if (!value) {
-        setEmployeeRowField(empId, field, '');
+        setEntryField(index, field, '');
         return;
     }
     const [datePart, timePart] = value.split('T');
-    if (datePart) form.date = datePart;
-    if (timePart) setEmployeeRowField(empId, field, timePart);
+    const next = [...form.entries];
+    const row = { ...next[index] };
+    if (datePart) row.date = datePart;
+    if (timePart) row[field] = timePart;
+    if (row.start_time && row.end_time) {
+        const [sh, sm] = row.start_time.split(':').map(Number);
+        const [eh, em] = row.end_time.split(':').map(Number);
+        if (!isNaN(sh) && !isNaN(eh)) {
+            const diff = (eh * 60 + em) - (sh * 60 + sm);
+            if (diff > 0) row.hours = (diff / 60).toFixed(2);
+        }
+    }
+    next[index] = row;
+    form.entries = next;
+};
+
+const getDepartmentName = (deptId) => {
+    const dept = props.departments?.find(d => d.id == deptId);
+    return dept ? dept.name : '';
+};
+
+const formatDateShort = (iso) => {
+    if (!iso) return '';
+    const [y, m, d] = iso.split('-');
+    return `${d}/${m}`;
 };
 
 const submit = () => {
@@ -368,10 +418,16 @@ const typeDescriptions = {
     special: 'Autorizacion especial que no encaja en otras categorias',
 };
 
-const getDepartmentName = (deptId) => {
-    const dept = props.departments?.find(d => d.id == deptId);
-    return dept ? dept.name : '';
-};
+const submitButtonCount = computed(() => {
+    if (isPerHour.value) return form.entries.length;
+    return form.employee_ids.length;
+});
+
+const canSubmit = computed(() => {
+    if (form.processing) return false;
+    if (isPerHour.value) return form.entries.length > 0;
+    return form.employee_ids.length > 0;
+});
 </script>
 
 <template>
@@ -385,7 +441,6 @@ const getDepartmentName = (deptId) => {
         </template>
 
         <div class="max-w-5xl">
-            <!-- Breadcrumb -->
             <div class="mb-6">
                 <Link :href="route('authorizations.index')" class="text-pink-600 hover:text-pink-800">
                     &larr; Volver a autorizaciones
@@ -421,14 +476,6 @@ const getDepartmentName = (deptId) => {
                     <p v-if="form.errors.type" class="mt-1 text-sm text-red-600">
                         {{ form.errors.type }}
                     </p>
-
-                    <!-- Night shift info banner -->
-                    <div v-if="form.type === 'night_shift'" class="mt-4 bg-indigo-50 border border-indigo-200 rounded-lg p-3">
-                        <p class="text-sm text-indigo-800">
-                            <strong>Velada:</strong> Las horas de inicio y fin se han pre-configurado para turno nocturno (22:00 - 06:00).
-                            Puede ajustarlos si es necesario.
-                        </p>
-                    </div>
                 </div>
 
                 <!-- Step 2: Employee Selection -->
@@ -442,7 +489,6 @@ const getDepartmentName = (deptId) => {
                             </span>
                         </h3>
                         <div class="flex items-center gap-3">
-                            <!-- Department Filter -->
                             <select
                                 v-model="departmentFilter"
                                 class="rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 text-sm"
@@ -474,7 +520,6 @@ const getDepartmentName = (deptId) => {
                     </p>
 
                     <div class="border rounded-lg overflow-hidden">
-                        <!-- Header -->
                         <div class="bg-gray-50 px-4 py-3 border-b flex items-center">
                             <input
                                 type="checkbox"
@@ -488,7 +533,6 @@ const getDepartmentName = (deptId) => {
                             </span>
                         </div>
 
-                        <!-- Employee List -->
                         <div class="max-h-64 overflow-y-auto">
                             <div
                                 v-for="emp in filteredEmployees"
@@ -520,7 +564,7 @@ const getDepartmentName = (deptId) => {
                     </p>
                 </div>
 
-                <!-- Step 3: Per-employee details (per_hour types only) -->
+                <!-- Step 3 (per_hour): Date range + entries table -->
                 <div v-if="isPerHour && form.employee_ids.length > 0" class="bg-white rounded-lg shadow p-6">
                     <div class="flex items-start justify-between gap-3 mb-4">
                         <div class="flex-1">
@@ -529,25 +573,32 @@ const getDepartmentName = (deptId) => {
                                 Horas por Empleado
                             </h3>
                             <p class="text-xs text-gray-500">
-                                Cada empleado tiene su propio horario. Puedes editarlos manualmente o cargarlos desde checadas.
+                                Cada fila es una autorización (empleado + día). Elige un rango y carga las horas detectadas en checadas, o agrégalas manualmente.
                             </p>
                             <p class="mt-2 text-xs text-gray-500">
-                                Total: <strong>{{ totalEditableHours }}h</strong>
+                                {{ form.entries.length }} fila(s) · Total: <strong>{{ totalEntryHours }}h</strong>
                             </p>
                         </div>
                         <div class="flex flex-col items-end gap-2 flex-shrink-0">
                             <div class="flex items-center gap-2">
-                                <label class="text-xs text-gray-600">Fecha checadas:</label>
-                                <input type="date" v-model="form.date"
+                                <label class="text-xs text-gray-600">Desde:</label>
+                                <input type="date" v-model="rangeStart"
+                                    class="text-xs rounded border-gray-300 focus:border-pink-500 focus:ring-pink-500 py-1" />
+                                <label class="text-xs text-gray-600">Hasta:</label>
+                                <input type="date" v-model="rangeEnd" :min="rangeStart"
                                     class="text-xs rounded border-gray-300 focus:border-pink-500 focus:ring-pink-500 py-1" />
                             </div>
                             <div class="flex gap-2">
                                 <button type="button" @click="fetchBulkSuggestions"
-                                    :disabled="suggestionsLoading || !form.date"
+                                    :disabled="suggestionsLoading || !rangeStart || !rangeEnd"
                                     class="px-3 py-1.5 bg-amber-600 text-white text-xs rounded hover:bg-amber-700 disabled:opacity-50">
                                     {{ suggestionsLoading ? 'Calculando...' : 'Cargar desde checadas' }}
                                 </button>
-                                <button v-if="suggestionsApplied" type="button" @click="clearBulkSuggestions"
+                                <button type="button" @click="addManualEntry"
+                                    class="px-3 py-1.5 border border-gray-300 text-gray-700 text-xs rounded hover:bg-gray-50">
+                                    + Agregar fila
+                                </button>
+                                <button v-if="suggestionsApplied || form.entries.length > 0" type="button" @click="clearBulkSuggestions"
                                     class="px-3 py-1.5 border border-gray-300 text-gray-700 text-xs rounded hover:bg-gray-50">
                                     Limpiar
                                 </button>
@@ -555,43 +606,55 @@ const getDepartmentName = (deptId) => {
                         </div>
                     </div>
 
-                    <div v-if="suggestionsApplied && skippedCount > 0" class="mb-3 bg-amber-50 border border-amber-200 rounded-lg p-2 text-xs text-amber-800">
-                        Se recortaron {{ skippedCount }} empleados sin tiempo extra detectado en esa fecha.
+                    <div v-if="suggestionsApplied" class="mb-3 bg-amber-50 border border-amber-200 rounded-lg p-2 text-xs text-amber-800 space-y-1">
+                        <p>
+                            Se cargaron <strong>{{ form.entries.length }}</strong> fila(s) para <strong>{{ eligibleEmployeeCount }}</strong> empleado(s) con tiempo extra detectado.
+                        </p>
+                        <p>
+                            Redondeo: &lt;30 min no cuenta · 30–49 min = 0.5h · 50 min en adelante = 1h (y así, sumando 0.5h en :30 y 1h completo en :50).
+                        </p>
                     </div>
 
-                    <div class="border rounded-lg overflow-hidden">
+                    <div v-if="form.entries.length === 0" class="border rounded-lg p-6 text-center text-sm text-gray-500">
+                        No hay filas todavía. Define un rango y carga desde checadas, o agrega una manualmente.
+                    </div>
+
+                    <div v-else class="border rounded-lg overflow-hidden">
                         <div class="bg-gray-50 px-4 py-2 grid grid-cols-12 gap-2 text-xs font-medium text-gray-700">
-                            <div class="col-span-4">Empleado</div>
+                            <div class="col-span-4">Empleado / Día</div>
                             <div class="col-span-3">Fecha/Hora Inicio</div>
                             <div class="col-span-3">Fecha/Hora Fin</div>
                             <div class="col-span-1">Horas</div>
                             <div class="col-span-1"></div>
                         </div>
                         <div class="max-h-96 overflow-y-auto divide-y divide-gray-100">
-                            <div v-for="empId in form.employee_ids" :key="empId"
+                            <div v-for="entry in sortedEntries" :key="`${entry.employee_id}_${entry.date}_${entry.kind}_${realIndexOf(entry)}`"
                                 class="px-4 py-2 grid grid-cols-12 gap-2 items-center text-sm bg-white">
                                 <div class="col-span-4 min-w-0">
-                                    <div class="font-medium text-gray-900 truncate">{{ findEmployeeName(empId) }}</div>
+                                    <div class="font-medium text-gray-900 truncate">
+                                        {{ entry.employee_name }}
+                                        <span class="text-xs font-normal text-pink-700 ml-1">· {{ formatDateShort(entry.date) }}</span>
+                                    </div>
                                     <div class="text-xs text-gray-500 truncate">
-                                        {{ findEmployeeNumber(empId) }}
-                                        <span v-if="findSuggestionSummary(empId)" class="text-amber-700 ml-2">
-                                            • {{ findSuggestionSummary(empId) }}
+                                        {{ entry.employee_number }}
+                                        <span v-if="entry.summary" class="text-amber-700 ml-2">
+                                            • {{ entry.summary }}
                                         </span>
                                     </div>
                                 </div>
                                 <input type="datetime-local"
-                                    :value="getRowDatetime(empId, 'start_time')"
-                                    @input="setRowDatetime(empId, 'start_time', $event.target.value)"
+                                    :value="getEntryDatetime(entry, 'start_time')"
+                                    @input="setEntryDatetime(realIndexOf(entry), 'start_time', $event.target.value)"
                                     class="col-span-3 rounded border-gray-300 text-xs focus:border-pink-500 focus:ring-pink-500" />
                                 <input type="datetime-local"
-                                    :value="getRowDatetime(empId, 'end_time')"
-                                    @input="setRowDatetime(empId, 'end_time', $event.target.value)"
+                                    :value="getEntryDatetime(entry, 'end_time')"
+                                    @input="setEntryDatetime(realIndexOf(entry), 'end_time', $event.target.value)"
                                     class="col-span-3 rounded border-gray-300 text-xs focus:border-pink-500 focus:ring-pink-500" />
                                 <input type="number" step="0.25" min="0" max="24"
-                                    :value="getEmployeeRow(empId).hours"
-                                    @input="setEmployeeRowField(empId, 'hours', $event.target.value)"
+                                    :value="entry.hours"
+                                    @input="setEntryField(realIndexOf(entry), 'hours', $event.target.value)"
                                     class="col-span-1 rounded border-gray-300 text-xs focus:border-pink-500 focus:ring-pink-500" />
-                                <button type="button" @click="removeEmployeeFromBulk(empId)"
+                                <button type="button" @click="removeEntry(realIndexOf(entry))"
                                     class="col-span-1 text-gray-400 hover:text-red-600 text-xs text-left">
                                     Quitar
                                 </button>
@@ -608,29 +671,7 @@ const getDepartmentName = (deptId) => {
                     </h3>
                     <p v-if="selectedTypeLabel" class="text-xs text-gray-500 mb-4">Aplicara como <strong>{{ selectedTypeLabel }}</strong></p>
 
-                    <!-- per_hour -->
-                    <div v-if="selectedApplicationMode === 'per_hour'" class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Fecha/Hora Inicio *</label>
-                            <input v-model="startDatetime" type="datetime-local" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.date || form.errors.start_time }" />
-                            <p v-if="form.errors.date" class="mt-1 text-sm text-red-600">{{ form.errors.date }}</p>
-                            <p v-if="form.errors.start_time" class="mt-1 text-sm text-red-600">{{ form.errors.start_time }}</p>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Fecha/Hora Fin *</label>
-                            <input v-model="endDatetime" type="datetime-local" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.end_time }" />
-                            <p v-if="form.errors.end_time" class="mt-1 text-sm text-red-600">{{ form.errors.end_time }}</p>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Horas Totales</label>
-                            <input v-model="form.hours" type="number" step="0.5" min="0" max="48" placeholder="Auto" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.hours }" />
-                            <p v-if="form.errors.hours" class="mt-1 text-sm text-red-600">{{ form.errors.hours }}</p>
-                            <p class="mt-1 text-xs text-gray-500">Se calcula automaticamente</p>
-                        </div>
-                    </div>
-
-                    <!-- per_day -->
-                    <div v-else-if="selectedApplicationMode === 'per_day'" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div v-if="selectedApplicationMode === 'per_day'" class="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Fecha Inicio *</label>
                             <input v-model="startDate" type="date" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.date }" />
@@ -643,7 +684,6 @@ const getDepartmentName = (deptId) => {
                         </div>
                     </div>
 
-                    <!-- one_time: date + quantity -->
                     <div v-else-if="selectedApplicationMode === 'one_time'" class="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Fecha *</label>
@@ -669,7 +709,7 @@ const getDepartmentName = (deptId) => {
                         <textarea
                             v-model="form.reason"
                             rows="3"
-                            placeholder="Describa el motivo de esta autorizacion (aplica para todos los empleados seleccionados)..."
+                            placeholder="Describa el motivo de esta autorizacion (aplica para todas las filas)..."
                             class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
                             :class="{ 'border-red-500': form.errors.reason }"
                         ></textarea>
@@ -680,11 +720,10 @@ const getDepartmentName = (deptId) => {
                 </div>
 
                 <!-- Summary -->
-                <div v-if="form.employee_ids.length > 0" class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <div v-if="submitButtonCount > 0" class="bg-blue-50 border border-blue-200 rounded-lg p-4">
                     <p class="text-sm text-blue-800">
-                        Se crearan <strong>{{ form.employee_ids.length }}</strong> autorizaciones
-                        <span v-if="form.type"> de tipo <strong>{{ form.compensation_type_id ? types.find(t => t.compensation_type_id === form.compensation_type_id)?.label : types.find(t => t.value === form.type && !t.compensation_type_id)?.label }}</strong></span>
-                        <span v-if="form.date"> para el <strong>{{ form.date }}</strong></span>
+                        Se crearán <strong>{{ submitButtonCount }}</strong> autorización(es)
+                        <span v-if="selectedTypeLabel"> de tipo <strong>{{ selectedTypeLabel }}</strong></span>
                     </p>
                 </div>
 
@@ -698,10 +737,10 @@ const getDepartmentName = (deptId) => {
                     </Link>
                     <button
                         type="submit"
-                        :disabled="form.processing || form.employee_ids.length === 0"
+                        :disabled="!canSubmit"
                         class="px-6 py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700 transition-colors disabled:opacity-50"
                     >
-                        {{ form.processing ? 'Creando...' : `Crear ${form.employee_ids.length} Autorizaciones` }}
+                        {{ form.processing ? 'Creando...' : `Crear ${submitButtonCount} Autorizaciones` }}
                     </button>
                 </div>
             </form>
