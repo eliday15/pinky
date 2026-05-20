@@ -18,12 +18,19 @@ const today = todayLocal();
 const initialDate = props.prefill?.date || today;
 const initialStartTime = props.prefill?.start_time || '08:00';
 const initialEndTime = props.prefill?.end_time || '16:00';
+
+// Per_day / one_time legacy state (kept for non-per_hour types).
 const startDatetime = ref(`${initialDate}T${initialStartTime}`);
 const endDatetime = ref(`${initialDate}T${initialEndTime}`);
 const startDate = ref(initialDate);
 const endDate = ref(initialDate);
 
+// Per_hour range pickers for "Cargar desde checadas".
+const rangeStart = ref(initialDate);
+const rangeEnd = ref(initialDate);
+
 const form = useForm({
+    // Legacy single-row fields (per_day / one_time path).
     employee_id: props.prefill?.employee_id || props.selectedEmployee || '',
     type: props.prefill?.type || '',
     compensation_type_id: props.prefill?.compensation_type_id || null,
@@ -33,23 +40,25 @@ const form = useForm({
     hours: props.prefill?.hours || '',
     reason: props.prefill?.reason || '',
     anomaly_id: props.prefill?.anomaly_id || null,
+    // Per_hour entries — multi-day flat list submitted to storeBulk.
+    // employee_ids is filled with the single selected employee so storeBulk's
+    // legacy branch validates when entries[] is empty.
+    employee_ids: [],
+    entries: [],
 });
 
-/** The application_mode of the currently selected compensation type. */
 const selectedApplicationMode = computed(() => {
     if (!form.compensation_type_id) return null;
     const t = props.types.find(t => t.compensation_type_id === form.compensation_type_id);
     return t?.application_mode || null;
 });
 
-/** Human-readable label of the selected type. */
 const selectedTypeLabel = computed(() => {
     if (!form.compensation_type_id) return '';
     const t = props.types.find(t => t.compensation_type_id === form.compensation_type_id);
     return t?.label || '';
 });
 
-/** Card title for the date/time step, adapted to the selected type's input mode. */
 const dateCardTitle = computed(() => {
     switch (selectedApplicationMode.value) {
         case 'per_hour': return 'Fecha y Horario';
@@ -59,21 +68,20 @@ const dateCardTitle = computed(() => {
     }
 });
 
-/** Auto-calculate hours when datetimes change (per_hour mode). */
+const isPerHour = computed(() => selectedApplicationMode.value === 'per_hour');
+
+/** Legacy hours auto-calc when datetimes change (per_hour single submit). */
 watch([startDatetime, endDatetime], ([start, end]) => {
     if (start && end && selectedApplicationMode.value === 'per_hour') {
         const s = new Date(start);
         const e = new Date(end);
-        if (e > s) {
-            form.hours = ((e - s) / (1000 * 60 * 60)).toFixed(2);
-        }
+        if (e > s) form.hours = ((e - s) / (1000 * 60 * 60)).toFixed(2);
         form.date = start.split('T')[0];
         form.start_time = start.split('T')[1] || '';
         form.end_time = end.split('T')[1] || '';
     }
 });
 
-/** Sync date fields for per_day mode. */
 watch([startDate, endDate], ([start, end]) => {
     if (start && selectedApplicationMode.value === 'per_day') {
         form.date = start;
@@ -88,7 +96,6 @@ watch([startDate, endDate], ([start, end]) => {
     }
 });
 
-/** Sync date for one_time mode. */
 watch(startDate, (val) => {
     if (selectedApplicationMode.value === 'one_time') {
         form.date = val;
@@ -97,91 +104,152 @@ watch(startDate, (val) => {
     }
 });
 
-const submit = () => {
-    form.post(route('authorizations.store'));
-};
+/* ----- Suggestion state for per_hour multi-day mode ----- */
+const suggestions = ref([]);
+const suggestionsLoading = ref(false);
+const suggestionsApplied = ref(false);
+const eligibleDayCount = ref(0);
 
-/* ----- Live suggestion from schedule + attendance ----- */
-const suggestion = ref(null); // { found, start_time, end_time, hours, summary, message }
-const suggestionLoading = ref(false);
-let suggestTimer = null;
+function resetEntries() {
+    suggestions.value = [];
+    suggestionsApplied.value = false;
+    eligibleDayCount.value = 0;
+    form.entries = [];
+}
 
-const canSuggest = computed(() => {
-    return form.employee_id
-        && form.date
-        && (form.type === 'overtime' || form.type === 'night_shift')
-        && selectedApplicationMode.value === 'per_hour';
+/** Type / employee / date-range changes invalidate any cached suggestions. */
+watch(() => form.compensation_type_id, () => resetEntries());
+watch(() => form.employee_id, () => resetEntries());
+watch([rangeStart, rangeEnd], () => resetEntries());
+
+const canFetchSuggestions = computed(() => {
+    return isPerHour.value
+        && form.employee_id
+        && rangeStart.value
+        && rangeEnd.value
+        && (form.type === 'overtime' || form.type === 'night_shift');
 });
 
-const fetchSuggestion = async () => {
-    if (!canSuggest.value) {
-        suggestion.value = null;
-        return;
-    }
-    suggestionLoading.value = true;
+const applySuggestions = () => {
+    if (suggestions.value.length === 0) return;
+    const selectedEmp = props.employees.find(e => e.id == form.employee_id);
+    form.entries = suggestions.value.map(s => ({
+        employee_id: s.employee_id,
+        employee_name: s.employee_name || selectedEmp?.full_name || '',
+        employee_number: s.employee_number || selectedEmp?.employee_number || '',
+        date: s.date,
+        start_time: s.start_time,
+        end_time: s.end_time,
+        hours: s.hours,
+        summary: s.summary,
+        kind: s.kind,
+    }));
+    suggestionsApplied.value = true;
+};
+
+const fetchSuggestions = async () => {
+    if (!canFetchSuggestions.value) return;
+    suggestionsLoading.value = true;
+    suggestionsApplied.value = false;
     try {
-        const { data } = await axios.get(route('authorizations.suggest'), {
+        const { data } = await axios.get(route('authorizations.suggestBulk'), {
             params: {
-                employee_id: form.employee_id,
-                date: form.date,
+                employee_ids: [form.employee_id],
+                start_date: rangeStart.value,
+                end_date: rangeEnd.value,
                 type: form.type,
             },
         });
-        suggestion.value = data;
-    } catch {
-        suggestion.value = null;
+        suggestions.value = data.suggestions || [];
+        eligibleDayCount.value = data.eligible_count || suggestions.value.length;
+        if (suggestions.value.length > 0) applySuggestions();
+    } catch (err) {
+        suggestions.value = [];
+        eligibleDayCount.value = 0;
+        if (err?.response?.data?.message) alert(err.response.data.message);
     } finally {
-        suggestionLoading.value = false;
+        suggestionsLoading.value = false;
     }
 };
 
-/** Track when the current times were filled from a suggestion (vs typed by hand). */
-const appliedFromSuggestion = ref(false);
-let isApplyingSuggestion = false;
+const clearSuggestions = () => resetEntries();
 
-watch(
-    () => [form.employee_id, form.date, form.type],
-    () => {
-        suggestion.value = null;
-        // If the user had auto-applied a suggestion, the times are no longer
-        // valid for the new tuple — drop them. Manual entries are preserved.
-        if (appliedFromSuggestion.value) {
-            form.start_time = '';
-            form.end_time = '';
-            form.hours = '';
-            appliedFromSuggestion.value = false;
-            if (form.date) {
-                isApplyingSuggestion = true;
-                startDatetime.value = `${form.date}T08:00`;
-                endDatetime.value = `${form.date}T16:00`;
-                Promise.resolve().then(() => { isApplyingSuggestion = false; });
-            }
+const totalEntryHours = computed(() => {
+    return form.entries.reduce((sum, e) => sum + (parseFloat(e.hours) || 0), 0).toFixed(2);
+});
+
+const setEntryField = (index, field, value) => {
+    const next = [...form.entries];
+    const row = { ...next[index], [field]: value };
+    if ((field === 'start_time' || field === 'end_time') && row.start_time && row.end_time) {
+        const [sh, sm] = row.start_time.split(':').map(Number);
+        const [eh, em] = row.end_time.split(':').map(Number);
+        if (!isNaN(sh) && !isNaN(eh)) {
+            const diff = (eh * 60 + em) - (sh * 60 + sm);
+            if (diff > 0) row.hours = (diff / 60).toFixed(2);
         }
-        clearTimeout(suggestTimer);
-        suggestTimer = setTimeout(fetchSuggestion, 300);
-    },
-    { immediate: true },
-);
-
-const applySuggestion = () => {
-    if (!suggestion.value?.found) return;
-    const date = form.date;
-    isApplyingSuggestion = true;
-    startDatetime.value = `${date}T${suggestion.value.start_time}`;
-    endDatetime.value = `${date}T${suggestion.value.end_time}`;
-    form.start_time = suggestion.value.start_time;
-    form.end_time = suggestion.value.end_time;
-    form.hours = suggestion.value.hours;
-    appliedFromSuggestion.value = true;
-    // Release the guard after the datetime watchers have flushed.
-    Promise.resolve().then(() => { isApplyingSuggestion = false; });
+    }
+    next[index] = row;
+    form.entries = next;
 };
 
-/** Manual edits cancel the "auto-applied" flag so future type/date changes don't wipe them. */
-watch([startDatetime, endDatetime], () => {
-    if (isApplyingSuggestion) return;
-    appliedFromSuggestion.value = false;
-});
+const removeEntry = (index) => {
+    const next = [...form.entries];
+    next.splice(index, 1);
+    form.entries = next;
+};
+
+const addManualEntry = () => {
+    if (!form.employee_id) return;
+    const emp = props.employees.find(e => e.id == form.employee_id);
+    form.entries = [
+        ...form.entries,
+        {
+            employee_id: Number(form.employee_id),
+            employee_name: emp?.full_name || '',
+            employee_number: emp?.employee_number || '',
+            date: rangeStart.value || today,
+            start_time: '',
+            end_time: '',
+            hours: '',
+            summary: '',
+            kind: 'manual',
+        },
+    ];
+};
+
+const getEntryDatetime = (entry, field) => {
+    if (!entry[field]) return '';
+    return `${entry.date}T${entry[field]}`;
+};
+
+const setEntryDatetime = (index, field, value) => {
+    if (!value) {
+        setEntryField(index, field, '');
+        return;
+    }
+    const [datePart, timePart] = value.split('T');
+    const next = [...form.entries];
+    const row = { ...next[index] };
+    if (datePart) row.date = datePart;
+    if (timePart) row[field] = timePart;
+    if (row.start_time && row.end_time) {
+        const [sh, sm] = row.start_time.split(':').map(Number);
+        const [eh, em] = row.end_time.split(':').map(Number);
+        if (!isNaN(sh) && !isNaN(eh)) {
+            const diff = (eh * 60 + em) - (sh * 60 + sm);
+            if (diff > 0) row.hours = (diff / 60).toFixed(2);
+        }
+    }
+    next[index] = row;
+    form.entries = next;
+};
+
+const formatDateShort = (iso) => {
+    if (!iso) return '';
+    const [y, m, d] = iso.split('-');
+    return `${d}/${m}`;
+};
 
 /** Active compensation type IDs for the selected employee. */
 const selectedEmployeeData = computed(() => {
@@ -189,27 +257,20 @@ const selectedEmployeeData = computed(() => {
     return props.employees.find(e => e.id == form.employee_id);
 });
 
-/** Group types for optgroup display, filtered by employee's active compensation types. */
 const compensationTypes = computed(() => {
     const all = props.types.filter(t => t.group === 'compensation');
     const ids = selectedEmployeeData.value?.active_compensation_type_ids;
     if (!ids) return all;
     return all.filter(t => ids.includes(t.compensation_type_id));
 });
-/**
- * Build a unique option value for each type entry.
- */
-const optionValue = (type) => {
-    return `comp_${type.compensation_type_id}`;
-};
 
-/** Currently selected option value (derived from form state). */
+const optionValue = (type) => `comp_${type.compensation_type_id}`;
+
 const selectedOptionValue = computed(() => {
     if (form.compensation_type_id) return `comp_${form.compensation_type_id}`;
     return form.type;
 });
 
-/** When user selects a type, parse and set both type and compensation_type_id. */
 const onTypeChange = (event) => {
     const raw = event.target.value;
     if (raw.startsWith('comp_')) {
@@ -223,7 +284,7 @@ const onTypeChange = (event) => {
     }
 };
 
-/** Reset type selection when employee changes and selected type is no longer available. */
+/** When the chosen employee drops the currently selected type, reset it. */
 watch(() => form.employee_id, () => {
     if (form.compensation_type_id) {
         const ids = selectedEmployeeData.value?.active_compensation_type_ids;
@@ -240,6 +301,26 @@ const typeDescriptions = {
     holiday_worked: 'Trabajo realizado en dia festivo oficial',
     special: 'Autorizacion especial que no encaja en otras categorias',
 };
+
+/** Per_hour submits via the bulk endpoint (one Authorization per entry).
+ *  Non-per_hour keeps the legacy single-record store endpoint. */
+const submit = () => {
+    if (isPerHour.value && form.entries.length > 0) {
+        form.employee_ids = [Number(form.employee_id)];
+        form.post(route('authorizations.storeBulk'));
+        return;
+    }
+    form.post(route('authorizations.store'));
+};
+
+const canSubmit = computed(() => {
+    if (form.processing) return false;
+    if (!form.employee_id || !form.type) return false;
+    if (isPerHour.value) return form.entries.length > 0;
+    return true;
+});
+
+const submitCount = computed(() => (isPerHour.value ? form.entries.length : 1));
 </script>
 
 <template>
@@ -252,8 +333,7 @@ const typeDescriptions = {
             </h2>
         </template>
 
-        <div class="max-w-3xl">
-            <!-- Breadcrumb -->
+        <div class="max-w-4xl">
             <div class="mb-6">
                 <Link :href="route('authorizations.index')" class="text-pink-600 hover:text-pink-800">
                     &larr; Volver a autorizaciones
@@ -277,14 +357,15 @@ const typeDescriptions = {
                     </div>
                 </div>
 
-                <!-- Employee & Type -->
+                <!-- Step 1: Employee + Type -->
                 <div class="bg-white rounded-lg shadow p-6">
-                    <h3 class="text-lg font-semibold text-gray-800 mb-4">Informacion General</h3>
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">
+                        <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-600 text-white text-xs mr-2">1</span>
+                        Empleado y Tipo
+                    </h3>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">
-                                Empleado *
-                            </label>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Empleado *</label>
                             <SearchableSelect
                                 v-model="form.employee_id"
                                 :options="employees"
@@ -298,11 +379,8 @@ const typeDescriptions = {
                                 {{ form.errors.employee_id }}
                             </p>
                         </div>
-
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">
-                                Tipo de Autorizacion *
-                            </label>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Tipo de Autorizacion *</label>
                             <select
                                 :value="selectedOptionValue"
                                 @change="onTypeChange"
@@ -328,64 +406,103 @@ const typeDescriptions = {
                     </div>
                 </div>
 
-                <!-- Live suggestion from schedule + attendance -->
-                <div v-if="canSuggest && suggestion && !prefill?.anomaly_id" class="rounded-lg p-4 border-l-4"
-                    :class="suggestion.found ? 'bg-amber-50 border-amber-400' : 'bg-gray-50 border-gray-300'">
-                    <div v-if="suggestion.found" class="flex items-start gap-3">
-                        <svg class="w-5 h-5 text-amber-500 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                            <path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0zM12 14c.015-.34.208-.646.477-.859a4 4 0 10-4.954 0c.27.213.462.519.476.859h4.002z" />
-                        </svg>
+                <!-- Step 2 (per_hour): Date range + entries table for this employee -->
+                <div v-if="isPerHour && form.employee_id" class="bg-white rounded-lg shadow p-6">
+                    <div class="flex items-start justify-between gap-3 mb-4">
                         <div class="flex-1">
-                            <h4 class="text-sm font-semibold text-amber-800">Sugerencia basada en checadas reales</h4>
-                            <p class="text-sm text-amber-700 mt-1">{{ suggestion.summary }}</p>
-                            <p class="text-xs text-amber-600 mt-1">
-                                Horario sugerido: <strong>{{ suggestion.start_time }} - {{ suggestion.end_time }}</strong> ({{ suggestion.hours }}h)
+                            <h3 class="text-lg font-semibold text-gray-800 mb-1">
+                                <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-600 text-white text-xs mr-2">2</span>
+                                Horas a Autorizar
+                            </h3>
+                            <p class="text-xs text-gray-500">
+                                Cada fila es una autorización (un día). Elige un rango y carga las horas detectadas en checadas, o agrega manualmente.
                             </p>
-                            <button type="button" @click="applySuggestion"
-                                class="mt-2 px-3 py-1.5 bg-amber-600 text-white text-xs rounded hover:bg-amber-700">
-                                Aplicar sugerencia
-                            </button>
+                            <p class="mt-2 text-xs text-gray-500">
+                                {{ form.entries.length }} fila(s) · Total: <strong>{{ totalEntryHours }}h</strong>
+                            </p>
+                        </div>
+                        <div class="flex flex-col items-end gap-2 flex-shrink-0">
+                            <div class="flex items-center gap-2">
+                                <label class="text-xs text-gray-600">Desde:</label>
+                                <input type="date" v-model="rangeStart"
+                                    class="text-xs rounded border-gray-300 focus:border-pink-500 focus:ring-pink-500 py-1" />
+                                <label class="text-xs text-gray-600">Hasta:</label>
+                                <input type="date" v-model="rangeEnd" :min="rangeStart"
+                                    class="text-xs rounded border-gray-300 focus:border-pink-500 focus:ring-pink-500 py-1" />
+                            </div>
+                            <div class="flex gap-2">
+                                <button type="button" @click="fetchSuggestions"
+                                    :disabled="suggestionsLoading || !canFetchSuggestions"
+                                    class="px-3 py-1.5 bg-amber-600 text-white text-xs rounded hover:bg-amber-700 disabled:opacity-50">
+                                    {{ suggestionsLoading ? 'Calculando...' : 'Cargar desde checadas' }}
+                                </button>
+                                <button type="button" @click="addManualEntry"
+                                    class="px-3 py-1.5 border border-gray-300 text-gray-700 text-xs rounded hover:bg-gray-50">
+                                    + Agregar fila
+                                </button>
+                                <button v-if="suggestionsApplied || form.entries.length > 0" type="button" @click="clearSuggestions"
+                                    class="px-3 py-1.5 border border-gray-300 text-gray-700 text-xs rounded hover:bg-gray-50">
+                                    Limpiar
+                                </button>
+                            </div>
                         </div>
                     </div>
-                    <div v-else class="flex items-start gap-3">
-                        <svg class="w-5 h-5 text-gray-400 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
-                        </svg>
-                        <p class="text-sm text-gray-600">{{ suggestion.message }}</p>
+
+                    <div v-if="suggestionsApplied" class="mb-3 bg-amber-50 border border-amber-200 rounded-lg p-2 text-xs text-amber-800 space-y-1">
+                        <p>Se cargaron <strong>{{ form.entries.length }}</strong> fila(s) con tiempo extra detectado.</p>
+                        <p>Redondeo: &lt;30 min no cuenta · 30–49 min = 0.5h · 50 min en adelante = 1h (y así, sumando 0.5h en :30 y 1h completo en :50).</p>
+                    </div>
+
+                    <div v-if="form.entries.length === 0" class="border rounded-lg p-6 text-center text-sm text-gray-500">
+                        No hay filas todavía. Define un rango y carga desde checadas, o agrega una manualmente.
+                    </div>
+                    <div v-else class="border rounded-lg overflow-hidden">
+                        <div class="bg-gray-50 px-4 py-2 grid grid-cols-12 gap-2 text-xs font-medium text-gray-700">
+                            <div class="col-span-2">Día</div>
+                            <div class="col-span-4">Fecha/Hora Inicio</div>
+                            <div class="col-span-4">Fecha/Hora Fin</div>
+                            <div class="col-span-1">Horas</div>
+                            <div class="col-span-1"></div>
+                        </div>
+                        <div class="max-h-96 overflow-y-auto divide-y divide-gray-100">
+                            <div v-for="(entry, idx) in form.entries" :key="`${entry.date}_${entry.kind}_${idx}`"
+                                class="px-4 py-2 grid grid-cols-12 gap-2 items-center text-sm bg-white">
+                                <div class="col-span-2 min-w-0">
+                                    <div class="text-xs font-semibold text-pink-700">{{ formatDateShort(entry.date) }}</div>
+                                    <div v-if="entry.summary" class="text-[10px] text-amber-700 truncate" :title="entry.summary">
+                                        {{ entry.summary }}
+                                    </div>
+                                </div>
+                                <input type="datetime-local"
+                                    :value="getEntryDatetime(entry, 'start_time')"
+                                    @input="setEntryDatetime(idx, 'start_time', $event.target.value)"
+                                    class="col-span-4 rounded border-gray-300 text-xs focus:border-pink-500 focus:ring-pink-500" />
+                                <input type="datetime-local"
+                                    :value="getEntryDatetime(entry, 'end_time')"
+                                    @input="setEntryDatetime(idx, 'end_time', $event.target.value)"
+                                    class="col-span-4 rounded border-gray-300 text-xs focus:border-pink-500 focus:ring-pink-500" />
+                                <input type="number" step="0.25" min="0" max="24"
+                                    :value="entry.hours"
+                                    @input="setEntryField(idx, 'hours', $event.target.value)"
+                                    class="col-span-1 rounded border-gray-300 text-xs focus:border-pink-500 focus:ring-pink-500" />
+                                <button type="button" @click="removeEntry(idx)"
+                                    class="col-span-1 text-gray-400 hover:text-red-600 text-xs">
+                                    Quitar
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
-                <div v-else-if="canSuggest && suggestionLoading" class="bg-gray-50 rounded-lg p-3 text-sm text-gray-500">
-                    Calculando sugerencia desde checadas...
-                </div>
 
-                <!-- Date & Time - adapts to application_mode -->
-                <div v-if="selectedApplicationMode" class="bg-white rounded-lg shadow p-6">
-                    <h3 class="text-lg font-semibold text-gray-800 mb-1">{{ dateCardTitle }}</h3>
+                <!-- Step 2 (legacy): Date & Time for per_day / one_time -->
+                <div v-if="selectedApplicationMode && !isPerHour" class="bg-white rounded-lg shadow p-6">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-1">
+                        <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-600 text-white text-xs mr-2">2</span>
+                        {{ dateCardTitle }}
+                    </h3>
                     <p v-if="selectedTypeLabel" class="text-xs text-gray-500 mb-4">Aplicara como <strong>{{ selectedTypeLabel }}</strong></p>
 
-                    <!-- per_hour: datetime-local start + end + auto hours -->
-                    <div v-if="selectedApplicationMode === 'per_hour'" class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Fecha/Hora Inicio *</label>
-                            <input v-model="startDatetime" type="datetime-local" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.date || form.errors.start_time }" />
-                            <p v-if="form.errors.date" class="mt-1 text-sm text-red-600">{{ form.errors.date }}</p>
-                            <p v-if="form.errors.start_time" class="mt-1 text-sm text-red-600">{{ form.errors.start_time }}</p>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Fecha/Hora Fin *</label>
-                            <input v-model="endDatetime" type="datetime-local" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.end_time }" />
-                            <p v-if="form.errors.end_time" class="mt-1 text-sm text-red-600">{{ form.errors.end_time }}</p>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Horas Totales</label>
-                            <input v-model="form.hours" type="number" step="0.5" min="0" max="48" placeholder="Auto" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.hours }" />
-                            <p v-if="form.errors.hours" class="mt-1 text-sm text-red-600">{{ form.errors.hours }}</p>
-                            <p class="mt-1 text-xs text-gray-500">Se calcula automaticamente</p>
-                        </div>
-                    </div>
-
-                    <!-- per_day: date start + date end (no times) -->
-                    <div v-else-if="selectedApplicationMode === 'per_day'" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div v-if="selectedApplicationMode === 'per_day'" class="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Fecha Inicio *</label>
                             <input v-model="startDate" type="date" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.date }" />
@@ -398,7 +515,6 @@ const typeDescriptions = {
                         </div>
                     </div>
 
-                    <!-- one_time: date + quantity -->
                     <div v-else-if="selectedApplicationMode === 'one_time'" class="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Fecha *</label>
@@ -409,7 +525,7 @@ const typeDescriptions = {
                             <label class="block text-sm font-medium text-gray-700 mb-1">Cantidad</label>
                             <input v-model="form.hours" type="number" step="1" min="1" placeholder="1" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.hours }" />
                             <p v-if="form.errors.hours" class="mt-1 text-sm text-red-600">{{ form.errors.hours }}</p>
-                            <p class="mt-1 text-xs text-gray-500">Numero de unidades (el monto se calcula del valor asignado al empleado)</p>
+                            <p class="mt-1 text-xs text-gray-500">Numero de unidades</p>
                         </div>
                     </div>
                 </div>
@@ -418,36 +534,24 @@ const typeDescriptions = {
                 <div class="bg-white rounded-lg shadow p-6">
                     <h3 class="text-lg font-semibold text-gray-800 mb-4">Justificacion</h3>
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">
-                            Razon / Motivo *
-                        </label>
-                        <textarea
-                            v-model="form.reason"
-                            rows="4"
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Razon / Motivo *</label>
+                        <textarea v-model="form.reason" rows="3"
                             placeholder="Describa el motivo de esta autorizacion..."
                             class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                            :class="{ 'border-red-500': form.errors.reason }"
-                        ></textarea>
-                        <p v-if="form.errors.reason" class="mt-1 text-sm text-red-600">
-                            {{ form.errors.reason }}
-                        </p>
+                            :class="{ 'border-red-500': form.errors.reason }"></textarea>
+                        <p v-if="form.errors.reason" class="mt-1 text-sm text-red-600">{{ form.errors.reason }}</p>
                     </div>
                 </div>
 
                 <!-- Actions -->
                 <div class="flex justify-end space-x-4">
-                    <Link
-                        :href="route('authorizations.index')"
-                        class="px-6 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-                    >
+                    <Link :href="route('authorizations.index')"
+                        class="px-6 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors">
                         Cancelar
                     </Link>
-                    <button
-                        type="submit"
-                        :disabled="form.processing"
-                        class="px-6 py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700 transition-colors disabled:opacity-50"
-                    >
-                        {{ form.processing ? 'Guardando...' : 'Crear Autorizacion' }}
+                    <button type="submit" :disabled="!canSubmit"
+                        class="px-6 py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700 transition-colors disabled:opacity-50">
+                        {{ form.processing ? 'Guardando...' : (submitCount > 1 ? `Crear ${submitCount} Autorizaciones` : 'Crear Autorización') }}
                     </button>
                 </div>
             </form>
