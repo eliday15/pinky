@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, inject, ref } from 'vue';
 import { formatHours } from '../format';
 
 const props = defineProps({
@@ -8,8 +8,12 @@ const props = defineProps({
     showZero: { type: Boolean, default: true },
 });
 
+// Preview.vue provides a reactive "show pending" toggle so the user can
+// switch to an approved-only view (which is the default).
+const showPendingRef = inject('showPending', ref(true));
+
 const hasApproved = computed(() => props.approved > 0);
-const hasPending = computed(() => props.pending > 0);
+const hasPending = computed(() => props.pending > 0 && showPendingRef.value);
 </script>
 
 <template>

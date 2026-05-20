@@ -2,12 +2,14 @@
 import AppLayout from '@/Layouts/AppLayout.vue';
 import TwoFactorModal from '@/Components/TwoFactorModal.vue';
 import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { formatDate } from '@/utils/date';
+import SearchableSelect from '@/Components/SearchableSelect.vue';
 
 const props = defineProps({
     authorizations: Object,
     employees: Array,
+    departments: Array,
     pendingCount: Number,
     filters: Object,
     types: Array,
@@ -22,6 +24,9 @@ const filters = ref({
     status: props.filters.status || '',
     type: props.filters.type || '',
     employee: props.filters.employee || '',
+    department: props.filters.department || '',
+    from_date: props.filters.from_date || '',
+    to_date: props.filters.to_date || '',
     search: props.filters.search || '',
 });
 
@@ -43,8 +48,91 @@ const applyFilters = () => {
 };
 
 const clearFilters = () => {
-    filters.value = { status: '', type: '', employee: '', search: '' };
+    filters.value = {
+        status: '',
+        type: '',
+        employee: '',
+        department: '',
+        from_date: '',
+        to_date: '',
+        search: '',
+    };
     applyFilters();
+};
+
+/** SearchableSelect updates the v-model directly without firing @change, so
+ *  watch the employee filter and trigger the URL update from here. */
+watch(() => filters.value.employee, () => applyFilters());
+
+// Bulk selection
+const selectedIds = ref([]);
+
+const pendingRowIds = computed(() =>
+    props.authorizations.data.filter(a => a.status === 'pending').map(a => a.id)
+);
+
+const allPendingSelected = computed(() =>
+    pendingRowIds.value.length > 0 && pendingRowIds.value.every(id => selectedIds.value.includes(id))
+);
+
+const toggleSelectAll = (event) => {
+    if (event.target.checked) {
+        selectedIds.value = [...pendingRowIds.value];
+    } else {
+        selectedIds.value = [];
+    }
+};
+
+const toggleSelect = (id) => {
+    const idx = selectedIds.value.indexOf(id);
+    if (idx >= 0) selectedIds.value.splice(idx, 1);
+    else selectedIds.value.push(id);
+};
+
+// Reset selection when the underlying data set changes (e.g., filter/page change)
+watch(() => props.authorizations.data, () => {
+    selectedIds.value = [];
+});
+
+const showBulkApproveModal = ref(false);
+const showBulkRejectModal = ref(false);
+
+const bulkRejectForm = useForm({
+    ids: [],
+    rejection_reason: '',
+    two_factor_code: '',
+});
+
+const handleBulkApprove = () => {
+    if (selectedIds.value.length === 0) return;
+    if (hasTwoFactor.value) {
+        showBulkApproveModal.value = true;
+    } else {
+        router.post(route('authorizations.bulkApprove'), { ids: selectedIds.value }, {
+            preserveScroll: true,
+            onSuccess: () => { selectedIds.value = []; },
+        });
+    }
+};
+
+const openBulkRejectModal = () => {
+    if (selectedIds.value.length === 0) return;
+    bulkRejectForm.ids = [...selectedIds.value];
+    bulkRejectForm.rejection_reason = '';
+    bulkRejectForm.two_factor_code = '';
+    bulkRejectForm.clearErrors();
+    showBulkRejectModal.value = true;
+};
+
+const submitBulkReject = () => {
+    bulkRejectForm.ids = [...selectedIds.value];
+    bulkRejectForm.post(route('authorizations.bulkReject'), {
+        preserveScroll: true,
+        onSuccess: () => {
+            showBulkRejectModal.value = false;
+            selectedIds.value = [];
+        },
+    });
 };
 
 const rejectForm = useForm({
@@ -141,7 +229,7 @@ const typeLabels = {
 
         <!-- Filters -->
         <div class="bg-white rounded-lg shadow p-4 mb-6">
-            <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Buscar</label>
                     <input
@@ -183,16 +271,49 @@ const typeLabels = {
 
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Empleado</label>
-                    <select
+                    <SearchableSelect
                         v-model="filters.employee"
+                        :options="employees"
+                        value-key="id"
+                        label-key="full_name"
+                        secondary-key="employee_number"
+                        placeholder="Todos"
+                        allow-clear
+                        @update:model-value="applyFilters"
+                    />
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Departamento</label>
+                    <SearchableSelect
+                        v-model="filters.department"
+                        :options="departments"
+                        value-key="id"
+                        label-key="name"
+                        placeholder="Todos"
+                        allow-clear
+                        @update:model-value="applyFilters"
+                    />
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Desde</label>
+                    <input
+                        v-model="filters.from_date"
+                        type="date"
                         class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
                         @change="applyFilters"
-                    >
-                        <option value="">Todos</option>
-                        <option v-for="emp in employees" :key="emp.id" :value="emp.id">
-                            {{ emp.full_name }}
-                        </option>
-                    </select>
+                    />
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Hasta</label>
+                    <input
+                        v-model="filters.to_date"
+                        type="date"
+                        class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                        @change="applyFilters"
+                    />
                 </div>
 
                 <div class="flex items-end">
@@ -206,11 +327,52 @@ const typeLabels = {
             </div>
         </div>
 
+        <!-- Bulk Action Toolbar -->
+        <div
+            v-if="selectedIds.length > 0 && (can.approve || can.reject)"
+            class="bg-pink-50 border border-pink-200 rounded-lg shadow p-4 mb-4 flex flex-wrap items-center justify-between gap-3"
+        >
+            <div class="text-sm font-medium text-pink-900">
+                {{ selectedIds.length }} {{ selectedIds.length === 1 ? 'autorizacion seleccionada' : 'autorizaciones seleccionadas' }}
+            </div>
+            <div class="flex space-x-2">
+                <button
+                    v-if="can.approve"
+                    @click="handleBulkApprove"
+                    class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                >
+                    Aprobar seleccionados
+                </button>
+                <button
+                    v-if="can.reject"
+                    @click="openBulkRejectModal"
+                    class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                >
+                    Rechazar seleccionados
+                </button>
+                <button
+                    @click="selectedIds = []"
+                    class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+                >
+                    Limpiar
+                </button>
+            </div>
+        </div>
+
         <!-- Table -->
         <div class="bg-white rounded-lg shadow overflow-hidden">
             <table class="min-w-full divide-y divide-gray-200">
                 <thead class="bg-gray-50">
                     <tr>
+                        <th class="px-4 py-3 text-left">
+                            <input
+                                v-if="(can.approve || can.reject) && pendingRowIds.length > 0"
+                                type="checkbox"
+                                :checked="allPendingSelected"
+                                @change="toggleSelectAll"
+                                class="rounded border-gray-300 text-pink-600 focus:ring-pink-500"
+                            />
+                        </th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                             Empleado
                         </th>
@@ -233,6 +395,15 @@ const typeLabels = {
                 </thead>
                 <tbody class="bg-white divide-y divide-gray-200">
                     <tr v-for="auth in authorizations.data" :key="auth.id" class="hover:bg-gray-50">
+                        <td class="px-4 py-4 whitespace-nowrap">
+                            <input
+                                v-if="auth.status === 'pending' && (can.approve || can.reject)"
+                                type="checkbox"
+                                :checked="selectedIds.includes(auth.id)"
+                                @change="toggleSelect(auth.id)"
+                                class="rounded border-gray-300 text-pink-600 focus:ring-pink-500"
+                            />
+                        </td>
                         <td class="px-6 py-4 whitespace-nowrap">
                             <div class="text-sm font-medium text-gray-900">
                                 {{ auth.employee?.full_name }}
@@ -302,7 +473,7 @@ const typeLabels = {
                         </td>
                     </tr>
                     <tr v-if="authorizations.data.length === 0">
-                        <td colspan="6" class="px-6 py-12 text-center text-gray-500">
+                        <td colspan="7" class="px-6 py-12 text-center text-gray-500">
                             No se encontraron autorizaciones
                         </td>
                     </tr>
@@ -349,6 +520,79 @@ const typeLabels = {
             message="Ingresa tu codigo de verificacion para aprobar esta autorizacion."
             @close="showApproveModal = false; approveAuthId = null;"
         />
+
+        <!-- Bulk Approve 2FA Modal -->
+        <TwoFactorModal
+            :show="showBulkApproveModal"
+            :action="route('authorizations.bulkApprove')"
+            method="post"
+            title="Aprobar autorizaciones seleccionadas"
+            :message="`Ingresa tu codigo de verificacion para aprobar ${selectedIds.length} autorizaciones.`"
+            :extra-data="{ ids: selectedIds }"
+            @close="showBulkApproveModal = false"
+            @success="selectedIds = []"
+        />
+
+        <!-- Bulk Reject Modal -->
+        <div v-if="showBulkRejectModal" class="fixed inset-0 z-50 overflow-y-auto">
+            <div class="flex items-center justify-center min-h-screen px-4">
+                <div class="fixed inset-0 bg-gray-500 bg-opacity-75" @click="showBulkRejectModal = false"></div>
+                <div class="relative bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">
+                        Rechazar {{ selectedIds.length }} autorizaciones
+                    </h3>
+                    <form @submit.prevent="submitBulkReject">
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                Razon del rechazo *
+                            </label>
+                            <textarea
+                                v-model="bulkRejectForm.rejection_reason"
+                                rows="3"
+                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                required
+                            ></textarea>
+                            <p v-if="bulkRejectForm.errors.rejection_reason" class="mt-1 text-sm text-red-600">
+                                {{ bulkRejectForm.errors.rejection_reason }}
+                            </p>
+                        </div>
+                        <div v-if="hasTwoFactor" class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                Codigo de verificacion *
+                            </label>
+                            <input
+                                v-model="bulkRejectForm.two_factor_code"
+                                type="text"
+                                inputmode="numeric"
+                                autocomplete="one-time-code"
+                                maxlength="6"
+                                class="w-full text-center text-lg tracking-widest rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                placeholder="000000"
+                            />
+                            <p v-if="bulkRejectForm.errors.two_factor_code" class="mt-1 text-sm text-red-600">
+                                {{ bulkRejectForm.errors.two_factor_code }}
+                            </p>
+                        </div>
+                        <div class="flex justify-end space-x-3">
+                            <button
+                                type="button"
+                                @click="showBulkRejectModal = false"
+                                class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                type="submit"
+                                :disabled="bulkRejectForm.processing"
+                                class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+                            >
+                                Rechazar
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
 
         <!-- Reject Modal -->
         <div v-if="showRejectModal" class="fixed inset-0 z-50 overflow-y-auto">

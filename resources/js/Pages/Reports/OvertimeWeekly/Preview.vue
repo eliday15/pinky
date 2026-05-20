@@ -1,13 +1,17 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head, Link } from '@inertiajs/vue3';
-import { computed } from 'vue';
+import { computed, provide, ref } from 'vue';
 import { formatDate } from './format';
 import BiesTable from './components/BiesTable.vue';
 import CalidadTable from './components/CalidadTable.vue';
 import CorteTable from './components/CorteTable.vue';
 import DefaultTable from './components/DefaultTable.vue';
 import DisenoTable from './components/DisenoTable.vue';
+
+// Default to approved-only view; toggle reveals pending markers in cells.
+const showPending = ref(false);
+provide('showPending', showPending);
 
 const props = defineProps({
     report: Object,
@@ -55,6 +59,10 @@ const excelHref = computed(() => route('reports.overtime-weekly.export.excel', e
                 </span>
             </div>
             <div class="flex items-center gap-2">
+                <label class="inline-flex items-center gap-1 px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm text-gray-700 cursor-pointer">
+                    <input type="checkbox" v-model="showPending" class="rounded border-gray-300 text-pink-600 focus:ring-pink-500" />
+                    Mostrar pendientes por aprobar
+                </label>
                 <a
                     :href="pdfHref"
                     class="inline-flex items-center px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm"
@@ -86,7 +94,7 @@ const excelHref = computed(() => route('reports.overtime-weekly.export.excel', e
                 <p class="text-2xl font-bold text-emerald-600">{{ report.totals.total_hours }}h <span class="text-base">✓</span></p>
                 <p class="text-xs text-gray-500">Aprobadas</p>
             </div>
-            <div class="bg-white rounded-lg shadow p-3 text-center">
+            <div v-if="showPending" class="bg-white rounded-lg shadow p-3 text-center">
                 <p class="text-2xl font-bold text-amber-600">+{{ report.totals.pending_hours || 0 }}h</p>
                 <p class="text-xs text-gray-500">Pendientes por aprobar</p>
             </div>

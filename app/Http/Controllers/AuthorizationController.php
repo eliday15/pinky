@@ -7,6 +7,7 @@ use App\Models\AttendanceAnomaly;
 use App\Models\AttendanceRecord;
 use App\Models\Authorization;
 use App\Models\CompensationType;
+use App\Models\Department;
 use App\Models\Employee;
 use App\Services\OvertimeRoundingService;
 use App\Services\ZktecoSyncService;
@@ -69,6 +70,11 @@ class AuthorizationController extends Controller
             ->when($request->employee, function ($q, $employee) {
                 $q->where('employee_id', $employee);
             })
+            ->when($request->department, function ($q, $department) {
+                $q->whereHas('employee', function ($e) use ($department) {
+                    $e->where('department_id', $department);
+                });
+            })
             ->when($request->search, function ($q, $search) {
                 $q->whereHas('employee', function ($e) use ($search) {
                     $e->where('full_name', 'like', "%{$search}%");
@@ -100,8 +106,15 @@ class AuthorizationController extends Controller
         }
         $pendingCount = $pendingQuery->count();
 
-        // Get employees for filter (scoped)
-        $employeesQuery = Employee::active()->orderBy('full_name');
+        // Get employees for filter (scoped) — only those who have at least one
+        // authorization, so the dropdown stays short and relevant.
+        $employeesQuery = Employee::active()
+            ->orderBy('full_name')
+            ->whereExists(function ($q) {
+                $q->select(\Illuminate\Support\Facades\DB::raw(1))
+                    ->from('authorizations')
+                    ->whereColumn('authorizations.employee_id', 'employees.id');
+            });
         if (! $user->hasPermissionTo('authorizations.view_all')) {
             if ($user->hasPermissionTo('authorizations.view_team')) {
                 $userEmployee = $user->employee;
@@ -115,9 +128,10 @@ class AuthorizationController extends Controller
 
         return Inertia::render('Authorizations/Index', [
             'authorizations' => $authorizations,
-            'employees' => $employeesQuery->get(['id', 'full_name']),
+            'employees' => $employeesQuery->get(['id', 'full_name', 'employee_number']),
+            'departments' => Department::active()->orderBy('name')->get(['id', 'name']),
             'pendingCount' => $pendingCount,
-            'filters' => $request->only(['status', 'type', 'employee', 'search', 'from_date', 'to_date']),
+            'filters' => $request->only(['status', 'type', 'employee', 'department', 'search', 'from_date', 'to_date']),
             'types' => $this->getAuthorizationTypes(),
             'can' => [
                 'create' => $user->can('create', Authorization::class),
@@ -645,6 +659,91 @@ class AuthorizationController extends Controller
         $authorization->reject(Auth::user(), $validated['rejection_reason']);
 
         return redirect()->back()->with('success', 'Autorizacion rechazada.');
+    }
+
+    /**
+     * Bulk approve multiple authorizations.
+     *
+     * Each authorization is checked individually against the policy and skipped
+     * silently if the user lacks permission or it is no longer pending. The
+     * 2FA code (when enabled) is verified once for the whole batch.
+     */
+    public function bulkApprove(Request $request, ZktecoSyncService $syncService): RedirectResponse
+    {
+        $this->verifyTwoFactorCode($request);
+
+        $validated = $request->validate([
+            'ids' => ['required', 'array', 'min:1'],
+            'ids.*' => ['integer', 'exists:authorizations,id'],
+        ]);
+
+        $approved = 0;
+        $skipped = 0;
+        $user = Auth::user();
+        $authorizations = Authorization::whereIn('id', $validated['ids'])->get();
+
+        foreach ($authorizations as $authorization) {
+            if (! $user->can('approve', $authorization) || ! $authorization->isPending()) {
+                $skipped++;
+                continue;
+            }
+
+            $authorization->approve($user);
+
+            if ($authorization->attendance_record_id) {
+                $syncService->recalculateAttendanceRecord($authorization->attendanceRecord);
+            } else {
+                $record = AttendanceRecord::where('employee_id', $authorization->employee_id)
+                    ->where('work_date', $authorization->date)
+                    ->first();
+                if ($record) {
+                    $syncService->recalculateAttendanceRecord($record);
+                }
+            }
+
+            $this->autoResolveAnomalies($authorization);
+            $approved++;
+        }
+
+        $msg = $skipped > 0
+            ? "Se aprobaron {$approved} autorizaciones ({$skipped} omitidas)."
+            : "Se aprobaron {$approved} autorizaciones.";
+
+        return redirect()->back()->with('success', $msg);
+    }
+
+    /**
+     * Bulk reject multiple authorizations with a shared reason.
+     */
+    public function bulkReject(Request $request): RedirectResponse
+    {
+        $this->verifyTwoFactorCode($request);
+
+        $validated = $request->validate([
+            'ids' => ['required', 'array', 'min:1'],
+            'ids.*' => ['integer', 'exists:authorizations,id'],
+            'rejection_reason' => ['required', 'string', 'max:500'],
+        ]);
+
+        $rejected = 0;
+        $skipped = 0;
+        $user = Auth::user();
+        $authorizations = Authorization::whereIn('id', $validated['ids'])->get();
+
+        foreach ($authorizations as $authorization) {
+            if (! $user->can('reject', $authorization) || ! $authorization->isPending()) {
+                $skipped++;
+                continue;
+            }
+            $authorization->reject($user, $validated['rejection_reason']);
+            $rejected++;
+        }
+
+        $msg = $skipped > 0
+            ? "Se rechazaron {$rejected} autorizaciones ({$skipped} omitidas)."
+            : "Se rechazaron {$rejected} autorizaciones.";
+
+        return redirect()->back()->with('success', $msg);
     }
 
     /**
