@@ -9,13 +9,28 @@ import CorteTable from './components/CorteTable.vue';
 import DefaultTable from './components/DefaultTable.vue';
 import DisenoTable from './components/DisenoTable.vue';
 
+const props = defineProps({
+    report: Object,
+    layout: String,
+});
+
 // Default to approved-only view; toggle reveals pending markers in cells.
 const showPending = ref(false);
 provide('showPending', showPending);
 
-const props = defineProps({
-    report: Object,
-    layout: String,
+/** Drop rows that have nothing to report so the table stays readable.
+ *  "Nothing" = zero approved OT and (if not showing pending) zero pending too. */
+const visibleReport = computed(() => {
+    const r = props.report;
+    if (!r) return r;
+    const rows = r.rows.filter(row => {
+        const approved = (row.totals?.total_hours || 0) + (row.totals?.weekend_hours || 0)
+            + (row.totals?.velada_count || 0) + (row.totals?.cena_count || 0)
+            + (row.totals?.comida_count || 0);
+        const pending = showPending.value ? (row.totals?.pending_hours || 0) : 0;
+        return approved > 0 || pending > 0;
+    });
+    return { ...r, rows };
 });
 
 const tableComponent = computed(() => {
@@ -87,8 +102,8 @@ const excelHref = computed(() => route('reports.overtime-weekly.export.excel', e
         <!-- Summary chips -->
         <div class="grid grid-cols-2 md:grid-cols-6 gap-3 mb-4">
             <div class="bg-white rounded-lg shadow p-3 text-center">
-                <p class="text-2xl font-bold text-gray-800">{{ report.totals.employee_count }}</p>
-                <p class="text-xs text-gray-500">Empleados</p>
+                <p class="text-2xl font-bold text-gray-800">{{ visibleReport.rows.length }}<span class="text-base text-gray-400"> / {{ report.totals.employee_count }}</span></p>
+                <p class="text-xs text-gray-500">Empleados con OT</p>
             </div>
             <div class="bg-white rounded-lg shadow p-3 text-center">
                 <p class="text-2xl font-bold text-emerald-600">{{ report.totals.total_hours }}h <span class="text-base">✓</span></p>
@@ -114,7 +129,7 @@ const excelHref = computed(() => route('reports.overtime-weekly.export.excel', e
 
         <!-- Layout-specific table -->
         <div class="bg-white rounded-lg shadow overflow-x-auto">
-            <component :is="tableComponent" :report="report" />
+            <component :is="tableComponent" :report="visibleReport" />
         </div>
     </AppLayout>
 </template>
