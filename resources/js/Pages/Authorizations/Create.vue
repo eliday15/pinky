@@ -14,7 +14,35 @@ const props = defineProps({
     types: Array,
     prefill: { type: Object, default: null },
     departments: { type: Array, default: () => [] },
+    holidays: { type: Array, default: () => [] },
 });
+
+const holidaySet = computed(() => new Set(props.holidays || []));
+
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const toMin = (hhmm) => {
+    if (!hhmm) return null;
+    const [h, m] = hhmm.split(':').map(Number);
+    return isNaN(h) || isNaN(m) ? null : h * 60 + m;
+};
+
+/** Mirrors the backend overlapsWorkSchedule check so per-hour authorizations
+ *  inside the employee's regular jornada are blocked before submit. Holidays
+ *  bypass the rule. */
+const hasScheduleConflict = (entry) => {
+    if (!entry?.date || !entry?.start_time || !entry?.end_time) return false;
+    if (holidaySet.value.has(entry.date)) return false;
+    const emp = props.employees.find(e => e.id == entry.employee_id);
+    const dayName = DAY_NAMES[new Date(entry.date + 'T12:00:00').getDay()];
+    const sched = emp?.schedule_by_day?.[dayName];
+    if (!sched) return false;
+    const eMin = toMin(sched.entry);
+    const xMin = toMin(sched.exit);
+    const s = toMin(entry.start_time);
+    const f = toMin(entry.end_time);
+    if (eMin == null || xMin == null || s == null || f == null) return false;
+    return s < xMin && f > eMin;
+};
 
 /** Department filter narrows the SearchableSelect options so users with many
  *  employees can jump straight to the right team before searching. */
@@ -324,10 +352,21 @@ const submit = () => {
     form.post(route('authorizations.store'));
 };
 
+const isHoursType = computed(() => form.type === 'overtime' || form.type === 'night_shift');
+
+const conflictedEntries = computed(() => {
+    if (!isHoursType.value) return [];
+    return form.entries.filter(hasScheduleConflict);
+});
+
 const canSubmit = computed(() => {
     if (form.processing) return false;
     if (!form.employee_id || !form.type) return false;
-    if (isPerHour.value) return form.entries.length > 0;
+    if (isPerHour.value) {
+        if (form.entries.length === 0) return false;
+        if (conflictedEntries.value.length > 0) return false;
+        return true;
+    }
     return true;
 });
 
@@ -479,6 +518,12 @@ const submitCount = computed(() => (isPerHour.value ? form.entries.length : 1));
                         <p>Redondeo: &lt;30 min no cuenta · 30–49 min = 0.5h · 50 min en adelante = 1h (y así, sumando 0.5h en :30 y 1h completo en :50).</p>
                     </div>
 
+                    <div v-if="isHoursType && conflictedEntries.length > 0"
+                        class="mb-3 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-800">
+                        <strong>{{ conflictedEntries.length }}</strong> fila(s) caen dentro del horario laboral del empleado y no pueden autorizarse.
+                        Ajusta los tiempos para que queden <em>fuera</em> de la jornada, o quita esas filas. Día festivo se exenta de esta regla.
+                    </div>
+
                     <div v-if="form.entries.length === 0" class="border rounded-lg p-6 text-center text-sm text-gray-500">
                         No hay filas todavía. Define un rango y carga desde checadas, o agrega una manualmente.
                     </div>
@@ -491,31 +536,42 @@ const submitCount = computed(() => (isPerHour.value ? form.entries.length : 1));
                             <div class="col-span-1"></div>
                         </div>
                         <div class="max-h-96 overflow-y-auto divide-y divide-gray-100">
-                            <div v-for="(entry, idx) in form.entries" :key="`${entry.date}_${entry.kind}_${idx}`"
-                                class="px-4 py-2 grid grid-cols-12 gap-2 items-center text-sm bg-white">
-                                <div class="col-span-2 min-w-0">
-                                    <div class="text-xs font-semibold text-pink-700">{{ formatDateShort(entry.date) }}</div>
-                                    <div v-if="entry.summary" class="text-[10px] text-amber-700 truncate" :title="entry.summary">
-                                        {{ entry.summary }}
+                            <template v-for="(entry, idx) in form.entries" :key="`${entry.date}_${entry.kind}_${idx}`">
+                                <div class="px-4 py-2 grid grid-cols-12 gap-2 items-center text-sm"
+                                    :class="isHoursType && hasScheduleConflict(entry) ? 'bg-red-50' : 'bg-white'">
+                                    <div class="col-span-2 min-w-0">
+                                        <div class="text-xs font-semibold"
+                                            :class="isHoursType && hasScheduleConflict(entry) ? 'text-red-700' : 'text-pink-700'">
+                                            {{ formatDateShort(entry.date) }}
+                                        </div>
+                                        <div v-if="entry.summary" class="text-[10px] text-amber-700 truncate" :title="entry.summary">
+                                            {{ entry.summary }}
+                                        </div>
                                     </div>
+                                    <input type="datetime-local"
+                                        :value="getEntryDatetime(entry, 'start_time')"
+                                        @input="setEntryDatetime(idx, 'start_time', $event.target.value)"
+                                        class="col-span-4 rounded text-xs focus:border-pink-500 focus:ring-pink-500"
+                                        :class="isHoursType && hasScheduleConflict(entry) ? 'border-red-400' : 'border-gray-300'" />
+                                    <input type="datetime-local"
+                                        :value="getEntryDatetime(entry, 'end_time')"
+                                        @input="setEntryDatetime(idx, 'end_time', $event.target.value)"
+                                        class="col-span-4 rounded text-xs focus:border-pink-500 focus:ring-pink-500"
+                                        :class="isHoursType && hasScheduleConflict(entry) ? 'border-red-400' : 'border-gray-300'" />
+                                    <input type="text" readonly
+                                        :value="entry.hours"
+                                        title="Calculado automáticamente desde inicio/fin con la regla escalonada"
+                                        class="col-span-1 rounded border-gray-200 bg-gray-50 text-xs text-gray-700 text-right cursor-not-allowed" />
+                                    <button type="button" @click="removeEntry(idx)"
+                                        class="col-span-1 text-gray-400 hover:text-red-600 text-xs">
+                                        Quitar
+                                    </button>
                                 </div>
-                                <input type="datetime-local"
-                                    :value="getEntryDatetime(entry, 'start_time')"
-                                    @input="setEntryDatetime(idx, 'start_time', $event.target.value)"
-                                    class="col-span-4 rounded border-gray-300 text-xs focus:border-pink-500 focus:ring-pink-500" />
-                                <input type="datetime-local"
-                                    :value="getEntryDatetime(entry, 'end_time')"
-                                    @input="setEntryDatetime(idx, 'end_time', $event.target.value)"
-                                    class="col-span-4 rounded border-gray-300 text-xs focus:border-pink-500 focus:ring-pink-500" />
-                                <input type="text" readonly
-                                    :value="entry.hours"
-                                    title="Calculado automáticamente desde inicio/fin con la regla escalonada"
-                                    class="col-span-1 rounded border-gray-200 bg-gray-50 text-xs text-gray-700 text-right cursor-not-allowed" />
-                                <button type="button" @click="removeEntry(idx)"
-                                    class="col-span-1 text-gray-400 hover:text-red-600 text-xs">
-                                    Quitar
-                                </button>
-                            </div>
+                                <div v-if="isHoursType && hasScheduleConflict(entry)"
+                                    class="px-4 pb-2 -mt-1 text-[11px] text-red-700 bg-red-50">
+                                    ⚠ Las horas caen dentro de su jornada laboral. Solo se autoriza fuera de horario (o en día festivo).
+                                </div>
+                            </template>
                         </div>
                     </div>
                 </div>

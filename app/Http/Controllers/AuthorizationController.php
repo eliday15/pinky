@@ -168,6 +168,7 @@ class AuthorizationController extends Controller
 
         $employees = $employeesQuery->get(['id', 'full_name', 'employee_number', 'department_id']);
         $this->appendActiveCompensationTypeIds($employees);
+        $this->appendScheduleByDay($employees);
 
         $types = $this->getAuthorizationTypes();
         $prefill = null;
@@ -190,6 +191,7 @@ class AuthorizationController extends Controller
             'types' => $types,
             'prefill' => $prefill,
             'departments' => \App\Models\Department::active()->orderBy('name')->get(['id', 'name']),
+            'holidays' => \App\Models\Holiday::pluck('date')->map(fn($d) => $d->toDateString())->values()->all(),
         ]);
     }
 
@@ -293,6 +295,17 @@ class AuthorizationController extends Controller
         $anomalyId = $validated['anomaly_id'] ?? null;
         unset($validated['anomaly_id']);
 
+        // Block per-hour authorizations whose range falls inside the employee's
+        // regular schedule (non-holiday). See overlapsWorkSchedule() for rules.
+        if (in_array($validated['type'], [Authorization::TYPE_OVERTIME, Authorization::TYPE_NIGHT_SHIFT], true)) {
+            $emp = Employee::find($validated['employee_id']);
+            if ($emp && $this->overlapsWorkSchedule($emp, $validated['date'], $validated['start_time'] ?? null, $validated['end_time'] ?? null)) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'start_time' => 'Las horas seleccionadas chocan con el horario de trabajo del empleado. No se autoriza tiempo dentro de su jornada (salvo días festivos).',
+                ]);
+            }
+        }
+
         $validated['requested_by'] = Auth::id();
         $validated['is_pre_authorization'] = Carbon::parse($validated['date'])->isFuture()
             || Carbon::parse($validated['date'])->isToday();
@@ -353,6 +366,7 @@ class AuthorizationController extends Controller
 
         $employees = $employeesQuery->get(['id', 'full_name', 'employee_number', 'department_id']);
         $this->appendActiveCompensationTypeIds($employees);
+        $this->appendScheduleByDay($employees);
 
         return Inertia::render('Authorizations/CreateBulk', [
             'employees' => $employees,
@@ -362,6 +376,7 @@ class AuthorizationController extends Controller
                 ->whereHas('position', fn($q) => $q->whereNotNull('supervisor_position_id'))
                 ->orderBy('full_name')
                 ->get(['id', 'full_name', 'department_id']),
+            'holidays' => \App\Models\Holiday::pluck('date')->map(fn($d) => $d->toDateString())->values()->all(),
         ]);
     }
 
@@ -405,6 +420,28 @@ class AuthorizationController extends Controller
         $autoApprovedCount = 0;
 
         $rounder = new OvertimeRoundingService();
+
+        // Per-hour types (overtime / velada) can't be authorized inside the
+        // employee's scheduled work hours — those hours are their obligation,
+        // not extras. Exception: official holidays, where any worked hour
+        // qualifies. Collect conflicts up front so we reject the whole batch
+        // with row-precise errors before creating anything.
+        if (! empty($validated['entries'])
+            && in_array($validated['type'], [Authorization::TYPE_OVERTIME, Authorization::TYPE_NIGHT_SHIFT], true)
+        ) {
+            $empCache = Employee::whereIn('id', array_column($validated['entries'], 'employee_id'))->get()->keyBy('id');
+            $conflicts = [];
+            foreach ($validated['entries'] as $i => $entry) {
+                $emp = $empCache->get($entry['employee_id']);
+                if (! $emp) continue;
+                if ($this->overlapsWorkSchedule($emp, $entry['date'], $entry['start_time'] ?? null, $entry['end_time'] ?? null)) {
+                    $conflicts["entries.{$i}"] = "Las horas chocan con el horario de trabajo de {$emp->full_name} el {$entry['date']}. No se autoriza tiempo dentro de su jornada (salvo días festivos).";
+                }
+            }
+            if (! empty($conflicts)) {
+                throw \Illuminate\Validation\ValidationException::withMessages($conflicts);
+            }
+        }
 
         if (! empty($validated['entries'])) {
             foreach ($validated['entries'] as $entry) {
@@ -1129,6 +1166,62 @@ class AuthorizationController extends Controller
             $emp->setAttribute('active_compensation_type_ids', $emp->compensationTypes->pluck('id')->values());
             $emp->unsetRelation('compensationTypes');
         });
+    }
+
+    /**
+     * Attach a `schedule_by_day` map to each employee so the frontend can detect
+     * when a manually entered authorization range overlaps the employee's regular
+     * working hours. Shape: { Monday: {entry:'08:00', exit:'17:30'}, ... }.
+     * Days without a schedule (rest days) are omitted.
+     */
+    private function appendScheduleByDay(\Illuminate\Database\Eloquent\Collection $employees): void
+    {
+        $days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+        $employees->each(function (Employee $emp) use ($days) {
+            $map = [];
+            foreach ($days as $day) {
+                $sch = $emp->getEffectiveScheduleForDay($day);
+                if ($sch && ! empty($sch->entry_time) && ! empty($sch->exit_time)) {
+                    $map[$day] = [
+                        'entry' => substr((string) $sch->entry_time, 0, 5),
+                        'exit' => substr((string) $sch->exit_time, 0, 5),
+                    ];
+                }
+            }
+            $emp->setAttribute('schedule_by_day', $map);
+        });
+    }
+
+    /**
+     * Check if a per-hour authorization range overlaps the employee's regular
+     * working hours on that date.
+     *
+     *  - Returns false on official holidays (working then is not an obligation)
+     *  - Returns false when there's no schedule for the day (rest day)
+     *  - Otherwise returns true if [start, end] overlaps [entry, exit]
+     */
+    private function overlapsWorkSchedule(Employee $employee, string $date, ?string $startTime, ?string $endTime): bool
+    {
+        if (empty($startTime) || empty($endTime)) {
+            return false;
+        }
+        if (\App\Models\Holiday::isHoliday($date)) {
+            return false;
+        }
+        $dayName = Carbon::parse($date)->format('l');
+        $schedule = $employee->getEffectiveScheduleForDay($dayName);
+        if (! $schedule || empty($schedule->entry_time) || empty($schedule->exit_time)) {
+            return false;
+        }
+
+        $toMin = fn(string $hhmm) => (int) substr($hhmm, 0, 2) * 60 + (int) substr($hhmm, 3, 2);
+        $entry = $toMin(substr((string) $schedule->entry_time, 0, 5));
+        $exit = $toMin(substr((string) $schedule->exit_time, 0, 5));
+        $start = $toMin(substr($startTime, 0, 5));
+        $end = $toMin(substr($endTime, 0, 5));
+
+        // Standard half-open overlap test: [start, end) ∩ [entry, exit) ≠ ∅
+        return $start < $exit && $end > $entry;
     }
 
     /**
