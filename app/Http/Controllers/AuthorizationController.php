@@ -166,9 +166,10 @@ class AuthorizationController extends Controller
             }
         }
 
-        $employees = $employeesQuery->get(['id', 'full_name', 'employee_number', 'department_id']);
+        $employees = $employeesQuery->get(['id', 'full_name', 'employee_number', 'department_id', 'schedule_id', 'schedule_overrides']);
         $this->appendActiveCompensationTypeIds($employees);
         $this->appendScheduleByDay($employees);
+        $employees->each(fn($e) => $e->makeHidden(['schedule_id', 'schedule_overrides']));
 
         $types = $this->getAuthorizationTypes();
         $prefill = null;
@@ -298,7 +299,7 @@ class AuthorizationController extends Controller
         // Block per-hour authorizations whose range falls inside the employee's
         // regular schedule (non-holiday). See overlapsWorkSchedule() for rules.
         if (in_array($validated['type'], [Authorization::TYPE_OVERTIME, Authorization::TYPE_NIGHT_SHIFT], true)) {
-            $emp = Employee::find($validated['employee_id']);
+            $emp = Employee::with('schedule')->find($validated['employee_id']);
             if ($emp && $this->overlapsWorkSchedule($emp, $validated['date'], $validated['start_time'] ?? null, $validated['end_time'] ?? null)) {
                 throw \Illuminate\Validation\ValidationException::withMessages([
                     'start_time' => 'Las horas seleccionadas chocan con el horario de trabajo del empleado. No se autoriza tiempo dentro de su jornada (salvo días festivos).',
@@ -364,9 +365,10 @@ class AuthorizationController extends Controller
             }
         }
 
-        $employees = $employeesQuery->get(['id', 'full_name', 'employee_number', 'department_id']);
+        $employees = $employeesQuery->get(['id', 'full_name', 'employee_number', 'department_id', 'schedule_id', 'schedule_overrides']);
         $this->appendActiveCompensationTypeIds($employees);
         $this->appendScheduleByDay($employees);
+        $employees->each(fn($e) => $e->makeHidden(['schedule_id', 'schedule_overrides']));
 
         return Inertia::render('Authorizations/CreateBulk', [
             'employees' => $employees,
@@ -429,11 +431,22 @@ class AuthorizationController extends Controller
         if (! empty($validated['entries'])
             && in_array($validated['type'], [Authorization::TYPE_OVERTIME, Authorization::TYPE_NIGHT_SHIFT], true)
         ) {
-            $empCache = Employee::whereIn('id', array_column($validated['entries'], 'employee_id'))->get()->keyBy('id');
+            $empCache = Employee::with('schedule')
+                ->whereIn('id', array_unique(array_column($validated['entries'], 'employee_id')))
+                ->get()
+                ->keyBy('id');
+            $dates = array_unique(array_column($validated['entries'], 'date'));
+            $holidaySet = \App\Models\Holiday::whereIn('date', $dates)
+                ->pluck('date')
+                ->map(fn($d) => $d->toDateString())
+                ->all();
+            $holidaySet = array_flip($holidaySet);
+
             $conflicts = [];
             foreach ($validated['entries'] as $i => $entry) {
                 $emp = $empCache->get($entry['employee_id']);
                 if (! $emp) continue;
+                if (isset($holidaySet[$entry['date']])) continue;
                 if ($this->overlapsWorkSchedule($emp, $entry['date'], $entry['start_time'] ?? null, $entry['end_time'] ?? null)) {
                     $conflicts["entries.{$i}"] = "Las horas chocan con el horario de trabajo de {$emp->full_name} el {$entry['date']}. No se autoriza tiempo dentro de su jornada (salvo días festivos).";
                 }
@@ -1172,10 +1185,18 @@ class AuthorizationController extends Controller
      * Attach a `schedule_by_day` map to each employee so the frontend can detect
      * when a manually entered authorization range overlaps the employee's regular
      * working hours. Shape: { Monday: {entry:'08:00', exit:'17:30'}, ... }.
-     * Days without a schedule (rest days) are omitted.
+     *
+     * Requires the employees collection to have already loaded `schedule_id` and
+     * `schedule_overrides` columns (so the relation can be followed). Eager-loads
+     * the `schedule` relation up front to avoid N+1 queries.
      */
     private function appendScheduleByDay(\Illuminate\Database\Eloquent\Collection $employees): void
     {
+        if ($employees->isEmpty()) {
+            return;
+        }
+        $employees->load('schedule');
+
         $days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
         $employees->each(function (Employee $emp) use ($days) {
             $map = [];
@@ -1189,6 +1210,7 @@ class AuthorizationController extends Controller
                 }
             }
             $emp->setAttribute('schedule_by_day', $map);
+            $emp->unsetRelation('schedule');
         });
     }
 
