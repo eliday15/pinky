@@ -296,9 +296,21 @@ class AuthorizationController extends Controller
         $anomalyId = $validated['anomaly_id'] ?? null;
         unset($validated['anomaly_id']);
 
-        // Block per-hour authorizations whose range falls inside the employee's
-        // regular schedule (non-holiday). See overlapsWorkSchedule() for rules.
+        // Block per-hour authorizations that are 0h (the company rule rounds <30
+        // min to 0 — nothing to authorize) or whose range falls inside the
+        // employee's regular schedule on a non-holiday.
         if (in_array($validated['type'], [Authorization::TYPE_OVERTIME, Authorization::TYPE_NIGHT_SHIFT], true)) {
+            // Pre-calc hours when not given, so the 0-hour check sees the real value.
+            $hoursPreview = $validated['hours'] ?? null;
+            if (! empty($validated['start_time']) && ! empty($validated['end_time']) && empty($hoursPreview)) {
+                $minutes = (int) Carbon::parse($validated['end_time'])->diffInMinutes(Carbon::parse($validated['start_time']));
+                $hoursPreview = (new OvertimeRoundingService())->roundMinutes($minutes);
+            }
+            if ((float) $hoursPreview <= 0) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'hours' => 'No se pueden autorizar 0 horas. El rango es muy corto (menos de 30 min se redondea a 0). Ajusta los tiempos.',
+                ]);
+            }
             $emp = Employee::with('schedule')->find($validated['employee_id']);
             if ($emp && $this->overlapsWorkSchedule($emp, $validated['date'], $validated['start_time'] ?? null, $validated['end_time'] ?? null)) {
                 throw \Illuminate\Validation\ValidationException::withMessages([
@@ -446,6 +458,17 @@ class AuthorizationController extends Controller
             foreach ($validated['entries'] as $i => $entry) {
                 $emp = $empCache->get($entry['employee_id']);
                 if (! $emp) continue;
+                // Re-derive hours with the rounding ladder so we catch 0-hour rows
+                // that came from <30 min ranges before checking the schedule.
+                $entryHours = $entry['hours'] ?? null;
+                if (! empty($entry['start_time']) && ! empty($entry['end_time'])) {
+                    $entryMins = (int) Carbon::parse($entry['end_time'])->diffInMinutes(Carbon::parse($entry['start_time']));
+                    $entryHours = $rounder->roundMinutes($entryMins);
+                }
+                if ((float) $entryHours <= 0) {
+                    $conflicts["entries.{$i}"] = "Fila {$emp->full_name} ({$entry['date']}): el rango es menor a 30 min y se redondea a 0 horas. No se puede autorizar.";
+                    continue;
+                }
                 if (isset($holidaySet[$entry['date']])) continue;
                 if ($this->overlapsWorkSchedule($emp, $entry['date'], $entry['start_time'] ?? null, $entry['end_time'] ?? null)) {
                     $conflicts["entries.{$i}"] = "Las horas chocan con el horario de trabajo de {$emp->full_name} el {$entry['date']}. No se autoriza tiempo dentro de su jornada (salvo días festivos).";
@@ -609,6 +632,22 @@ class AuthorizationController extends Controller
             $start = Carbon::parse($validated['start_time']);
             $end = Carbon::parse($validated['end_time']);
             $validated['hours'] = $end->diffInMinutes($start) / 60;
+        }
+
+        // Same per-hour guards as store(): hours must be > 0 and the range
+        // can't fall inside the employee's regular schedule on a non-holiday.
+        if (in_array($validated['type'], [Authorization::TYPE_OVERTIME, Authorization::TYPE_NIGHT_SHIFT], true)) {
+            if ((float) ($validated['hours'] ?? 0) <= 0) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'hours' => 'No se pueden autorizar 0 horas. Ajusta el rango o cambia el tipo de autorización.',
+                ]);
+            }
+            $emp = Employee::with('schedule')->find($validated['employee_id']);
+            if ($emp && $this->overlapsWorkSchedule($emp, $validated['date'], $validated['start_time'] ?? null, $validated['end_time'] ?? null)) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'start_time' => 'Las horas seleccionadas chocan con el horario de trabajo del empleado. No se autoriza tiempo dentro de su jornada (salvo días festivos).',
+                ]);
+            }
         }
 
         $authorization->update($validated);

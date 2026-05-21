@@ -462,11 +462,19 @@ const conflictedEntries = computed(() => {
     return form.entries.filter(hasScheduleConflict);
 });
 
+/** Per-hour rows of 0 hours have no business being authorized (rounded down
+ *  from a <30min range). Block them in the UI before the backend rejects. */
+const zeroHourEntries = computed(() => {
+    if (!isHoursType.value) return [];
+    return form.entries.filter(e => (parseFloat(e.hours) || 0) <= 0);
+});
+
 const canSubmit = computed(() => {
     if (form.processing) return false;
     if (isPerHour.value) {
         if (form.entries.length === 0) return false;
         if (conflictedEntries.value.length > 0) return false;
+        if (zeroHourEntries.value.length > 0) return false;
         return true;
     }
     return form.employee_ids.length > 0;
@@ -664,6 +672,11 @@ const canSubmit = computed(() => {
                         Ajusta los tiempos para que queden <em>fuera</em> de la jornada, o quita esas filas. Día festivo se exenta de esta regla.
                     </div>
 
+                    <div v-if="isHoursType && zeroHourEntries.length > 0"
+                        class="mb-3 bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
+                        <strong>{{ zeroHourEntries.length }}</strong> fila(s) tienen <strong>0 horas</strong> (rango menor a 30 min se redondea a 0). Amplía el rango o quita esas filas.
+                    </div>
+
                     <div v-if="form.entries.length === 0" class="border rounded-lg p-6 text-center text-sm text-gray-500">
                         No hay filas todavía. Define un rango y carga desde checadas, o agrega una manualmente.
                     </div>
@@ -694,10 +707,10 @@ const canSubmit = computed(() => {
                             <div class="divide-y divide-gray-100">
                                 <template v-for="entry in group.entries" :key="`${entry.employee_id}_${entry.date}_${entry.kind}_${entry._index}`">
                                     <div class="px-4 py-2 grid grid-cols-12 gap-2 items-center text-sm"
-                                        :class="isHoursType && hasScheduleConflict(entry) ? 'bg-red-50' : 'bg-white'">
+                                        :class="isHoursType && hasScheduleConflict(entry) ? 'bg-red-50' : (isHoursType && (parseFloat(entry.hours) || 0) <= 0 ? 'bg-amber-50' : 'bg-white')">
                                         <div class="col-span-3 min-w-0">
                                             <div class="text-xs font-semibold"
-                                                :class="isHoursType && hasScheduleConflict(entry) ? 'text-red-700' : 'text-pink-700'">
+                                                :class="isHoursType && hasScheduleConflict(entry) ? 'text-red-700' : (isHoursType && (parseFloat(entry.hours) || 0) <= 0 ? 'text-amber-700' : 'text-pink-700')">
                                                 {{ formatDateShort(entry.date) }}
                                             </div>
                                             <div v-if="entry.summary" class="text-[10px] text-amber-700 truncate" :title="entry.summary">
@@ -726,6 +739,10 @@ const canSubmit = computed(() => {
                                     <div v-if="isHoursType && hasScheduleConflict(entry)"
                                         class="px-4 pb-2 -mt-1 text-[11px] text-red-700 bg-red-50">
                                         ⚠ Las horas caen dentro de su jornada laboral. Solo se autoriza fuera de horario (o en día festivo).
+                                    </div>
+                                    <div v-else-if="isHoursType && (parseFloat(entry.hours) || 0) <= 0"
+                                        class="px-4 pb-2 -mt-1 text-[11px] text-amber-700 bg-amber-50">
+                                        ⚠ Rango menor a 30 min se redondea a 0 horas. Amplía el rango para poder autorizarlo.
                                     </div>
                                 </template>
                             </div>
