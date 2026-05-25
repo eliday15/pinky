@@ -617,8 +617,8 @@ const exportUrl = computed(() => {
         </div>
 
         <!-- Table -->
-        <div class="bg-white rounded-lg shadow overflow-hidden">
-            <table class="min-w-full divide-y divide-gray-200">
+        <div class="bg-white rounded-lg shadow overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200 whitespace-nowrap">
                 <thead class="bg-gray-50">
                     <tr>
                         <th v-if="bulkEditMode && applyTo === 'selected'" class="px-4 py-3 text-left">
