@@ -287,7 +287,7 @@ class AuthorizationController extends Controller
             'date' => ['required', 'date'],
             'start_time' => ['nullable', 'date_format:H:i'],
             'end_time' => ['nullable', 'date_format:H:i'],
-            'hours' => ['nullable', 'numeric', 'min:0', 'max:24'],
+            'hours' => $this->hoursRules($request->input('compensation_type_id'), $request->input('type')),
             'reason' => ['required', 'string', 'max:1000'],
             'evidence' => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
             'anomaly_id' => ['nullable', 'exists:attendance_anomalies,id'],
@@ -401,6 +401,8 @@ class AuthorizationController extends Controller
     {
         $this->authorize('create', Authorization::class);
 
+        $hoursRules = $this->hoursRules($request->input('compensation_type_id'), $request->input('type'));
+
         $validated = $request->validate([
             'type' => ['required', Rule::in([
                 Authorization::TYPE_OVERTIME,
@@ -418,7 +420,7 @@ class AuthorizationController extends Controller
             'entries.*.date' => ['required_with:entries', 'date'],
             'entries.*.start_time' => ['nullable', 'date_format:H:i'],
             'entries.*.end_time' => ['nullable', 'date_format:H:i'],
-            'entries.*.hours' => ['nullable', 'numeric', 'min:0', 'max:24'],
+            'entries.*.hours' => $hoursRules,
 
             // Per-day / one-time / fallback: single (employee_ids, date) shape.
             'employee_ids' => ['required_without:entries', 'array'],
@@ -426,7 +428,7 @@ class AuthorizationController extends Controller
             'date' => ['required_without:entries', 'date'],
             'start_time' => ['nullable', 'date_format:H:i'],
             'end_time' => ['nullable', 'date_format:H:i'],
-            'hours' => ['nullable', 'numeric', 'min:0', 'max:24'],
+            'hours' => $hoursRules,
         ]);
 
         $bulkGroupId = 'bulk_' . now()->format('YmdHis') . '_' . Auth::id();
@@ -625,7 +627,7 @@ class AuthorizationController extends Controller
             'date' => ['required', 'date'],
             'start_time' => ['nullable', 'date_format:H:i'],
             'end_time' => ['nullable', 'date_format:H:i'],
-            'hours' => ['nullable', 'numeric', 'min:0', 'max:24'],
+            'hours' => $this->hoursRules($request->input('compensation_type_id'), $request->input('type')),
             'reason' => ['required', 'string', 'max:1000'],
         ]);
 
@@ -1286,6 +1288,37 @@ class AuthorizationController extends Controller
 
         // Standard half-open overlap test: [start, end) ∩ [entry, exit) ≠ ∅
         return $start < $exit && $end > $entry;
+    }
+
+    /**
+     * Build the validation rules for the `hours` field.
+     *
+     * The `hours` column is overloaded by the compensation type's application
+     * mode: per_hour stores real hours worked (capped at 24/day), while per_day
+     * stores a day count and one_time stores a unit quantity (e.g. production
+     * pieces) — neither of which is bounded by 24. We therefore only apply the
+     * 24-hour ceiling when the selected concept is per_hour, falling back to the
+     * authorization type when no compensation type is linked. The non-hour cap
+     * (999999.99) matches the widened decimal(8,2) column.
+     *
+     * Args:
+     *     compensationTypeId: The selected compensation type id, if any.
+     *     type: The authorization type (overtime, night_shift, ...).
+     *
+     * Returns:
+     *     The Laravel validation rule array for the `hours` field.
+     */
+    private function hoursRules($compensationTypeId, ?string $type): array
+    {
+        $applicationMode = $compensationTypeId
+            ? CompensationType::whereKey($compensationTypeId)->value('application_mode')
+            : null;
+
+        $isPerHour = $applicationMode
+            ? $applicationMode === CompensationType::APPLICATION_PER_HOUR
+            : in_array($type, [Authorization::TYPE_OVERTIME, Authorization::TYPE_NIGHT_SHIFT], true);
+
+        return ['nullable', 'numeric', 'min:0', 'max:' . ($isPerHour ? '24' : '999999.99')];
     }
 
     /**
