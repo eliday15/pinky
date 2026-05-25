@@ -414,7 +414,7 @@ const typeLabels = {
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap">
                             <span class="text-sm text-gray-900">
-                                {{ typeLabels[auth.type] || auth.type }}
+                                {{ auth.compensation_type?.name || typeLabels[auth.type] || auth.type }}
                             </span>
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap">
