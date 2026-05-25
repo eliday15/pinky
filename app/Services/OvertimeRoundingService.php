@@ -71,7 +71,8 @@ class OvertimeRoundingService
         if ($scheduledEntry) {
             $scheduledEntryDt = Carbon::parse($date . ' ' . $scheduledEntry);
             if ($checkIn->lt($scheduledEntryDt)) {
-                $earlyMinutes = (int) $checkIn->diffInMinutes($scheduledEntryDt);
+                // abs() defensively — Carbon 3 diffInMinutes is signed.
+                $earlyMinutes = abs((int) $checkIn->diffInMinutes($scheduledEntryDt));
                 $total += $this->roundMinutes($earlyMinutes);
             }
         }
@@ -79,7 +80,7 @@ class OvertimeRoundingService
         if ($scheduledExit) {
             $scheduledExitDt = Carbon::parse($date . ' ' . $scheduledExit);
             if ($checkOut->gt($scheduledExitDt)) {
-                $lateMinutes = (int) $scheduledExitDt->diffInMinutes($checkOut);
+                $lateMinutes = abs((int) $scheduledExitDt->diffInMinutes($checkOut));
                 $total += $this->roundMinutes($lateMinutes);
             }
         }

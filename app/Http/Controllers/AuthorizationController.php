@@ -303,7 +303,7 @@ class AuthorizationController extends Controller
             // Pre-calc hours when not given, so the 0-hour check sees the real value.
             $hoursPreview = $validated['hours'] ?? null;
             if (! empty($validated['start_time']) && ! empty($validated['end_time']) && empty($hoursPreview)) {
-                $minutes = (int) Carbon::parse($validated['end_time'])->diffInMinutes(Carbon::parse($validated['start_time']));
+                $minutes = abs((int) Carbon::parse($validated['start_time'])->diffInMinutes(Carbon::parse($validated['end_time'])));
                 $hoursPreview = (new OvertimeRoundingService())->roundMinutes($minutes);
             }
             if ((float) $hoursPreview <= 0) {
@@ -327,7 +327,7 @@ class AuthorizationController extends Controller
         if (! empty($validated['start_time']) && ! empty($validated['end_time']) && empty($validated['hours'])) {
             $start = Carbon::parse($validated['start_time']);
             $end = Carbon::parse($validated['end_time']);
-            $validated['hours'] = $end->diffInMinutes($start) / 60;
+            $validated['hours'] = abs($start->diffInMinutes($end)) / 60;
         }
 
         // Handle file upload
@@ -462,7 +462,9 @@ class AuthorizationController extends Controller
                 // that came from <30 min ranges before checking the schedule.
                 $entryHours = $entry['hours'] ?? null;
                 if (! empty($entry['start_time']) && ! empty($entry['end_time'])) {
-                    $entryMins = (int) Carbon::parse($entry['end_time'])->diffInMinutes(Carbon::parse($entry['start_time']));
+                    // abs() because Carbon 3 diffInMinutes is signed — direction
+                    // matters and we always want the magnitude here.
+                    $entryMins = abs((int) Carbon::parse($entry['start_time'])->diffInMinutes(Carbon::parse($entry['end_time'])));
                     $entryHours = $rounder->roundMinutes($entryMins);
                 }
                 if ((float) $entryHours <= 0) {
@@ -490,7 +492,7 @@ class AuthorizationController extends Controller
                 // read-only, but this guards against API-direct submissions
                 // and keeps the stored value canonical.
                 if (! empty($startTime) && ! empty($endTime)) {
-                    $minutes = (int) Carbon::parse($endTime)->diffInMinutes(Carbon::parse($startTime));
+                    $minutes = abs((int) Carbon::parse($startTime)->diffInMinutes(Carbon::parse($endTime)));
                     $hours = $rounder->roundMinutes($minutes);
                 }
 
@@ -523,7 +525,7 @@ class AuthorizationController extends Controller
             if (! empty($validated['start_time']) && ! empty($validated['end_time']) && empty($globalHours)) {
                 $start = Carbon::parse($validated['start_time']);
                 $end = Carbon::parse($validated['end_time']);
-                $globalHours = $end->diffInMinutes($start) / 60;
+                $globalHours = abs($start->diffInMinutes($end)) / 60;
             }
 
             $isPreAuthorization = Carbon::parse($validated['date'])->isFuture()
@@ -631,7 +633,7 @@ class AuthorizationController extends Controller
         if (! empty($validated['start_time']) && ! empty($validated['end_time']) && empty($validated['hours'])) {
             $start = Carbon::parse($validated['start_time']);
             $end = Carbon::parse($validated['end_time']);
-            $validated['hours'] = $end->diffInMinutes($start) / 60;
+            $validated['hours'] = abs($start->diffInMinutes($end)) / 60;
         }
 
         // Same per-hour guards as store(): hours must be > 0 and the range
@@ -1073,7 +1075,8 @@ class AuthorizationController extends Controller
         if ($scheduledEntry) {
             $scheduledEntryDt = Carbon::parse($date . ' ' . $scheduledEntry);
             if ($checkIn->lt($scheduledEntryDt)) {
-                $earlyMinutes = (int) $checkIn->diffInMinutes($scheduledEntryDt);
+                // abs() defensively — Carbon 3 diffInMinutes is signed.
+                $earlyMinutes = abs((int) $checkIn->diffInMinutes($scheduledEntryDt));
                 $rounded = $this->roundOvertimeMinutes($earlyMinutes);
                 if ($rounded > 0) {
                     $segments[] = [
@@ -1090,7 +1093,7 @@ class AuthorizationController extends Controller
         if ($scheduledExit) {
             $scheduledExitDt = Carbon::parse($date . ' ' . $scheduledExit);
             if ($checkOut->gt($scheduledExitDt)) {
-                $lateMinutes = (int) $scheduledExitDt->diffInMinutes($checkOut);
+                $lateMinutes = abs((int) $scheduledExitDt->diffInMinutes($checkOut));
                 $rounded = $this->roundOvertimeMinutes($lateMinutes);
                 if ($rounded > 0) {
                     $segments[] = [
