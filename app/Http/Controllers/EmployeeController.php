@@ -376,6 +376,12 @@ class EmployeeController extends Controller
             return $this->updatePersonalOnly($request, $employee);
         }
 
+        // Defensive: legacy data may have stored a self-referencing supervisor_id.
+        // Strip it before validation so the user can save unrelated fields.
+        if ((int) $request->input('supervisor_id') === (int) $employee->id) {
+            $request->merge(['supervisor_id' => null]);
+        }
+
         $scheduleChanging = $request->schedule_id != $employee->schedule_id;
 
         $currentCompIds = $employee->compensationTypes()->pluck('compensation_types.id')->sort()->values()->all();

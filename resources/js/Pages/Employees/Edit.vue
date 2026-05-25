@@ -103,7 +103,9 @@ const form = useForm({
     position_id: props.employee.position_id,
     schedule_id: props.employee.schedule_id,
     schedule_overrides: props.employee.schedule_overrides || {},
-    supervisor_id: props.employee.supervisor_id || '',
+    supervisor_id: (props.employee.supervisor_id && props.employee.supervisor_id !== props.employee.id)
+        ? props.employee.supervisor_id
+        : '',
     subordinate_ids: props.subordinateIds || [],
     hourly_rate: props.employee.hourly_rate,
     is_minimum_wage: props.employee.is_minimum_wage || false,
@@ -697,7 +699,7 @@ watch(() => form.hire_date, onHireDateChange);
                                 {{ form.errors.supervisor_id }}
                             </p>
 
-                            <div v-if="employee.supervisor" class="mt-3 p-2 bg-gray-50 rounded text-xs text-gray-600">
+                            <div v-if="employee.supervisor && employee.supervisor.id !== employee.id" class="mt-3 p-2 bg-gray-50 rounded text-xs text-gray-600">
                                 <span class="font-medium">Jefe actual:</span> {{ employee.supervisor.full_name }}
                             </div>
                         </div>

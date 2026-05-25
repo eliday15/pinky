@@ -40,7 +40,7 @@ class SupervisorResolutionService
             return $employee->supervisor;
         }
 
-        $supervisor = $this->findSupervisor($position->supervisor_position_id, $employee->department_id);
+        $supervisor = $this->findSupervisor($position->supervisor_position_id, $employee->department_id, $employee->id);
 
         if ($supervisor) {
             $employee->update(['supervisor_id' => $supervisor->id]);
@@ -68,7 +68,7 @@ class SupervisorResolutionService
                 continue;
             }
 
-            $supervisor = $this->findSupervisor($position->supervisor_position_id, $employee->department_id);
+            $supervisor = $this->findSupervisor($position->supervisor_position_id, $employee->department_id, $employee->id);
 
             if ($supervisor) {
                 $employee->update(['supervisor_id' => $supervisor->id]);
@@ -84,14 +84,16 @@ class SupervisorResolutionService
      * Args:
      *     supervisorPositionId: Position ID of the supervisor role
      *     preferredDepartmentId: Department ID to prefer when multiple candidates exist
+     *     excludeEmployeeId: Employee ID to exclude (prevents self-assignment)
      *
      * Returns:
      *     The supervisor Employee, or null if none found
      */
-    private function findSupervisor(int $supervisorPositionId, ?int $preferredDepartmentId): ?Employee
+    private function findSupervisor(int $supervisorPositionId, ?int $preferredDepartmentId, ?int $excludeEmployeeId = null): ?Employee
     {
         $candidates = Employee::where('position_id', $supervisorPositionId)
             ->where('status', 'active')
+            ->when($excludeEmployeeId, fn ($q) => $q->where('id', '!=', $excludeEmployeeId))
             ->get();
 
         if ($candidates->isEmpty()) {
