@@ -105,9 +105,25 @@ const selectedPullRule = computed(() => {
     return t?.attendance_pull_rule || null;
 });
 
-/** Meal (Cena) rule: pulled from check-ins as one per-day entry per qualifying
- *  day (long day / velada / weekend), never auto-approved. */
-const isMeal = computed(() => selectedPullRule.value === 'meal');
+/** Whether the selected type pulls per-day entries from check-ins (meal/weekend),
+ *  as one entry per qualifying day, never auto-approved. */
+const isAttendancePull = computed(() => selectedPullRule.value === 'meal' || selectedPullRule.value === 'weekend');
+
+/** Copy for the attendance-pull card, by rule. */
+const pullCopy = computed(() => {
+    if (selectedPullRule.value === 'weekend') {
+        return {
+            title: 'Fines de Semana a Autorizar',
+            hint: 'Cada fila es un día de fin de semana trabajado (sáb/dom fuera de su horario). Elige un rango y carga desde checadas.',
+            unit: 'fin(es) de semana',
+        };
+    }
+    return {
+        title: 'Cenas a Autorizar',
+        hint: 'Cada fila es una cena (un día). Elige un rango y carga desde checadas: se genera una cena por cada día con jornada larga, velada (cruzó medianoche) o trabajo en fin de semana.',
+        unit: 'cena(s)',
+    };
+});
 
 const dateCardTitle = computed(() => {
     switch (selectedApplicationMode.value) {
@@ -174,7 +190,7 @@ watch([rangeStart, rangeEnd], () => resetEntries());
 
 const canFetchSuggestions = computed(() => {
     if (!form.employee_id || !rangeStart.value || !rangeEnd.value) return false;
-    if (isMeal.value) return true;
+    if (isAttendancePull.value) return true;
     return isPerHour.value
         && (form.type === 'overtime' || form.type === 'night_shift');
 });
@@ -355,7 +371,7 @@ const typeDescriptions = {
 /** Per_hour submits via the bulk endpoint (one Authorization per entry).
  *  Non-per_hour keeps the legacy single-record store endpoint. */
 const submit = () => {
-    if ((isPerHour.value || isMeal.value) && form.entries.length > 0) {
+    if ((isPerHour.value || isAttendancePull.value) && form.entries.length > 0) {
         form.employee_ids = [Number(form.employee_id)];
         form.post(route('authorizations.storeBulk'));
         return;
@@ -384,14 +400,15 @@ const canSubmit = computed(() => {
         if (zeroHourEntries.value.length > 0) return false;
         return true;
     }
-    // Meal (Cena): one per-day entry per qualifying day, no hour/conflict rules.
-    if (isMeal.value) {
+    // Attendance-pull (Cena / Fin de semana): one per-day entry per qualifying
+    // day, no hour/conflict rules.
+    if (isAttendancePull.value) {
         return form.entries.length > 0;
     }
     return true;
 });
 
-const submitCount = computed(() => ((isPerHour.value || isMeal.value) ? form.entries.length : 1));
+const submitCount = computed(() => ((isPerHour.value || isAttendancePull.value) ? form.entries.length : 1));
 </script>
 
 <template>
@@ -606,19 +623,19 @@ const submitCount = computed(() => ((isPerHour.value || isMeal.value) ? form.ent
                     </div>
                 </div>
 
-                <!-- Step 2 (meal/Cena): date range + qualifying days from check-ins -->
-                <div v-if="isMeal && form.employee_id" class="bg-white rounded-lg shadow p-6">
+                <!-- Step 2 (attendance pull): date range + qualifying days from check-ins -->
+                <div v-if="isAttendancePull && form.employee_id" class="bg-white rounded-lg shadow p-6">
                     <div class="flex items-start justify-between gap-3 mb-4">
                         <div class="flex-1">
                             <h3 class="text-lg font-semibold text-gray-800 mb-1">
                                 <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-600 text-white text-xs mr-2">2</span>
-                                Cenas a Autorizar
+                                {{ pullCopy.title }}
                             </h3>
                             <p class="text-xs text-gray-500">
-                                Cada fila es una cena (un día). Elige un rango y carga desde checadas: se genera una cena por cada día con jornada larga, velada (cruzó medianoche) o trabajo en fin de semana.
+                                {{ pullCopy.hint }}
                             </p>
                             <p class="mt-2 text-xs text-gray-500">
-                                {{ form.entries.length }} cena(s) detectada(s)
+                                {{ form.entries.length }} {{ pullCopy.unit }} detectada(s)
                             </p>
                         </div>
                         <div class="flex flex-col items-end gap-2 flex-shrink-0">
@@ -645,11 +662,11 @@ const submitCount = computed(() => ((isPerHour.value || isMeal.value) ? form.ent
                     </div>
 
                     <div v-if="suggestionsApplied" class="mb-3 bg-amber-50 border border-amber-200 rounded-lg p-2 text-xs text-amber-800">
-                        <p>Se cargaron <strong>{{ form.entries.length }}</strong> cena(s). Revísalas y crea: quedarán <strong>pendientes</strong> de aprobación.</p>
+                        <p>Se cargaron <strong>{{ form.entries.length }}</strong> {{ pullCopy.unit }}. Revísalas y crea: quedarán <strong>pendientes</strong> de aprobación.</p>
                     </div>
 
                     <div v-if="form.entries.length === 0" class="border rounded-lg p-6 text-center text-sm text-gray-500">
-                        No hay cenas todavía. Define un rango y carga desde checadas.
+                        No hay {{ pullCopy.unit }} todavía. Define un rango y carga desde checadas.
                     </div>
                     <div v-else class="border rounded-lg overflow-hidden divide-y divide-gray-100">
                         <div v-for="(entry, idx) in form.entries" :key="`${entry.date}_${idx}`"
@@ -669,7 +686,7 @@ const submitCount = computed(() => ((isPerHour.value || isMeal.value) ? form.ent
                 </div>
 
                 <!-- Step 2 (legacy): Date & Time for per_day / one_time -->
-                <div v-if="selectedApplicationMode && !isPerHour && !isMeal" class="bg-white rounded-lg shadow p-6">
+                <div v-if="selectedApplicationMode && !isPerHour && !isAttendancePull" class="bg-white rounded-lg shadow p-6">
                     <h3 class="text-lg font-semibold text-gray-800 mb-1">
                         <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-600 text-white text-xs mr-2">2</span>
                         {{ dateCardTitle }}

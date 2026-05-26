@@ -935,15 +935,17 @@ class AuthorizationController extends Controller
             'compensation_type_id' => ['nullable', 'exists:compensation_types,id'],
         ]);
 
-        // The meal (Cena) rule pulls from check-ins differently than overtime/
-        // velada: one entry per qualifying day, no time segments. Any other
-        // type only supports the per-hour overtime/velada detection.
+        // Per-day pull rules (meal/weekend) pull from check-ins differently than
+        // overtime/velada: one entry per qualifying day, no time segments. Any
+        // other type only supports the per-hour overtime/velada detection.
         $compType = ! empty($validated['compensation_type_id'])
             ? CompensationType::find($validated['compensation_type_id'])
             : null;
         $isMeal = $compType && $compType->hasMealPullRule();
+        $isWeekend = $compType && $compType->hasWeekendPullRule();
+        $isPull = $isMeal || $isWeekend;
 
-        if (! $isMeal && ! in_array($validated['type'], [Authorization::TYPE_OVERTIME, Authorization::TYPE_NIGHT_SHIFT], true)) {
+        if (! $isPull && ! in_array($validated['type'], [Authorization::TYPE_OVERTIME, Authorization::TYPE_NIGHT_SHIFT], true)) {
             return response()->json([
                 'suggestions' => [],
                 'message' => 'Este tipo no se puede jalar desde checadas.',
@@ -978,13 +980,13 @@ class AuthorizationController extends Controller
             ->get()
             ->groupBy('employee_id');
 
-        // Meal rule prerequisites: configurable hours threshold + a set of days
-        // that already have a (non-rejected) entry for this concept, so a second
-        // "Cargar desde checadas" doesn't duplicate dinners.
+        // Pull-rule prerequisites: configurable hours threshold (meal only) + a
+        // set of days that already have a (non-rejected) entry for this concept,
+        // so a second "Cargar desde checadas" doesn't duplicate entries.
         $mealThreshold = $isMeal ? (float) SystemSetting::get('cena_min_worked_hours', 12) : 0.0;
-        $existingMeal = [];
-        if ($isMeal) {
-            $existingMeal = Authorization::where('compensation_type_id', $compType->id)
+        $existingPull = [];
+        if ($isPull) {
+            $existingPull = Authorization::where('compensation_type_id', $compType->id)
                 ->whereIn('employee_id', $validated['employee_ids'])
                 ->whereBetween('date', [$startDate->toDateString(), $endDate->toDateString()])
                 ->where('status', '!=', Authorization::STATUS_REJECTED)
@@ -1005,9 +1007,11 @@ class AuthorizationController extends Controller
                 $dateStr = $cursor->toDateString();
                 $record = $empRecords->get($dateStr);
 
-                if ($isMeal) {
-                    if ($record && $record->check_in && ! isset($existingMeal[$employee->id . '|' . $dateStr])) {
-                        $seg = $this->buildMealSegment($record, $mealThreshold);
+                if ($isPull) {
+                    if ($record && $record->check_in && ! isset($existingPull[$employee->id . '|' . $dateStr])) {
+                        $seg = $isMeal
+                            ? $this->buildMealSegment($record, $mealThreshold)
+                            : $this->buildWeekendSegment($record);
                         if ($seg) {
                             $rows[] = [
                                 'employee_id' => $employee->id,
@@ -1241,6 +1245,29 @@ class AuthorizationController extends Controller
     }
 
     /**
+     * Weekend segment: a single per-day entry when the employee worked a weekend
+     * day outside their schedule (is_weekend_work, set during the ZKTeco sync).
+     *
+     * Returns null when the day isn't flagged as weekend work. `hours` is 1
+     * because the weekend concept is per_day — one worked weekend day is one
+     * entry. These never auto-approve (special type).
+     */
+    private function buildWeekendSegment(AttendanceRecord $record): ?array
+    {
+        if (! $record->is_weekend_work) {
+            return null;
+        }
+
+        return [
+            'kind' => 'weekend',
+            'start_time' => null,
+            'end_time' => null,
+            'hours' => '1',
+            'summary' => 'Fin de semana trabajado.',
+        ];
+    }
+
+    /**
      * Auto-approve an authorization when its (start, end, hours) exactly match
      * a detected segment for that employee/date. The intent is: if the supervisor
      * loaded the row from real checadas and didn't touch it, the system already
@@ -1261,10 +1288,10 @@ class AuthorizationController extends Controller
         if (! in_array($authorization->type, [Authorization::TYPE_OVERTIME, Authorization::TYPE_NIGHT_SHIFT], true)) {
             return;
         }
-        // Meal-rule concepts (Cena) always stay pending for human review, even if
-        // misconfigured onto an overtime/velada type. RRHH approves each dinner.
+        // Attendance-pull concepts (Cena, Fin de semana) always stay pending for
+        // human review, even if misconfigured onto an overtime/velada type.
         if ($authorization->compensation_type_id
-            && optional(CompensationType::find($authorization->compensation_type_id))->hasMealPullRule()) {
+            && optional(CompensationType::find($authorization->compensation_type_id))->pullsFromAttendance()) {
             return;
         }
         if (! $authorization->start_time || ! $authorization->end_time || ! $authorization->hours) {

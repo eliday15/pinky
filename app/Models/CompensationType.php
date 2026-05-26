@@ -28,12 +28,16 @@ class CompensationType extends Model
     public const APPLICATION_ONE_TIME = 'one_time';
 
     /**
-     * Attendance pull rule: load entries from check-ins in bulk authorizations.
+     * Attendance pull rules: load entries from check-ins in authorizations.
      *
-     * 'meal' = one entry per (employee, day) where the employee worked a long
-     * day, crossed midnight (velada), or worked a weekend outside their schedule.
+     * 'meal'    = one entry per (employee, day) where the employee worked a long
+     *             day, crossed midnight (velada), or worked a weekend.
+     * 'weekend' = one entry per (employee, day) where the employee worked a
+     *             weekend day outside their schedule (is_weekend_work).
      */
     public const PULL_RULE_MEAL = 'meal';
+
+    public const PULL_RULE_WEEKEND = 'weekend';
 
     /**
      * Module name for audit logging.
@@ -180,5 +184,21 @@ class CompensationType extends Model
     public function hasMealPullRule(): bool
     {
         return $this->attendance_pull_rule === self::PULL_RULE_MEAL;
+    }
+
+    /**
+     * Whether this type is loaded from check-ins using the weekend rule.
+     */
+    public function hasWeekendPullRule(): bool
+    {
+        return $this->attendance_pull_rule === self::PULL_RULE_WEEKEND;
+    }
+
+    /**
+     * Whether this type pulls per-day entries from check-ins (meal or weekend).
+     */
+    public function pullsFromAttendance(): bool
+    {
+        return in_array($this->attendance_pull_rule, [self::PULL_RULE_MEAL, self::PULL_RULE_WEEKEND], true);
     }
 }
