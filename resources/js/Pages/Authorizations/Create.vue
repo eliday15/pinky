@@ -98,6 +98,17 @@ const selectedTypeLabel = computed(() => {
     return t?.label || '';
 });
 
+/** The attendance_pull_rule of the selected compensation type. */
+const selectedPullRule = computed(() => {
+    if (!form.compensation_type_id) return null;
+    const t = props.types.find(t => t.compensation_type_id === form.compensation_type_id);
+    return t?.attendance_pull_rule || null;
+});
+
+/** Meal (Cena) rule: pulled from check-ins as one per-day entry per qualifying
+ *  day (long day / velada / weekend), never auto-approved. */
+const isMeal = computed(() => selectedPullRule.value === 'meal');
+
 const dateCardTitle = computed(() => {
     switch (selectedApplicationMode.value) {
         case 'per_hour': return 'Fecha y Horario';
@@ -162,10 +173,9 @@ watch(() => form.employee_id, () => resetEntries());
 watch([rangeStart, rangeEnd], () => resetEntries());
 
 const canFetchSuggestions = computed(() => {
+    if (!form.employee_id || !rangeStart.value || !rangeEnd.value) return false;
+    if (isMeal.value) return true;
     return isPerHour.value
-        && form.employee_id
-        && rangeStart.value
-        && rangeEnd.value
         && (form.type === 'overtime' || form.type === 'night_shift');
 });
 
@@ -197,6 +207,7 @@ const fetchSuggestions = async () => {
                 start_date: rangeStart.value,
                 end_date: rangeEnd.value,
                 type: form.type,
+                compensation_type_id: form.compensation_type_id,
             },
         });
         suggestions.value = data.suggestions || [];
@@ -344,7 +355,7 @@ const typeDescriptions = {
 /** Per_hour submits via the bulk endpoint (one Authorization per entry).
  *  Non-per_hour keeps the legacy single-record store endpoint. */
 const submit = () => {
-    if (isPerHour.value && form.entries.length > 0) {
+    if ((isPerHour.value || isMeal.value) && form.entries.length > 0) {
         form.employee_ids = [Number(form.employee_id)];
         form.post(route('authorizations.storeBulk'));
         return;
@@ -373,10 +384,14 @@ const canSubmit = computed(() => {
         if (zeroHourEntries.value.length > 0) return false;
         return true;
     }
+    // Meal (Cena): one per-day entry per qualifying day, no hour/conflict rules.
+    if (isMeal.value) {
+        return form.entries.length > 0;
+    }
     return true;
 });
 
-const submitCount = computed(() => (isPerHour.value ? form.entries.length : 1));
+const submitCount = computed(() => ((isPerHour.value || isMeal.value) ? form.entries.length : 1));
 </script>
 
 <template>
@@ -591,8 +606,70 @@ const submitCount = computed(() => (isPerHour.value ? form.entries.length : 1));
                     </div>
                 </div>
 
+                <!-- Step 2 (meal/Cena): date range + qualifying days from check-ins -->
+                <div v-if="isMeal && form.employee_id" class="bg-white rounded-lg shadow p-6">
+                    <div class="flex items-start justify-between gap-3 mb-4">
+                        <div class="flex-1">
+                            <h3 class="text-lg font-semibold text-gray-800 mb-1">
+                                <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-600 text-white text-xs mr-2">2</span>
+                                Cenas a Autorizar
+                            </h3>
+                            <p class="text-xs text-gray-500">
+                                Cada fila es una cena (un día). Elige un rango y carga desde checadas: se genera una cena por cada día con jornada larga, velada (cruzó medianoche) o trabajo en fin de semana.
+                            </p>
+                            <p class="mt-2 text-xs text-gray-500">
+                                {{ form.entries.length }} cena(s) detectada(s)
+                            </p>
+                        </div>
+                        <div class="flex flex-col items-end gap-2 flex-shrink-0">
+                            <div class="flex items-center gap-2">
+                                <label class="text-xs text-gray-600">Desde:</label>
+                                <input type="date" v-model="rangeStart"
+                                    class="text-xs rounded border-gray-300 focus:border-pink-500 focus:ring-pink-500 py-1" />
+                                <label class="text-xs text-gray-600">Hasta:</label>
+                                <input type="date" v-model="rangeEnd" :min="rangeStart"
+                                    class="text-xs rounded border-gray-300 focus:border-pink-500 focus:ring-pink-500 py-1" />
+                            </div>
+                            <div class="flex gap-2">
+                                <button type="button" @click="fetchSuggestions"
+                                    :disabled="suggestionsLoading || !canFetchSuggestions"
+                                    class="px-3 py-1.5 bg-amber-600 text-white text-xs rounded hover:bg-amber-700 disabled:opacity-50">
+                                    {{ suggestionsLoading ? 'Calculando...' : 'Cargar desde checadas' }}
+                                </button>
+                                <button v-if="suggestionsApplied || form.entries.length > 0" type="button" @click="clearSuggestions"
+                                    class="px-3 py-1.5 border border-gray-300 text-gray-700 text-xs rounded hover:bg-gray-50">
+                                    Limpiar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div v-if="suggestionsApplied" class="mb-3 bg-amber-50 border border-amber-200 rounded-lg p-2 text-xs text-amber-800">
+                        <p>Se cargaron <strong>{{ form.entries.length }}</strong> cena(s). Revísalas y crea: quedarán <strong>pendientes</strong> de aprobación.</p>
+                    </div>
+
+                    <div v-if="form.entries.length === 0" class="border rounded-lg p-6 text-center text-sm text-gray-500">
+                        No hay cenas todavía. Define un rango y carga desde checadas.
+                    </div>
+                    <div v-else class="border rounded-lg overflow-hidden divide-y divide-gray-100">
+                        <div v-for="(entry, idx) in form.entries" :key="`${entry.date}_${idx}`"
+                            class="px-4 py-2 flex items-center justify-between gap-3 text-sm bg-white">
+                            <div class="min-w-0">
+                                <div class="text-xs font-semibold text-pink-700">{{ formatDateShort(entry.date) }}</div>
+                                <div v-if="entry.summary" class="text-[11px] text-gray-600 truncate" :title="entry.summary">
+                                    {{ entry.summary }}
+                                </div>
+                            </div>
+                            <button type="button" @click="removeEntry(idx)"
+                                class="text-[11px] text-gray-400 hover:text-red-600 flex-shrink-0">
+                                Quitar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Step 2 (legacy): Date & Time for per_day / one_time -->
-                <div v-if="selectedApplicationMode && !isPerHour" class="bg-white rounded-lg shadow p-6">
+                <div v-if="selectedApplicationMode && !isPerHour && !isMeal" class="bg-white rounded-lg shadow p-6">
                     <h3 class="text-lg font-semibold text-gray-800 mb-1">
                         <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-600 text-white text-xs mr-2">2</span>
                         {{ dateCardTitle }}
