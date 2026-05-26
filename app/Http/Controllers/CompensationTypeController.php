@@ -93,6 +93,7 @@ class CompensationTypeController extends Controller
             'is_active' => ['boolean'],
             'application_mode' => ['required', Rule::in(['per_hour', 'per_day', 'one_time'])],
             'authorization_type' => ['nullable', Rule::in(['overtime', 'night_shift', 'holiday_worked', 'special'])],
+            'attendance_pull_rule' => ['nullable', Rule::in([CompensationType::PULL_RULE_MEAL])],
             'priority' => ['integer', 'min:0'],
             'position_ids' => ['nullable', 'array'],
             'position_ids.*' => ['exists:positions,id'],
@@ -112,7 +113,7 @@ class CompensationTypeController extends Controller
             collect($validated)->only([
                 'name', 'code', 'description', 'calculation_type',
                 'percentage_value', 'fixed_amount', 'is_active',
-                'application_mode', 'authorization_type', 'priority',
+                'application_mode', 'authorization_type', 'attendance_pull_rule', 'priority',
             ])->toArray()
         );
 
@@ -166,6 +167,7 @@ class CompensationTypeController extends Controller
             'is_active' => ['boolean'],
             'application_mode' => ['required', Rule::in(['per_hour', 'per_day', 'one_time'])],
             'authorization_type' => ['nullable', Rule::in(['overtime', 'night_shift', 'holiday_worked', 'special'])],
+            'attendance_pull_rule' => ['nullable', Rule::in([CompensationType::PULL_RULE_MEAL])],
             'priority' => ['integer', 'min:0'],
             'position_ids' => ['nullable', 'array'],
             'position_ids.*' => ['exists:positions,id'],
@@ -185,7 +187,7 @@ class CompensationTypeController extends Controller
             collect($validated)->only([
                 'name', 'code', 'description', 'calculation_type',
                 'percentage_value', 'fixed_amount', 'is_active',
-                'application_mode', 'authorization_type', 'priority',
+                'application_mode', 'authorization_type', 'attendance_pull_rule', 'priority',
             ])->toArray()
         );
 

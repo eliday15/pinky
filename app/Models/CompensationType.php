@@ -28,6 +28,14 @@ class CompensationType extends Model
     public const APPLICATION_ONE_TIME = 'one_time';
 
     /**
+     * Attendance pull rule: load entries from check-ins in bulk authorizations.
+     *
+     * 'meal' = one entry per (employee, day) where the employee worked a long
+     * day, crossed midnight (velada), or worked a weekend outside their schedule.
+     */
+    public const PULL_RULE_MEAL = 'meal';
+
+    /**
      * Module name for audit logging.
      */
     protected string $auditModule = 'compensation_types';
@@ -47,6 +55,7 @@ class CompensationType extends Model
         'is_active',
         'application_mode',
         'authorization_type',
+        'attendance_pull_rule',
         'priority',
     ];
 
@@ -163,5 +172,13 @@ class CompensationType extends Model
     public function scopeForAuthorizationType($query, string $type)
     {
         return $query->where('authorization_type', $type);
+    }
+
+    /**
+     * Whether this type is loaded from check-ins using the meal (Cena) rule.
+     */
+    public function hasMealPullRule(): bool
+    {
+        return $this->attendance_pull_rule === self::PULL_RULE_MEAL;
     }
 }

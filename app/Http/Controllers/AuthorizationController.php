@@ -9,6 +9,7 @@ use App\Models\Authorization;
 use App\Models\CompensationType;
 use App\Models\Department;
 use App\Models\Employee;
+use App\Models\SystemSetting;
 use App\Services\OvertimeRoundingService;
 use App\Services\ZktecoSyncService;
 use Carbon\Carbon;
@@ -930,8 +931,24 @@ class AuthorizationController extends Controller
             'employee_ids.*' => ['required', 'integer', 'exists:employees,id'],
             'start_date' => ['required', 'date'],
             'end_date' => ['required', 'date', 'after_or_equal:start_date'],
-            'type' => ['required', Rule::in([Authorization::TYPE_OVERTIME, Authorization::TYPE_NIGHT_SHIFT])],
+            'type' => ['required', 'string'],
+            'compensation_type_id' => ['nullable', 'exists:compensation_types,id'],
         ]);
+
+        // The meal (Cena) rule pulls from check-ins differently than overtime/
+        // velada: one entry per qualifying day, no time segments. Any other
+        // type only supports the per-hour overtime/velada detection.
+        $compType = ! empty($validated['compensation_type_id'])
+            ? CompensationType::find($validated['compensation_type_id'])
+            : null;
+        $isMeal = $compType && $compType->hasMealPullRule();
+
+        if (! $isMeal && ! in_array($validated['type'], [Authorization::TYPE_OVERTIME, Authorization::TYPE_NIGHT_SHIFT], true)) {
+            return response()->json([
+                'suggestions' => [],
+                'message' => 'Este tipo no se puede jalar desde checadas.',
+            ], 422);
+        }
 
         // Hard cap to avoid runaway queries (e.g., user picks a full year).
         $startDate = Carbon::parse($validated['start_date']);
@@ -961,6 +978,21 @@ class AuthorizationController extends Controller
             ->get()
             ->groupBy('employee_id');
 
+        // Meal rule prerequisites: configurable hours threshold + a set of days
+        // that already have a (non-rejected) entry for this concept, so a second
+        // "Cargar desde checadas" doesn't duplicate dinners.
+        $mealThreshold = $isMeal ? (float) SystemSetting::get('cena_min_worked_hours', 12) : 0.0;
+        $existingMeal = [];
+        if ($isMeal) {
+            $existingMeal = Authorization::where('compensation_type_id', $compType->id)
+                ->whereIn('employee_id', $validated['employee_ids'])
+                ->whereBetween('date', [$startDate->toDateString(), $endDate->toDateString()])
+                ->where('status', '!=', Authorization::STATUS_REJECTED)
+                ->get(['employee_id', 'date'])
+                ->mapWithKeys(fn($a) => [$a->employee_id . '|' . Carbon::parse($a->date)->toDateString() => true])
+                ->all();
+        }
+
         $rows = [];
         foreach ($employees as $employee) {
             if ($allowed !== null && ! in_array($employee->id, $allowed, true)) {
@@ -972,7 +1004,20 @@ class AuthorizationController extends Controller
             while ($cursor->lte($endDate)) {
                 $dateStr = $cursor->toDateString();
                 $record = $empRecords->get($dateStr);
-                if ($record && $record->check_in && $record->check_out) {
+
+                if ($isMeal) {
+                    if ($record && $record->check_in && ! isset($existingMeal[$employee->id . '|' . $dateStr])) {
+                        $seg = $this->buildMealSegment($record, $mealThreshold);
+                        if ($seg) {
+                            $rows[] = [
+                                'employee_id' => $employee->id,
+                                'employee_name' => $employee->full_name,
+                                'employee_number' => $employee->employee_number,
+                                'date' => $dateStr,
+                            ] + $seg;
+                        }
+                    }
+                } elseif ($record && $record->check_in && $record->check_out) {
                     $segments = $this->buildSuggestionSegments($employee, $dateStr, $validated['type'], $record);
                     foreach ($segments as $seg) {
                         $rows[] = [
@@ -1144,6 +1189,58 @@ class AuthorizationController extends Controller
     }
 
     /**
+     * Meal (Cena) segment: a single per-day entry when the day qualifies for a
+     * dinner. A day qualifies if ANY of these hold (the reasons are surfaced so
+     * the supervisor can sanity-check before approving):
+     *
+     *  - Long day: total worked (worked_hours + overtime_hours) >= threshold.
+     *  - Velada: the shift crossed midnight (check_out earlier than check_in),
+     *    i.e. they worked from the evening into the next day.
+     *  - Weekend: worked a Sat/Sun that falls outside their schedule
+     *    (is_weekend_work, set during the ZKTeco sync).
+     *
+     * Returns null when the day doesn't qualify. `hours` is 1 because a Cena is a
+     * per_day concept and one qualifying day is one dinner. No start/end times —
+     * a dinner isn't a time range. These never auto-approve (special type).
+     */
+    private function buildMealSegment(AttendanceRecord $record, float $threshold): ?array
+    {
+        $reasons = [];
+
+        $totalWorked = (float) ($record->worked_hours ?? 0) + (float) ($record->overtime_hours ?? 0);
+        if ($threshold > 0 && $totalWorked >= $threshold) {
+            $reasons[] = number_format($totalWorked, 2, '.', '') . 'h trabajadas';
+        }
+
+        // Midnight crossing: check_in/check_out are TIME-only; anchoring both to
+        // the same day, a check_out that lands "before" check_in means the shift
+        // ran past 00:00.
+        if ($record->check_in && $record->check_out) {
+            $checkIn = Carbon::parse($record->check_in);
+            $checkOut = Carbon::parse($record->check_out);
+            if ($checkOut->lt($checkIn)) {
+                $reasons[] = 'velada (cruzó medianoche)';
+            }
+        }
+
+        if ($record->is_weekend_work) {
+            $reasons[] = 'fin de semana';
+        }
+
+        if (empty($reasons)) {
+            return null;
+        }
+
+        return [
+            'kind' => 'meal',
+            'start_time' => null,
+            'end_time' => null,
+            'hours' => '1',
+            'summary' => 'Cena: ' . implode(', ', $reasons) . '.',
+        ];
+    }
+
+    /**
      * Auto-approve an authorization when its (start, end, hours) exactly match
      * a detected segment for that employee/date. The intent is: if the supervisor
      * loaded the row from real checadas and didn't touch it, the system already
@@ -1162,6 +1259,12 @@ class AuthorizationController extends Controller
             return;
         }
         if (! in_array($authorization->type, [Authorization::TYPE_OVERTIME, Authorization::TYPE_NIGHT_SHIFT], true)) {
+            return;
+        }
+        // Meal-rule concepts (Cena) always stay pending for human review, even if
+        // misconfigured onto an overtime/velada type. RRHH approves each dinner.
+        if ($authorization->compensation_type_id
+            && optional(CompensationType::find($authorization->compensation_type_id))->hasMealPullRule()) {
             return;
         }
         if (! $authorization->start_time || ! $authorization->end_time || ! $authorization->hours) {
@@ -1333,13 +1436,14 @@ class AuthorizationController extends Controller
         // the type validation rule and still appear in the dropdown.
         $compTypes = CompensationType::active()
             ->orderBy('priority')
-            ->get(['id', 'name', 'code', 'authorization_type', 'application_mode']);
+            ->get(['id', 'name', 'code', 'authorization_type', 'application_mode', 'attendance_pull_rule']);
 
         $types = $compTypes->map(fn(CompensationType $ct) => [
             'value' => $ct->authorization_type ?: 'special',
             'label' => $ct->name,
             'compensation_type_id' => $ct->id,
             'application_mode' => $ct->application_mode,
+            'attendance_pull_rule' => $ct->attendance_pull_rule,
             'requires_evidence' => true,
             'group' => 'compensation',
         ])->toArray();

@@ -36,6 +36,7 @@ const form = useForm({
     is_active: props.compensationType.is_active,
     application_mode: props.compensationType.application_mode || 'per_hour',
     authorization_type: props.compensationType.authorization_type || '',
+    attendance_pull_rule: props.compensationType.attendance_pull_rule || null,
     priority: props.compensationType.priority ?? 0,
     employee_ids: initialEmployeeIds,
     employee_percentages: initialEmployeePercentages,
@@ -312,6 +313,26 @@ const submit = () => {
                             </p>
                             <p v-if="form.errors.authorization_type" class="mt-1 text-sm text-red-600">
                                 {{ form.errors.authorization_type }}
+                            </p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                Jalar desde checadas
+                            </label>
+                            <select
+                                v-model="form.attendance_pull_rule"
+                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                :class="{ 'border-red-500': form.errors.attendance_pull_rule }"
+                            >
+                                <option :value="null">Ninguna</option>
+                                <option value="meal">Cena (12h, velada o fin de semana)</option>
+                            </select>
+                            <p class="mt-1 text-sm text-gray-500">
+                                Si eliges "Cena", al jalar desde checadas se generan entradas automaticas por cada dia en que el empleado trabajo la jornada minima, cruzo medianoche, o trabajo en fin de semana. No se auto-aprueban.
+                            </p>
+                            <p v-if="form.errors.attendance_pull_rule" class="mt-1 text-sm text-red-600">
+                                {{ form.errors.attendance_pull_rule }}
                             </p>
                         </div>
 

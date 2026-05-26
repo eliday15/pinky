@@ -80,6 +80,17 @@ const selectedTypeLabel = computed(() => {
     return t?.label || '';
 });
 
+/** The attendance_pull_rule of the currently selected compensation type. */
+const selectedPullRule = computed(() => {
+    if (!form.compensation_type_id) return null;
+    const t = props.types.find(t => t.compensation_type_id === form.compensation_type_id);
+    return t?.attendance_pull_rule || null;
+});
+
+/** Meal (Cena) rule: pulled from check-ins as one per-day entry per qualifying
+ *  day (long day / velada / weekend), never auto-approved. */
+const isMeal = computed(() => selectedPullRule.value === 'meal');
+
 const dateCardTitle = computed(() => {
     switch (selectedApplicationMode.value) {
         case 'per_hour': return 'Fecha y Horario';
@@ -272,7 +283,7 @@ const canSuggestBulk = computed(() => {
     return form.employee_ids.length > 0
         && rangeStart.value
         && rangeEnd.value
-        && (form.type === 'overtime' || form.type === 'night_shift');
+        && (form.type === 'overtime' || form.type === 'night_shift' || isMeal.value);
 });
 
 const applyBulkSuggestions = () => {
@@ -304,6 +315,7 @@ const fetchBulkSuggestions = async () => {
                 start_date: rangeStart.value,
                 end_date: rangeEnd.value,
                 type: form.type,
+                compensation_type_id: form.compensation_type_id,
             },
         });
         suggestions.value = data.suggestions || [];
@@ -449,7 +461,7 @@ const typeDescriptions = {
 };
 
 const submitButtonCount = computed(() => {
-    if (isPerHour.value) return form.entries.length;
+    if (isPerHour.value || isMeal.value) return form.entries.length;
     return form.employee_ids.length;
 });
 
@@ -476,6 +488,11 @@ const canSubmit = computed(() => {
         if (conflictedEntries.value.length > 0) return false;
         if (zeroHourEntries.value.length > 0) return false;
         return true;
+    }
+    // Meal (Cena) submits one per-day entry per qualifying day; no schedule
+    // conflict or zero-hour rules apply.
+    if (isMeal.value) {
+        return form.entries.length > 0;
     }
     return form.employee_ids.length > 0;
 });
@@ -750,8 +767,91 @@ const canSubmit = computed(() => {
                     </div>
                 </div>
 
+                <!-- Step 3 (meal/Cena): date range + qualifying days from check-ins -->
+                <div v-if="isMeal && form.employee_ids.length > 0" class="bg-white rounded-lg shadow p-6">
+                    <div class="flex items-start justify-between gap-3 mb-4">
+                        <div class="flex-1">
+                            <h3 class="text-lg font-semibold text-gray-800 mb-1">
+                                <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-600 text-white text-xs mr-2">3</span>
+                                Cenas por Empleado
+                            </h3>
+                            <p class="text-xs text-gray-500">
+                                Cada fila es una cena (empleado + día). Elige un rango y carga desde checadas: se genera una cena por cada día con jornada larga, velada (cruzó medianoche) o trabajo en fin de semana.
+                            </p>
+                            <p class="mt-2 text-xs text-gray-500">
+                                {{ form.entries.length }} cena(s) detectada(s)
+                            </p>
+                        </div>
+                        <div class="flex flex-col items-end gap-2 flex-shrink-0">
+                            <div class="flex items-center gap-2">
+                                <label class="text-xs text-gray-600">Desde:</label>
+                                <input type="date" v-model="rangeStart"
+                                    class="text-xs rounded border-gray-300 focus:border-pink-500 focus:ring-pink-500 py-1" />
+                                <label class="text-xs text-gray-600">Hasta:</label>
+                                <input type="date" v-model="rangeEnd" :min="rangeStart"
+                                    class="text-xs rounded border-gray-300 focus:border-pink-500 focus:ring-pink-500 py-1" />
+                            </div>
+                            <div class="flex gap-2">
+                                <button type="button" @click="fetchBulkSuggestions"
+                                    :disabled="suggestionsLoading || !rangeStart || !rangeEnd"
+                                    class="px-3 py-1.5 bg-amber-600 text-white text-xs rounded hover:bg-amber-700 disabled:opacity-50">
+                                    {{ suggestionsLoading ? 'Calculando...' : 'Cargar desde checadas' }}
+                                </button>
+                                <button v-if="suggestionsApplied || form.entries.length > 0" type="button" @click="clearBulkSuggestions"
+                                    class="px-3 py-1.5 border border-gray-300 text-gray-700 text-xs rounded hover:bg-gray-50">
+                                    Limpiar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div v-if="suggestionsApplied" class="mb-3 bg-amber-50 border border-amber-200 rounded-lg p-2 text-xs text-amber-800">
+                        <p>
+                            Se cargaron <strong>{{ form.entries.length }}</strong> cena(s) para <strong>{{ eligibleEmployeeCount }}</strong> empleado(s). Revísalas y crea: quedarán <strong>pendientes</strong> de aprobación.
+                        </p>
+                    </div>
+
+                    <div v-if="form.entries.length === 0" class="border rounded-lg p-6 text-center text-sm text-gray-500">
+                        No hay cenas todavía. Define un rango y carga desde checadas.
+                    </div>
+
+                    <div v-else class="max-h-[32rem] overflow-y-auto space-y-3 pr-1">
+                        <div v-for="group in entriesGroupedByEmployee" :key="group.employee_id"
+                            class="border rounded-lg overflow-hidden">
+                            <div class="bg-gray-50 px-4 py-2 flex items-center justify-between border-b">
+                                <div class="min-w-0">
+                                    <div class="text-sm font-semibold text-gray-900 truncate">
+                                        {{ group.employee_name }}
+                                        <span class="ml-2 text-xs font-normal text-gray-500">{{ group.employee_number }}</span>
+                                    </div>
+                                </div>
+                                <div class="text-xs text-gray-700 whitespace-nowrap">
+                                    {{ group.entries.length }} cena(s)
+                                </div>
+                            </div>
+                            <div class="divide-y divide-gray-100">
+                                <div v-for="entry in group.entries" :key="`${entry.employee_id}_${entry.date}_${entry._index}`"
+                                    class="px-4 py-2 flex items-center justify-between gap-3 text-sm bg-white">
+                                    <div class="min-w-0">
+                                        <div class="text-xs font-semibold text-pink-700">
+                                            {{ formatDateShort(entry.date) }}
+                                        </div>
+                                        <div v-if="entry.summary" class="text-[11px] text-gray-600 truncate" :title="entry.summary">
+                                            {{ entry.summary }}
+                                        </div>
+                                    </div>
+                                    <button type="button" @click="removeEntry(entry._index)"
+                                        class="text-[11px] text-gray-400 hover:text-red-600 flex-shrink-0">
+                                        Quitar
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Step 3 (legacy): Date & Time for per_day / one_time -->
-                <div v-if="selectedApplicationMode && !isPerHour && form.employee_ids.length > 0" class="bg-white rounded-lg shadow p-6">
+                <div v-if="selectedApplicationMode && !isPerHour && !isMeal && form.employee_ids.length > 0" class="bg-white rounded-lg shadow p-6">
                     <h3 class="text-lg font-semibold text-gray-800 mb-1">
                         <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-600 text-white text-xs mr-2">3</span>
                         {{ dateCardTitle }}

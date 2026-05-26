@@ -82,6 +82,14 @@ class SystemSettingsSeeder extends Seeder
                 'description' => 'Hora (0-23) hasta la cual se considera velada',
             ],
             [
+                'key' => 'cena_min_worked_hours',
+                'value' => '12',
+                'type' => 'integer',
+                'group' => 'attendance',
+                'label' => 'Horas Minimas para Cena',
+                'description' => 'Horas totales trabajadas en un dia (jornada + extra) que dan derecho a cena al jalar desde checadas.',
+            ],
+            [
                 'key' => 'velada_confirmation_start_hour',
                 'value' => '0',
                 'type' => 'integer',
