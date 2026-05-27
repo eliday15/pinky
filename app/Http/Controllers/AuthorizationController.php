@@ -461,10 +461,13 @@ class AuthorizationController extends Controller
             foreach ($validated['entries'] as $i => $entry) {
                 $emp = $empCache->get($entry['employee_id']);
                 if (! $emp) continue;
-                // Re-derive hours with the rounding ladder so we catch 0-hour rows
-                // that came from <30 min ranges before checking the schedule.
-                $entryHours = $entry['hours'] ?? null;
-                if (! empty($entry['start_time']) && ! empty($entry['end_time'])) {
+                // Trust an explicitly chosen hours value (the user can override the
+                // escalonado ladder in the UI). Only derive from the time range when
+                // no hours were given, so we still catch 0-hour rows from <30 min ranges.
+                $entryHours = (isset($entry['hours']) && $entry['hours'] !== '' && $entry['hours'] !== null)
+                    ? (float) $entry['hours']
+                    : null;
+                if ($entryHours === null && ! empty($entry['start_time']) && ! empty($entry['end_time'])) {
                     // abs() because Carbon 3 diffInMinutes is signed — direction
                     // matters and we always want the magnitude here.
                     $entryMins = abs((int) Carbon::parse($entry['start_time'])->diffInMinutes(Carbon::parse($entry['end_time'])));
@@ -488,13 +491,14 @@ class AuthorizationController extends Controller
             foreach ($validated['entries'] as $entry) {
                 $startTime = $entry['start_time'] ?? null;
                 $endTime = $entry['end_time'] ?? null;
-                $hours = $entry['hours'] ?? null;
 
-                // Always derive hours from start/end with the company rounding
-                // ladder when both times are present — the frontend input is
-                // read-only, but this guards against API-direct submissions
-                // and keeps the stored value canonical.
-                if (! empty($startTime) && ! empty($endTime)) {
+                // Trust an explicitly chosen hours value (the escalonado select lets
+                // the user override the auto-calc). Fall back to deriving it from the
+                // time range with the company rounding ladder only when none was sent.
+                $hours = (isset($entry['hours']) && $entry['hours'] !== '' && $entry['hours'] !== null)
+                    ? (float) $entry['hours']
+                    : null;
+                if ($hours === null && ! empty($startTime) && ! empty($endTime)) {
                     $minutes = abs((int) Carbon::parse($startTime)->diffInMinutes(Carbon::parse($endTime)));
                     $hours = $rounder->roundMinutes($minutes);
                 }
@@ -686,11 +690,29 @@ class AuthorizationController extends Controller
         $this->authorize('approve', $authorization);
         $this->verifyTwoFactorCode($request);
 
-        if (! $authorization->isPending()) {
+        $user = Auth::user();
+        $isAdmin = $user->hasPermissionTo('authorizations.view_all');
+
+        // A paid authorization is locked. Non-admins can only act on pending ones;
+        // admins may modify an existing approval (partial / post-hoc adjustment).
+        if ($authorization->isPaid()) {
+            return redirect()->back()->with('error', 'No se puede modificar una autorización ya pagada.');
+        }
+        if (! $authorization->isPending() && ! $isAdmin) {
             return redirect()->back()->with('error', 'Esta autorizacion ya fue procesada.');
         }
 
-        $authorization->approve(Auth::user());
+        // Optional partial-approval hours override. Reuses the type-aware rules
+        // (per_hour caps at 24; per_day/one_time allow larger quantities). An
+        // empty value keeps the requested/detected hours untouched.
+        $validated = $request->validate([
+            'hours' => $this->hoursRules($authorization->compensation_type_id, $authorization->type),
+        ]);
+        $overrideHours = (isset($validated['hours']) && $validated['hours'] !== null && $validated['hours'] !== '')
+            ? (float) $validated['hours']
+            : null;
+
+        $authorization->approve($user, $overrideHours);
 
         // FASE 1.4: Recalculate attendance if this affects an existing record
         if ($authorization->attendance_record_id) {

@@ -1,7 +1,6 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
-import TwoFactorModal from '@/Components/TwoFactorModal.vue';
-import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
+import { Head, Link, useForm, usePage } from '@inertiajs/vue3';
 import { ref, computed } from 'vue';
 import { formatDate as fmtDate, formatDateTime } from '@/utils/date';
 
@@ -11,7 +10,52 @@ const props = defineProps({
 });
 
 const hasTwoFactor = computed(() => usePage().props.auth.has_two_factor);
+
+/** Hour-based types use the escalonado select for partial approval; everything
+ *  else (per_day / one_time quantities) uses a plain number input. */
+const isHoursType = computed(() => ['overtime', 'night_shift'].includes(props.authorization.type));
+
+/** Escalonado ladder: every half hour from 0.5h to 24h. */
+const hourStepOptions = computed(() => {
+    const opts = [];
+    for (let i = 1; i <= 48; i++) {
+        const v = i / 2;
+        opts.push({ value: v.toFixed(2), label: String(v) });
+    }
+    return opts;
+});
+
+const isAlreadyApproved = computed(() => props.authorization.status === 'approved');
+const approveLabel = computed(() => (isAlreadyApproved.value ? 'Modificar aprobación' : 'Aprobar'));
+
+/** Default the approve dialog to the currently requested/approved hours, as a
+ *  canonical two-decimal string so the select pre-selects the matching option. */
+const defaultApproveHours = () => {
+    const n = Number(props.authorization.hours);
+    return n > 0 ? n.toFixed(2) : '';
+};
+
 const showApproveModal = ref(false);
+const approveForm = useForm({
+    hours: defaultApproveHours(),
+    two_factor_code: '',
+});
+
+const openApprove = () => {
+    approveForm.hours = defaultApproveHours();
+    approveForm.two_factor_code = '';
+    approveForm.clearErrors();
+    showApproveModal.value = true;
+};
+
+const submitApprove = () => {
+    approveForm.post(route('authorizations.approve', props.authorization.id), {
+        preserveScroll: true,
+        onSuccess: () => {
+            showApproveModal.value = false;
+        },
+    });
+};
 
 const statusColors = {
     pending: 'bg-yellow-100 text-yellow-800 border-yellow-300',
@@ -38,14 +82,6 @@ const rejectForm = useForm({
 });
 
 const showRejectModal = ref(false);
-
-const handleApprove = () => {
-    if (hasTwoFactor.value) {
-        showApproveModal.value = true;
-    } else {
-        router.post(route('authorizations.approve', props.authorization.id));
-    }
-};
 
 const submitReject = () => {
     rejectForm.post(route('authorizations.reject', props.authorization.id), {
@@ -205,16 +241,16 @@ const submitReject = () => {
                             Eliminar
                         </Link>
                     </div>
-                    <div v-if="authorization.status === 'pending'" class="space-x-2">
+                    <div class="space-x-2">
                         <button
                             v-if="can.approve"
-                            @click="handleApprove"
+                            @click="openApprove"
                             class="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
                         >
-                            Aprobar
+                            {{ approveLabel }}
                         </button>
                         <button
-                            v-if="can.reject"
+                            v-if="can.reject && authorization.status === 'pending'"
                             @click="showRejectModal = true"
                             class="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
                         >
@@ -225,15 +261,88 @@ const submitReject = () => {
             </div>
         </div>
 
-        <!-- Approve 2FA Modal -->
-        <TwoFactorModal
-            :show="showApproveModal"
-            :action="route('authorizations.approve', authorization.id)"
-            method="post"
-            title="Aprobar Autorizacion"
-            message="Ingresa tu codigo de verificacion para aprobar esta autorizacion."
-            @close="showApproveModal = false"
-        />
+        <!-- Approve Modal (with partial-hours adjustment) -->
+        <div v-if="showApproveModal" class="fixed inset-0 z-50 overflow-y-auto">
+            <div class="flex items-center justify-center min-h-screen px-4">
+                <div class="fixed inset-0 bg-gray-500 bg-opacity-75" @click="showApproveModal = false"></div>
+                <div class="relative bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-1">
+                        {{ approveLabel }}
+                    </h3>
+                    <p class="text-sm text-gray-500 mb-4">
+                        {{ isAlreadyApproved
+                            ? 'Ajusta las horas aprobadas y vuelve a confirmar.'
+                            : 'Confirma la aprobación. Puedes aprobar una cantidad parcial.' }}
+                    </p>
+                    <form @submit.prevent="submitApprove">
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                {{ isHoursType ? 'Horas a aprobar' : 'Cantidad a aprobar' }}
+                            </label>
+                            <p v-if="authorization.hours" class="text-xs text-gray-500 mb-1">
+                                Solicitado: {{ authorization.hours }}<span v-if="isHoursType">h</span>
+                            </p>
+                            <select
+                                v-if="isHoursType"
+                                v-model="approveForm.hours"
+                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                :class="{ 'border-red-500': approveForm.errors.hours }"
+                            >
+                                <option value="">Sin cambio</option>
+                                <option v-for="opt in hourStepOptions" :key="opt.value" :value="opt.value">{{ opt.label }}h</option>
+                            </select>
+                            <input
+                                v-else
+                                v-model="approveForm.hours"
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                placeholder="Sin cambio"
+                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                :class="{ 'border-red-500': approveForm.errors.hours }"
+                            />
+                            <p v-if="approveForm.errors.hours" class="mt-1 text-sm text-red-600">
+                                {{ approveForm.errors.hours }}
+                            </p>
+                        </div>
+                        <div v-if="hasTwoFactor" class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                Codigo de verificacion *
+                            </label>
+                            <input
+                                v-model="approveForm.two_factor_code"
+                                type="text"
+                                inputmode="numeric"
+                                autocomplete="one-time-code"
+                                maxlength="6"
+                                :class="{ 'border-red-500': approveForm.errors.two_factor_code }"
+                                class="w-full text-center text-lg tracking-widest rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                placeholder="000000"
+                            />
+                            <p v-if="approveForm.errors.two_factor_code" class="mt-1 text-sm text-red-600">
+                                {{ approveForm.errors.two_factor_code }}
+                            </p>
+                        </div>
+                        <div class="flex justify-end space-x-3">
+                            <button
+                                type="button"
+                                @click="showApproveModal = false"
+                                class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                type="submit"
+                                :disabled="approveForm.processing"
+                                class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+                            >
+                                {{ approveForm.processing ? 'Guardando...' : approveLabel }}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
 
         <!-- Reject Modal -->
         <div v-if="showRejectModal" class="fixed inset-0 z-50 overflow-y-auto">

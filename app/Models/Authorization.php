@@ -181,14 +181,28 @@ class Authorization extends Model
 
     /**
      * Approve the authorization.
+     *
+     * When $hours is provided it becomes the approved amount (partial approval),
+     * overriding the requested/detected value — this is what payroll pays. Passing
+     * null keeps the existing hours untouched. Re-approving an already-processed
+     * authorization (admin "modify approval") clears any prior rejection reason.
+     *
+     * Args:
+     *     approver: The user approving the authorization.
+     *     hours: Optional approved hours/quantity override. Null keeps current.
      */
-    public function approve(User $approver): void
+    public function approve(User $approver, ?float $hours = null): void
     {
         $data = [
             'status' => self::STATUS_APPROVED,
             'approved_by' => $approver->id,
             'approved_at' => now(),
+            'rejection_reason' => null,
         ];
+
+        if ($hours !== null) {
+            $data['hours'] = $hours;
+        }
 
         // Auto-sign department head timestamp if department_head_id is set
         if ($this->department_head_id) {

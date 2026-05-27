@@ -396,6 +396,25 @@ const totalEntryHours = computed(() => {
     return form.entries.reduce((sum, e) => sum + (parseFloat(e.hours) || 0), 0).toFixed(2);
 });
 
+/** Staggered hour choices (the "escalonado" ladder the company uses): every
+ *  half hour from 0.5h up to 24h. `value` matches the canonical two-decimal
+ *  string stored on entries; `label` drops trailing zeros for display. */
+const hourStepOptions = computed(() => {
+    const opts = [];
+    for (let i = 1; i <= 48; i++) {
+        const v = i / 2;
+        opts.push({ value: v.toFixed(2), label: String(v) });
+    }
+    return opts;
+});
+
+/** Normalize an entry's stored hours to the matching <select> option value
+ *  (or '' so the placeholder shows when there's nothing meaningful yet). */
+const entryHoursSelectValue = (entry) => {
+    const n = Number(entry.hours);
+    return n > 0 ? n.toFixed(2) : '';
+};
+
 const setEntryField = (index, field, value) => {
     const next = [...form.entries];
     const row = { ...next[index], [field]: value };
@@ -412,13 +431,13 @@ const removeEntry = (index) => {
     form.entries = next;
 };
 
+/** Add one blank row for every selected employee (mirrors how "Cargar desde
+ *  checadas" fans out across the whole selection), not just the first. */
 const addManualEntry = () => {
     if (form.employee_ids.length === 0) return;
-    const empId = form.employee_ids[0];
-    const emp = props.employees.find(e => e.id === empId);
-    form.entries = [
-        ...form.entries,
-        {
+    const newRows = form.employee_ids.map((empId) => {
+        const emp = props.employees.find(e => e.id === empId);
+        return {
             employee_id: empId,
             employee_name: emp?.full_name || `Empleado #${empId}`,
             employee_number: emp?.employee_number || '',
@@ -428,8 +447,9 @@ const addManualEntry = () => {
             hours: '',
             summary: '',
             kind: 'manual',
-        },
-    ];
+        };
+    });
+    form.entries = [...form.entries, ...newRows];
 };
 
 /** Compose a datetime-local string from row date + row time. */
@@ -731,17 +751,17 @@ const canSubmit = computed(() => {
                             </div>
                             <!-- Column headers shown once per group -->
                             <div class="bg-gray-50 px-4 py-1 grid grid-cols-12 gap-2 text-[10px] font-medium uppercase tracking-wide text-gray-500 border-b">
-                                <div class="col-span-3">Día</div>
+                                <div class="col-span-2">Día</div>
                                 <div class="col-span-4">Inicio</div>
                                 <div class="col-span-4">Fin</div>
-                                <div class="col-span-1">h</div>
+                                <div class="col-span-2">h</div>
                             </div>
                             <!-- Day rows for this employee -->
                             <div class="divide-y divide-gray-100">
                                 <template v-for="entry in group.entries" :key="`${entry.employee_id}_${entry.date}_${entry.kind}_${entry._index}`">
                                     <div class="px-4 py-2 grid grid-cols-12 gap-2 items-center text-sm"
                                         :class="isHoursType && hasScheduleConflict(entry) ? 'bg-red-50' : (isHoursType && (parseFloat(entry.hours) || 0) <= 0 ? 'bg-amber-50' : 'bg-white')">
-                                        <div class="col-span-3 min-w-0">
+                                        <div class="col-span-2 min-w-0">
                                             <div class="text-xs font-semibold"
                                                 :class="isHoursType && hasScheduleConflict(entry) ? 'text-red-700' : (isHoursType && (parseFloat(entry.hours) || 0) <= 0 ? 'text-amber-700' : 'text-pink-700')">
                                                 {{ formatDateShort(entry.date) }}
@@ -764,10 +784,15 @@ const canSubmit = computed(() => {
                                             @input="setEntryDatetime(entry._index, 'end_time', $event.target.value)"
                                             class="col-span-4 rounded text-xs focus:border-pink-500 focus:ring-pink-500"
                                             :class="isHoursType && hasScheduleConflict(entry) ? 'border-red-400' : 'border-gray-300'" />
-                                        <input type="text" readonly
-                                            :value="entry.hours"
-                                            title="Calculado automáticamente desde inicio/fin con la regla escalonada"
-                                            class="col-span-1 rounded border-gray-200 bg-gray-50 text-xs text-gray-700 text-right cursor-not-allowed" />
+                                        <select
+                                            :value="entryHoursSelectValue(entry)"
+                                            @change="setEntryField(entry._index, 'hours', $event.target.value)"
+                                            title="Horas a autorizar (escalonado). Se llena solo desde inicio/fin, pero puedes ajustarlo."
+                                            class="col-span-2 rounded text-xs text-gray-700 focus:border-pink-500 focus:ring-pink-500"
+                                            :class="isHoursType && hasScheduleConflict(entry) ? 'border-red-400' : 'border-gray-300'">
+                                            <option value="">--</option>
+                                            <option v-for="opt in hourStepOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+                                        </select>
                                     </div>
                                     <div v-if="isHoursType && hasScheduleConflict(entry)"
                                         class="px-4 pb-2 -mt-1 text-[11px] text-red-700 bg-red-50">

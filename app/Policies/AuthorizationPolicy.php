@@ -114,6 +114,13 @@ class AuthorizationPolicy
             return false;
         }
 
+        // Full-access admins (RRHH/admin) can also modify an existing approval or
+        // re-approve a rejected one — partial approval and post-hoc adjustments —
+        // for anything that isn't already paid out.
+        if ($user->hasPermissionTo('authorizations.view_all')) {
+            return ! $authorization->isPaid();
+        }
+
         return $authorization->isPending();
     }
 
