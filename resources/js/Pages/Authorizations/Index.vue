@@ -17,8 +17,6 @@ const props = defineProps({
 });
 
 const hasTwoFactor = computed(() => usePage().props.auth.has_two_factor);
-const showApproveModal = ref(false);
-const approveAuthId = ref(null);
 
 const filters = ref({
     status: props.filters.status || '',
@@ -143,13 +141,48 @@ const rejectForm = useForm({
 const showRejectModal = ref(false);
 const selectedAuthorization = ref(null);
 
-const handleApprove = (auth) => {
-    if (hasTwoFactor.value) {
-        approveAuthId.value = auth.id;
-        showApproveModal.value = true;
-    } else {
-        router.post(route('authorizations.approve', auth.id));
+// Single approve / modify-approval modal (with optional partial hours), mirroring
+// the detail page. Hour-based types use the escalonado select; others a number.
+const showApproveModal = ref(false);
+const approveAuth = ref(null);
+
+const isHoursType = (auth) => ['overtime', 'night_shift'].includes(auth?.type);
+
+/** Escalonado ladder: every half hour from 0.5h to 24h. */
+const hourStepOptions = computed(() => {
+    const opts = [];
+    for (let i = 1; i <= 48; i++) {
+        const v = i / 2;
+        opts.push({ value: v.toFixed(2), label: String(v) });
     }
+    return opts;
+});
+
+const approveForm = useForm({
+    hours: '',
+    two_factor_code: '',
+});
+
+const isApproveModify = computed(() => approveAuth.value?.status === 'approved');
+const approveModalLabel = computed(() => (isApproveModify.value ? 'Modificar aprobación' : 'Aprobar'));
+
+const openApprove = (auth) => {
+    approveAuth.value = auth;
+    const n = Number(auth.hours);
+    approveForm.hours = n > 0 ? n.toFixed(2) : '';
+    approveForm.two_factor_code = '';
+    approveForm.clearErrors();
+    showApproveModal.value = true;
+};
+
+const submitApprove = () => {
+    approveForm.post(route('authorizations.approve', approveAuth.value.id), {
+        preserveScroll: true,
+        onSuccess: () => {
+            showApproveModal.value = false;
+            approveAuth.value = null;
+        },
+    });
 };
 
 const openRejectModal = (auth) => {
@@ -456,8 +489,8 @@ const typeLabels = {
                             </Link>
                             <template v-if="auth.status === 'pending'">
                                 <button
-                                    v-if="can.approve"
-                                    @click="handleApprove(auth)"
+                                    v-if="auth.can_approve"
+                                    @click="openApprove(auth)"
                                     class="text-green-600 hover:text-green-900"
                                 >
                                     Aprobar
@@ -470,6 +503,13 @@ const typeLabels = {
                                     Rechazar
                                 </button>
                             </template>
+                            <button
+                                v-else-if="auth.status === 'approved' && auth.can_approve"
+                                @click="openApprove(auth)"
+                                class="text-green-600 hover:text-green-900"
+                            >
+                                Modificar
+                            </button>
                         </td>
                     </tr>
                     <tr v-if="authorizations.data.length === 0">
@@ -510,16 +550,91 @@ const typeLabels = {
             </div>
         </div>
 
-        <!-- Approve 2FA Modal -->
-        <TwoFactorModal
-            v-if="approveAuthId"
-            :show="showApproveModal"
-            :action="route('authorizations.approve', approveAuthId)"
-            method="post"
-            title="Aprobar Autorizacion"
-            message="Ingresa tu codigo de verificacion para aprobar esta autorizacion."
-            @close="showApproveModal = false; approveAuthId = null;"
-        />
+        <!-- Approve / Modify-approval Modal (with partial-hours adjustment) -->
+        <div v-if="showApproveModal && approveAuth" class="fixed inset-0 z-50 overflow-y-auto">
+            <div class="flex items-center justify-center min-h-screen px-4">
+                <div class="fixed inset-0 bg-gray-500 bg-opacity-75" @click="showApproveModal = false"></div>
+                <div class="relative bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-1">
+                        {{ approveModalLabel }}
+                    </h3>
+                    <p class="text-sm text-gray-500 mb-1">
+                        {{ approveAuth.employee?.full_name }}
+                    </p>
+                    <p class="text-sm text-gray-500 mb-4">
+                        {{ isApproveModify
+                            ? 'Ajusta las horas aprobadas y vuelve a confirmar.'
+                            : 'Confirma la aprobación. Puedes aprobar una cantidad parcial.' }}
+                    </p>
+                    <form @submit.prevent="submitApprove">
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                {{ isHoursType(approveAuth) ? 'Horas a aprobar' : 'Cantidad a aprobar' }}
+                            </label>
+                            <p v-if="approveAuth.hours" class="text-xs text-gray-500 mb-1">
+                                Solicitado: {{ approveAuth.hours }}<span v-if="isHoursType(approveAuth)">h</span>
+                            </p>
+                            <select
+                                v-if="isHoursType(approveAuth)"
+                                v-model="approveForm.hours"
+                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                :class="{ 'border-red-500': approveForm.errors.hours }"
+                            >
+                                <option value="">Sin cambio</option>
+                                <option v-for="opt in hourStepOptions" :key="opt.value" :value="opt.value">{{ opt.label }}h</option>
+                            </select>
+                            <input
+                                v-else
+                                v-model="approveForm.hours"
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                placeholder="Sin cambio"
+                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                :class="{ 'border-red-500': approveForm.errors.hours }"
+                            />
+                            <p v-if="approveForm.errors.hours" class="mt-1 text-sm text-red-600">
+                                {{ approveForm.errors.hours }}
+                            </p>
+                        </div>
+                        <div v-if="hasTwoFactor" class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                Codigo de verificacion *
+                            </label>
+                            <input
+                                v-model="approveForm.two_factor_code"
+                                type="text"
+                                inputmode="numeric"
+                                autocomplete="one-time-code"
+                                maxlength="6"
+                                :class="{ 'border-red-500': approveForm.errors.two_factor_code }"
+                                class="w-full text-center text-lg tracking-widest rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                placeholder="000000"
+                            />
+                            <p v-if="approveForm.errors.two_factor_code" class="mt-1 text-sm text-red-600">
+                                {{ approveForm.errors.two_factor_code }}
+                            </p>
+                        </div>
+                        <div class="flex justify-end space-x-3">
+                            <button
+                                type="button"
+                                @click="showApproveModal = false"
+                                class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                type="submit"
+                                :disabled="approveForm.processing"
+                                class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+                            >
+                                {{ approveForm.processing ? 'Guardando...' : approveModalLabel }}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
 
         <!-- Bulk Approve 2FA Modal -->
         <TwoFactorModal

@@ -90,6 +90,16 @@ class AuthorizationController extends Controller
 
         $authorizations = $query->orderBy('created_at', 'desc')->paginate(15)->withQueryString();
 
+        // Per-row approve capability drives "Aprobar parcial" (pending) and
+        // "Modificar aprobación" (already approved) in the list. The policy
+        // already accounts for pending-vs-admin, ownership, team scope and the
+        // paid lock, so the frontend doesn't have to duplicate that logic.
+        $authorizations->through(function ($authorization) use ($user) {
+            $authorization->can_approve = $user->can('approve', $authorization);
+
+            return $authorization;
+        });
+
         // Pending count (scoped to user's view permissions)
         $pendingQuery = Authorization::pending();
         if (! $user->hasPermissionTo('authorizations.view_all')) {
