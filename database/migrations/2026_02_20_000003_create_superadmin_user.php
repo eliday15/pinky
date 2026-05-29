@@ -20,7 +20,10 @@ return new class extends Migration
             ]
         );
 
-        if (!$user->hasRole('admin')) {
+        // Only assign the role if it already exists. On a fresh migration the
+        // 'admin' role is created later by RolesPermissionsSeeder.
+        if (\Spatie\Permission\Models\Role::where('name', 'admin')->where('guard_name', 'web')->exists()
+            && !$user->hasRole('admin')) {
             $user->assignRole('admin');
         }
     }

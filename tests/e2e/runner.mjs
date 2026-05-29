@@ -14,7 +14,7 @@
  */
 
 import { execSync, spawn } from 'node:child_process';
-import { existsSync, unlinkSync, writeFileSync, readFileSync } from 'node:fs';
+import { existsSync, unlinkSync, writeFileSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -133,29 +133,44 @@ async function main() {
             console.log('  Removed public/hot (force production assets)');
         }
 
-        // 4. Start Laravel server
+        // 4. Start Laravel server via shell redirect so stdout/stderr go to a real
+        // file. `php artisan serve` uses `file_put_contents('php://stdout', ...)` for
+        // access logs; if those writes get EPIPE (e.g. due to how Node inherits fds
+        // through the artisan→php-S→worker chain), the server crashes mid-request.
+        // A shell-level `>file 2>&1` redirect gives every descended process a
+        // writable file fd that never causes EPIPE, regardless of what Node does to
+        // its own stdio descriptors.
         console.log('\n→ Starting Laravel server...');
-        serverProcess = spawn('php', ['artisan', 'serve', '--env=testing', `--port=${PORT}`], {
-            cwd: ROOT,
-            stdio: ['ignore', 'pipe', 'pipe'],
-        });
-
-        serverProcess.stdout.on('data', (data) => {
-            const msg = data.toString().trim();
-            if (msg) console.log(`  [server] ${msg}`);
-        });
-        serverProcess.stderr.on('data', (data) => {
-            const msg = data.toString().trim();
-            if (msg) console.log(`  [server:err] ${msg}`);
-        });
+        const serverLogPath = resolve(ROOT, 'storage/logs/e2e-server.log');
+        serverProcess = spawn(
+            'sh',
+            ['-c', `php artisan serve --env=testing --port=${PORT} >"${serverLogPath}" 2>&1`],
+            { cwd: ROOT, stdio: 'ignore', detached: false }
+        );
 
         await waitForServer();
 
         // 5. Run tests
+        // Enumerate spec files explicitly (don't rely on shell glob expansion)
+        // and run them serially: every spec launches its own browser and shares
+        // the single dev server on PORT, so concurrency would cause contention.
         console.log('\n→ Running E2E tests...\n');
+        const specFiles = readdirSync(__dirname)
+            .filter((f) => f.endsWith('.test.mjs'))
+            .sort()
+            .map((f) => resolve(__dirname, f));
+
+        if (specFiles.length === 0) {
+            throw new Error('No *.test.mjs spec files found in tests/e2e');
+        }
+        console.log(`  Discovered ${specFiles.length} spec file(s):`);
+        specFiles.forEach((f) => console.log(`    - ${f.split('/').pop()}`));
+
         try {
+            // --test-timeout caps any single hung test (e.g. a selector that never
+            // appears) so the suite fails fast instead of blocking indefinitely.
             execSync(
-                `node --test ${resolve(__dirname, '*.test.mjs')}`,
+                `node --test --test-concurrency=1 --test-timeout=60000 ${specFiles.map((f) => `"${f}"`).join(' ')}`,
                 { cwd: ROOT, stdio: 'inherit', env: { ...process.env, E2E_BASE_URL: BASE_URL } }
             );
             console.log('\n✓ All E2E tests passed!');

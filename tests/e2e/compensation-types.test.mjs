@@ -19,6 +19,7 @@ import {
     screenshot,
     countElements,
     waitForInertia,
+    selectByLabel,
 } from './helpers.mjs';
 
 describe('Compensation Types (Block 1)', () => {
@@ -79,6 +80,10 @@ describe('Compensation Types (Block 1)', () => {
         await pctInput.press('Backspace');
         await pctInput.type('25.00', { delay: 20 });
 
+        // authorization_type is NOT NULL in the DB; the form defaults it to empty,
+        // so a concept must be linked to an authorization type to persist.
+        await selectByLabel(page, 'Tipo de Autorizacion', 'Horas Extra');
+
         await screenshot(page, 'ct-02-create-pct-filled');
 
         // Submit
@@ -115,6 +120,9 @@ describe('Compensation Types (Block 1)', () => {
         await amtInput.click({ clickCount: 3 });
         await amtInput.press('Backspace');
         await amtInput.type('200.00', { delay: 20 });
+
+        // authorization_type is NOT NULL in the DB; link the concept to persist it.
+        await selectByLabel(page, 'Tipo de Autorizacion', 'Especial');
 
         await screenshot(page, 'ct-03-create-fixed-filled');
 

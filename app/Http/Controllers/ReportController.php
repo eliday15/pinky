@@ -114,7 +114,7 @@ class ReportController extends Controller implements HasMiddleware
         $activeEmployeeIds = $this->scopedActiveEmployeeIds();
 
         $records = AttendanceRecord::with(['employee.department'])
-            ->whereBetween('work_date', [$startDate, $endDate])
+            ->whereBetween('work_date', [$startDate->toDateString(), $endDate->toDateString()])
             ->whereIn('employee_id', $activeEmployeeIds)
             ->get();
 
@@ -161,7 +161,7 @@ class ReportController extends Controller implements HasMiddleware
         $activeEmployeeIds = $this->scopedActiveEmployeeIds();
 
         $records = AttendanceRecord::with(['employee.department'])
-            ->whereBetween('work_date', [$startDate, $endDate])
+            ->whereBetween('work_date', [$startDate->toDateString(), $endDate->toDateString()])
             ->whereIn('employee_id', $activeEmployeeIds)
             ->get();
 
@@ -244,6 +244,7 @@ class ReportController extends Controller implements HasMiddleware
             if ($selectedPeriod) {
                 $entries = PayrollEntry::with(['employee.department'])
                     ->where('payroll_period_id', $periodId)
+                    ->whereIn('employee_id', $this->scopedActiveEmployeeIds())
                     ->orderBy('net_pay', 'desc')
                     ->get();
 
@@ -278,7 +279,7 @@ class ReportController extends Controller implements HasMiddleware
 
         $records = AttendanceRecord::with(['employee.department'])
             ->whereIn('employee_id', $activeEmployeeIds)
-            ->whereBetween('work_date', [$startDate, $endDate])
+            ->whereBetween('work_date', [$startDate->toDateString(), $endDate->toDateString()])
             ->where('overtime_hours', '>', 0)
             ->get();
 
@@ -325,7 +326,7 @@ class ReportController extends Controller implements HasMiddleware
 
         $records = AttendanceRecord::with(['employee.department', 'employee.schedule:id,working_days'])
             ->whereIn('employee_id', $activeEmployeeIds)
-            ->whereBetween('work_date', [$startDate, $endDate])
+            ->whereBetween('work_date', [$startDate->toDateString(), $endDate->toDateString()])
             ->where('status', 'absent')
             ->when(! empty($holidayDates), fn ($q) => $q->whereNotIn('work_date', $holidayDates))
             ->get()
@@ -387,7 +388,7 @@ class ReportController extends Controller implements HasMiddleware
 
         $records = AttendanceRecord::with(['employee.department', 'employee.schedule'])
             ->whereIn('employee_id', $activeEmployeeIds)
-            ->whereBetween('work_date', [$startDate, $endDate])
+            ->whereBetween('work_date', [$startDate->toDateString(), $endDate->toDateString()])
             ->where('status', 'late')
             ->orderBy('late_minutes', 'desc')
             ->get();
@@ -488,7 +489,7 @@ class ReportController extends Controller implements HasMiddleware
 
         $records = AttendanceRecord::with(['employee.department'])
             ->whereIn('employee_id', $activeEmployeeIds)
-            ->whereBetween('work_date', [$startDate, $endDate])
+            ->whereBetween('work_date', [$startDate->toDateString(), $endDate->toDateString()])
             ->get();
 
         $departments = $records->groupBy(fn ($r) => $r->employee?->department?->name ?? 'Sin Departamento')->map(function ($group, $deptName) {
@@ -603,7 +604,7 @@ class ReportController extends Controller implements HasMiddleware
 
         $records = AttendanceRecord::with(['employee.department', 'employee.schedule'])
             ->whereIn('employee_id', $activeEmployeeIds)
-            ->whereBetween('work_date', [$startDate, $endDate])
+            ->whereBetween('work_date', [$startDate->toDateString(), $endDate->toDateString()])
             ->get();
 
         $byEmployee = $records->groupBy('employee_id')->map(function ($group) {
@@ -664,7 +665,11 @@ class ReportController extends Controller implements HasMiddleware
      */
     public function payrollTrends(Request $request): Response
     {
-        $periods = PayrollPeriod::with(['entries'])
+        $activeEmployeeIds = $this->scopedActiveEmployeeIds();
+
+        $periods = PayrollPeriod::with(['entries' => function ($q) use ($activeEmployeeIds) {
+            $q->whereIn('employee_id', $activeEmployeeIds);
+        }])
             ->whereIn('status', ['approved', 'paid'])
             ->orderBy('start_date', 'desc')
             ->take(12)

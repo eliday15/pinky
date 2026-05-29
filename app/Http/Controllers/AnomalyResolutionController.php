@@ -66,7 +66,7 @@ class AnomalyResolutionController extends Controller
             $query->where('status', 'open');
         }
 
-        $anomalies = $query->orderByRaw("FIELD(severity, 'critical', 'warning', 'info')")
+        $anomalies = $query->orderByRaw("CASE severity WHEN 'critical' THEN 1 WHEN 'warning' THEN 2 WHEN 'info' THEN 3 ELSE 4 END")
             ->orderBy('work_date', 'desc')
             ->paginate(20)
             ->withQueryString();

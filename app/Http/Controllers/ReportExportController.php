@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Controllers\Concerns\ScopesReportEmployees;
 use App\Models\AttendanceRecord;
 use App\Models\Employee;
 use App\Models\Incident;
@@ -20,6 +21,8 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
  */
 class ReportExportController extends Controller implements HasMiddleware
 {
+    use ScopesReportEmployees;
+
     /**
      * Get the middleware that should be assigned to the controller.
      */
@@ -47,7 +50,7 @@ class ReportExportController extends Controller implements HasMiddleware
         $date = $request->get('date', Carbon::today()->toDateString());
 
         $records = AttendanceRecord::with(['employee.department'])
-            ->whereIn('employee_id', Employee::active()->pluck('id'))
+            ->whereIn('employee_id', $this->scopedActiveEmployeeIds())
             ->where('work_date', $date)
             ->get();
 
@@ -76,7 +79,7 @@ class ReportExportController extends Controller implements HasMiddleware
         $endDate = Carbon::parse($startDate)->endOfWeek()->toDateString();
 
         $records = AttendanceRecord::with(['employee.department'])
-            ->whereIn('employee_id', Employee::active()->pluck('id'))
+            ->whereIn('employee_id', $this->scopedActiveEmployeeIds())
             ->whereBetween('work_date', [$startDate, $endDate])
             ->orderBy('employee_id')
             ->orderBy('work_date')
@@ -118,7 +121,7 @@ class ReportExportController extends Controller implements HasMiddleware
         $endDate = $startDate->copy()->endOfMonth();
 
         $records = AttendanceRecord::with(['employee.department'])
-            ->whereIn('employee_id', Employee::active()->pluck('id'))
+            ->whereIn('employee_id', $this->scopedActiveEmployeeIds())
             ->whereBetween('work_date', [$startDate, $endDate])
             ->orderBy('employee_id')
             ->get();
@@ -158,7 +161,7 @@ class ReportExportController extends Controller implements HasMiddleware
         $endDate = $request->get('end_date', Carbon::now()->endOfMonth()->toDateString());
 
         $records = AttendanceRecord::with(['employee.department'])
-            ->whereIn('employee_id', Employee::active()->pluck('id'))
+            ->whereIn('employee_id', $this->scopedActiveEmployeeIds())
             ->whereBetween('work_date', [$startDate, $endDate])
             ->where('status', 'absent')
             ->orderBy('work_date')
@@ -186,7 +189,7 @@ class ReportExportController extends Controller implements HasMiddleware
         $endDate = $request->get('end_date', Carbon::now()->endOfMonth()->toDateString());
 
         $records = AttendanceRecord::with(['employee.department'])
-            ->whereIn('employee_id', Employee::active()->pluck('id'))
+            ->whereIn('employee_id', $this->scopedActiveEmployeeIds())
             ->whereBetween('work_date', [$startDate, $endDate])
             ->where('status', 'late')
             ->orderBy('work_date')
@@ -214,6 +217,7 @@ class ReportExportController extends Controller implements HasMiddleware
     {
         $employees = Employee::with('department')
             ->active()
+            ->whereIn('id', $this->scopedActiveEmployeeIds())
             ->orderBy('full_name')
             ->get();
 
@@ -240,7 +244,7 @@ class ReportExportController extends Controller implements HasMiddleware
         $endDate = $request->get('end_date', Carbon::now()->endOfMonth()->toDateString());
 
         $incidents = Incident::with(['employee.department', 'incidentType'])
-            ->whereIn('employee_id', Employee::active()->pluck('id'))
+            ->whereIn('employee_id', $this->scopedActiveEmployeeIds())
             ->whereBetween('start_date', [$startDate, $endDate])
             ->orderBy('start_date')
             ->get();
@@ -270,7 +274,7 @@ class ReportExportController extends Controller implements HasMiddleware
         $endDate = $request->get('end_date', Carbon::now()->endOfMonth()->toDateString());
 
         $records = AttendanceRecord::with(['employee.department'])
-            ->whereIn('employee_id', Employee::active()->pluck('id'))
+            ->whereIn('employee_id', $this->scopedActiveEmployeeIds())
             ->whereBetween('work_date', [$startDate, $endDate])
             ->where('overtime_hours', '>', 0)
             ->orderBy('work_date')
@@ -298,7 +302,7 @@ class ReportExportController extends Controller implements HasMiddleware
     {
         $startDate = $request->get('start_date', Carbon::now()->startOfWeek()->toDateString());
         $endDate = $request->get('end_date', Carbon::now()->endOfWeek()->toDateString());
-        $activeEmployeeIds = Employee::active()->pluck('id');
+        $activeEmployeeIds = $this->scopedActiveEmployeeIds();
         $lateToAbsenceCount = (int) SystemSetting::get('late_to_absence_count', 6);
 
         // Direct faltas
@@ -371,7 +375,7 @@ class ReportExportController extends Controller implements HasMiddleware
         $startDate = Carbon::parse($request->get('start_date', Carbon::now()->startOfWeek()->toDateString()));
         $endDate = Carbon::parse($request->get('end_date', Carbon::now()->endOfWeek()->toDateString()));
 
-        $employees = Employee::with(['schedule', 'department'])->active()->get();
+        $employees = Employee::with(['schedule', 'department'])->active()->whereIn('id', $this->scopedActiveEmployeeIds())->get();
         $allRecords = AttendanceRecord::whereBetween('work_date', [$startDate, $endDate])
             ->whereIn('employee_id', $employees->pluck('id'))
             ->get();
@@ -383,7 +387,7 @@ class ReportExportController extends Controller implements HasMiddleware
                 continue;
             }
 
-            $workingDays = $effectiveSchedule->working_days ?? [];
+            $workingDays = array_map('strtolower', $effectiveSchedule->working_days ?? []);
             if (empty($workingDays)) {
                 continue;
             }
@@ -391,7 +395,7 @@ class ReportExportController extends Controller implements HasMiddleware
             $expectedDays = 0;
             $currentDate = $startDate->copy();
             while ($currentDate->lte($endDate)) {
-                if (in_array($currentDate->englishDayOfWeek, $workingDays)) {
+                if (in_array(strtolower($currentDate->englishDayOfWeek), $workingDays)) {
                     $expectedDays++;
                 }
                 $currentDate->addDay();
@@ -442,7 +446,7 @@ class ReportExportController extends Controller implements HasMiddleware
 
         $records = AttendanceRecord::with(['employee.department'])
             ->whereBetween('work_date', [$startDate, $endDate])
-            ->whereIn('employee_id', Employee::active()->pluck('id'))
+            ->whereIn('employee_id', $this->scopedActiveEmployeeIds())
             ->where('status', 'late')
             ->orderBy('work_date')
             ->orderBy('employee_id')
@@ -472,7 +476,7 @@ class ReportExportController extends Controller implements HasMiddleware
 
         $records = AttendanceRecord::with(['employee.department'])
             ->whereBetween('work_date', [$startDate, $endDate])
-            ->whereIn('employee_id', Employee::active()->pluck('id'))
+            ->whereIn('employee_id', $this->scopedActiveEmployeeIds())
             ->where('early_departure_minutes', '>', 0)
             ->orderBy('work_date')
             ->orderBy('employee_id')

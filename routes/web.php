@@ -34,7 +34,7 @@ Route::get('/', function () {
     return redirect()->route('login');
 });
 
-Route::middleware(['auth', 'verified', 'password-changed', 'two-factor-setup'])->group(function () {
+Route::middleware(['auth', 'password-changed', 'two-factor-setup'])->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
 
     // Schedules

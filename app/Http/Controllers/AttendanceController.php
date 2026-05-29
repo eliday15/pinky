@@ -214,14 +214,40 @@ class AttendanceController extends Controller
      */
     public function calendar(Request $request): Response
     {
+        $this->authorize('viewAny', AttendanceRecord::class);
+
+        $user = Auth::user();
+
         $month = $request->month ? Carbon::parse($request->month . '-01') : Carbon::today()->startOfMonth();
         $employeeId = $request->employee;
 
-        $employees = Employee::active()->orderBy('full_name')->get(['id', 'full_name', 'employee_number']);
+        // Build employee query with the same permission-based scoping index() uses.
+        $employeeQuery = Employee::active();
+
+        if (! $user->hasPermissionTo('attendance.view_all')) {
+            if ($user->hasPermissionTo('attendance.view_team')) {
+                $userEmployee = $user->employee;
+                if ($userEmployee) {
+                    $employeeQuery->whereIn('id', $userEmployee->allSubordinateIds());
+                } else {
+                    $employeeQuery->whereRaw('1 = 0');
+                }
+            } elseif ($user->hasPermissionTo('attendance.view_own')) {
+                $employeeQuery->where('id', $user->employee?->id);
+            } else {
+                $employeeQuery->whereRaw('1 = 0');
+            }
+        }
+
+        $employees = (clone $employeeQuery)->orderBy('full_name')->get(['id', 'full_name', 'employee_number']);
 
         $calendarData = [];
 
-        if ($employeeId) {
+        // An employee outside the viewer's scope is treated as not selected so
+        // no out-of-scope data (or even its id) leaks back to the client.
+        $inScope = $employeeId && (clone $employeeQuery)->where('id', $employeeId)->exists();
+
+        if ($inScope) {
             $records = AttendanceRecord::where('employee_id', $employeeId)
                 ->whereBetween('work_date', [$month->copy()->startOfMonth(), $month->copy()->endOfMonth()])
                 ->get()
@@ -257,7 +283,7 @@ class AttendanceController extends Controller
 
         return Inertia::render('Attendance/Calendar', [
             'employees' => $employees,
-            'selectedEmployee' => $employeeId,
+            'selectedEmployee' => $inScope ? $employeeId : null,
             'month' => $month->format('Y-m'),
             'calendarData' => $calendarData,
         ]);
@@ -320,6 +346,8 @@ class AttendanceController extends Controller
 
             $workedMinutes = abs($checkIn->diffInMinutes($checkOut));
 
+            $dailyHours = 8;
+
             if ($employee->schedule) {
                 $dayName = strtolower($attendance->work_date->format('l'));
                 $daySchedule = $employee->getEffectiveScheduleForDay($dayName);
@@ -329,11 +357,12 @@ class AttendanceController extends Controller
                 if ($workedMinutes > 300) {
                     $workedMinutes -= $breakMinutes;
                 }
+
+                $dailyHours = $daySchedule->daily_work_hours ?? 8;
             }
 
             $workedMinutes = max(0, $workedMinutes);
             $workedHours = $workedMinutes / 60;
-            $dailyHours = $schedule ? ($daySchedule->daily_work_hours ?? 8) : 8;
 
             $validated['worked_hours'] = min($workedHours, $dailyHours);
             $validated['overtime_hours'] = max(0, $workedHours - $dailyHours);

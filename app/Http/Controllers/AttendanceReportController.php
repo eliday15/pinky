@@ -51,7 +51,7 @@ class AttendanceReportController extends Controller implements HasMiddleware
         // as faltas regardless of how the row was originally classified.
         $absentRows = DB::table('attendance_records')
             ->select('employee_id', 'work_date', 'check_in', 'check_out', 'late_minutes', 'early_departure_minutes')
-            ->whereBetween('work_date', [$startDate, $endDate])
+            ->whereBetween('work_date', [$startDate->toDateString(), $endDate->toDateString()])
             ->whereIn('employee_id', $activeEmployeeIds)
             ->where('status', 'absent')
             ->when(! empty($holidayDates), fn ($q) => $q->whereNotIn('work_date', $holidayDates))
@@ -90,7 +90,7 @@ class AttendanceReportController extends Controller implements HasMiddleware
         // Lates that fall on a holiday don't accumulate either.
         $lateRows = DB::table('attendance_records')
             ->select('employee_id', 'work_date')
-            ->whereBetween('work_date', [$startDate, $endDate])
+            ->whereBetween('work_date', [$startDate->toDateString(), $endDate->toDateString()])
             ->whereIn('employee_id', $activeEmployeeIds)
             ->where('status', 'late')
             ->when(! empty($holidayDates), fn ($q) => $q->whereNotIn('work_date', $holidayDates))
@@ -184,7 +184,7 @@ class AttendanceReportController extends Controller implements HasMiddleware
             ->get();
 
         $allRecords = AttendanceRecord::select('employee_id', 'work_date', 'status', 'worked_hours', 'late_minutes', 'early_departure_minutes')
-            ->whereBetween('work_date', [$startDate, $endDate])
+            ->whereBetween('work_date', [$startDate->toDateString(), $endDate->toDateString()])
             ->whereIn('employee_id', $employees->pluck('id'))
             ->get();
 
@@ -202,11 +202,14 @@ class AttendanceReportController extends Controller implements HasMiddleware
             if (empty($workingDays)) {
                 continue;
             }
+            // working_days are stored lowercase ("monday"); normalize both sides
+            // so the comparison is case-insensitive against Carbon's "Monday".
+            $workingDays = array_map('strtolower', $workingDays);
 
             $expectedDays = 0;
             $currentDate = $startDate->copy();
             while ($currentDate->lte($endDate)) {
-                if (in_array($currentDate->englishDayOfWeek, $workingDays)
+                if (in_array(strtolower($currentDate->englishDayOfWeek), $workingDays)
                     && ! in_array($currentDate->toDateString(), $holidayDates)) {
                     $expectedDays++;
                 }
@@ -275,7 +278,7 @@ class AttendanceReportController extends Controller implements HasMiddleware
 
         $rows = DB::table('attendance_records')
             ->select('employee_id', 'work_date', 'late_minutes', 'check_in')
-            ->whereBetween('work_date', [$startDate, $endDate])
+            ->whereBetween('work_date', [$startDate->toDateString(), $endDate->toDateString()])
             ->whereIn('employee_id', $activeEmployeeIds)
             ->where('status', 'late')
             ->when(! empty($holidayDates), fn ($q) => $q->whereNotIn('work_date', $holidayDates))
@@ -344,7 +347,7 @@ class AttendanceReportController extends Controller implements HasMiddleware
 
         $rows = DB::table('attendance_records')
             ->select('employee_id', 'work_date', 'early_departure_minutes', 'check_out')
-            ->whereBetween('work_date', [$startDate, $endDate])
+            ->whereBetween('work_date', [$startDate->toDateString(), $endDate->toDateString()])
             ->whereIn('employee_id', $activeEmployeeIds)
             ->where('early_departure_minutes', '>', 0)
             ->when(! empty($holidayDates), fn ($q) => $q->whereNotIn('work_date', $holidayDates))

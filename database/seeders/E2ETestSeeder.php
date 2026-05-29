@@ -2,13 +2,17 @@
 
 namespace Database\Seeders;
 
+use App\Models\Authorization;
 use App\Models\CompensationType;
 use App\Models\Department;
 use App\Models\Employee;
+use App\Models\Incident;
+use App\Models\IncidentType;
 use App\Models\Position;
 use App\Models\Schedule;
 use App\Models\User;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Hash;
 
 /**
@@ -20,12 +24,24 @@ use Illuminate\Support\Facades\Hash;
 class E2ETestSeeder extends Seeder
 {
     /**
+     * Fixed base32 TOTP secret for the E2E admin's confirmed 2FA device.
+     *
+     * Known to the Puppeteer helpers so they can compute a valid TOTP code
+     * for sensitive actions (approve/reject) that go through VerifiesTwoFactor.
+     * This is TEST-ONLY data; production devices use randomly generated secrets.
+     */
+    public const ADMIN_TOTP_SECRET = 'JBSWY3DPEHPK3PXP';
+
+    /**
      * Run the database seeds.
      */
     public function run(): void
     {
         // 1. Roles & permissions (required for Spatie)
         $this->call(RolesPermissionsSeeder::class);
+
+        // Incident types (needed by the Incidents module / e2e journey)
+        $this->call(IncidentTypesSeeder::class);
 
         // 2. Admin user
         $admin = User::factory()->create([
@@ -34,6 +50,20 @@ class E2ETestSeeder extends Seeder
             'password' => Hash::make('password'),
         ]);
         $admin->assignRole('admin');
+
+        // Confirmed 2FA device for the admin.
+        //
+        // The admin role requires 2FA (EnsureTwoFactorSetup middleware). Without a
+        // confirmed device the browser is bounced to /two-factor/setup and can never
+        // reach the app. Seeding a confirmed device with a KNOWN secret lets the e2e
+        // login proceed (the per-login TOTP challenge is currently disabled in
+        // AuthenticatedSessionController) AND lets the helpers generate a valid TOTP
+        // code for the approve/reject flows that call VerifiesTwoFactor::verifyTwoFactorCode.
+        $admin->twoFactorDevices()->create([
+            'name' => 'E2E Authenticator',
+            'secret' => Crypt::encryptString(self::ADMIN_TOTP_SECRET),
+            'confirmed_at' => now(),
+        ]);
 
         // 3. Departments
         $deptProd = Department::factory()->create([
@@ -192,6 +222,39 @@ class E2ETestSeeder extends Seeder
             'schedule_id' => $schedDay->id,
             'supervisor_id' => null,
             'hourly_rate' => 75.00,
+        ]);
+
+        // 8. Pending workflow records for the approval e2e journeys.
+        //
+        // Pending incident: "Permiso con goce" requires approval and does NOT
+        // deduct vacation, so the admin approve flow has no balance precondition.
+        $permisoType = IncidentType::where('code', 'PCG')->first();
+        Incident::factory()->create([
+            'employee_id' => $empTrial->id,
+            'incident_type_id' => $permisoType->id,
+            'start_date' => now()->addDays(3)->toDateString(),
+            'end_date' => now()->addDays(3)->toDateString(),
+            'days_count' => 1,
+            'reason' => 'Permiso e2e pendiente de aprobacion',
+            'status' => 'pending',
+        ]);
+
+        // Pending authorization: a "special" type never auto-approves (only
+        // overtime/night_shift do, and only when they match attendance — there's
+        // none seeded), so it stays pending for the admin approve journey.
+        Authorization::factory()->create([
+            'employee_id' => $empSupervisor->id,
+            'requested_by' => $admin->id,
+            'approved_by' => null,
+            'type' => Authorization::TYPE_SPECIAL,
+            'compensation_type_id' => $ctFixed->id,
+            'date' => now()->subDays(2)->toDateString(),
+            'start_time' => null,
+            'end_time' => null,
+            'hours' => 1,
+            'reason' => 'Autorizacion e2e pendiente de aprobacion',
+            'status' => Authorization::STATUS_PENDING,
+            'is_pre_authorization' => false,
         ]);
     }
 }

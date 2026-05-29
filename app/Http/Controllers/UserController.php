@@ -119,7 +119,7 @@ class UserController extends Controller
         ]);
 
         // Validate employee is not already linked to another user
-        if ($validated['employee_id']) {
+        if (! empty($validated['employee_id'])) {
             $employee = Employee::find($validated['employee_id']);
             if ($employee && $employee->user_id !== null) {
                 return back()->withErrors(['employee_id' => 'Este empleado ya esta vinculado a otro usuario.']);
@@ -137,7 +137,7 @@ class UserController extends Controller
         $user->assignRole($validated['role']);
 
         // Link employee if provided
-        if ($validated['employee_id']) {
+        if (! empty($validated['employee_id'])) {
             Employee::where('id', $validated['employee_id'])->update(['user_id' => $user->id]);
         }
 
@@ -199,7 +199,7 @@ class UserController extends Controller
         ]);
 
         // Validate employee is not already linked to another user
-        if ($validated['employee_id']) {
+        if (! empty($validated['employee_id'])) {
             $employee = Employee::find($validated['employee_id']);
             if ($employee && $employee->user_id !== null && $employee->user_id !== $user->id) {
                 return back()->withErrors(['employee_id' => 'Este empleado ya esta vinculado a otro usuario.']);
@@ -216,7 +216,7 @@ class UserController extends Controller
 
         // Handle employee link change
         $currentEmployeeId = $user->employee?->id;
-        $newEmployeeId = $validated['employee_id'] ? (int) $validated['employee_id'] : null;
+        $newEmployeeId = ! empty($validated['employee_id']) ? (int) $validated['employee_id'] : null;
 
         if ($currentEmployeeId !== $newEmployeeId) {
             // Unlink previous employee

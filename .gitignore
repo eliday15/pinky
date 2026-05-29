@@ -42,8 +42,10 @@ build/
 *.db
 database/database.sqlite
 
-# E2E test screenshots
+# E2E test screenshots & debug artifacts
 tests/e2e/screenshots/*.png
+tests/e2e/screenshots/*.html
+tests/e2e/server.log
 
 # Claude
 .claude/
@@ -54,3 +56,4 @@ tests/e2e/screenshots/*.png
 # Pinky sync agent — embeds production MySQL password + agent API key
 # Keep out of git so secrets never reach the remote repo history
 pinky_script/PinkySyncAgent.py
+storage/logs/e2e-server.log

@@ -181,7 +181,7 @@ class IncidentController extends Controller
         if (! empty($validated['start_time']) && ! empty($validated['end_time']) && empty($validated['hours'])) {
             $start = Carbon::parse($validated['start_time']);
             $end = Carbon::parse($validated['end_time']);
-            $validated['hours'] = $end->diffInMinutes($start) / 60;
+            $validated['hours'] = $start->diffInMinutes($end) / 60;
         }
 
         // Get employee and their schedule for working days calculation
@@ -390,7 +390,7 @@ class IncidentController extends Controller
                 'start_date' => $validated['start_date'],
                 'end_date' => $validated['end_date'],
                 'days_count' => $daysCount,
-                'reason' => $validated['reason'],
+                'reason' => $validated['reason'] ?? null,
                 'status' => $status,
                 'approved_by' => $status === 'approved' ? auth()->id() : null,
                 'approved_at' => $status === 'approved' ? now() : null,
@@ -473,7 +473,7 @@ class IncidentController extends Controller
         if (! empty($validated['start_time']) && ! empty($validated['end_time']) && empty($validated['hours'])) {
             $start = Carbon::parse($validated['start_time']);
             $end = Carbon::parse($validated['end_time']);
-            $validated['hours'] = $end->diffInMinutes($start) / 60;
+            $validated['hours'] = $start->diffInMinutes($end) / 60;
         }
 
         $employee = Employee::with('schedule')->find($validated['employee_id']);

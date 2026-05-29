@@ -137,6 +137,9 @@ class RolesPermissionsSeeder extends Seeder
             'authorizations.create',
             // Anomalías - team view only (no resolve)
             'anomalies.view_team',
+            // Reportes - team-scoped (own direct reports): attendance/discipline/
+            // overtime/payroll reports limited to subordinates via ScopesReportEmployees.
+            'reports.view_team',
         ]);
 
         // Create Employee role - Read-only: own attendance and own reports (faltas, asistencias, retardos, horas extra)
