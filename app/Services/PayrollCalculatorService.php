@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\AttendanceRecord;
 use App\Models\Authorization;
+use App\Models\CompensationType;
 use App\Models\Employee;
 use App\Models\Holiday;
 use App\Models\Incident;
@@ -31,6 +32,12 @@ class PayrollCalculatorService
      */
     public function calculatePeriod(PayrollPeriod $period): void
     {
+        // Paid periods are immutable: never recalculate (and overwrite) a
+        // period that has already been paid out.
+        if ($period->status === 'paid') {
+            return;
+        }
+
         $period->update(['status' => 'calculating']);
 
         // Eager load compensation types to avoid N+1
@@ -95,8 +102,15 @@ class PayrollCalculatorService
         // Calculate incident days
         $incidentMetrics = $this->calculateIncidentMetrics($incidents, $startDate, $endDate);
 
-        // FASE 3.1: Check late accumulation and add generated absences
-        $lateAbsencesGenerated = $this->calculateLateAbsences($employee, $period);
+        // ----------------------------------------------------------------
+        // Period payment scope.
+        // The nómina is split in two: a WEEKLY period pays the base salary
+        // minus absences/lates; a MONTHLY period pays the extras (overtime,
+        // velada, holiday, weekend, special concepts) plus vacations and all
+        // bonuses. A legacy BIWEEKLY period pays everything together.
+        // ----------------------------------------------------------------
+        $payBase = in_array($period->type, ['weekly', 'biweekly'], true);
+        $payExtras = in_array($period->type, ['monthly', 'biweekly'], true);
 
         // Get rates
         $hourlyRate = $employee->hourly_rate;
@@ -106,85 +120,116 @@ class PayrollCalculatorService
         $overtimeMultiplier = $employee->overtime_rate ?? 1.5;
         $holidayMultiplier = $employee->holiday_rate ?? 2.0;
 
-        // FASE 3.2: Calculate punctuality bonus
-        $punctualityBonusAmount = (float) SystemSetting::get('punctuality_bonus_amount', 50);
-        $punctualityBonus = $metrics['punctual_days'] * $punctualityBonusAmount;
+        // Use CompensationType-driven calculation if employee has comp types assigned
+        $useCompTypes = $this->resolver->hasCompensationTypes($employee);
 
-        // FASE 3.2: Calculate weekly and monthly bonuses
-        $weeklyBonus = $this->calculateWeeklyBonus($employee, $period, $attendance);
-        $monthlyBonus = $this->calculateMonthlyBonus($employee, $period, $attendance);
+        // ---- BASE (weekly): regular salary and absence/late deductions ----
+        $regularPay = $metrics['regular_hours'] * $hourlyRate;
 
-        // FASE 3.3: Calculate night shifts and dinner allowances
-        $nightShiftMetrics = $this->calculateNightShiftMetrics($employee, $startDate, $endDate);
+        // FASE 3.1: Late-to-absence is a weekly deduction; only consume and
+        // apply it on base periods so a monthly run never "eats" the
+        // accumulation without deducting it.
+        $lateAbsencesGenerated = $payBase ? $this->calculateLateAbsences($employee, $period) : 0;
+        $totalAbsences = $incidentMetrics['unpaid_days'] + $lateAbsencesGenerated;
+        $deductions = $payBase ? $totalAbsences * $dailySalary : 0.0;
 
-        // FASE 2/3: Calculate velada metrics from attendance records
+        // ---- EXTRAS (monthly): overtime, velada, holiday, weekend, special
+        // concepts, vacations and bonuses. Computed only when the period pays
+        // extras so a weekly period never charges them. ----
         $veladaMetrics = $this->calculateVeladaMetrics($attendance);
         $veladaMultiplier = (float) SystemSetting::get('velada_rate_multiplier', 2.0);
 
-        // Calculate pay - only authorized overtime/velada hours get paid
-        $regularPay = $metrics['regular_hours'] * $hourlyRate;
-        $authorizedOvertimeHours = $veladaMetrics['overtime_authorized_hours'];
-        $vacationPay = $incidentMetrics['vacation_days'] * ($hourlyRate * 8);
+        $nightShiftMetrics = [
+            'night_shift_hours' => 0,
+            'night_shift_days' => 0,
+            'night_shift_bonus' => 0,
+            'dinner_allowance' => 0,
+        ];
 
-        // Use CompensationType-driven calculation if employee has comp types assigned
-        $useCompTypes = $this->resolver->hasCompensationTypes($employee);
+        $overtimePay = 0.0;
+        $veladaPay = 0.0;
+        $holidayPay = 0.0;
+        $weekendPay = 0.0;
+        $otherCompensationPay = 0.0;
+        $vacationPay = 0.0;
+        $punctualityBonus = 0.0;
+        $weeklyBonus = 0.0;
+        $monthlyBonus = 0.0;
         $compensationConcepts = [];
 
-        if ($useCompTypes) {
-            $compensationPayments = $this->resolver->calculateAllCompensation(
-                $employee,
-                [
-                    'overtime_hours' => $authorizedOvertimeHours,
-                    'velada_hours' => $veladaMetrics['velada_authorized_hours'],
-                    'holiday_hours' => $metrics['holiday_hours'],
-                    'weekend_hours' => $metrics['weekend_hours'],
-                ],
-                $hourlyRate,
-                $dailySalary,
-                $approvedAuthorizations,
-            );
+        if ($payExtras) {
+            // FASE 3.3: Night shifts and dinner allowances
+            $nightShiftMetrics = $this->calculateNightShiftMetrics($employee, $startDate, $endDate);
 
-            $compensationConcepts = $compensationPayments['concepts'];
+            $vacationPay = $incidentMetrics['vacation_days'] * $dailySalary;
 
-            // Extract individual pays from concepts for backward-compatible fields
-            $overtimePay = 0;
-            $veladaPay = 0;
-            $holidayPay = 0;
-            $weekendPay = 0;
+            // FASE 3.2: Attendance bonuses (paid with the extras)
+            $punctualityBonus = $metrics['punctual_days'] * (float) SystemSetting::get('punctuality_bonus_amount', 50);
+            $weeklyBonus = $this->calculateWeeklyBonus($employee, $period, $attendance);
+            $monthlyBonus = $this->calculateMonthlyBonus($employee, $period, $attendance);
 
-            foreach ($compensationConcepts as $concept) {
-                $code = $concept['code'] ?? '';
-                if (in_array($code, ['HE', 'HED', 'HET'])) {
-                    $overtimePay += $concept['amount'];
-                } elseif ($code === 'VEL') {
-                    $veladaPay += $concept['amount'];
-                } elseif ($code === 'FEST') {
-                    $holidayPay += $concept['amount'];
-                } elseif (str_contains($concept['name'] ?? '', 'Fin de semana')) {
-                    $weekendPay += $concept['amount'];
-                } else {
-                    // Other compensation concepts go into overtime as catch-all
-                    $overtimePay += $concept['amount'];
+            $authorizedOvertimeHours = $veladaMetrics['overtime_authorized_hours'];
+
+            if ($useCompTypes) {
+                $compensationPayments = $this->resolver->calculateAllCompensation(
+                    $employee,
+                    [
+                        'overtime_hours' => $authorizedOvertimeHours,
+                        'velada_hours' => $veladaMetrics['velada_authorized_hours'],
+                        'holiday_hours' => $metrics['holiday_hours'],
+                        'weekend_hours' => $metrics['weekend_hours'],
+                    ],
+                    $hourlyRate,
+                    $dailySalary,
+                    $approvedAuthorizations,
+                    $holidayDates,
+                );
+
+                $compensationConcepts = $compensationPayments['concepts'];
+
+                // Route each concept to its stored pay bucket. Overtime/velada
+                // match by code; holiday/weekend/special match by the comp
+                // type's authorization_type / attendance_pull_rule.
+                foreach ($compensationConcepts as $concept) {
+                    $code = $concept['code'] ?? '';
+                    $authType = $concept['authorization_type'] ?? null;
+                    $pullRule = $concept['attendance_pull_rule'] ?? null;
+
+                    if (in_array($code, ['HE', 'HED', 'HET'], true)) {
+                        $overtimePay += $concept['amount'];
+                    } elseif ($code === 'VEL' || $authType === Authorization::TYPE_NIGHT_SHIFT) {
+                        $veladaPay += $concept['amount'];
+                    } elseif ($authType === Authorization::TYPE_HOLIDAY_WORKED) {
+                        $holidayPay += $concept['amount'];
+                    } elseif ($pullRule === CompensationType::PULL_RULE_WEEKEND) {
+                        $weekendPay += $concept['amount'];
+                    } else {
+                        // Cena, comida, dominical and any other special concept.
+                        $otherCompensationPay += $concept['amount'];
+                    }
                 }
+            } else {
+                // Legacy fallback: hardcoded multipliers
+                $overtimePay = $authorizedOvertimeHours * $hourlyRate * $overtimeMultiplier;
+                $veladaPay = $veladaMetrics['velada_authorized_hours'] * $hourlyRate * $veladaMultiplier;
+                $holidayPay = $metrics['holiday_hours'] * $hourlyRate * $holidayMultiplier;
+                $weekendPay = $metrics['weekend_hours'] * $hourlyRate * $overtimeMultiplier;
             }
-        } else {
-            // Legacy fallback: hardcoded multipliers
-            $overtimePay = $authorizedOvertimeHours * $hourlyRate * $overtimeMultiplier;
-            $veladaPay = $veladaMetrics['velada_authorized_hours'] * $hourlyRate * $veladaMultiplier;
-            $holidayPay = $metrics['holiday_hours'] * $hourlyRate * $holidayMultiplier;
-            $weekendPay = $metrics['weekend_hours'] * $hourlyRate * $overtimeMultiplier;
         }
 
-        // Calculate total bonuses
+        // Dinner: when the employee is on the CompensationType path, dinner is
+        // paid solely from approved CENA authorizations (above), so the legacy
+        // night_shift dinner allowance is suppressed to avoid double-paying.
+        $dinnerAllowance = $useCompTypes ? 0.0 : $nightShiftMetrics['dinner_allowance'];
+
+        // Calculate total bonuses (0 on a weekly period)
         $totalBonuses = $punctualityBonus + $weeklyBonus + $monthlyBonus
             + $nightShiftMetrics['night_shift_bonus']
-            + $nightShiftMetrics['dinner_allowance'];
+            + $dinnerAllowance;
 
-        // Calculate deductions (unpaid absences + late-generated absences)
-        $totalAbsences = $incidentMetrics['unpaid_days'] + $lateAbsencesGenerated;
-        $deductions = $totalAbsences * ($hourlyRate * 8);
-
-        $grossPay = $regularPay + $overtimePay + $veladaPay + $holidayPay + $weekendPay + $vacationPay + $totalBonuses;
+        $basePay = $payBase ? $regularPay : 0.0;
+        $grossPay = $basePay + $overtimePay + $veladaPay + $holidayPay + $weekendPay
+            + $otherCompensationPay + $vacationPay + $totalBonuses;
         $netPay = $grossPay - $deductions;
 
         // Build calculation breakdown for transparency
@@ -237,12 +282,18 @@ class PayrollCalculatorService
                 'uses_compensation_types' => $useCompTypes,
             ],
             'compensation_concepts' => $compensationConcepts,
+            'scope' => [
+                'period_type' => $period->type,
+                'pays_base' => $payBase,
+                'pays_extras' => $payExtras,
+            ],
             'calculations' => [
-                'regular_pay' => $regularPay,
+                'regular_pay' => $basePay,
                 'overtime_pay' => $overtimePay,
                 'velada_pay' => $veladaPay,
                 'holiday_pay' => $holidayPay,
                 'weekend_pay' => $weekendPay,
+                'other_compensation_pay' => $otherCompensationPay,
                 'vacation_pay' => $vacationPay,
                 'gross_pay' => $grossPay,
                 'deductions' => $deductions,
@@ -260,30 +311,31 @@ class PayrollCalculatorService
                 'hourly_rate' => $hourlyRate,
                 'overtime_multiplier' => $overtimeMultiplier,
                 'holiday_multiplier' => $holidayMultiplier,
-                'regular_hours' => $metrics['regular_hours'],
-                'overtime_hours' => $metrics['overtime_hours'],
-                'overtime_authorized_hours' => $veladaMetrics['overtime_authorized_hours'],
-                'velada_hours' => $veladaMetrics['velada_hours'],
-                'velada_authorized_hours' => $veladaMetrics['velada_authorized_hours'],
+                'regular_hours' => $payBase ? $metrics['regular_hours'] : 0,
+                'overtime_hours' => $payExtras ? $metrics['overtime_hours'] : 0,
+                'overtime_authorized_hours' => $payExtras ? $veladaMetrics['overtime_authorized_hours'] : 0,
+                'velada_hours' => $payExtras ? $veladaMetrics['velada_hours'] : 0,
+                'velada_authorized_hours' => $payExtras ? $veladaMetrics['velada_authorized_hours'] : 0,
                 'velada_multiplier' => $veladaMultiplier,
                 'velada_pay' => $veladaPay,
-                'holiday_hours' => $metrics['holiday_hours'],
-                'weekend_hours' => $metrics['weekend_hours'],
-                'night_shift_hours' => $nightShiftMetrics['night_shift_hours'],
-                'days_worked' => $metrics['days_worked'],
-                'days_absent' => $metrics['days_absent'] + $lateAbsencesGenerated,
-                'days_late' => $metrics['days_late'],
-                'punctuality_days' => $metrics['punctual_days'],
-                'night_shift_days' => $nightShiftMetrics['night_shift_days'],
+                'holiday_hours' => $payExtras ? $metrics['holiday_hours'] : 0,
+                'weekend_hours' => $payExtras ? $metrics['weekend_hours'] : 0,
+                'night_shift_hours' => $payExtras ? $nightShiftMetrics['night_shift_hours'] : 0,
+                'days_worked' => $payBase ? $metrics['days_worked'] : 0,
+                'days_absent' => $payBase ? ($metrics['days_absent'] + $lateAbsencesGenerated) : 0,
+                'days_late' => $payBase ? $metrics['days_late'] : 0,
+                'punctuality_days' => $payExtras ? $metrics['punctual_days'] : 0,
+                'night_shift_days' => $payExtras ? $nightShiftMetrics['night_shift_days'] : 0,
                 'late_absences_generated' => $lateAbsencesGenerated,
-                'vacation_days_paid' => $incidentMetrics['vacation_days'],
-                'regular_pay' => $regularPay,
+                'vacation_days_paid' => $payExtras ? $incidentMetrics['vacation_days'] : 0,
+                'regular_pay' => $basePay,
                 'overtime_pay' => $overtimePay,
                 'holiday_pay' => $holidayPay,
                 'weekend_pay' => $weekendPay,
+                'other_compensation_pay' => $otherCompensationPay,
                 'vacation_pay' => $vacationPay,
                 'punctuality_bonus' => $punctualityBonus,
-                'dinner_allowance' => $nightShiftMetrics['dinner_allowance'],
+                'dinner_allowance' => $dinnerAllowance,
                 'night_shift_bonus' => $nightShiftMetrics['night_shift_bonus'],
                 'weekly_bonus' => $weeklyBonus,
                 'monthly_bonus' => $monthlyBonus,
@@ -406,7 +458,7 @@ class PayrollCalculatorService
         $approvedNightShifts = Authorization::where('employee_id', $employee->id)
             ->whereBetween('date', [$startDate->toDateString(), $endDate->toDateString()])
             ->where('type', Authorization::TYPE_NIGHT_SHIFT)
-            ->where('status', Authorization::STATUS_APPROVED)
+            ->whereIn('status', [Authorization::STATUS_APPROVED, Authorization::STATUS_PAID])
             ->get();
 
         $nightShiftHours = $approvedNightShifts->sum('hours');

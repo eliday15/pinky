@@ -4,10 +4,13 @@ import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
 import { computed } from 'vue';
 import { formatDate as fmtDate } from '@/utils/date';
+import { periodTypeInfo } from '@/utils/payrollPeriodType';
 
 const props = defineProps({
     suggestedDates: Object,
 });
+
+const typeInfo = computed(() => periodTypeInfo(form.type));
 
 const form = useForm({
     name: '',
@@ -77,11 +80,28 @@ const submit = () => {
                         class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
                         :class="{ 'border-red-500': form.errors.type }"
                     >
-                        <option value="weekly">Semanal (7 dias)</option>
-                        <option value="biweekly">Quincenal (14 dias)</option>
-                        <option value="monthly">Mensual</option>
+                        <option value="weekly">Semanal — sueldo base (7 dias)</option>
+                        <option value="monthly">Mensual — extras</option>
+                        <option value="biweekly">Quincenal — todo junto (modo anterior)</option>
                     </select>
                     <p v-if="form.errors.type" class="mt-1 text-sm text-red-600">{{ form.errors.type }}</p>
+
+                    <!-- What this period type pays -->
+                    <div class="mt-3 border rounded-lg p-4" :class="typeInfo.tone.box">
+                        <p class="text-sm font-semibold" :class="typeInfo.tone.title">{{ typeInfo.title }}</p>
+                        <p class="mt-1 text-sm" :class="typeInfo.tone.text">{{ typeInfo.description }}</p>
+                        <ul class="mt-2 space-y-1">
+                            <li
+                                v-for="(item, idx) in typeInfo.pays"
+                                :key="idx"
+                                class="flex items-center text-sm"
+                                :class="typeInfo.tone.text"
+                            >
+                                <span class="w-1.5 h-1.5 rounded-full mr-2" :class="typeInfo.tone.dot"></span>
+                                {{ item }}
+                            </li>
+                        </ul>
+                    </div>
                 </div>
 
                 <!-- Date Range -->

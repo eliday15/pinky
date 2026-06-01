@@ -1,11 +1,17 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head, Link } from '@inertiajs/vue3';
+import { computed } from 'vue';
 import { formatDate as fmtDate } from '@/utils/date';
+import { periodTypeInfo } from '@/utils/payrollPeriodType';
 
 const props = defineProps({
     entry: Object,
 });
+
+const typeInfo = computed(() =>
+    periodTypeInfo(props.entry.calculation_breakdown?.scope?.period_type || props.entry.payroll_period?.type)
+);
 
 const formatDate = (date) => fmtDate(date, {
     day: 'numeric',
@@ -83,6 +89,15 @@ const breakdown = props.entry.calculation_breakdown || {};
                     <p class="font-medium">{{ entry.employee?.schedule?.name || 'N/A' }}</p>
                 </div>
             </div>
+        </div>
+
+        <!-- What this period pays -->
+        <div class="border rounded-lg p-4 mb-6" :class="typeInfo.tone.box">
+            <div class="flex flex-wrap items-center gap-2">
+                <span class="px-2 py-0.5 text-xs font-medium rounded-full" :class="typeInfo.tone.chip">{{ typeInfo.label }}</span>
+                <p class="text-sm font-semibold" :class="typeInfo.tone.title">{{ typeInfo.title }}</p>
+            </div>
+            <p class="mt-1 text-sm" :class="typeInfo.tone.text">{{ typeInfo.description }}</p>
         </div>
 
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -223,6 +238,13 @@ const breakdown = props.entry.calculation_breakdown || {};
                         <span class="text-gray-600">Pago fin de semana</span>
                     </div>
                     <span class="font-medium text-purple-600">{{ formatCurrency(entry.weekend_pay) }}</span>
+                </div>
+                <div v-if="entry.other_compensation_pay > 0" class="flex justify-between items-center py-2 border-b">
+                    <div>
+                        <span class="text-gray-600">Otros conceptos</span>
+                        <span class="text-xs text-gray-400 ml-2">(cena, comida, dominical, etc.)</span>
+                    </div>
+                    <span class="font-medium text-green-600">{{ formatCurrency(entry.other_compensation_pay) }}</span>
                 </div>
                 <div class="flex justify-between items-center py-2 border-b">
                     <div>

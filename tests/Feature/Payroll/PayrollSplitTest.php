@@ -1,0 +1,177 @@
+<?php
+
+namespace Tests\Feature\Payroll;
+
+use App\Models\AttendanceRecord;
+use App\Models\Authorization;
+use App\Models\CompensationType;
+use App\Models\Employee;
+use App\Models\PayrollEntry;
+use App\Models\PayrollPeriod;
+use App\Models\User;
+use App\Services\PayrollCalculatorService;
+use Tests\FeatureTestCase;
+
+/**
+ * Feature tests for the weekly/monthly payroll split and the
+ * authorization-driven compensation pass.
+ *
+ * Weekly periods pay the base salary minus absences/lates; monthly periods
+ * pay the extras (overtime, velada, holiday, weekend, special concepts),
+ * vacations and all bonuses. The two never double-pay because each concept
+ * is scoped to exactly one period type.
+ */
+class PayrollSplitTest extends FeatureTestCase
+{
+    private function calculator(): PayrollCalculatorService
+    {
+        return app(PayrollCalculatorService::class);
+    }
+
+    private function makeEmployee(): Employee
+    {
+        return Employee::factory()->create([
+            'status' => 'active',
+            'hourly_rate' => 100.00,
+            'overtime_rate' => 1.5,
+            'holiday_rate' => 2.0,
+        ]);
+    }
+
+    /**
+     * A weekday present record with 8 worked hours and 2 authorized overtime
+     * hours, so we can prove the weekly period ignores the overtime.
+     *
+     * Dated mid-period (Wed 2026-06-03) so it is never on the period boundary,
+     * where SQLite's string comparison of a DATE against a DATETIME bound would
+     * drop it (a test-only quirk; MySQL treats them as equal).
+     */
+    private function presentRecord(Employee $employee): AttendanceRecord
+    {
+        return AttendanceRecord::factory()->for($employee)->create([
+            'work_date' => '2026-06-03', // Wednesday, mid-period
+            'status' => 'present',
+            'worked_hours' => 8.00,
+            'overtime_hours' => 2.00,
+            'overtime_authorized_hours' => 2.00,
+        ]);
+    }
+
+    public function test_weekly_period_pays_base_salary_without_extras(): void
+    {
+        $employee = $this->makeEmployee();
+        $this->presentRecord($employee);
+
+        $period = PayrollPeriod::factory()->weekly()->create([
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-07',
+        ]);
+
+        $entry = $this->calculator()->calculateEmployeePayroll($period, $employee);
+
+        $this->assertEqualsWithDelta(800.00, (float) $entry->regular_pay, 0.01, 'base = 8h * 100');
+        $this->assertEqualsWithDelta(0.00, (float) $entry->overtime_pay, 0.01, 'no overtime on weekly');
+        $this->assertEqualsWithDelta(0.00, (float) $entry->bonuses, 0.01, 'no bonuses on weekly');
+        $this->assertEqualsWithDelta(0.00, (float) $entry->vacation_pay, 0.01, 'no vacation on weekly');
+        $this->assertEqualsWithDelta(800.00, (float) $entry->gross_pay, 0.01);
+        $this->assertEqualsWithDelta(800.00, (float) $entry->net_pay, 0.01);
+    }
+
+    public function test_monthly_period_pays_extras_without_base(): void
+    {
+        $employee = $this->makeEmployee();
+        $this->presentRecord($employee);
+
+        $period = PayrollPeriod::factory()->monthly()->create([
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-30',
+        ]);
+
+        $entry = $this->calculator()->calculateEmployeePayroll($period, $employee);
+
+        // Legacy fallback (no comp types): 2h * 100 * 1.5 = 300.
+        $this->assertEqualsWithDelta(0.00, (float) $entry->regular_pay, 0.01, 'no base on monthly');
+        $this->assertEqualsWithDelta(0.00, (float) $entry->deductions, 0.01, 'no deductions on monthly');
+        $this->assertEqualsWithDelta(300.00, (float) $entry->overtime_pay, 0.01, 'overtime paid on monthly');
+        $this->assertEqualsWithDelta(300.00, (float) $entry->gross_pay, 0.01);
+    }
+
+    public function test_monthly_pays_cena_via_generic_authorization_pass(): void
+    {
+        $employee = $this->makeEmployee();
+        $this->presentRecord($employee);
+
+        // CENA: dinner allowance, fixed $75/day, pulled from check-ins.
+        $cena = CompensationType::factory()->fixed(75.00)->create([
+            'code' => 'CENA',
+            'name' => 'Cena',
+            'application_mode' => CompensationType::APPLICATION_PER_DAY,
+            'authorization_type' => Authorization::TYPE_SPECIAL,
+            'attendance_pull_rule' => CompensationType::PULL_RULE_MEAL,
+        ]);
+        // Assign so the employee uses the CompensationType path.
+        $employee->compensationTypes()->attach($cena->id, ['is_active' => true]);
+        $employee->load(['compensationTypes' => fn ($q) => $q->wherePivot('is_active', true)]);
+        $this->assertTrue($employee->compensationTypes->isNotEmpty(), 'CENA assignment is active');
+
+        $user = User::factory()->create();
+        Authorization::create([
+            'employee_id' => $employee->id,
+            'requested_by' => $user->id,
+            'type' => Authorization::TYPE_SPECIAL,
+            'compensation_type_id' => $cena->id,
+            'date' => '2026-06-03',
+            'hours' => 1,
+            'reason' => 'cena',
+            'status' => Authorization::STATUS_APPROVED,
+        ]);
+
+        $period = PayrollPeriod::factory()->monthly()->create([
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-30',
+        ]);
+
+        $entry = $this->calculator()->calculateEmployeePayroll($period, $employee);
+
+        $this->assertEqualsWithDelta(75.00, (float) $entry->other_compensation_pay, 0.01, 'CENA paid once via generic pass');
+        // Legacy night-shift dinner allowance is suppressed for comp-type employees.
+        $this->assertEqualsWithDelta(0.00, (float) $entry->dinner_allowance, 0.01);
+        $this->assertGreaterThanOrEqual(75.00, (float) $entry->gross_pay);
+    }
+
+    public function test_contpaqi_export_columns_match_period_type(): void
+    {
+        $weekly = PayrollPeriod::factory()->weekly()->create();
+        $monthly = PayrollPeriod::factory()->monthly()->create();
+
+        $weeklyHeadings = (new \App\Exports\ContpaqiPrenominaExport($weekly))->headings();
+        $monthlyHeadings = (new \App\Exports\ContpaqiPrenominaExport($monthly))->headings();
+
+        // Weekly exports the base salary + deductions, not the extras.
+        $this->assertContains('P001_SUELDO', $weeklyHeadings);
+        $this->assertContains('D001_DEDUCCIONES', $weeklyHeadings);
+        $this->assertNotContains('P002_HORAS_EXTRA', $weeklyHeadings);
+        $this->assertNotContains('P007_OTROS', $weeklyHeadings);
+
+        // Monthly exports the extras (incl. OTROS = cena/comida/dominical), not the base.
+        $this->assertContains('P002_HORAS_EXTRA', $monthlyHeadings);
+        $this->assertContains('P007_OTROS', $monthlyHeadings);
+        $this->assertNotContains('P001_SUELDO', $monthlyHeadings);
+    }
+
+    public function test_paid_period_is_not_recalculated(): void
+    {
+        $employee = $this->makeEmployee();
+        $this->presentRecord($employee);
+
+        $period = PayrollPeriod::factory()->monthly()->paid()->create([
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-30',
+        ]);
+
+        $this->calculator()->calculatePeriod($period);
+
+        $this->assertSame('paid', $period->fresh()->status, 'paid period stays paid');
+        $this->assertSame(0, PayrollEntry::where('payroll_period_id', $period->id)->count(), 'no entries written for a paid period');
+    }
+}

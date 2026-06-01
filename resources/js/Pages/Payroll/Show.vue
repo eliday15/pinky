@@ -4,6 +4,7 @@ import TwoFactorModal from '@/Components/TwoFactorModal.vue';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import { ref, computed } from 'vue';
 import { formatDate as fmtDate } from '@/utils/date';
+import { periodTypeInfo } from '@/utils/payrollPeriodType';
 
 const props = defineProps({
     period: Object,
@@ -11,6 +12,8 @@ const props = defineProps({
     summary: Object,
     can: Object,
 });
+
+const typeInfo = computed(() => periodTypeInfo(props.period.type));
 
 const hasTwoFactor = computed(() => usePage().props.auth.has_two_factor);
 const showApproveModal = ref(false);
@@ -176,6 +179,26 @@ const markPaid = () => {
                     </div>
                 </div>
             </div>
+        </div>
+
+        <!-- What this period pays -->
+        <div class="border rounded-lg p-4 mb-6" :class="typeInfo.tone.box">
+            <div class="flex flex-wrap items-center gap-2">
+                <span class="px-2 py-0.5 text-xs font-medium rounded-full" :class="typeInfo.tone.chip">{{ typeInfo.label }}</span>
+                <p class="text-sm font-semibold" :class="typeInfo.tone.title">{{ typeInfo.title }}</p>
+            </div>
+            <p class="mt-1 text-sm" :class="typeInfo.tone.text">{{ typeInfo.description }}</p>
+            <ul class="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+                <li
+                    v-for="(item, idx) in typeInfo.pays"
+                    :key="idx"
+                    class="flex items-center text-sm"
+                    :class="typeInfo.tone.text"
+                >
+                    <span class="w-1.5 h-1.5 rounded-full mr-2" :class="typeInfo.tone.dot"></span>
+                    {{ item }}
+                </li>
+            </ul>
         </div>
 
         <!-- Summary Cards -->

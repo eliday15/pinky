@@ -36,59 +36,81 @@ class ContpaqiPrenominaExport implements FromCollection, WithHeadings, WithMappi
     }
 
     /**
-     * Define column headings using configured concept codes.
+     * Whether this period pays the base salary (weekly/biweekly).
      */
-    public function headings(): array
+    private function paysBase(): bool
     {
-        $codes = config('contpaqi.concept_codes');
-
-        return [
-            'CODIGO',
-            'NOMBRE',
-            'DEPARTAMENTO',
-            'PUESTO',
-            $codes['regular_pay'] . '_SUELDO',
-            $codes['overtime_pay'] . '_HORAS_EXTRA',
-            $codes['holiday_pay'] . '_FESTIVO',
-            $codes['weekend_pay'] . '_FIN_SEMANA',
-            $codes['vacation_pay'] . '_VACACIONES',
-            $codes['bonuses'] . '_BONOS',
-            $codes['deductions'] . '_DEDUCCIONES',
-            'HORAS_REGULARES',
-            'HORAS_EXTRA',
-            'DIAS_TRABAJADOS',
-            'DIAS_AUSENCIA',
-            'BRUTO',
-            'NETO',
-        ];
+        return in_array($this->period->type, ['weekly', 'biweekly'], true);
     }
 
     /**
-     * Map each payroll entry row to export format.
+     * Whether this period pays the extras (monthly/biweekly).
+     */
+    private function paysExtras(): bool
+    {
+        return in_array($this->period->type, ['monthly', 'biweekly'], true);
+    }
+
+    /**
+     * Column definitions (heading + value resolver), scoped to the period type.
+     *
+     * A weekly period exports only the base salary and absence deductions; a
+     * monthly period exports only the extras (overtime, holiday, weekend,
+     * other concepts, vacations, bonuses). A legacy biweekly period exports
+     * both. This keeps the CONTPAQi layout aligned with what each period pays.
+     *
+     * @return array<int, array{heading: string, value: callable}>
+     */
+    private function columns(): array
+    {
+        $codes = config('contpaqi.concept_codes');
+        $columns = [
+            ['heading' => 'CODIGO', 'value' => fn ($e) => $e->employee->contpaqi_identifier],
+            ['heading' => 'NOMBRE', 'value' => fn ($e) => $e->employee->full_name],
+            ['heading' => 'DEPARTAMENTO', 'value' => fn ($e) => $e->employee->department?->name ?? ''],
+            ['heading' => 'PUESTO', 'value' => fn ($e) => $e->employee->position?->name ?? ''],
+        ];
+
+        if ($this->paysBase()) {
+            $columns[] = ['heading' => $codes['regular_pay'].'_SUELDO', 'value' => fn ($e) => $this->formatNumber($e->regular_pay)];
+            $columns[] = ['heading' => $codes['deductions'].'_DEDUCCIONES', 'value' => fn ($e) => $this->formatNumber($e->deductions)];
+            $columns[] = ['heading' => 'HORAS_REGULARES', 'value' => fn ($e) => $this->formatNumber($e->regular_hours)];
+            $columns[] = ['heading' => 'DIAS_TRABAJADOS', 'value' => fn ($e) => $e->days_worked];
+            $columns[] = ['heading' => 'DIAS_AUSENCIA', 'value' => fn ($e) => $e->days_absent];
+        }
+
+        if ($this->paysExtras()) {
+            $columns[] = ['heading' => $codes['overtime_pay'].'_HORAS_EXTRA', 'value' => fn ($e) => $this->formatNumber($e->overtime_pay)];
+            $columns[] = ['heading' => $codes['holiday_pay'].'_FESTIVO', 'value' => fn ($e) => $this->formatNumber($e->holiday_pay)];
+            $columns[] = ['heading' => $codes['weekend_pay'].'_FIN_SEMANA', 'value' => fn ($e) => $this->formatNumber($e->weekend_pay)];
+            $columns[] = ['heading' => $codes['other_compensation_pay'].'_OTROS', 'value' => fn ($e) => $this->formatNumber($e->other_compensation_pay)];
+            $columns[] = ['heading' => $codes['vacation_pay'].'_VACACIONES', 'value' => fn ($e) => $this->formatNumber($e->vacation_pay)];
+            $columns[] = ['heading' => $codes['bonuses'].'_BONOS', 'value' => fn ($e) => $this->formatNumber($e->bonuses)];
+            $columns[] = ['heading' => 'HORAS_EXTRA', 'value' => fn ($e) => $this->formatNumber($e->overtime_hours)];
+        }
+
+        $columns[] = ['heading' => 'BRUTO', 'value' => fn ($e) => $this->formatNumber($e->gross_pay)];
+        $columns[] = ['heading' => 'NETO', 'value' => fn ($e) => $this->formatNumber($e->net_pay)];
+
+        return $columns;
+    }
+
+    /**
+     * Define column headings, scoped to the period type.
+     */
+    public function headings(): array
+    {
+        return array_map(fn ($col) => $col['heading'], $this->columns());
+    }
+
+    /**
+     * Map each payroll entry row to export format, scoped to the period type.
      *
      * @param PayrollEntry $entry
      */
     public function map($entry): array
     {
-        return [
-            $entry->employee->contpaqi_identifier,
-            $entry->employee->full_name,
-            $entry->employee->department?->name ?? '',
-            $entry->employee->position?->name ?? '',
-            $this->formatNumber($entry->regular_pay),
-            $this->formatNumber($entry->overtime_pay),
-            $this->formatNumber($entry->holiday_pay),
-            $this->formatNumber($entry->weekend_pay),
-            $this->formatNumber($entry->vacation_pay),
-            $this->formatNumber($entry->bonuses),
-            $this->formatNumber($entry->deductions),
-            $this->formatNumber($entry->regular_hours),
-            $this->formatNumber($entry->overtime_hours),
-            $entry->days_worked,
-            $entry->days_absent,
-            $this->formatNumber($entry->gross_pay),
-            $this->formatNumber($entry->net_pay),
-        ];
+        return array_map(fn ($col) => $col['value']($entry), $this->columns());
     }
 
     /**

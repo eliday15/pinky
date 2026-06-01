@@ -2,6 +2,7 @@
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import { formatDate as fmtDate } from '@/utils/date';
+import { periodTypeInfo } from '@/utils/payrollPeriodType';
 
 const props = defineProps({
     periods: Object,
@@ -94,8 +95,9 @@ const deletePeriod = (period) => {
                                 </p>
                             </div>
                         </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 capitalize">
-                            {{ period.type === 'biweekly' ? 'Quincenal' : period.type === 'weekly' ? 'Semanal' : 'Mensual' }}
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            <p class="font-medium text-gray-900">{{ periodTypeInfo(period.type).label }}</p>
+                            <p class="text-xs text-gray-400">{{ periodTypeInfo(period.type).short }}</p>
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                             {{ formatDate(period.payment_date) }}

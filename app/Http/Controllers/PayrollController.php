@@ -274,9 +274,11 @@ class PayrollController extends Controller
         $format = $request->get('format', 'xlsx');
         $writerType = $format === 'csv' ? Excel::CSV : Excel::XLSX;
 
-        // Sanitize period name for filename
+        // Sanitize period name for filename, tagging the period type so a
+        // weekly (base) export is not confused with a monthly (extras) one.
         $periodName = preg_replace('/[^a-zA-Z0-9_-]/', '_', $payroll->name);
-        $filename = "prenomina_{$periodName}_{$payroll->start_date->format('Y-m-d')}.{$format}";
+        $typeTag = ['weekly' => 'semanal', 'monthly' => 'mensual', 'biweekly' => 'quincenal'][$payroll->type] ?? $payroll->type;
+        $filename = "prenomina_{$typeTag}_{$periodName}_{$payroll->start_date->format('Y-m-d')}.{$format}";
 
         return (new ContpaqiPrenominaExport($payroll))->download($filename, $writerType);
     }

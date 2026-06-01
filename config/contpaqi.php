@@ -19,6 +19,7 @@ return [
         'weekend_pay'   => env('CONTPAQI_CODE_FIN_SEMANA', 'P004'),
         'vacation_pay'  => env('CONTPAQI_CODE_VACACIONES', 'P005'),
         'bonuses'       => env('CONTPAQI_CODE_BONOS', 'P006'),
+        'other_compensation_pay' => env('CONTPAQI_CODE_OTROS', 'P007'),
 
         // Deducciones
         'deductions'    => env('CONTPAQI_CODE_DEDUCCIONES', 'D001'),
