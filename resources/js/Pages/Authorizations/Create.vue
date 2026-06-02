@@ -6,7 +6,7 @@ import { Head, Link, useForm } from '@inertiajs/vue3';
 import { ref, computed, watch } from 'vue';
 import axios from 'axios';
 import { todayLocal } from '@/utils/date';
-import { diffMinutes, formatRoundedHours } from '@/utils/overtime';
+import { formatRoundedHours, minutesBetweenDates } from '@/utils/overtime';
 
 const props = defineProps({
     employees: Array,
@@ -136,6 +136,15 @@ const dateCardTitle = computed(() => {
 
 const isPerHour = computed(() => selectedApplicationMode.value === 'per_hour');
 
+/** per_day / one_time keep their range/quantity form, but also allow extra
+ *  loose rows (each row = one date + a quantity). */
+const isQuantityMode = computed(() =>
+    selectedApplicationMode.value === 'per_day' || selectedApplicationMode.value === 'one_time');
+
+/** one_time authorizes a unit quantity, not a worked date — its extra rows
+ *  only need a quantity (a date is still sent to satisfy the backend). */
+const isOneTime = computed(() => selectedApplicationMode.value === 'one_time');
+
 /** Legacy hours auto-calc when datetimes change (per_hour single submit). */
 watch([startDatetime, endDatetime], ([start, end]) => {
     if (start && end && selectedApplicationMode.value === 'per_hour') {
@@ -203,6 +212,9 @@ const applySuggestions = () => {
         employee_name: s.employee_name || selectedEmp?.full_name || '',
         employee_number: s.employee_number || selectedEmp?.employee_number || '',
         date: s.date,
+        // A velada whose end time is earlier than its start crossed midnight,
+        // so the end belongs to the next day.
+        end_date: inferEndDate(s.date, s.start_time, s.end_time),
         start_time: s.start_time,
         end_time: s.end_time,
         hours: s.hours,
@@ -244,11 +256,31 @@ const totalEntryHours = computed(() => {
     return form.entries.reduce((sum, e) => sum + (parseFloat(e.hours) || 0), 0).toFixed(2);
 });
 
+/** Add one day to an ISO date string (YYYY-MM-DD). */
+const addOneDay = (iso) => {
+    if (!iso) return iso;
+    const d = new Date(`${iso}T12:00:00`);
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().split('T')[0];
+};
+
+/** A range whose end time is at or before its start time crossed midnight, so
+ *  the end falls on the following day. */
+const inferEndDate = (date, startTime, endTime) => {
+    if (!date || !startTime || !endTime) return date;
+    return toMin(endTime) <= toMin(startTime) ? addOneDay(date) : date;
+};
+
+const recomputeHours = (row) => {
+    const endDate = row.end_date || row.date;
+    return formatRoundedHours(minutesBetweenDates(row.date, row.start_time, endDate, row.end_time));
+};
+
 const setEntryField = (index, field, value) => {
     const next = [...form.entries];
     const row = { ...next[index], [field]: value };
     if (field === 'start_time' || field === 'end_time') {
-        row.hours = formatRoundedHours(diffMinutes(row.start_time, row.end_time));
+        row.hours = recomputeHours(row);
     }
     next[index] = row;
     form.entries = next;
@@ -263,38 +295,52 @@ const removeEntry = (index) => {
 const addManualEntry = () => {
     if (!form.employee_id) return;
     const emp = props.employees.find(e => e.id == form.employee_id);
+    const qty = isQuantityMode.value;
+    const defaultDate = qty ? (startDate.value || today) : (rangeStart.value || today);
     form.entries = [
         ...form.entries,
         {
             employee_id: Number(form.employee_id),
             employee_name: emp?.full_name || '',
             employee_number: emp?.employee_number || '',
-            date: rangeStart.value || today,
+            date: defaultDate,
+            end_date: defaultDate,
             start_time: '',
             end_time: '',
-            hours: '',
+            hours: qty ? '1' : '',
             summary: '',
             kind: 'manual',
         },
     ];
 };
 
+/** Start uses the row's main date; end uses its own end_date so a velada can
+ *  span two days. */
 const getEntryDatetime = (entry, field) => {
     if (!entry[field]) return '';
-    return `${entry.date}T${entry[field]}`;
+    const datePart = field === 'end_time' ? (entry.end_date || entry.date) : entry.date;
+    return `${datePart}T${entry[field]}`;
 };
 
+/** Editing the start moves the row's main date; editing the end moves only
+ *  end_date, so setting the end never clobbers the start. */
 const setEntryDatetime = (index, field, value) => {
-    if (!value) {
-        setEntryField(index, field, '');
-        return;
-    }
-    const [datePart, timePart] = value.split('T');
     const next = [...form.entries];
     const row = { ...next[index] };
-    if (datePart) row.date = datePart;
-    if (timePart) row[field] = timePart;
-    row.hours = formatRoundedHours(diffMinutes(row.start_time, row.end_time));
+    if (!value) {
+        row[field] = '';
+    } else {
+        const [datePart, timePart] = value.split('T');
+        if (field === 'end_time') {
+            if (datePart) row.end_date = datePart;
+            if (timePart) row.end_time = timePart;
+        } else {
+            if (datePart) row.date = datePart;
+            if (timePart) row.start_time = timePart;
+            if (!row.end_date) row.end_date = datePart;
+        }
+    }
+    row.hours = recomputeHours(row);
     next[index] = row;
     form.entries = next;
 };
@@ -376,6 +422,30 @@ const submit = () => {
         form.post(route('authorizations.storeBulk'));
         return;
     }
+    // per_day / one_time with extra manual rows: fold the range/quantity form
+    // and the extra rows into a single entries[] payload (the bulk endpoint),
+    // so both are created in one request.
+    if (isQuantityMode.value && form.entries.length > 0) {
+        const emp = props.employees.find(e => e.id == form.employee_id);
+        const rangeRow = {
+            employee_id: Number(form.employee_id),
+            employee_name: emp?.full_name || '',
+            employee_number: emp?.employee_number || '',
+            date: form.date,
+            start_time: '',
+            end_time: '',
+            hours: form.hours || '1',
+            summary: '',
+            kind: 'range',
+        };
+        const merged = [rangeRow, ...form.entries];
+        form.employee_ids = [Number(form.employee_id)];
+        form.transform((data) => ({ ...data, entries: merged }))
+            .post(route('authorizations.storeBulk'), {
+                onFinish: () => form.transform((data) => data),
+            });
+        return;
+    }
     form.post(route('authorizations.store'));
 };
 
@@ -408,7 +478,12 @@ const canSubmit = computed(() => {
     return true;
 });
 
-const submitCount = computed(() => ((isPerHour.value || isAttendancePull.value) ? form.entries.length : 1));
+const submitCount = computed(() => {
+    if (isPerHour.value || isAttendancePull.value) return form.entries.length;
+    // Quantity modes: one auth from the range/quantity form, plus the extra rows.
+    if (isQuantityMode.value) return 1 + form.entries.length;
+    return 1;
+});
 </script>
 
 <template>
@@ -653,6 +728,10 @@ const submitCount = computed(() => ((isPerHour.value || isAttendancePull.value) 
                                     class="px-3 py-1.5 bg-amber-600 text-white text-xs rounded hover:bg-amber-700 disabled:opacity-50">
                                     {{ suggestionsLoading ? 'Calculando...' : 'Cargar desde checadas' }}
                                 </button>
+                                <button type="button" @click="addManualEntry"
+                                    class="px-3 py-1.5 border border-gray-300 text-gray-700 text-xs rounded hover:bg-gray-50">
+                                    + Agregar fila
+                                </button>
                                 <button v-if="suggestionsApplied || form.entries.length > 0" type="button" @click="clearSuggestions"
                                     class="px-3 py-1.5 border border-gray-300 text-gray-700 text-xs rounded hover:bg-gray-50">
                                     Limpiar
@@ -672,7 +751,11 @@ const submitCount = computed(() => ((isPerHour.value || isAttendancePull.value) 
                         <div v-for="(entry, idx) in form.entries" :key="`${entry.date}_${idx}`"
                             class="px-4 py-2 flex items-center justify-between gap-3 text-sm bg-white">
                             <div class="min-w-0">
-                                <div class="text-xs font-semibold text-pink-700">{{ formatDateShort(entry.date) }}</div>
+                                <input v-if="entry.kind === 'manual'" type="date"
+                                    :value="entry.date"
+                                    @input="setEntryField(idx, 'date', $event.target.value)"
+                                    class="text-xs rounded border-gray-300 focus:border-pink-500 focus:ring-pink-500 py-1" />
+                                <div v-else class="text-xs font-semibold text-pink-700">{{ formatDateShort(entry.date) }}</div>
                                 <div v-if="entry.summary" class="text-[11px] text-gray-600 truncate" :title="entry.summary">
                                     {{ entry.summary }}
                                 </div>
@@ -717,6 +800,42 @@ const submitCount = computed(() => ((isPerHour.value || isAttendancePull.value) 
                             <input v-model="form.hours" type="number" step="1" min="1" placeholder="1" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.hours }" />
                             <p v-if="form.errors.hours" class="mt-1 text-sm text-red-600">{{ form.errors.hours }}</p>
                             <p class="mt-1 text-xs text-gray-500">Numero de unidades</p>
+                        </div>
+                    </div>
+
+                    <!-- Extra manual rows (additive to the range/quantity above) -->
+                    <div class="mt-6 pt-4 border-t border-gray-100">
+                        <div class="flex items-center justify-between mb-2">
+                            <p class="text-xs text-gray-500">
+                                Filas adicionales.
+                                <span v-if="isOneTime">Solo cantidad.</span>
+                                <span v-else>Cada fila es una fecha extra.</span>
+                            </p>
+                            <button type="button" @click="addManualEntry"
+                                class="px-3 py-1.5 border border-gray-300 text-gray-700 text-xs rounded hover:bg-gray-50">
+                                + Agregar fila
+                            </button>
+                        </div>
+
+                        <div v-if="form.entries.length > 0" class="border rounded-lg overflow-hidden divide-y divide-gray-100">
+                            <div v-for="(entry, idx) in form.entries" :key="`q_${idx}`"
+                                class="px-4 py-2 flex items-center gap-3 text-sm bg-white">
+                                <div v-if="!isOneTime" class="flex-shrink-0">
+                                    <input type="date" :value="entry.date"
+                                        @input="setEntryField(idx, 'date', $event.target.value)"
+                                        class="text-xs rounded border-gray-300 focus:border-pink-500 focus:ring-pink-500 py-1" />
+                                </div>
+                                <div class="flex items-center gap-1">
+                                    <label class="text-xs text-gray-500">Cant.</label>
+                                    <input type="number" step="1" min="1" :value="entry.hours"
+                                        @input="setEntryField(idx, 'hours', $event.target.value)"
+                                        class="w-20 text-xs rounded border-gray-300 focus:border-pink-500 focus:ring-pink-500 py-1" />
+                                </div>
+                                <button type="button" @click="removeEntry(idx)"
+                                    class="ml-auto text-[11px] text-gray-400 hover:text-red-600 flex-shrink-0">
+                                    Quitar
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>

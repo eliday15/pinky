@@ -5,7 +5,7 @@ import { Head, Link, useForm } from '@inertiajs/vue3';
 import { ref, computed, watch } from 'vue';
 import axios from 'axios';
 import { todayLocal } from '@/utils/date';
-import { diffMinutes, formatRoundedHours } from '@/utils/overtime';
+import { formatRoundedHours, minutesBetweenDates } from '@/utils/overtime';
 
 const props = defineProps({
     employees: Array,
@@ -311,6 +311,9 @@ const applyBulkSuggestions = () => {
         employee_name: s.employee_name,
         employee_number: s.employee_number,
         date: s.date,
+        // A velada whose end time is earlier than its start crossed midnight,
+        // so the end belongs to the next day.
+        end_date: inferEndDate(s.date, s.start_time, s.end_time),
         start_time: s.start_time,
         end_time: s.end_time,
         hours: s.hours,
@@ -367,6 +370,15 @@ const clearBulkSuggestions = () => {
 /* ----- Per-row table for per_hour types ----- */
 const isPerHour = computed(() => selectedApplicationMode.value === 'per_hour');
 
+/** per_day / one_time keep their range/quantity form, but also allow extra
+ *  loose rows (each row = one date + a quantity). */
+const isQuantityMode = computed(() =>
+    selectedApplicationMode.value === 'per_day' || selectedApplicationMode.value === 'one_time');
+
+/** one_time authorizes a unit quantity, not a worked date — its extra rows
+ *  only need a quantity (a date is still sent to satisfy the backend). */
+const isOneTime = computed(() => selectedApplicationMode.value === 'one_time');
+
 /** Group rows by employee so the table reads as one block per person,
  *  with their days stacked beneath the name. */
 const entriesGroupedByEmployee = computed(() => {
@@ -415,11 +427,31 @@ const entryHoursSelectValue = (entry) => {
     return n > 0 ? n.toFixed(2) : '';
 };
 
+/** Add one day to an ISO date string (YYYY-MM-DD). */
+const addOneDay = (iso) => {
+    if (!iso) return iso;
+    const d = new Date(`${iso}T12:00:00`);
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().split('T')[0];
+};
+
+/** A range whose end time is at or before its start time crossed midnight, so
+ *  the end falls on the following day. */
+const inferEndDate = (date, startTime, endTime) => {
+    if (!date || !startTime || !endTime) return date;
+    return toMin(endTime) <= toMin(startTime) ? addOneDay(date) : date;
+};
+
+const recomputeHours = (row) => {
+    const endDate = row.end_date || row.date;
+    return formatRoundedHours(minutesBetweenDates(row.date, row.start_time, endDate, row.end_time));
+};
+
 const setEntryField = (index, field, value) => {
     const next = [...form.entries];
     const row = { ...next[index], [field]: value };
     if (field === 'start_time' || field === 'end_time') {
-        row.hours = formatRoundedHours(diffMinutes(row.start_time, row.end_time));
+        row.hours = recomputeHours(row);
     }
     next[index] = row;
     form.entries = next;
@@ -435,16 +467,19 @@ const removeEntry = (index) => {
  *  checadas" fans out across the whole selection), not just the first. */
 const addManualEntry = () => {
     if (form.employee_ids.length === 0) return;
+    const qty = isQuantityMode.value;
+    const defaultDate = qty ? (startDate.value || today) : (rangeStart.value || today);
     const newRows = form.employee_ids.map((empId) => {
         const emp = props.employees.find(e => e.id === empId);
         return {
             employee_id: empId,
             employee_name: emp?.full_name || `Empleado #${empId}`,
             employee_number: emp?.employee_number || '',
-            date: rangeStart.value || today,
+            date: defaultDate,
+            end_date: defaultDate,
             start_time: '',
             end_time: '',
-            hours: '',
+            hours: qty ? '1' : '',
             summary: '',
             kind: 'manual',
         };
@@ -452,24 +487,34 @@ const addManualEntry = () => {
     form.entries = [...form.entries, ...newRows];
 };
 
-/** Compose a datetime-local string from row date + row time. */
+/** Compose a datetime-local string from the row's date + time. Start uses the
+ *  row's main date; end uses its own end_date so a velada can span two days. */
 const getEntryDatetime = (entry, field) => {
     if (!entry[field]) return '';
-    return `${entry.date}T${entry[field]}`;
+    const datePart = field === 'end_time' ? (entry.end_date || entry.date) : entry.date;
+    return `${datePart}T${entry[field]}`;
 };
 
-/** Update both date and time portions of a row from a datetime-local input. */
+/** Update one endpoint of a row from a datetime-local input. Editing the start
+ *  moves the row's main date; editing the end moves only end_date, so setting
+ *  the end never clobbers the start. */
 const setEntryDatetime = (index, field, value) => {
-    if (!value) {
-        setEntryField(index, field, '');
-        return;
-    }
-    const [datePart, timePart] = value.split('T');
     const next = [...form.entries];
     const row = { ...next[index] };
-    if (datePart) row.date = datePart;
-    if (timePart) row[field] = timePart;
-    row.hours = formatRoundedHours(diffMinutes(row.start_time, row.end_time));
+    if (!value) {
+        row[field] = '';
+    } else {
+        const [datePart, timePart] = value.split('T');
+        if (field === 'end_time') {
+            if (datePart) row.end_date = datePart;
+            if (timePart) row.end_time = timePart;
+        } else {
+            if (datePart) row.date = datePart;
+            if (timePart) row.start_time = timePart;
+            if (!row.end_date) row.end_date = datePart;
+        }
+    }
+    row.hours = recomputeHours(row);
     next[index] = row;
     form.entries = next;
 };
@@ -486,6 +531,32 @@ const formatDateShort = (iso) => {
 };
 
 const submit = () => {
+    // per_day / one_time: the range/quantity form submits as before (one auth
+    // per employee), and any extra manual rows ride along as additional entries.
+    // We fold both into entries[] so a single code path on the backend handles
+    // it; otherwise entries[] and the legacy date shape are mutually exclusive.
+    if (isQuantityMode.value && form.entries.length > 0) {
+        const rangeRows = form.employee_ids.map((empId) => {
+            const emp = props.employees.find(e => e.id === empId);
+            return {
+                employee_id: empId,
+                employee_name: emp?.full_name || `Empleado #${empId}`,
+                employee_number: emp?.employee_number || '',
+                date: form.date,
+                start_time: '',
+                end_time: '',
+                hours: form.hours || '1',
+                summary: '',
+                kind: 'range',
+            };
+        });
+        const merged = [...rangeRows, ...form.entries];
+        form.transform((data) => ({ ...data, entries: merged }))
+            .post(route('authorizations.storeBulk'), {
+                onFinish: () => form.transform((data) => data),
+            });
+        return;
+    }
     form.post(route('authorizations.storeBulk'));
 };
 
@@ -498,6 +569,8 @@ const typeDescriptions = {
 
 const submitButtonCount = computed(() => {
     if (isPerHour.value || isAttendancePull.value) return form.entries.length;
+    // Quantity modes: one auth per employee from the range, plus the extra rows.
+    if (isQuantityMode.value) return form.employee_ids.length + form.entries.length;
     return form.employee_ids.length;
 });
 
@@ -838,6 +911,10 @@ const canSubmit = computed(() => {
                                     class="px-3 py-1.5 bg-amber-600 text-white text-xs rounded hover:bg-amber-700 disabled:opacity-50">
                                     {{ suggestionsLoading ? 'Calculando...' : 'Cargar desde checadas' }}
                                 </button>
+                                <button type="button" @click="addManualEntry"
+                                    class="px-3 py-1.5 border border-gray-300 text-gray-700 text-xs rounded hover:bg-gray-50">
+                                    + Agregar fila
+                                </button>
                                 <button v-if="suggestionsApplied || form.entries.length > 0" type="button" @click="clearBulkSuggestions"
                                     class="px-3 py-1.5 border border-gray-300 text-gray-700 text-xs rounded hover:bg-gray-50">
                                     Limpiar
@@ -874,7 +951,13 @@ const canSubmit = computed(() => {
                                 <div v-for="entry in group.entries" :key="`${entry.employee_id}_${entry.date}_${entry._index}`"
                                     class="px-4 py-2 flex items-center justify-between gap-3 text-sm bg-white">
                                     <div class="min-w-0">
-                                        <div class="text-xs font-semibold text-pink-700">
+                                        <div v-if="entry.kind === 'manual'">
+                                            <input type="date"
+                                                :value="entry.date"
+                                                @input="setEntryField(entry._index, 'date', $event.target.value)"
+                                                class="text-xs rounded border-gray-300 focus:border-pink-500 focus:ring-pink-500 py-1" />
+                                        </div>
+                                        <div v-else class="text-xs font-semibold text-pink-700">
                                             {{ formatDateShort(entry.date) }}
                                         </div>
                                         <div v-if="entry.summary" class="text-[11px] text-gray-600 truncate" :title="entry.summary">
@@ -923,6 +1006,55 @@ const canSubmit = computed(() => {
                             <input v-model="form.hours" type="number" step="1" min="1" placeholder="1" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.hours }" />
                             <p v-if="form.errors.hours" class="mt-1 text-sm text-red-600">{{ form.errors.hours }}</p>
                             <p class="mt-1 text-xs text-gray-500">Numero de unidades</p>
+                        </div>
+                    </div>
+
+                    <!-- Extra manual rows (additive to the range/quantity above) -->
+                    <div class="mt-6 pt-4 border-t border-gray-100">
+                        <div class="flex items-center justify-between mb-2">
+                            <p class="text-xs text-gray-500">
+                                Filas adicionales (una por empleado seleccionado).
+                                <span v-if="isOneTime">Solo cantidad.</span>
+                                <span v-else>Cada fila es una fecha extra.</span>
+                            </p>
+                            <button type="button" @click="addManualEntry"
+                                class="px-3 py-1.5 border border-gray-300 text-gray-700 text-xs rounded hover:bg-gray-50">
+                                + Agregar fila
+                            </button>
+                        </div>
+
+                        <div v-if="form.entries.length > 0" class="max-h-[28rem] overflow-y-auto space-y-3 pr-1">
+                            <div v-for="group in entriesGroupedByEmployee" :key="group.employee_id"
+                                class="border rounded-lg overflow-hidden">
+                                <div class="bg-gray-50 px-4 py-2 flex items-center justify-between border-b">
+                                    <div class="text-sm font-semibold text-gray-900 truncate">
+                                        {{ group.employee_name }}
+                                        <span class="ml-2 text-xs font-normal text-gray-500">{{ group.employee_number }}</span>
+                                    </div>
+                                    <div class="text-xs text-gray-700 whitespace-nowrap">{{ group.entries.length }} fila(s)</div>
+                                </div>
+                                <div class="divide-y divide-gray-100">
+                                    <div v-for="entry in group.entries" :key="`${entry.employee_id}_${entry._index}`"
+                                        class="px-4 py-2 flex items-center gap-3 text-sm bg-white">
+                                        <div v-if="!isOneTime" class="flex-shrink-0">
+                                            <input type="date" :value="entry.date"
+                                                @input="setEntryField(entry._index, 'date', $event.target.value)"
+                                                class="text-xs rounded border-gray-300 focus:border-pink-500 focus:ring-pink-500 py-1" />
+                                        </div>
+                                        <div class="flex items-center gap-1">
+                                            <label class="text-xs text-gray-500">Cant.</label>
+                                            <input type="number" step="1" min="1"
+                                                :value="entry.hours"
+                                                @input="setEntryField(entry._index, 'hours', $event.target.value)"
+                                                class="w-20 text-xs rounded border-gray-300 focus:border-pink-500 focus:ring-pink-500 py-1" />
+                                        </div>
+                                        <button type="button" @click="removeEntry(entry._index)"
+                                            class="ml-auto text-[11px] text-gray-400 hover:text-red-600 flex-shrink-0">
+                                            Quitar
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>

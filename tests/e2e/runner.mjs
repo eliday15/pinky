@@ -86,12 +86,30 @@ function cleanup() {
     if (serverProcess) {
         serverProcess.kill('SIGTERM');
         serverProcess = null;
-        console.log('  Server stopped.');
     }
+    // Belt-and-suspenders: kill whatever still holds PORT. Killing the `sh -c`
+    // wrapper doesn't always reap the grandchild `php -S`, and an orphan left
+    // listening would make the NEXT run bind-fail and silently reuse the stale
+    // server. Reaping by port guarantees a clean slate.
+    freePort();
+    console.log('  Server stopped.');
     if (existsSync(DB_PATH)) {
         unlinkSync(DB_PATH);
         console.log('  Test database deleted.');
     }
+}
+
+/**
+ * Kill any process listening on PORT (best-effort, POSIX `lsof`).
+ */
+function freePort() {
+    try {
+        const pids = execSync(`lsof -ti tcp:${PORT} 2>/dev/null || true`, { cwd: ROOT })
+            .toString().trim().split('\n').filter(Boolean);
+        for (const pid of pids) {
+            try { process.kill(Number(pid), 'SIGKILL'); } catch { /* already gone */ }
+        }
+    } catch { /* lsof unavailable — nothing to do */ }
 }
 
 async function main() {
@@ -133,18 +151,28 @@ async function main() {
             console.log('  Removed public/hot (force production assets)');
         }
 
-        // 4. Start Laravel server via shell redirect so stdout/stderr go to a real
-        // file. `php artisan serve` uses `file_put_contents('php://stdout', ...)` for
-        // access logs; if those writes get EPIPE (e.g. due to how Node inherits fds
-        // through the artisan→php-S→worker chain), the server crashes mid-request.
-        // A shell-level `>file 2>&1` redirect gives every descended process a
-        // writable file fd that never causes EPIPE, regardless of what Node does to
-        // its own stdio descriptors.
-        console.log('\n→ Starting Laravel server...');
+        // 4. Start the PHP built-in server DIRECTLY (not `php artisan serve`).
+        //
+        // `artisan serve` runs `php -S` as a Symfony Process child and captures its
+        // output through a pipe. Laravel's framework router logs every request via
+        // `file_put_contents('php://stdout', ...)`; once that pipe backs up under
+        // load the worker's write fails with "errno=32 Broken pipe" and the request
+        // returns a raw PHP Notice instead of HTML — flaking specs nondeterministically.
+        //
+        // Launching `php -S` ourselves with a custom router (tests/e2e/server-router.php,
+        // which omits that stdout log line) removes both the capturing pipe and the
+        // EPIPE-prone write. All server output goes to a real file via shell redirect,
+        // so no descriptor can ever EPIPE. PHP_CLI_SERVER_WORKERS lets the built-in
+        // server fork workers so a page's parallel asset requests don't serialize.
+        console.log('\n→ Starting PHP built-in server (EPIPE-safe)...');
+        // Clear any orphan from a previous run so we bind cleanly instead of
+        // silently falling back onto a stale (artisan-serve) listener.
+        freePort();
         const serverLogPath = resolve(ROOT, 'storage/logs/e2e-server.log');
+        const routerScript = resolve(__dirname, 'server-router.php');
         serverProcess = spawn(
             'sh',
-            ['-c', `php artisan serve --env=testing --port=${PORT} >"${serverLogPath}" 2>&1`],
+            ['-c', `APP_ENV=testing PHP_CLI_SERVER_WORKERS=4 php -S 127.0.0.1:${PORT} -t public "${routerScript}" >"${serverLogPath}" 2>&1`],
             { cwd: ROOT, stdio: 'ignore', detached: false }
         );
 

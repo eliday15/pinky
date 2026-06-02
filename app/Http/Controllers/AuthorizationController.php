@@ -1194,11 +1194,27 @@ class AuthorizationController extends Controller
     }
 
     /**
-     * Velada segments: a single block back-extended from check_out using the
-     * record's precomputed velada_hours. Rounding applies the same stepped rule.
+     * Velada segments.
+     *
+     * A real velada is a SEPARATE night block: the employee finishes their normal
+     * shift (possibly after some overtime), clocks out, then clocks back IN for the
+     * velada and OUT when it ends — so the day's punches read as
+     * [entrada normal, salida normal/extras, entrada velada, salida velada].
+     *
+     * We surface that actual velada entry→exit block straight from the day's raw
+     * punches. Only when there are no usable punches (legacy records synced before
+     * raw_punches was stored) do we fall back to the old behaviour of back-extending
+     * a synthetic range from the precomputed velada_hours.
      */
     private function buildVeladaSegments(AttendanceRecord $record): array
     {
+        $fromPunches = $this->veladaSegmentFromPunches($record->raw_punches ?? []);
+        if ($fromPunches !== null) {
+            return [$fromPunches];
+        }
+
+        // Fallback: legacy record without raw punches. Back-extend from check_out
+        // using the precomputed velada_hours and the same stepped rounding rule.
         $rawHours = (float) ($record->velada_hours ?? 0);
         $minutes = (int) round($rawHours * 60);
         $rounded = $this->roundOvertimeMinutes($minutes);
@@ -1216,6 +1232,92 @@ class AuthorizationController extends Controller
             'hours' => number_format($rounded, 2, '.', ''),
             'summary' => "Velada: {$rounded}h (de " . $start->format('H:i') . " hasta {$checkOut->format('H:i')}).",
         ]];
+    }
+
+    /**
+     * Extract the velada block (the night re-entry) from a day's raw punches.
+     *
+     * Punches are stored chronologically as [{time:'HH:MM:SS', type, ...}]. The
+     * velada is the last work block of the day, so we take the last two
+     * shift-boundary punches (ignoring the lunch break, which is interior to the
+     * normal shift) as the velada entry and exit. A velada whose exit time reads
+     * earlier than its entry (e.g. 22:00 → 02:00) crossed midnight; its real
+     * duration spans into the next day.
+     *
+     * The block only counts as a velada when its entry lands inside the configured
+     * velada window (velada_detection_start_hour..end_hour) or the span crossed
+     * midnight — so an ordinary day or a continuous overtime block (no separate
+     * re-entry) is not mistaken for one. Returns a suggestion row, or null when the
+     * punches don't describe a velada (the caller then falls back to velada_hours).
+     *
+     * @param  array  $rawPunches  Stored punches for the day, in chronological order.
+     */
+    private function veladaSegmentFromPunches(array $rawPunches): ?array
+    {
+        // Keep only shift-boundary punches, in stored (chronological) order. The
+        // lunch break sits inside the normal shift and never bounds the velada.
+        $points = [];
+        foreach ($rawPunches as $p) {
+            $type = $p['type'] ?? 'punch';
+            if ($type === 'lunch_out' || $type === 'lunch_in') {
+                continue;
+            }
+            $time = $p['time'] ?? null;
+            if (! $time) {
+                continue;
+            }
+            $points[] = [
+                'hm' => substr($time, 0, 5),
+                'min' => ((int) substr($time, 0, 2)) * 60 + (int) substr($time, 3, 2),
+                'hour' => (int) substr($time, 0, 2),
+            ];
+        }
+
+        if (count($points) < 2) {
+            return null;
+        }
+
+        // The velada is the last work block → its entry/exit are the last two
+        // boundary punches (robust to a stray normal-shift punch in the middle).
+        $entry = $points[count($points) - 2];
+        $exit = $points[count($points) - 1];
+
+        $veladaStart = (int) SystemSetting::get('velada_detection_start_hour', 22);
+        $veladaEnd = (int) SystemSetting::get('velada_detection_end_hour', 5);
+
+        $inWindow = function (int $hour) use ($veladaStart, $veladaEnd): bool {
+            return $veladaStart <= $veladaEnd
+                ? ($hour >= $veladaStart && $hour < $veladaEnd)
+                : ($hour >= $veladaStart || $hour < $veladaEnd);
+        };
+
+        // exit at/before entry (in minutes-of-day) means the block ran past 00:00.
+        $crossesMidnight = $exit['min'] <= $entry['min'];
+
+        // Require a genuine night entry: inside the velada window, or a span that
+        // crossed midnight. This rejects normal days and continuous OT (no re-entry).
+        if (! $inWindow($entry['hour']) && ! $crossesMidnight) {
+            return null;
+        }
+
+        $minutes = $crossesMidnight
+            ? ($exit['min'] + 1440) - $entry['min']
+            : $exit['min'] - $entry['min'];
+
+        $rounded = $this->roundOvertimeMinutes($minutes);
+        if ($rounded <= 0) {
+            return null;
+        }
+
+        $crossNote = $crossesMidnight ? ' del día siguiente' : '';
+
+        return [
+            'kind' => 'velada',
+            'start_time' => $entry['hm'],
+            'end_time' => $exit['hm'],
+            'hours' => number_format($rounded, 2, '.', ''),
+            'summary' => "Velada: {$rounded}h (entrada {$entry['hm']}, salida {$exit['hm']}{$crossNote}).",
+        ];
     }
 
     /** Delegate the rounding rule to the shared service. */

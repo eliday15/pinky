@@ -114,6 +114,38 @@ class E2ETestSeeder extends Seeder
             'description' => 'Pago de dia festivo al 100%',
         ]);
 
+        // Extra types to exercise every authorization application mode in the UI
+        // (per_hour velada, per_day, one_time, and weekend attendance-pull).
+        $ctVelada = CompensationType::factory()->percentage(100.00)->create([
+            'name' => 'Velada',
+            'code' => 'VEL',
+            'description' => 'Turno nocturno que cruza medianoche',
+            'application_mode' => CompensationType::APPLICATION_PER_HOUR,
+            'authorization_type' => Authorization::TYPE_NIGHT_SHIFT,
+        ]);
+        $ctPermisoDia = CompensationType::factory()->fixed(200.00)->create([
+            'name' => 'Permiso por Dia',
+            'code' => 'PDIA',
+            'description' => 'Compensacion por dia (per_day)',
+            'application_mode' => CompensationType::APPLICATION_PER_DAY,
+            'authorization_type' => Authorization::TYPE_SPECIAL,
+        ]);
+        $ctBonoUnico = CompensationType::factory()->fixed(500.00)->create([
+            'name' => 'Bono Unico',
+            'code' => 'BUNI',
+            'description' => 'Bono de cantidad fija (one_time)',
+            'application_mode' => CompensationType::APPLICATION_ONE_TIME,
+            'authorization_type' => Authorization::TYPE_SPECIAL,
+        ]);
+        $ctFinde = CompensationType::factory()->percentage(75.00)->create([
+            'name' => 'Fin de Semana',
+            'code' => 'FINDE',
+            'description' => 'Trabajo en fin de semana (jala desde checadas)',
+            'application_mode' => CompensationType::APPLICATION_PER_DAY,
+            'authorization_type' => Authorization::TYPE_SPECIAL,
+            'attendance_pull_rule' => CompensationType::PULL_RULE_WEEKEND,
+        ]);
+
         // 6. Positions (with compensation types)
         $posOperator = Position::factory()->create([
             'name' => 'Operador',
@@ -198,8 +230,10 @@ class E2ETestSeeder extends Seeder
             $ctFixed->id => ['custom_percentage' => null, 'custom_fixed_amount' => 150.00, 'is_active' => true],
         ]);
 
-        // Admin employee with variable bonus
-        Employee::factory()->withVariableBonus(300.00)->withFullProfile()->create([
+        // Admin employee with variable bonus. Enabled for every application mode
+        // so the authorization-create e2e can drive per_hour/per_day/one_time and
+        // the weekend attendance-pull flows against a single known employee.
+        $empAdmin = Employee::factory()->withVariableBonus(300.00)->withFullProfile()->create([
             'employee_number' => 'EMP-0004',
             'zkteco_user_id' => 1004,
             'first_name' => 'Ana',
@@ -208,6 +242,12 @@ class E2ETestSeeder extends Seeder
             'department_id' => $deptAdmin->id,
             'position_id' => $posAdminAsst->id,
             'schedule_id' => $schedDay->id,
+        ]);
+        $empAdmin->compensationTypes()->attach([
+            $ctVelada->id => ['custom_percentage' => 100.00, 'custom_fixed_amount' => null, 'is_active' => true],
+            $ctPermisoDia->id => ['custom_percentage' => null, 'custom_fixed_amount' => 200.00, 'is_active' => true],
+            $ctBonoUnico->id => ['custom_percentage' => null, 'custom_fixed_amount' => 500.00, 'is_active' => true],
+            $ctFinde->id => ['custom_percentage' => 75.00, 'custom_fixed_amount' => null, 'is_active' => true],
         ]);
 
         // Incomplete profile employee (no supervisor — triggers Incompleto badge)

@@ -30,6 +30,19 @@ export function diffMinutes(startHHMM, endHHMM) {
 }
 
 /**
+ * Total minutes between two full datetimes (date + HH:MM each), so a range
+ * that crosses midnight (e.g. a velada 22:00 -> next-day 06:00) is measured
+ * correctly. Negative spans (end before start) clamp to 0.
+ */
+export function minutesBetweenDates(startDate, startHHMM, endDate, endHHMM) {
+    if (!startDate || !startHHMM || !endDate || !endHHMM) return 0;
+    const start = new Date(`${startDate}T${startHHMM}`);
+    const end = new Date(`${endDate}T${endHHMM}`);
+    const diff = (end - start) / 60000;
+    return Number.isFinite(diff) ? Math.max(0, diff) : 0;
+}
+
+/**
  * Convenience: hours formatted to two decimals as a string, matching
  * the backend's number_format($v, 2, '.', '') output.
  */

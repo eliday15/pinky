@@ -501,6 +501,90 @@ class AuthorizationControllerTest extends FeatureTestCase
             ->assertSessionHasErrors(['type', 'reason']);
     }
 
+    /**
+     * per_day / one_time now fold their range/quantity form and any extra manual
+     * rows into a single entries[] payload. Each row (no start/end times, just an
+     * explicit quantity in `hours`) becomes one authorization. Mirrors what
+     * Create.vue / CreateBulk.vue submit for quantity modes.
+     */
+    public function test_store_bulk_quantity_entries_create_one_auth_per_row(): void
+    {
+        $this->actingAsAdmin();
+        $emp = Employee::factory()->create();
+
+        $this->from(route('authorizations.createBulk'))->post(route('authorizations.storeBulk'), [
+            'type' => Authorization::TYPE_SPECIAL,
+            'reason' => 'per_day range + manual rows',
+            'entries' => [
+                // The "range" row (e.g. a 3-day span) plus two extra manual rows.
+                ['employee_id' => $emp->id, 'date' => '2026-06-10', 'hours' => 3],
+                ['employee_id' => $emp->id, 'date' => '2026-06-15', 'hours' => 1],
+                ['employee_id' => $emp->id, 'date' => '2026-06-20', 'hours' => 2],
+            ],
+        ])->assertRedirect(route('authorizations.index'));
+
+        $this->assertEquals(3, Authorization::count());
+        $this->assertDatabaseHas('authorizations', ['employee_id' => $emp->id, 'date' => '2026-06-10', 'hours' => 3.00, 'start_time' => null]);
+        $this->assertDatabaseHas('authorizations', ['employee_id' => $emp->id, 'date' => '2026-06-15', 'hours' => 1.00]);
+        $this->assertDatabaseHas('authorizations', ['employee_id' => $emp->id, 'date' => '2026-06-20', 'hours' => 2.00]);
+    }
+
+    /**
+     * A velada (night_shift) that crosses midnight — start 22:00, end 06:00 with
+     * an explicit 8-hour value — must be accepted, not falsely rejected as a
+     * schedule conflict or a zero-hour row. This is the backend half of the
+     * front-end cross-midnight fix (separate end_date in the row model).
+     */
+    public function test_store_bulk_velada_crossing_midnight_is_accepted(): void
+    {
+        $this->actingAsAdmin();
+        // Default factory schedule is a weekday 08:00-17:00 day shift; 2026-06-08
+        // is a Monday. A 22:00->06:00 range sits entirely outside that jornada.
+        $emp = Employee::factory()->create();
+
+        $this->from(route('authorizations.createBulk'))->post(route('authorizations.storeBulk'), [
+            'type' => Authorization::TYPE_NIGHT_SHIFT,
+            'reason' => 'Velada cruzando medianoche',
+            'entries' => [
+                ['employee_id' => $emp->id, 'date' => '2026-06-08', 'start_time' => '22:00', 'end_time' => '06:00', 'hours' => 8],
+            ],
+        ])->assertSessionHasNoErrors();
+
+        $this->assertEquals(1, Authorization::count());
+        $this->assertDatabaseHas('authorizations', [
+            'employee_id' => $emp->id,
+            'type' => Authorization::TYPE_NIGHT_SHIFT,
+            'date' => '2026-06-08',
+            'start_time' => '22:00',
+            'end_time' => '06:00',
+            'hours' => 8.00,
+        ]);
+    }
+
+    /**
+     * Guard the explicit-hours trust path: even though 22:00->06:00 read as a
+     * literal same-day H:i diff would be a negative/odd span, the backend stores
+     * the caller's explicit hours rather than recomputing a wrong value.
+     */
+    public function test_store_bulk_velada_trusts_explicit_hours_over_time_diff(): void
+    {
+        $this->actingAsAdmin();
+        $emp = Employee::factory()->create();
+
+        $this->from(route('authorizations.createBulk'))->post(route('authorizations.storeBulk'), [
+            'type' => Authorization::TYPE_NIGHT_SHIFT,
+            'reason' => 'Velada con horas explícitas',
+            'entries' => [
+                ['employee_id' => $emp->id, 'date' => '2026-06-08', 'start_time' => '23:30', 'end_time' => '05:30', 'hours' => 6],
+            ],
+        ])->assertSessionHasNoErrors();
+
+        $this->assertDatabaseHas('authorizations', [
+            'employee_id' => $emp->id,
+            'hours' => 6.00,
+        ]);
+    }
+
     public function test_store_bulk_rejects_entry_inside_work_schedule(): void
     {
         $this->actingAsAdmin();
