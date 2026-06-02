@@ -139,6 +139,54 @@ class PayrollSplitTest extends FeatureTestCase
         $this->assertGreaterThanOrEqual(75.00, (float) $entry->gross_pay);
     }
 
+    /**
+     * A velada that crosses midnight (22:00 → 06:00) is authorized for its real
+     * 8h span, not a naive same-day 16h/20h diff. The midnight-aware hours are
+     * stored on the Authorization and the attendance velada_authorized_hours;
+     * payroll generation must surface exactly those — never recompute from the
+     * start/end times. Legacy (no comp types) path: velada pay = hours * rate *
+     * multiplier, so 8h proves through as 8 * 100 * 2.0 = 1600, not 20h → 4000.
+     */
+    public function test_monthly_velada_crossing_midnight_pays_real_hours(): void
+    {
+        $employee = $this->makeEmployee();
+
+        // Attendance velada split as the midnight-aware VeladaCalculatorService /
+        // sync would persist it: 8 detected, 8 authorized.
+        AttendanceRecord::factory()->for($employee)->create([
+            'work_date' => '2026-06-03',
+            'status' => 'present',
+            'worked_hours' => 8.00,
+            'velada_hours' => 8.00,
+            'velada_authorized_hours' => 8.00,
+        ]);
+
+        // The approved velada authorization, stored with the midnight-aware 8h the
+        // fixed controller computes for a 22:00 → 06:00 (next-day) range.
+        $user = User::factory()->create();
+        Authorization::create([
+            'employee_id' => $employee->id,
+            'requested_by' => $user->id,
+            'type' => Authorization::TYPE_NIGHT_SHIFT,
+            'date' => '2026-06-03',
+            'start_time' => '22:00',
+            'end_time' => '06:00',
+            'hours' => 8,
+            'reason' => 'velada cruzando medianoche',
+            'status' => Authorization::STATUS_APPROVED,
+        ]);
+
+        $period = PayrollPeriod::factory()->monthly()->create([
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-30',
+        ]);
+
+        $entry = $this->calculator()->calculateEmployeePayroll($period, $employee);
+
+        $this->assertEqualsWithDelta(8.00, (float) $entry->night_shift_hours, 0.01, 'night_shift_hours = summed authorization hours (8), not 20');
+        $this->assertEqualsWithDelta(1600.00, (float) $entry->velada_pay, 0.01, 'velada pay = 8h * 100 * 2.0, proving the 8h span flows through');
+    }
+
     public function test_contpaqi_export_columns_match_period_type(): void
     {
         $weekly = PayrollPeriod::factory()->weekly()->create();

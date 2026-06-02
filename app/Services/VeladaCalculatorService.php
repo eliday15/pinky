@@ -38,8 +38,12 @@ class VeladaCalculatorService
             ];
         }
 
-        $veladaStartHour = (int) SystemSetting::get('velada_detection_start_hour', 0);
-        $veladaEndHour = (int) SystemSetting::get('velada_detection_end_hour', 6);
+        // Defaults match the seeded/migrated production values (22:00–05:00) and
+        // the AuthorizationController velada detection, so an unset setting (e.g.
+        // a fresh DB) falls back to the same window everywhere instead of the
+        // stale pre-migration 0:00–6:00 split.
+        $veladaStartHour = (int) SystemSetting::get('velada_detection_start_hour', 22);
+        $veladaEndHour = (int) SystemSetting::get('velada_detection_end_hour', 5);
 
         $dateStr = $record->work_date->toDateString();
         $checkIn = Carbon::parse($dateStr . ' ' . Carbon::parse($record->check_in)->format('H:i:s'));
