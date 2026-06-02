@@ -430,6 +430,47 @@ class AuthorizationControllerTest extends FeatureTestCase
         ]);
     }
 
+    /**
+     * The velada equivalent: a night_shift authorization whose (start, end, hours)
+     * match the velada block detected from raw punches (22:00 → 02:00 = 4h) is
+     * auto-approved — i.e. the supervisor loads it from checadas and submits it
+     * untouched. Closes the loop on the punch-based velada detection.
+     */
+    public function test_store_auto_approves_when_range_matches_detected_velada(): void
+    {
+        $admin = $this->actingAsAdmin();
+        $emp = Employee::factory()->create();
+        AttendanceRecord::factory()->create([
+            'employee_id' => $emp->id,
+            'work_date' => '2026-06-08',
+            'check_in' => '08:00:00',
+            'check_out' => '02:00:00',
+            'raw_punches' => [
+                ['time' => '08:00:00', 'type' => 'in'],
+                ['time' => '17:00:00', 'type' => 'punch'],
+                ['time' => '22:00:00', 'type' => 'punch'],
+                ['time' => '02:00:00', 'type' => 'out'],
+            ],
+        ]);
+
+        $this->from(route('authorizations.create'))->post(route('authorizations.store'), [
+            'employee_id' => $emp->id,
+            'type' => Authorization::TYPE_NIGHT_SHIFT,
+            'date' => '2026-06-08',
+            'start_time' => '22:00',
+            'end_time' => '02:00',
+            'hours' => 4,
+            'reason' => 'Matches detected velada',
+        ])->assertRedirect(route('authorizations.index'));
+
+        $this->assertDatabaseHas('authorizations', [
+            'employee_id' => $emp->id,
+            'type' => Authorization::TYPE_NIGHT_SHIFT,
+            'status' => Authorization::STATUS_APPROVED,
+            'approved_by' => $admin->id,
+        ]);
+    }
+
     // ─────────────────────────────────────────────────────────────────────
     // createBulk / storeBulk
     // ─────────────────────────────────────────────────────────────────────
@@ -1667,5 +1708,183 @@ class AuthorizationControllerTest extends FeatureTestCase
             'end_date' => '2026-06-08',
             'type' => Authorization::TYPE_OVERTIME,
         ]))->assertRedirect(route('login'));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Velada pull-from-checadas (raw_punches → real night block)
+    // ─────────────────────────────────────────────────────────────────────
+
+    /**
+     * A velada is pulled as the REAL night block from the day's punches: the
+     * employee worked their normal shift, clocked out, then clocked back in for
+     * the velada and out after midnight. The suggestion must be the actual velada
+     * entry→exit (22:00 → 02:00 = 4h), not a synthetic range back-extended from
+     * velada_hours. Drives "Cargar desde checadas" for night_shift in both forms.
+     */
+    public function test_suggest_bulk_velada_pulls_real_block_from_punches(): void
+    {
+        $this->actingAsAdmin();
+        $emp = Employee::factory()->create();
+        AttendanceRecord::factory()->create([
+            'employee_id' => $emp->id,
+            'work_date' => '2026-06-08',
+            // check_out is the post-midnight velada exit (time-only, wraps past 00:00).
+            'check_in' => '08:00:00',
+            'check_out' => '02:00:00',
+            // Velada split would be irrelevant here — the block comes from punches.
+            'velada_hours' => 0,
+            'raw_punches' => [
+                ['time' => '08:00:00', 'type' => 'in'],
+                ['time' => '17:00:00', 'type' => 'punch'],   // salida del turno normal
+                ['time' => '22:00:00', 'type' => 'punch'],   // entrada de la velada
+                ['time' => '02:00:00', 'type' => 'out'],     // salida de la velada (+1 día)
+            ],
+        ]);
+
+        $this->getJson(route('authorizations.suggestBulk', [
+            'employee_ids' => [$emp->id],
+            'start_date' => '2026-06-08',
+            'end_date' => '2026-06-08',
+            'type' => Authorization::TYPE_NIGHT_SHIFT,
+        ]))
+            ->assertOk()
+            ->assertJsonPath('suggestions.0.kind', 'velada')
+            ->assertJsonPath('suggestions.0.start_time', '22:00')
+            ->assertJsonPath('suggestions.0.end_time', '02:00')
+            ->assertJsonPath('suggestions.0.hours', '4.00');
+    }
+
+    /**
+     * Same real-block detection through the single-employee `suggest` endpoint,
+     * so the Create.vue velada form (Image #3) gets the actual entry/exit too.
+     */
+    public function test_suggest_velada_pulls_real_block_from_punches(): void
+    {
+        $this->actingAsAdmin();
+        $emp = Employee::factory()->create();
+        AttendanceRecord::factory()->create([
+            'employee_id' => $emp->id,
+            'work_date' => '2026-06-08',
+            'check_in' => '08:00:00',
+            'check_out' => '02:00:00',
+            'velada_hours' => 0,
+            'raw_punches' => [
+                ['time' => '08:00:00', 'type' => 'in'],
+                ['time' => '17:00:00', 'type' => 'punch'],
+                ['time' => '22:00:00', 'type' => 'punch'],
+                ['time' => '02:00:00', 'type' => 'out'],
+            ],
+        ]);
+
+        $this->getJson(route('authorizations.suggest', [
+            'employee_id' => $emp->id,
+            'date' => '2026-06-08',
+            'type' => Authorization::TYPE_NIGHT_SHIFT,
+        ]))
+            ->assertOk()
+            ->assertJson([
+                'found' => true,
+                'kind' => 'velada',
+                'start_time' => '22:00',
+                'end_time' => '02:00',
+                'hours' => '4.00',
+            ]);
+    }
+
+    /**
+     * Lunch punches sit inside the normal shift and must not be mistaken for the
+     * velada boundary. A full day [in, lunch_out, lunch_in, normal_out, velada_in,
+     * velada_out] still resolves the velada as the last real block (23:00 → 03:30).
+     */
+    public function test_suggest_bulk_velada_ignores_lunch_punches(): void
+    {
+        $this->actingAsAdmin();
+        $emp = Employee::factory()->create();
+        AttendanceRecord::factory()->create([
+            'employee_id' => $emp->id,
+            'work_date' => '2026-06-08',
+            'check_in' => '08:00:00',
+            'check_out' => '03:30:00',
+            'raw_punches' => [
+                ['time' => '08:00:00', 'type' => 'in'],
+                ['time' => '13:00:00', 'type' => 'lunch_out'],
+                ['time' => '14:00:00', 'type' => 'lunch_in'],
+                ['time' => '18:00:00', 'type' => 'punch'],
+                ['time' => '23:00:00', 'type' => 'punch'],
+                ['time' => '03:30:00', 'type' => 'out'],
+            ],
+        ]);
+
+        $this->getJson(route('authorizations.suggestBulk', [
+            'employee_ids' => [$emp->id],
+            'start_date' => '2026-06-08',
+            'end_date' => '2026-06-08',
+            'type' => Authorization::TYPE_NIGHT_SHIFT,
+        ]))
+            ->assertOk()
+            ->assertJsonPath('suggestions.0.start_time', '23:00')
+            ->assertJsonPath('suggestions.0.end_time', '03:30')
+            ->assertJsonPath('suggestions.0.hours', '4.50');
+    }
+
+    /**
+     * A plain day shift with punches (in → out, no night re-entry) is NOT a velada,
+     * even though raw_punches are present: the last block must land in the velada
+     * window or cross midnight to qualify.
+     */
+    public function test_suggest_bulk_velada_skips_normal_day_with_punches(): void
+    {
+        $this->actingAsAdmin();
+        $emp = Employee::factory()->create();
+        AttendanceRecord::factory()->create([
+            'employee_id' => $emp->id,
+            'work_date' => '2026-06-08',
+            'check_in' => '08:00:00',
+            'check_out' => '17:00:00',
+            'velada_hours' => 0,
+            'raw_punches' => [
+                ['time' => '08:00:00', 'type' => 'in'],
+                ['time' => '17:00:00', 'type' => 'out'],
+            ],
+        ]);
+
+        $this->getJson(route('authorizations.suggestBulk', [
+            'employee_ids' => [$emp->id],
+            'start_date' => '2026-06-08',
+            'end_date' => '2026-06-08',
+            'type' => Authorization::TYPE_NIGHT_SHIFT,
+        ]))
+            ->assertOk()
+            ->assertJson(['eligible_count' => 0]);
+    }
+
+    /**
+     * Legacy records synced before raw_punches existed still work: with no punches
+     * the detector falls back to back-extending the velada block from the stored
+     * velada_hours (here 3h, from a 06:00 check_out → 03:00 start).
+     */
+    public function test_suggest_bulk_velada_falls_back_to_velada_hours_without_punches(): void
+    {
+        $this->actingAsAdmin();
+        $emp = Employee::factory()->create();
+        AttendanceRecord::factory()->create([
+            'employee_id' => $emp->id,
+            'work_date' => '2026-06-08',
+            'check_in' => '20:00:00',
+            'check_out' => '06:00:00',
+            'velada_hours' => 3,
+            'raw_punches' => null,
+        ]);
+
+        $this->getJson(route('authorizations.suggestBulk', [
+            'employee_ids' => [$emp->id],
+            'start_date' => '2026-06-08',
+            'end_date' => '2026-06-08',
+            'type' => Authorization::TYPE_NIGHT_SHIFT,
+        ]))
+            ->assertOk()
+            ->assertJsonPath('suggestions.0.kind', 'velada')
+            ->assertJsonPath('suggestions.0.end_time', '06:00')
+            ->assertJsonPath('suggestions.0.hours', '3.00');
     }
 }
