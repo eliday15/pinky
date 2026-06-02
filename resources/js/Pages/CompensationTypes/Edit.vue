@@ -328,9 +328,10 @@ const submit = () => {
                                 <option :value="null">Ninguna</option>
                                 <option value="meal">Cena (12h, velada o fin de semana)</option>
                                 <option value="weekend">Fin de semana (trabajo sab/dom fuera de horario)</option>
+                                <option value="comida">Comida (solo trabajo en fin de semana)</option>
                             </select>
                             <p class="mt-1 text-sm text-gray-500">
-                                Al jalar desde checadas se generan entradas automaticas por cada dia que califique segun la regla elegida. "Cena": jornada minima, cruzo medianoche o fin de semana. "Fin de semana": trabajo en sabado/domingo fuera de su horario. No se auto-aprueban.
+                                Al jalar desde checadas se generan entradas automaticas por cada dia que califique segun la regla elegida. "Cena": jornada minima, cruzo medianoche o fin de semana. "Fin de semana": trabajo en sabado/domingo fuera de su horario. "Comida": lunch solo por trabajar fin de semana. No se auto-aprueban.
                             </p>
                             <p v-if="form.errors.attendance_pull_rule" class="mt-1 text-sm text-red-600">
                                 {{ form.errors.attendance_pull_rule }}

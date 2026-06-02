@@ -962,15 +962,16 @@ class AuthorizationController extends Controller
             'compensation_type_id' => ['nullable', 'exists:compensation_types,id'],
         ]);
 
-        // Per-day pull rules (meal/weekend) pull from check-ins differently than
-        // overtime/velada: one entry per qualifying day, no time segments. Any
+        // Per-day pull rules (meal/weekend/comida) pull from check-ins differently
+        // than overtime/velada: one entry per qualifying day, no time segments. Any
         // other type only supports the per-hour overtime/velada detection.
         $compType = ! empty($validated['compensation_type_id'])
             ? CompensationType::find($validated['compensation_type_id'])
             : null;
         $isMeal = $compType && $compType->hasMealPullRule();
         $isWeekend = $compType && $compType->hasWeekendPullRule();
-        $isPull = $isMeal || $isWeekend;
+        $isComida = $compType && $compType->hasComidaPullRule();
+        $isPull = $isMeal || $isWeekend || $isComida;
 
         if (! $isPull && ! in_array($validated['type'], [Authorization::TYPE_OVERTIME, Authorization::TYPE_NIGHT_SHIFT], true)) {
             return response()->json([
@@ -1038,7 +1039,9 @@ class AuthorizationController extends Controller
                     if ($record && $record->check_in && ! isset($existingPull[$employee->id . '|' . $dateStr])) {
                         $seg = $isMeal
                             ? $this->buildMealSegment($record, $mealThreshold)
-                            : $this->buildWeekendSegment($record);
+                            : ($isWeekend
+                                ? $this->buildWeekendSegment($record)
+                                : $this->buildComidaSegment($record));
                         if ($seg) {
                             $rows[] = [
                                 'employee_id' => $employee->id,
@@ -1420,6 +1423,31 @@ class AuthorizationController extends Controller
             'end_time' => null,
             'hours' => '1',
             'summary' => 'Fin de semana trabajado.',
+        ];
+    }
+
+    /**
+     * Comida segment: a single per-day lunch entry given ONLY when the employee
+     * worked a weekend day outside their schedule (is_weekend_work, set during the
+     * ZKTeco sync). Unlike the Cena (meal) rule, it never fires for long days or
+     * veladas — a comida is earned strictly by working the weekend.
+     *
+     * Returns null when the day isn't flagged as weekend work. `hours` is 1 because
+     * the comida is per_day — one worked weekend day is one lunch. These never
+     * auto-approve (per_day pull concept).
+     */
+    private function buildComidaSegment(AttendanceRecord $record): ?array
+    {
+        if (! $record->is_weekend_work) {
+            return null;
+        }
+
+        return [
+            'kind' => 'comida',
+            'start_time' => null,
+            'end_time' => null,
+            'hours' => '1',
+            'summary' => 'Comida: fin de semana trabajado.',
         ];
     }
 

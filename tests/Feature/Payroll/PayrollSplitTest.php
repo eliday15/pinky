@@ -187,6 +187,51 @@ class PayrollSplitTest extends FeatureTestCase
         $this->assertEqualsWithDelta(1600.00, (float) $entry->velada_pay, 0.01, 'velada pay = 8h * 100 * 2.0, proving the 8h span flows through');
     }
 
+    /**
+     * A COMIDA (attendance_pull_rule = comida) authorization pays through the same
+     * generic authorization pass as cena — one fixed lunch per approved weekend-work
+     * day — and lands in other_compensation_pay (the monthly "otros" bucket), proving
+     * the new pull rule is wired end-to-end into payroll generation.
+     */
+    public function test_monthly_pays_comida_via_generic_authorization_pass(): void
+    {
+        $employee = $this->makeEmployee();
+        $this->presentRecord($employee);
+
+        // Factory-generated unique code: a 'COM' may already exist in the seeded
+        // catalog, and this test only cares about the comida pull rule, not the code.
+        $comida = CompensationType::factory()->fixed(60.00)->create([
+            'name' => 'Comida',
+            'application_mode' => CompensationType::APPLICATION_PER_DAY,
+            'authorization_type' => Authorization::TYPE_SPECIAL,
+            'attendance_pull_rule' => CompensationType::PULL_RULE_COMIDA,
+        ]);
+        $employee->compensationTypes()->attach($comida->id, ['is_active' => true]);
+        $employee->load(['compensationTypes' => fn ($q) => $q->wherePivot('is_active', true)]);
+
+        $user = User::factory()->create();
+        Authorization::create([
+            'employee_id' => $employee->id,
+            'requested_by' => $user->id,
+            'type' => Authorization::TYPE_SPECIAL,
+            'compensation_type_id' => $comida->id,
+            'date' => '2026-06-06', // Saturday worked
+            'hours' => 1,
+            'reason' => 'comida fin de semana',
+            'status' => Authorization::STATUS_APPROVED,
+        ]);
+
+        $period = PayrollPeriod::factory()->monthly()->create([
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-30',
+        ]);
+
+        $entry = $this->calculator()->calculateEmployeePayroll($period, $employee);
+
+        $this->assertEqualsWithDelta(60.00, (float) $entry->other_compensation_pay, 0.01, 'COMIDA paid once via generic pass into otros');
+        $this->assertEqualsWithDelta(0.00, (float) $entry->weekend_pay, 0.01, 'comida is not a weekend premium');
+    }
+
     public function test_contpaqi_export_columns_match_period_type(): void
     {
         $weekly = PayrollPeriod::factory()->weekly()->create();

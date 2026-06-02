@@ -89,7 +89,7 @@ const selectedPullRule = computed(() => {
 
 /** Whether the selected type pulls per-day entries from check-ins (meal/weekend),
  *  as one entry per qualifying day, never auto-approved. */
-const isAttendancePull = computed(() => selectedPullRule.value === 'meal' || selectedPullRule.value === 'weekend');
+const isAttendancePull = computed(() => ['meal', 'weekend', 'comida'].includes(selectedPullRule.value));
 
 /** Copy for the attendance-pull card, by rule. */
 const pullCopy = computed(() => {
@@ -98,6 +98,13 @@ const pullCopy = computed(() => {
             title: 'Fines de Semana por Empleado',
             hint: 'Cada fila es un día de fin de semana trabajado (sáb/dom fuera de su horario). Elige un rango y carga desde checadas.',
             unit: 'fin(es) de semana',
+        };
+    }
+    if (selectedPullRule.value === 'comida') {
+        return {
+            title: 'Comidas por Empleado',
+            hint: 'Cada fila es una comida (empleado + día). Elige un rango y carga desde checadas: se genera una comida por cada día de fin de semana trabajado (sáb/dom fuera de su horario).',
+            unit: 'comida(s)',
         };
     }
     return {
@@ -368,7 +375,9 @@ const clearBulkSuggestions = () => {
 };
 
 /* ----- Per-row table for per_hour types ----- */
-const isPerHour = computed(() => selectedApplicationMode.value === 'per_hour');
+// A pull-rule type (cena/fin de semana/comida) always uses the attendance-pull
+// card, even if it were configured per_hour — never the per-hour hours table.
+const isPerHour = computed(() => selectedApplicationMode.value === 'per_hour' && !isAttendancePull.value);
 
 /** per_day / one_time keep their range/quantity form, but also allow extra
  *  loose rows (each row = one date + a quantity). */

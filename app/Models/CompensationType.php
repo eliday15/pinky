@@ -34,10 +34,15 @@ class CompensationType extends Model
      *             day, crossed midnight (velada), or worked a weekend.
      * 'weekend' = one entry per (employee, day) where the employee worked a
      *             weekend day outside their schedule (is_weekend_work).
+     * 'comida'  = one entry per (employee, day) where the employee worked a
+     *             weekend (is_weekend_work) — a lunch given only for weekend work,
+     *             unlike the cena which also fires on long days / veladas.
      */
     public const PULL_RULE_MEAL = 'meal';
 
     public const PULL_RULE_WEEKEND = 'weekend';
+
+    public const PULL_RULE_COMIDA = 'comida';
 
     /**
      * Module name for audit logging.
@@ -195,10 +200,19 @@ class CompensationType extends Model
     }
 
     /**
-     * Whether this type pulls per-day entries from check-ins (meal or weekend).
+     * Whether this type is loaded from check-ins using the comida rule (a lunch
+     * given for weekend work).
+     */
+    public function hasComidaPullRule(): bool
+    {
+        return $this->attendance_pull_rule === self::PULL_RULE_COMIDA;
+    }
+
+    /**
+     * Whether this type pulls per-day entries from check-ins (meal, weekend or comida).
      */
     public function pullsFromAttendance(): bool
     {
-        return in_array($this->attendance_pull_rule, [self::PULL_RULE_MEAL, self::PULL_RULE_WEEKEND], true);
+        return in_array($this->attendance_pull_rule, [self::PULL_RULE_MEAL, self::PULL_RULE_WEEKEND, self::PULL_RULE_COMIDA], true);
     }
 }

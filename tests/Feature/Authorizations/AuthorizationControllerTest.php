@@ -1949,4 +1949,78 @@ class AuthorizationControllerTest extends FeatureTestCase
             ->assertOk()
             ->assertJson(['eligible_count' => 0]);
     }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Comida pull-from-checadas (lunch given only for weekend work)
+    // ─────────────────────────────────────────────────────────────────────
+
+    /**
+     * A "Comida" compensation type (attendance_pull_rule = comida) pulls one
+     * per-day lunch from checadas for each weekend day the employee worked
+     * (is_weekend_work), modeled on the Cena rule but weekend-only.
+     */
+    public function test_suggest_bulk_comida_pulls_weekend_worked_day(): void
+    {
+        $this->actingAsAdmin();
+        $comida = CompensationType::factory()->create([
+            'application_mode' => CompensationType::APPLICATION_PER_DAY,
+            'authorization_type' => Authorization::TYPE_SPECIAL,
+            'attendance_pull_rule' => CompensationType::PULL_RULE_COMIDA,
+        ]);
+        $emp = Employee::factory()->create();
+        // 2026-06-06 is a Saturday; flagged as weekend work (outside schedule).
+        AttendanceRecord::factory()->create([
+            'employee_id' => $emp->id,
+            'work_date' => '2026-06-06',
+            'check_in' => '09:00:00',
+            'check_out' => '15:00:00',
+            'is_weekend_work' => true,
+        ]);
+
+        $this->getJson(route('authorizations.suggestBulk', [
+            'employee_ids' => [$emp->id],
+            'start_date' => '2026-06-06',
+            'end_date' => '2026-06-06',
+            'type' => Authorization::TYPE_SPECIAL,
+            'compensation_type_id' => $comida->id,
+        ]))
+            ->assertOk()
+            ->assertJsonPath('suggestions.0.kind', 'comida')
+            ->assertJsonPath('suggestions.0.hours', '1')
+            ->assertJsonPath('eligible_count', 1);
+    }
+
+    /**
+     * The comida rule fires ONLY on weekend work: a regular weekday with a long
+     * shift (which WOULD earn a cena) yields no comida.
+     */
+    public function test_suggest_bulk_comida_skips_non_weekend_day(): void
+    {
+        $this->actingAsAdmin();
+        $comida = CompensationType::factory()->create([
+            'application_mode' => CompensationType::APPLICATION_PER_DAY,
+            'authorization_type' => Authorization::TYPE_SPECIAL,
+            'attendance_pull_rule' => CompensationType::PULL_RULE_COMIDA,
+        ]);
+        $emp = Employee::factory()->create();
+        // 2026-06-08 is a Monday worked long, but NOT weekend work → no comida.
+        AttendanceRecord::factory()->create([
+            'employee_id' => $emp->id,
+            'work_date' => '2026-06-08',
+            'check_in' => '08:00:00',
+            'check_out' => '22:00:00',
+            'worked_hours' => 13,
+            'is_weekend_work' => false,
+        ]);
+
+        $this->getJson(route('authorizations.suggestBulk', [
+            'employee_ids' => [$emp->id],
+            'start_date' => '2026-06-08',
+            'end_date' => '2026-06-08',
+            'type' => Authorization::TYPE_SPECIAL,
+            'compensation_type_id' => $comida->id,
+        ]))
+            ->assertOk()
+            ->assertJson(['eligible_count' => 0]);
+    }
 }
