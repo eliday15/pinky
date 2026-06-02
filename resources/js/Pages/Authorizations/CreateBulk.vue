@@ -439,7 +439,7 @@ const addOneDay = (iso) => {
  *  the end falls on the following day. */
 const inferEndDate = (date, startTime, endTime) => {
     if (!date || !startTime || !endTime) return date;
-    return toMin(endTime) <= toMin(startTime) ? addOneDay(date) : date;
+    return toMin(endTime) < toMin(startTime) ? addOneDay(date) : date;
 };
 
 const recomputeHours = (row) => {

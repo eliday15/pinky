@@ -1887,4 +1887,66 @@ class AuthorizationControllerTest extends FeatureTestCase
             ->assertJsonPath('suggestions.0.end_time', '06:00')
             ->assertJsonPath('suggestions.0.hours', '3.00');
     }
+
+    /**
+     * Guard against a phantom 24-hour velada: two equal-timestamp boundary punches
+     * (a duplicate that slipped through) must be treated as a zero-length block and
+     * fall back, NOT computed as a full day that could auto-approve into payroll.
+     */
+    public function test_suggest_bulk_velada_duplicate_punch_does_not_phantom_24h(): void
+    {
+        $this->actingAsAdmin();
+        $emp = Employee::factory()->create();
+        AttendanceRecord::factory()->create([
+            'employee_id' => $emp->id,
+            'work_date' => '2026-06-08',
+            'check_in' => '08:00:00',
+            'check_out' => '22:00:00',
+            'velada_hours' => 0, // no fallback hours either → no suggestion at all
+            'raw_punches' => [
+                ['time' => '08:00:00', 'type' => 'in'],
+                ['time' => '22:00:00', 'type' => 'punch'],   // same minute as the last
+                ['time' => '22:00:00', 'type' => 'out'],     // duplicate boundary punch
+            ],
+        ]);
+
+        $this->getJson(route('authorizations.suggestBulk', [
+            'employee_ids' => [$emp->id],
+            'start_date' => '2026-06-08',
+            'end_date' => '2026-06-08',
+            'type' => Authorization::TYPE_NIGHT_SHIFT,
+        ]))
+            ->assertOk()
+            ->assertJson(['eligible_count' => 0]);
+    }
+
+    /**
+     * A single boundary punch left after filtering lunch can't bound a velada;
+     * the detector must fall back rather than index a missing entry.
+     */
+    public function test_suggest_bulk_velada_single_boundary_punch_falls_back(): void
+    {
+        $this->actingAsAdmin();
+        $emp = Employee::factory()->create();
+        AttendanceRecord::factory()->create([
+            'employee_id' => $emp->id,
+            'work_date' => '2026-06-08',
+            'check_in' => '13:00:00',
+            'check_out' => '14:00:00',
+            'velada_hours' => 0,
+            'raw_punches' => [
+                ['time' => '13:00:00', 'type' => 'lunch_out'],
+                ['time' => '14:00:00', 'type' => 'lunch_in'],
+            ],
+        ]);
+
+        $this->getJson(route('authorizations.suggestBulk', [
+            'employee_ids' => [$emp->id],
+            'start_date' => '2026-06-08',
+            'end_date' => '2026-06-08',
+            'type' => Authorization::TYPE_NIGHT_SHIFT,
+        ]))
+            ->assertOk()
+            ->assertJson(['eligible_count' => 0]);
+    }
 }

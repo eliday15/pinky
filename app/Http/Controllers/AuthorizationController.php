@@ -314,8 +314,9 @@ class AuthorizationController extends Controller
             // Pre-calc hours when not given, so the 0-hour check sees the real value.
             $hoursPreview = $validated['hours'] ?? null;
             if (! empty($validated['start_time']) && ! empty($validated['end_time']) && empty($hoursPreview)) {
-                $minutes = abs((int) Carbon::parse($validated['start_time'])->diffInMinutes(Carbon::parse($validated['end_time'])));
-                $hoursPreview = (new OvertimeRoundingService())->roundMinutes($minutes);
+                $hoursPreview = (new OvertimeRoundingService())->roundMinutes(
+                    $this->minutesBetweenTimes($validated['start_time'], $validated['end_time'])
+                );
             }
             if ((float) $hoursPreview <= 0) {
                 throw \Illuminate\Validation\ValidationException::withMessages([
@@ -334,11 +335,10 @@ class AuthorizationController extends Controller
         $validated['is_pre_authorization'] = Carbon::parse($validated['date'])->isFuture()
             || Carbon::parse($validated['date'])->isToday();
 
-        // Calculate hours if start and end time provided
+        // Calculate hours if start and end time provided (midnight-aware so a
+        // velada whose end reads before its start counts as next-day, not 20h).
         if (! empty($validated['start_time']) && ! empty($validated['end_time']) && empty($validated['hours'])) {
-            $start = Carbon::parse($validated['start_time']);
-            $end = Carbon::parse($validated['end_time']);
-            $validated['hours'] = abs($start->diffInMinutes($end)) / 60;
+            $validated['hours'] = $this->minutesBetweenTimes($validated['start_time'], $validated['end_time']) / 60;
         }
 
         // Handle file upload
@@ -478,10 +478,9 @@ class AuthorizationController extends Controller
                     ? (float) $entry['hours']
                     : null;
                 if ($entryHours === null && ! empty($entry['start_time']) && ! empty($entry['end_time'])) {
-                    // abs() because Carbon 3 diffInMinutes is signed — direction
-                    // matters and we always want the magnitude here.
-                    $entryMins = abs((int) Carbon::parse($entry['start_time'])->diffInMinutes(Carbon::parse($entry['end_time'])));
-                    $entryHours = $rounder->roundMinutes($entryMins);
+                    // Midnight-aware: a velada whose end reads before its start is
+                    // a next-day span, not a 20h one.
+                    $entryHours = $rounder->roundMinutes($this->minutesBetweenTimes($entry['start_time'], $entry['end_time']));
                 }
                 if ((float) $entryHours <= 0) {
                     $conflicts["entries.{$i}"] = "Fila {$emp->full_name} ({$entry['date']}): el rango es menor a 30 min y se redondea a 0 horas. No se puede autorizar.";
@@ -509,8 +508,7 @@ class AuthorizationController extends Controller
                     ? (float) $entry['hours']
                     : null;
                 if ($hours === null && ! empty($startTime) && ! empty($endTime)) {
-                    $minutes = abs((int) Carbon::parse($startTime)->diffInMinutes(Carbon::parse($endTime)));
-                    $hours = $rounder->roundMinutes($minutes);
+                    $hours = $rounder->roundMinutes($this->minutesBetweenTimes($startTime, $endTime));
                 }
 
                 $isPreAuth = Carbon::parse($entry['date'])->isFuture()
@@ -540,9 +538,7 @@ class AuthorizationController extends Controller
         } else {
             $globalHours = $validated['hours'] ?? null;
             if (! empty($validated['start_time']) && ! empty($validated['end_time']) && empty($globalHours)) {
-                $start = Carbon::parse($validated['start_time']);
-                $end = Carbon::parse($validated['end_time']);
-                $globalHours = abs($start->diffInMinutes($end)) / 60;
+                $globalHours = $this->minutesBetweenTimes($validated['start_time'], $validated['end_time']) / 60;
             }
 
             $isPreAuthorization = Carbon::parse($validated['date'])->isFuture()
@@ -646,11 +642,10 @@ class AuthorizationController extends Controller
             'reason' => ['required', 'string', 'max:1000'],
         ]);
 
-        // Calculate hours if start and end time provided
+        // Calculate hours if start and end time provided (midnight-aware so a
+        // velada whose end reads before its start counts as next-day, not 20h).
         if (! empty($validated['start_time']) && ! empty($validated['end_time']) && empty($validated['hours'])) {
-            $start = Carbon::parse($validated['start_time']);
-            $end = Carbon::parse($validated['end_time']);
-            $validated['hours'] = abs($start->diffInMinutes($end)) / 60;
+            $validated['hours'] = $this->minutesBetweenTimes($validated['start_time'], $validated['end_time']) / 60;
         }
 
         // Same per-hour guards as store(): hours must be > 0 and the range
@@ -1282,6 +1277,12 @@ class AuthorizationController extends Controller
         $entry = $points[count($points) - 2];
         $exit = $points[count($points) - 1];
 
+        // Degenerate block: a duplicate punch (same minute) is a zero-length, not
+        // a 24h, velada — bail so the caller falls back rather than inventing a day.
+        if ($entry['min'] === $exit['min']) {
+            return null;
+        }
+
         $veladaStart = (int) SystemSetting::get('velada_detection_start_hour', 22);
         $veladaEnd = (int) SystemSetting::get('velada_detection_end_hour', 5);
 
@@ -1291,8 +1292,9 @@ class AuthorizationController extends Controller
                 : ($hour >= $veladaStart || $hour < $veladaEnd);
         };
 
-        // exit at/before entry (in minutes-of-day) means the block ran past 00:00.
-        $crossesMidnight = $exit['min'] <= $entry['min'];
+        // exit strictly before entry (in minutes-of-day) means the block ran past
+        // 00:00. Equal minutes were already rejected above as degenerate.
+        $crossesMidnight = $exit['min'] < $entry['min'];
 
         // Require a genuine night entry: inside the velada window, or a span that
         // crossed midnight. This rejects normal days and continuous OT (no re-entry).
@@ -1324,6 +1326,26 @@ class AuthorizationController extends Controller
     private function roundOvertimeMinutes(int $minutes): float
     {
         return (new OvertimeRoundingService())->roundMinutes($minutes);
+    }
+
+    /**
+     * Minutes between two H:i time-of-day strings, midnight-aware: when the end
+     * reads earlier than the start (e.g. a velada 22:00 → 02:00) it is treated as
+     * the next day, so the span is measured as 4h, not a wrong 20h. Equal times
+     * are a zero-length block. Returns 0 when either side is missing.
+     */
+    private function minutesBetweenTimes(?string $start, ?string $end): int
+    {
+        if (empty($start) || empty($end)) {
+            return 0;
+        }
+        $s = Carbon::parse($start);
+        $e = Carbon::parse($end);
+        if ($e->lt($s)) {
+            $e->addDay();
+        }
+
+        return (int) abs($s->diffInMinutes($e));
     }
 
     /**
