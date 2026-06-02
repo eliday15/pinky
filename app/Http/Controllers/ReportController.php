@@ -48,9 +48,12 @@ class ReportController extends Controller implements HasMiddleware
         $user = $request->user();
 
         return Inertia::render('Reports/Index', [
+            // Null-safe like ScopesReportEmployees: real requests always carry a
+            // user (auth middleware), but the reports:audit smoke test invokes this
+            // without one, and an unscoped 'own' default is the safe fallback.
             'scope' => match (true) {
-                $user->hasPermissionTo('reports.view_all') => 'all',
-                $user->hasPermissionTo('reports.view_team') => 'team',
+                $user?->hasPermissionTo('reports.view_all') => 'all',
+                $user?->hasPermissionTo('reports.view_team') => 'team',
                 default => 'own',
             },
         ]);
