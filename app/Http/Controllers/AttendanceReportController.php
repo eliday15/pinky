@@ -73,11 +73,11 @@ class AttendanceReportController extends Controller implements HasMiddleware
                 if (($row->late_minutes ?? 0) >= $maxLateBeforeAbsence) {
                     $expected = $this->formatTime($this->entryTimeForDate($emp, $row->work_date));
                     $actual = $this->formatTime($row->check_in);
-                    $label = "Entrada esperada: {$expected}, llegó: {$actual}";
+                    $label = "Entrada esperada: {$expected}, llegó: {$actual}".$this->punchDayHint($row->check_in, false);
                 } elseif ($earlyDepartureIsAbsence && ($row->early_departure_minutes ?? 0) >= $earlyDepartureThreshold) {
                     $expected = $this->formatTime($this->exitTimeForDate($emp, $row->work_date));
                     $actual = $this->formatTime($row->check_out);
-                    $label = "Salida esperada: {$expected}, salió: {$actual}";
+                    $label = "Salida esperada: {$expected}, salió: {$actual}".$this->punchDayHint($row->check_out, true);
                 } else {
                     $label = 'Por umbral';
                 }
@@ -531,5 +531,28 @@ class AttendanceReportController extends Controller implements HasMiddleware
         }
 
         return Carbon::parse($time)->format('H:i');
+    }
+
+    /**
+     * Clarify which day a punch belongs to. Punches are paired per calendar
+     * day, so the time shown always comes from the row's own date — but a
+     * check-out like "04:39" next to an expected "18:30" reads as if it could
+     * belong to the next morning. Exits always get the hint; arrivals only
+     * when they fall in the madrugada (before 7am), where the same confusion
+     * applies.
+     */
+    private function punchDayHint(?string $time, bool $always): string
+    {
+        if (! $time) {
+            return '';
+        }
+
+        $hour = (int) substr($time, 0, 2);
+
+        if ($hour < 7) {
+            return ' (madrugada del mismo día)';
+        }
+
+        return $always ? ' (mismo día)' : '';
     }
 }

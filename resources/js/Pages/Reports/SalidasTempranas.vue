@@ -23,6 +23,13 @@ const applyFilter = () => {
 
 const formatShortDate = (date) => fmtDate(date, { day: 'numeric', month: 'short' });
 const formatTime = (t) => t ? t.substring(0, 5) : '—';
+
+// La salida siempre es una checada del mismo día de la fila; se aclara porque
+// una salida de madrugada (p. ej. 04:39) parece ser del día siguiente.
+const sameDayHint = (t) => {
+    if (!t) return '';
+    return parseInt(t.substring(0, 2), 10) < 7 ? ' (madrugada del mismo día)' : ' (mismo día)';
+};
 </script>
 
 <template>
@@ -114,7 +121,7 @@ const formatTime = (t) => t ? t.substring(0, 5) : '—';
                                 <div v-for="d in row.dates.slice(0, 8)" :key="d.date" class="flex items-center gap-1.5 text-xs">
                                     <span :class="['w-2 h-2 rounded-full shrink-0', d.is_falta ? 'bg-red-500' : 'bg-orange-500']"></span>
                                     <span class="text-gray-700 whitespace-nowrap">{{ formatShortDate(d.date) }}</span>
-                                    <span :class="d.is_falta ? 'text-red-700' : 'text-orange-700'">— Esperada: {{ formatTime(d.expected_exit) }}, salió: {{ formatTime(d.check_out) }}</span>
+                                    <span :class="d.is_falta ? 'text-red-700' : 'text-orange-700'">— Esperada: {{ formatTime(d.expected_exit) }}, salió: {{ formatTime(d.check_out) }}{{ sameDayHint(d.check_out) }}</span>
                                     <span v-if="d.is_falta" class="text-red-600 font-bold">F</span>
                                 </div>
                                 <div v-if="row.dates.length > 8" class="text-xs text-gray-400 pl-3.5">+{{ row.dates.length - 8 }} más</div>
