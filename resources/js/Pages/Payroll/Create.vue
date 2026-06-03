@@ -12,12 +12,27 @@ const props = defineProps({
 
 const typeInfo = computed(() => periodTypeInfo(form.type));
 
+const addDaysToDate = (dateStr, days) => {
+    const d = new Date(`${dateStr}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + days);
+    return d.toISOString().slice(0, 10);
+};
+
+const today = () => {
+    const now = new Date();
+    return new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()))
+        .toISOString()
+        .slice(0, 10);
+};
+
+// Semanal es el flujo principal: arranca preseleccionado con los últimos
+// 7 días (de hoy a 7 días atrás) y el pago propuesto al día siguiente.
 const form = useForm({
     name: '',
-    type: 'biweekly',
-    start_date: props.suggestedDates?.start_date || '',
-    end_date: props.suggestedDates?.end_date || '',
-    payment_date: props.suggestedDates?.payment_date || '',
+    type: 'weekly',
+    start_date: addDaysToDate(today(), -6),
+    end_date: today(),
+    payment_date: addDaysToDate(today(), 1),
 });
 
 const periodDays = computed(() => {
@@ -27,18 +42,20 @@ const periodDays = computed(() => {
     return Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
 });
 
-// Semanal tiene duración fija (7 días): al elegir la fecha de inicio, la
+// Semanal tiene duración fija (7 días): al cambiar la fecha de inicio, la
 // fecha fin se calcula sola (inicio + 6). Si después se edita el fin a mano,
 // se respeta mientras no cambien el inicio o el tipo.
-const addDays = (dateStr, days) => {
-    const d = new Date(`${dateStr}T00:00:00Z`);
-    d.setUTCDate(d.getUTCDate() + days);
-    return d.toISOString().slice(0, 10);
-};
-
 watch([() => form.start_date, () => form.type], () => {
     if (form.type === 'weekly' && form.start_date) {
-        form.end_date = addDays(form.start_date, 6);
+        form.end_date = addDaysToDate(form.start_date, 6);
+    }
+});
+
+// El pago de una semanal se propone al día siguiente del fin (igual que las
+// semanas reales, p. ej. 19–25 may pagada el 26 may).
+watch(() => form.end_date, () => {
+    if (form.type === 'weekly' && form.end_date) {
+        form.payment_date = addDaysToDate(form.end_date, 1);
     }
 });
 
