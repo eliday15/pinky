@@ -1,12 +1,17 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { Head, Link, router } from '@inertiajs/vue3';
+import { Head, Link, router, usePage } from '@inertiajs/vue3';
+import { computed } from 'vue';
 import { formatDate as fmtDate } from '@/utils/date';
 import { periodTypeInfo } from '@/utils/payrollPeriodType';
 
 const props = defineProps({
     periods: Object,
 });
+
+// Solo admin puede eliminar periodos ya calculados/aprobados (para poder
+// borrar y recalcular en pruebas); los borradores se eliminan como siempre.
+const isAdmin = computed(() => (usePage().props.auth?.roles ?? []).includes('admin'));
 
 const statusColors = {
     draft: 'bg-gray-100 text-gray-800',
@@ -38,7 +43,10 @@ const formatCurrency = (amount) => {
 };
 
 const deletePeriod = (period) => {
-    if (confirm('¿Eliminar este periodo de nomina?')) {
+    const msg = period.status === 'draft'
+        ? '¿Eliminar este periodo de nomina?'
+        : `Este periodo esta "${statusLabels[period.status] ?? period.status}" con ${period.entries_count || 0} empleado(s) calculados. Se eliminaran TODAS sus entradas de nomina. ¿Eliminar de todas formas?`;
+    if (confirm(msg)) {
         router.delete(route('payroll.destroy', period.id));
     }
 };
@@ -121,7 +129,7 @@ const deletePeriod = (period) => {
                                 Ver
                             </Link>
                             <button
-                                v-if="period.status === 'draft'"
+                                v-if="period.status === 'draft' || isAdmin"
                                 @click="deletePeriod(period)"
                                 class="text-red-600 hover:text-red-900"
                             >

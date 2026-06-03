@@ -236,7 +236,9 @@ class PayrollController extends Controller
     }
 
     /**
-     * Delete a payroll period (only if draft).
+     * Delete a payroll period. Drafts can be deleted by anyone with payroll
+     * permissions; admins may also delete calculated/approved/paid periods so
+     * they can wipe and re-run test calculations.
      */
     public function destroy(PayrollPeriod $payroll): RedirectResponse
     {
@@ -244,7 +246,7 @@ class PayrollController extends Controller
             abort(403);
         }
 
-        if ($payroll->status !== 'draft') {
+        if ($payroll->status !== 'draft' && !auth()->user()->hasRole('admin')) {
             return redirect()->back()
                 ->with('error', 'Solo se pueden eliminar periodos en borrador.');
         }
