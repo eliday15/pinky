@@ -195,7 +195,9 @@ class ZktecoSyncService
                     if ($wasCreated) {
                         $created++;
                     }
-                } catch (\Exception $e) {
+                } catch (\Throwable $e) {
+                    // Isolate per-employee/day failures (including \Error such as a
+                    // null dereference) so one bad record can never abort the whole sync.
                     Log::error("Error processing attendance for employee {$employee->id} on {$date}: ".$e->getMessage());
                 }
             }
@@ -233,6 +235,13 @@ class ZktecoSyncService
         }
 
         try {
+            // Bound every DB operation in this sync so a blocked query or a
+            // metadata-lock wait can NEVER hang the process indefinitely. This is
+            // the root-cause fix for the 2026-05/06 freezes (runs hung 30 min–6 h
+            // with no timeout; MySQL's lock_wait_timeout defaults to 1 YEAR).
+            // Session-scoped: web requests use separate connections and are unaffected.
+            $this->applySessionTimeouts();
+
             // Step 1: Sync employees
             Log::info('ZKTeco Sync: Syncing employees...');
             $employeeStats = $this->syncEmployees();
@@ -274,6 +283,28 @@ class ZktecoSyncService
         }
 
         return $log;
+    }
+
+    /**
+     * Apply conservative per-session DB timeouts so a single blocked statement
+     * or metadata-lock wait cannot hang the sync process indefinitely. Each SET
+     * is best-effort: a failure is logged, never thrown, so it can never abort a sync.
+     */
+    private function applySessionTimeouts(): void
+    {
+        $statements = [
+            'SET SESSION max_execution_time = 120000',   // SELECTs: 120s (milliseconds)
+            'SET SESSION lock_wait_timeout = 60',        // metadata locks: 60s (server default is 1 year)
+            'SET SESSION innodb_lock_wait_timeout = 30', // row locks: 30s
+        ];
+
+        foreach ($statements as $sql) {
+            try {
+                DB::statement($sql);
+            } catch (\Throwable $e) {
+                Log::warning("ZKTeco Sync: could not apply session timeout [{$sql}]: ".$e->getMessage());
+            }
+        }
     }
 
     /**

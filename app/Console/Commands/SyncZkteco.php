@@ -13,6 +13,12 @@ class SyncZkteco extends Command
 
     public function handle(ZktecoSyncService $syncService): int
     {
+        // Backstop against a pure-CPU runaway (e.g. an infinite loop): cap CPU
+        // time at 5 min. DB/lock stalls are bounded separately by per-session
+        // timeouts in ZktecoSyncService; note set_time_limit counts CPU time on
+        // Linux (not time blocked on I/O), so the two defenses are complementary.
+        set_time_limit(300);
+
         $days = (int) $this->option('days');
         $fromDate = now()->subDays($days);
 
