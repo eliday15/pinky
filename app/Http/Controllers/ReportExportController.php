@@ -304,9 +304,13 @@ class ReportExportController extends Controller implements HasMiddleware
         $endDate = $request->get('end_date', Carbon::now()->endOfWeek()->toDateString());
         $activeEmployeeIds = $this->scopedActiveEmployeeIds();
         $lateToAbsenceCount = (int) SystemSetting::get('late_to_absence_count', 6);
+        $maxLateBeforeAbsence = (int) SystemSetting::get('max_late_minutes_before_absence', 60);
+        $earlyDepartureThreshold = (int) SystemSetting::get('early_departure_absence_threshold', 30);
+        $earlyDepartureIsAbsence = (bool) SystemSetting::get('early_departure_is_absence', true);
 
-        // Direct faltas
-        $absentRecords = AttendanceRecord::with(['employee.department'])
+        // Direct faltas ('employee.schedule' eager-loaded for the expected
+        // entry/exit times used in the Observaciones column)
+        $absentRecords = AttendanceRecord::with(['employee.department', 'employee.schedule'])
             ->whereBetween('work_date', [$startDate, $endDate])
             ->whereIn('employee_id', $activeEmployeeIds)
             ->where('status', 'absent')
@@ -320,11 +324,17 @@ class ReportExportController extends Controller implements HasMiddleware
 
         // Calculate retardo faltas per employee (monthly)
         $retardoFaltas = [];
+        $retardoDetalles = [];
         foreach ($lateRecords->groupBy('employee_id') as $employeeId => $empRecords) {
             $byMonth = $empRecords->groupBy(fn ($r) => Carbon::parse($r->work_date)->format('Y-m'));
             $total = 0;
-            foreach ($byMonth as $monthRecords) {
-                $total += intdiv($monthRecords->count(), $lateToAbsenceCount);
+            foreach ($byMonth as $month => $monthRecords) {
+                $faltasMes = intdiv($monthRecords->count(), $lateToAbsenceCount);
+                $total += $faltasMes;
+                if ($faltasMes > 0) {
+                    $mes = Carbon::parse($month.'-01')->locale('es')->isoFormat('MMM YYYY');
+                    $retardoDetalles[$employeeId][] = "{$mes}: {$monthRecords->count()} retardos = {$faltasMes} falta".($faltasMes > 1 ? 's' : '');
+                }
             }
             if ($total > 0) {
                 $retardoFaltas[$employeeId] = $total;
@@ -349,6 +359,20 @@ class ReportExportController extends Controller implements HasMiddleware
             $threshold = $empThreshold->count();
             $retardo = $retardoFaltas[$employeeId] ?? 0;
 
+            // Observaciones: qué día fue cada falta y por qué, aclarando de qué
+            // día es la checada (una salida de madrugada parece del día
+            // siguiente). Mismos textos que el detalle del reporte web.
+            $observaciones = [];
+            foreach ($empNoShow->sortBy('work_date') as $r) {
+                $observaciones[] = $this->faltaObservacion($r, $maxLateBeforeAbsence, $earlyDepartureThreshold, $earlyDepartureIsAbsence);
+            }
+            foreach ($empThreshold->sortBy('work_date') as $r) {
+                $observaciones[] = $this->faltaObservacion($r, $maxLateBeforeAbsence, $earlyDepartureThreshold, $earlyDepartureIsAbsence);
+            }
+            foreach ($retardoDetalles[$employeeId] ?? [] as $detalle) {
+                $observaciones[] = $detalle;
+            }
+
             $data[] = [
                 $employee?->full_name ?? '-',
                 $employee?->employee_number ?? '-',
@@ -357,12 +381,13 @@ class ReportExportController extends Controller implements HasMiddleware
                 $threshold,
                 $retardo,
                 $noShow + $threshold + $retardo,
+                implode(' | ', $observaciones),
             ];
         }
 
         return $this->exportCsv(
             "reporte_faltas_{$startDate}_{$endDate}.csv",
-            ['Empleado', 'No. Empleado', 'Departamento', 'Inasistencias', 'Por Umbral', 'Faltas por Retardos', 'Total Faltas'],
+            ['Empleado', 'No. Empleado', 'Departamento', 'Inasistencias', 'Por Umbral', 'Faltas por Retardos', 'Total Faltas', 'Observaciones'],
             $data
         );
     }
@@ -557,5 +582,90 @@ class ReportExportController extends Controller implements HasMiddleware
             'rejected' => 'Rechazada',
             default => $status,
         };
+    }
+
+    /**
+     * One-line explanation of a falta row for the Observaciones column: which
+     * day it was, what happened, and which day the punch belongs to. Mirrors
+     * the labels of the Faltas web report (AttendanceReportController).
+     */
+    private function faltaObservacion(AttendanceRecord $record, int $maxLateBeforeAbsence, int $earlyDepartureThreshold, bool $earlyDepartureIsAbsence): string
+    {
+        $dia = Carbon::parse($record->work_date)->locale('es')->isoFormat('D MMM');
+
+        if (is_null($record->check_in)) {
+            $esperada = $this->horaEsperada($record, 'entry_time');
+
+            return "{$dia}: no se presentó".($esperada ? " (entrada esperada {$esperada})" : '');
+        }
+
+        if (($record->late_minutes ?? 0) >= $maxLateBeforeAbsence) {
+            $esperada = $this->horaEsperada($record, 'entry_time');
+
+            return "{$dia}: retardo excesivo — llegó ".$this->hora($record->check_in)
+                .$this->punchDayHint($record->check_in, false)
+                .($esperada ? " (entrada esperada {$esperada})" : '');
+        }
+
+        if ($earlyDepartureIsAbsence && ($record->early_departure_minutes ?? 0) >= $earlyDepartureThreshold) {
+            $esperada = $this->horaEsperada($record, 'exit_time');
+
+            return "{$dia}: salida temprana — salió ".$this->hora($record->check_out)
+                .$this->punchDayHint($record->check_out, true)
+                .($esperada ? " (salida esperada {$esperada})" : '');
+        }
+
+        return "{$dia}: falta por umbral";
+    }
+
+    /**
+     * Expected entry/exit time for the record's day, per the employee's
+     * effective schedule (including overrides). Null when not resolvable.
+     */
+    private function horaEsperada(AttendanceRecord $record, string $field): ?string
+    {
+        $employee = $record->employee;
+        if (! $employee) {
+            return null;
+        }
+
+        $dayName = strtolower(Carbon::parse($record->work_date)->englishDayOfWeek);
+        $daySchedule = $employee->getEffectiveScheduleForDay($dayName);
+
+        return $daySchedule?->{$field} ? $this->hora($daySchedule->{$field}) : null;
+    }
+
+    private function hora(?string $time): string
+    {
+        if (! $time) {
+            return '—';
+        }
+
+        try {
+            return Carbon::parse($time)->format('H:i');
+        } catch (\Throwable) {
+            return substr($time, 0, 5);
+        }
+    }
+
+    /**
+     * Clarify which day a punch belongs to: punches are paired per calendar
+     * day, so the time always comes from the row's own date — but a check-out
+     * like "04:39" next to an expected "18:30" reads as if it could belong to
+     * the next morning. (Same hint as AttendanceReportController.)
+     */
+    private function punchDayHint(?string $time, bool $always): string
+    {
+        if (! $time) {
+            return '';
+        }
+
+        $hour = (int) substr($time, 0, 2);
+
+        if ($hour < 7) {
+            return ' (madrugada del mismo día)';
+        }
+
+        return $always ? ' (mismo día)' : '';
     }
 }
