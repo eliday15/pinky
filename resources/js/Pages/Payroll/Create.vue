@@ -2,7 +2,7 @@
 import AppLayout from '@/Layouts/AppLayout.vue';
 import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
-import { computed } from 'vue';
+import { computed, watch } from 'vue';
 import { formatDate as fmtDate } from '@/utils/date';
 import { periodTypeInfo } from '@/utils/payrollPeriodType';
 
@@ -25,6 +25,21 @@ const periodDays = computed(() => {
     const start = new Date(form.start_date);
     const end = new Date(form.end_date);
     return Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
+});
+
+// Semanal tiene duración fija (7 días): al elegir la fecha de inicio, la
+// fecha fin se calcula sola (inicio + 6). Si después se edita el fin a mano,
+// se respeta mientras no cambien el inicio o el tipo.
+const addDays = (dateStr, days) => {
+    const d = new Date(`${dateStr}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + days);
+    return d.toISOString().slice(0, 10);
+};
+
+watch([() => form.start_date, () => form.type], () => {
+    if (form.type === 'weekly' && form.start_date) {
+        form.end_date = addDays(form.start_date, 6);
+    }
 });
 
 const formatDateForName = (date) => fmtDate(date, {
