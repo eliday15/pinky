@@ -22,6 +22,15 @@ use Illuminate\Support\Facades\Log;
 class AnomalyDetectorService
 {
     /**
+     * @param  OvertimeRoundingService  $rounder  Shared company rounding rule so
+     *                                            anomalies use the SAME standard as
+     *                                            authorizations (<30 min → 0h).
+     */
+    public function __construct(
+        private readonly OvertimeRoundingService $rounder = new OvertimeRoundingService(),
+    ) {}
+
+    /**
      * Detect all anomalies for a set of attendance records.
      *
      * @param  Collection  $records  Collection of AttendanceRecord models
@@ -70,7 +79,7 @@ class AnomalyDetectorService
         // Run all detection methods
         $anomalies = array_merge($anomalies, $this->detectMissingCheckout($record, $daySchedule));
         $anomalies = array_merge($anomalies, $this->detectMissingCheckin($record, $daySchedule));
-        $anomalies = array_merge($anomalies, $this->detectUnauthorizedOvertime($record, $employee));
+        $anomalies = array_merge($anomalies, $this->detectUnauthorizedOvertime($record, $employee, $daySchedule));
         $anomalies = array_merge($anomalies, $this->detectUnauthorizedVelada($record, $employee));
         $anomalies = array_merge($anomalies, $this->detectExcessiveBreak($record, $daySchedule));
         $anomalies = array_merge($anomalies, $this->detectMissingLunch($record, $daySchedule));
@@ -98,6 +107,11 @@ class AnomalyDetectorService
                 $count++;
             }
         }
+
+        // Self-heal: close open per-hour anomalies that no longer meet the
+        // authorization standard (e.g. a recalculation left less than 30 min,
+        // which rounds to 0h and can never be authorized).
+        $this->closeRedundantAnomalies($record, $daySchedule);
 
         // Update record anomaly count
         $totalAnomalies = AttendanceAnomaly::where('attendance_record_id', $record->id)
@@ -178,13 +192,30 @@ class AnomalyDetectorService
     /**
      * Detect unauthorized overtime (overtime without approved authorization).
      *
+     * Uses the SAME standard as the authorization flow ("Cargar desde checadas"
+     * and the weekly report): early/late segments measured against the schedule
+     * and rounded with the official company ladder (<30 min → 0h). Time that
+     * rounds to 0h can never be authorized (the create form blocks 0-hour
+     * authorizations), so flagging it would only generate unactionable noise.
+     *
      * @param  AttendanceRecord  $record  The attendance record
      * @param  Employee  $employee  The employee
+     * @param  mixed  $schedule  The employee's effective schedule for the day
      * @return array List of anomaly data arrays
      */
-    private function detectUnauthorizedOvertime(AttendanceRecord $record, Employee $employee): array
+    private function detectUnauthorizedOvertime(AttendanceRecord $record, Employee $employee, $schedule): array
     {
         if ($record->overtime_hours <= 0) {
+            return [];
+        }
+
+        $authorizableHours = $this->rounder->detectOvertimeHours(
+            $record,
+            $schedule,
+            Carbon::parse($record->work_date)->toDateString()
+        );
+
+        if ($authorizableHours <= 0) {
             return [];
         }
 
@@ -198,10 +229,10 @@ class AnomalyDetectorService
             return [[
                 'anomaly_type' => 'unauthorized_overtime',
                 'severity' => 'warning',
-                'description' => "Se detectaron {$record->overtime_hours} horas extra sin autorizacion aprobada.",
+                'description' => "Se detectaron {$authorizableHours} horas extra autorizables sin autorizacion aprobada.",
                 'expected_value' => '0',
-                'actual_value' => (string) $record->overtime_hours,
-                'deviation_minutes' => (int) ($record->overtime_hours * 60),
+                'actual_value' => (string) $authorizableHours,
+                'deviation_minutes' => (int) round($authorizableHours * 60),
             ]];
         }
 
@@ -225,6 +256,14 @@ class AnomalyDetectorService
             return [];
         }
 
+        // Same standard as authorizations: <30 min rounds to 0h and cannot be
+        // authorized, so there is no actionable velada to flag (nor a
+        // confirmation punch to demand).
+        $authorizableHours = $this->rounder->roundMinutes((int) round($record->velada_hours * 60));
+        if ($authorizableHours <= 0) {
+            return [];
+        }
+
         $hasAuthorization = Authorization::where('employee_id', $employee->id)
             ->where('date', $record->work_date)
             ->where('type', Authorization::TYPE_NIGHT_SHIFT)
@@ -235,10 +274,10 @@ class AnomalyDetectorService
             return [[
                 'anomaly_type' => 'unauthorized_velada',
                 'severity' => 'critical',
-                'description' => "Se detectaron {$record->velada_hours} horas de velada sin autorizacion aprobada.",
+                'description' => "Se detectaron {$authorizableHours} horas de velada autorizables sin autorizacion aprobada.",
                 'expected_value' => '0',
-                'actual_value' => (string) $record->velada_hours,
-                'deviation_minutes' => (int) ($record->velada_hours * 60),
+                'actual_value' => (string) $authorizableHours,
+                'deviation_minutes' => (int) round($authorizableHours * 60),
             ]];
         }
 
@@ -455,6 +494,57 @@ class AnomalyDetectorService
         }
 
         return [];
+    }
+
+    /**
+     * Auto-resolve open per-hour anomalies that no longer meet the
+     * authorization standard.
+     *
+     * An unauthorized_overtime / unauthorized_velada anomaly is redundant when
+     * the detected time rounds to 0 hours under the official company ladder
+     * (<30 min → 0h): nothing can ever be authorized for it, so it would sit
+     * open forever. Anomalies covered by an approved authorization are NOT
+     * touched here — those get linked (status linked_to_authorization) by the
+     * approval flow, which preserves the audit trail to the authorization.
+     *
+     * @param  AttendanceRecord  $record  The attendance record
+     * @param  mixed  $schedule  The employee's effective schedule for the day
+     */
+    private function closeRedundantAnomalies(AttendanceRecord $record, $schedule): void
+    {
+        // Cheap guard: only records currently flagged can have stale anomalies.
+        if (! $record->has_anomalies) {
+            return;
+        }
+
+        $staleTypes = [];
+
+        $authorizableOvertime = $record->overtime_hours > 0
+            ? $this->rounder->detectOvertimeHours($record, $schedule, Carbon::parse($record->work_date)->toDateString())
+            : 0.0;
+        if ($authorizableOvertime <= 0) {
+            $staleTypes[] = AttendanceAnomaly::TYPE_UNAUTHORIZED_OVERTIME;
+        }
+
+        $authorizableVelada = ($record->velada_hours ?? 0) > 0
+            ? $this->rounder->roundMinutes((int) round($record->velada_hours * 60))
+            : 0.0;
+        if ($authorizableVelada <= 0) {
+            $staleTypes[] = AttendanceAnomaly::TYPE_UNAUTHORIZED_VELADA;
+        }
+
+        if (empty($staleTypes)) {
+            return;
+        }
+
+        AttendanceAnomaly::where('attendance_record_id', $record->id)
+            ->whereIn('anomaly_type', $staleTypes)
+            ->where('status', AttendanceAnomaly::STATUS_OPEN)
+            ->update([
+                'status' => AttendanceAnomaly::STATUS_RESOLVED,
+                'resolved_at' => now(),
+                'resolution_notes' => 'Auto-resuelto: tiempo menor a 30 minutos se redondea a 0 horas (estandar de autorizaciones).',
+            ]);
     }
 
     /**
