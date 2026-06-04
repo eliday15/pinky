@@ -8,6 +8,7 @@ use App\Models\Employee;
 use App\Models\Holiday;
 use App\Models\Incident;
 use App\Models\IncidentType;
+use App\Services\PayrollInvalidationService;
 use App\Services\ZktecoSyncService;
 use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
@@ -616,14 +617,21 @@ class IncidentController extends Controller
             ])
             ->get();
 
-        if ($records->isEmpty()) {
-            return;
+        if ($records->isNotEmpty()) {
+            $sync = app(ZktecoSyncService::class);
+
+            foreach ($records as $record) {
+                $sync->recalculateAttendanceRecord($record);
+            }
         }
 
-        $sync = app(ZktecoSyncService::class);
-
-        foreach ($records as $record) {
-            $sync->recalculateAttendanceRecord($record);
-        }
+        // Fase E (DECISIONES §7): la nómina de los periodos que solapan la
+        // incidencia queda al día (draft: recálculo automático) o marcada
+        // "requiere recálculo" (review/approved). Pagados son inmutables.
+        app(PayrollInvalidationService::class)->invalidate(
+            $incident->employee_id,
+            Carbon::parse($incident->start_date)->toDateString(),
+            Carbon::parse($incident->end_date)->toDateString(),
+        );
     }
 }

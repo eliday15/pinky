@@ -11,6 +11,7 @@ use App\Models\Employee;
 use App\Models\SyncLog;
 use App\Policies\AttendanceRecordPolicy;
 use App\Services\AnomalyDetectorService;
+use App\Services\PayrollInvalidationService;
 use App\Services\ZktecoSyncService;
 use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
@@ -320,15 +321,20 @@ class AttendanceController extends Controller
      * Update an attendance record.
      *
      * Requires a manual_edit_reason and records who edited the record and when.
-     * After saving, re-runs anomaly detection so stale anomalies self-heal
-     * (e.g. missing_checkout closes once a check_out is added). The canonical
-     * metric recalculation is deliberately NOT run here — it would overwrite
-     * the status the editor chose explicitly (manual edit wins).
+     *
+     * Fase E (DECISIONES §7, auditoría 10/45/63/64): tras guardar, las
+     * métricas derivadas (horas, retardo, salida temprana, velada y horas
+     * autorizadas) se recalculan con la MISMA fórmula canónica del sync —
+     * preservando el status que el editor eligió ("manual edit wins") — y se
+     * invalida la nómina de los periodos afectados. Después se re-corre la
+     * detección de anomalías para que las obsoletas se auto-cierren.
      */
     public function update(
         Request $request,
         AttendanceRecord $attendance,
-        AnomalyDetectorService $detector
+        AnomalyDetectorService $detector,
+        ZktecoSyncService $syncService,
+        PayrollInvalidationService $payrollInvalidation
     ): RedirectResponse {
         $this->authorize('update', $attendance);
 
@@ -340,58 +346,27 @@ class AttendanceController extends Controller
             'manual_edit_reason' => ['required', 'string', 'min:5', 'max:500'],
         ]);
 
-        // Recalculate hours if times changed
-        if (isset($validated['check_in']) && isset($validated['check_out'])) {
-            $employee = $attendance->employee;
-            $dateStr = $attendance->work_date->toDateString();
-            $checkIn = Carbon::parse($dateStr . ' ' . $validated['check_in']);
-            $checkOut = Carbon::parse($dateStr . ' ' . $validated['check_out']);
-
-            // Handle midnight crossing
-            if ($checkOut->lt($checkIn)) {
-                $checkOut->addDay();
-            }
-
-            $workedMinutes = abs($checkIn->diffInMinutes($checkOut));
-
-            $dailyHours = 8;
-
-            if ($employee->schedule) {
-                $dayName = strtolower($attendance->work_date->format('l'));
-                $daySchedule = $employee->getEffectiveScheduleForDay($dayName);
-                $departmentBreak = $attendance->employee->department?->default_break_minutes;
-                $breakMinutes = $daySchedule->break_minutes ?? $departmentBreak ?? 60;
-
-                if ($workedMinutes > 300) {
-                    $workedMinutes -= $breakMinutes;
-                }
-
-                $dailyHours = $daySchedule->daily_work_hours ?? 8;
-            }
-
-            $workedMinutes = max(0, $workedMinutes);
-            $workedHours = $workedMinutes / 60;
-
-            $validated['worked_hours'] = min($workedHours, $dailyHours);
-            $validated['overtime_hours'] = max(0, $workedHours - $dailyHours);
-        }
-
         $validated['requires_review'] = false;
         $validated['manually_edited_by'] = Auth::id();
         $validated['manually_edited_at'] = now();
 
         $attendance->update($validated);
 
+        // Métricas derivadas con la fórmula canónica del sync (una sola
+        // fuente de verdad), preservando el status del editor. Esto también
+        // actualiza overtime_authorized_hours/velada_authorized_hours, que es
+        // lo que la nómina realmente paga.
+        $attendance->refresh();
+        $syncService->recalculateAttendanceRecord($attendance, preserveStatus: true);
+
         // Self-heal: re-run anomaly detection on the edited punches so
         // anomalies whose condition no longer holds auto-resolve via
-        // closeRedundantAnomalies(). This reliably clears missing_checkin/
-        // missing_checkout (driven by raw check_in/check_out presence, which the
-        // edit does change). Derived metrics (late_minutes, early_departure_minutes,
-        // velada_hours, actual_break_minutes) are only recomputed by the ZKTeco
-        // sync, so late/early/break anomalies won't auto-close from a manual edit
-        // — the editor resolves those explicitly via the resolution modal.
+        // closeRedundantAnomalies().
         $attendance->refresh();
         $detector->detectForRecord($attendance);
+
+        // La nómina del rango queda al día (draft) o marcada (review/approved).
+        $payrollInvalidation->invalidate($attendance->employee_id, $attendance->work_date->toDateString());
 
         return redirect()->route('attendance.index', ['date' => $attendance->work_date->toDateString()])
             ->with('success', 'Registro actualizado.');

@@ -18,6 +18,8 @@ class PayrollPeriod extends Model
         'end_date',
         'payment_date',
         'status',
+        'requires_recalculation',
+        'recalculation_flagged_at',
         'created_by',
         'approved_by',
     ];
@@ -26,6 +28,8 @@ class PayrollPeriod extends Model
         'start_date' => 'date:Y-m-d',
         'end_date' => 'date:Y-m-d',
         'payment_date' => 'date:Y-m-d',
+        'requires_recalculation' => 'boolean',
+        'recalculation_flagged_at' => 'datetime',
     ];
 
     /**

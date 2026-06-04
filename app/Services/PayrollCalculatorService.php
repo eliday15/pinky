@@ -52,7 +52,13 @@ class PayrollCalculatorService
             $this->calculateEmployeePayroll($period, $employee);
         }
 
-        $period->update(['status' => 'review']);
+        // El recálculo completo deja el periodo al día: limpia la marca de
+        // invalidación (DECISIONES §7) y regresa a revisión.
+        $period->update([
+            'status' => 'review',
+            'requires_recalculation' => false,
+            'recalculation_flagged_at' => null,
+        ]);
     }
 
     /**

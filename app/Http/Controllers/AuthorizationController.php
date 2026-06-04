@@ -11,6 +11,7 @@ use App\Models\Department;
 use App\Models\Employee;
 use App\Models\SystemSetting;
 use App\Services\OvertimeRoundingService;
+use App\Services\PayrollInvalidationService;
 use App\Services\ZktecoSyncService;
 use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
@@ -723,9 +724,11 @@ class AuthorizationController extends Controller
         if ($authorization->attendance_record_id) {
             $syncService->recalculateAttendanceRecord($authorization->attendanceRecord);
         } else {
-            // Find attendance record by employee and date if not directly linked
+            // Find attendance record by employee and date if not directly
+            // linked (fecha como string: DATE vs Carbon datetime pierde la
+            // fila en SQLite).
             $attendanceRecord = AttendanceRecord::where('employee_id', $authorization->employee_id)
-                ->where('work_date', $authorization->date)
+                ->whereDate('work_date', Carbon::parse($authorization->date)->toDateString())
                 ->first();
 
             if ($attendanceRecord) {
@@ -735,6 +738,14 @@ class AuthorizationController extends Controller
 
         // Auto-resolve related anomalies
         $this->autoResolveAnomalies($authorization);
+
+        // Fase E (DECISIONES §7): la nómina de los periodos que cubren la
+        // fecha queda al día (draft) o marcada "requiere recálculo"
+        // (review/approved). Cubre también el ajuste admin de una aprobación.
+        app(PayrollInvalidationService::class)->invalidate(
+            $authorization->employee_id,
+            Carbon::parse($authorization->date)->toDateString(),
+        );
 
         return redirect()->back()->with('success', 'Autorizacion aprobada.');
     }
@@ -840,7 +851,7 @@ class AuthorizationController extends Controller
                 $syncService->recalculateAttendanceRecord($authorization->attendanceRecord);
             } else {
                 $record = AttendanceRecord::where('employee_id', $authorization->employee_id)
-                    ->where('work_date', $authorization->date)
+                    ->whereDate('work_date', Carbon::parse($authorization->date)->toDateString())
                     ->first();
                 if ($record) {
                     $syncService->recalculateAttendanceRecord($record);
@@ -848,6 +859,12 @@ class AuthorizationController extends Controller
             }
 
             $this->autoResolveAnomalies($authorization);
+
+            app(PayrollInvalidationService::class)->invalidate(
+                $authorization->employee_id,
+                Carbon::parse($authorization->date)->toDateString(),
+            );
+
             $approved++;
         }
 

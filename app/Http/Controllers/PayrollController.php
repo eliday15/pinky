@@ -160,7 +160,13 @@ class PayrollController extends Controller
             abort(403);
         }
 
-        if (!in_array($payroll->status, ['draft', 'review'])) {
+        // Un periodo aprobado solo se puede recalcular cuando está marcado
+        // "requiere recálculo" (DECISIONES §7) — y al hacerlo vuelve a
+        // 'review' para re-aprobación. Pagado nunca se recalcula.
+        $recalculable = in_array($payroll->status, ['draft', 'review'], true)
+            || ($payroll->status === 'approved' && $payroll->requires_recalculation);
+
+        if (! $recalculable) {
             return redirect()->back()
                 ->with('error', 'No se puede recalcular una nomina aprobada o pagada.');
         }

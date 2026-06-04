@@ -615,7 +615,7 @@ class ZktecoSyncService
      * 2. Handles night shift calculations correctly
      * 3. Qualifies night shift employees for bonus
      */
-    private function calculateAttendanceMetrics(AttendanceRecord $attendance): void
+    private function calculateAttendanceMetrics(AttendanceRecord $attendance, bool $preserveStatus = false): void
     {
         $employee = $attendance->employee;
 
@@ -639,7 +639,9 @@ class ZktecoSyncService
         $isWorkingDay = $employee->isEffectiveWorkingDay($dayName);
 
         if (! $attendance->check_in && $isWorkingDay && ! $attendance->is_holiday) {
-            $attendance->update(['status' => 'absent']);
+            if (! $preserveStatus) {
+                $attendance->update(['status' => 'absent']);
+            }
 
             return;
         }
@@ -815,7 +817,7 @@ class ZktecoSyncService
         // Night shift bonus qualification
         $qualifiesForNightShiftBonus = $isNightShift && $workedHours >= 6;
 
-        $attendance->update([
+        $updates = [
             'worked_hours' => round($regularHours, 2),
             'overtime_hours' => round($overtimeHours, 2),
             'velada_hours' => $veladaSplit['velada_hours'] ?? 0,
@@ -831,7 +833,15 @@ class ZktecoSyncService
             'is_night_shift' => $isNightShift,
             'status' => $status,
             'requires_review' => $requiresReview,
-        ]);
+        ];
+
+        // "Manual edit wins": el status elegido explícitamente por el editor
+        // no se sobreescribe; las métricas derivadas sí se mantienen canónicas.
+        if ($preserveStatus) {
+            unset($updates['status']);
+        }
+
+        $attendance->update($updates);
 
         // NOTA: la conversión retardos→falta es ahora MENSUAL al cierre y vive
         // exclusivamente en LateAbsenceService (DECISIONES_NEGOCIO §1). El sync
@@ -842,10 +852,18 @@ class ZktecoSyncService
 
     /**
      * Recalculate attendance metrics for a specific record.
+     *
+     * Si el registro fue editado manualmente, el STATUS elegido por el editor
+     * se preserva ("manual edit wins") pero las métricas derivadas (horas,
+     * retardo, salida temprana, velada y horas autorizadas) sí se recalculan
+     * con la fórmula canónica — así la nómina nunca paga métricas obsoletas
+     * ni divergentes (Fase E, auditoría hallazgos 10/45/63/64).
      */
-    public function recalculateAttendanceRecord(AttendanceRecord $attendance): void
+    public function recalculateAttendanceRecord(AttendanceRecord $attendance, ?bool $preserveStatus = null): void
     {
-        $this->calculateAttendanceMetrics($attendance);
+        $preserveStatus = $preserveStatus ?? ($attendance->manually_edited_at !== null);
+
+        $this->calculateAttendanceMetrics($attendance, $preserveStatus);
     }
 
     /**
