@@ -390,6 +390,17 @@ class ReportExportController extends Controller implements HasMiddleware
             }
         }
 
+        // Días justificados por incidencias aprobadas: no se exportan como
+        // falta — la misma regla que el reporte web y la nómina.
+        $justifiedDates = Incident::justifiedDatesByEmployee(
+            $activeEmployeeIds,
+            Carbon::parse($startDate)->toDateString(),
+            Carbon::parse($endDate)->toDateString()
+        );
+        $absentRecords = $absentRecords->reject(
+            fn ($r) => isset($justifiedDates[$r->employee_id][Carbon::parse($r->work_date)->toDateString()])
+        );
+
         // Split absent records: true no-shows vs threshold-triggered
         $noShowRecords = $absentRecords->filter(fn ($r) => is_null($r->check_in));
         $thresholdRecords = $absentRecords->filter(fn ($r) => ! is_null($r->check_in));

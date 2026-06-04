@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Traits\Auditable;
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -105,6 +106,60 @@ class Incident extends Model
                      ->where('end_date', '>=', $endDate);
               });
         });
+    }
+
+    /**
+     * ¿El tipo de incidencia JUSTIFICA la ausencia/retardo del día para
+     * efectos de bonos y reportes? (DECISIONES_NEGOCIO_2026-06-04.md §8:
+     * "lo justificado no rompe el bono"; solo lo SIN justificar penaliza.)
+     *
+     * - vacation / sick_leave / permission: siempre justifican.
+     * - absence: solo con goce (FJU "falta justificada"); FIN/SUS son
+     *   disciplinarias y no justifican.
+     * - late_accumulation (FRT): es una sanción, nunca justifica.
+     */
+    public static function typeJustifiesAbsence(IncidentType $type): bool
+    {
+        return match ($type->category) {
+            'vacation', 'sick_leave', 'permission' => true,
+            'absence' => (bool) $type->is_paid,
+            default => false,
+        };
+    }
+
+    /**
+     * Fechas cubiertas por incidencias aprobadas que justifican, por empleado,
+     * acotadas al rango dado: [employee_id => ['Y-m-d' => true, ...]].
+     *
+     * Única fuente de la regla de justificación para reportes (faltas,
+     * salidas tempranas) — debe coincidir siempre con lo que nómina respeta.
+     */
+    public static function justifiedDatesByEmployee(iterable $employeeIds, string $startDate, string $endDate): array
+    {
+        $incidents = self::query()
+            ->where('status', 'approved')
+            ->whereIn('employee_id', collect($employeeIds)->all())
+            ->where('start_date', '<=', $endDate)
+            ->where('end_date', '>=', $startDate)
+            ->with('incidentType')
+            ->get();
+
+        $map = [];
+
+        foreach ($incidents as $incident) {
+            if (! $incident->incidentType || ! self::typeJustifiesAbsence($incident->incidentType)) {
+                continue;
+            }
+
+            $from = Carbon::parse($incident->start_date)->max(Carbon::parse($startDate));
+            $to = Carbon::parse($incident->end_date)->min(Carbon::parse($endDate));
+
+            for ($day = $from->copy(); $day->lte($to); $day->addDay()) {
+                $map[$incident->employee_id][$day->toDateString()] = true;
+            }
+        }
+
+        return $map;
     }
 
     /**

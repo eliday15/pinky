@@ -800,8 +800,12 @@ class ZktecoSyncService
             $status = 'holiday';
         }
 
+        // La salida temprana solo escala a falta si el negocio así lo decidió
+        // (early_departure_is_absence) — el mismo flag que ya respetan los
+        // reportes de faltas y salidas tempranas (DECISIONES, derivadas).
         $earlyDepartureThreshold = (int) SystemSetting::get('early_departure_absence_threshold', 30);
-        if ($earlyDepartureMinutes > $earlyDepartureThreshold && ! $hasApprovedExitPermission) {
+        $earlyDepartureIsAbsence = (bool) SystemSetting::get('early_departure_is_absence', true);
+        if ($earlyDepartureIsAbsence && $earlyDepartureMinutes > $earlyDepartureThreshold && ! $hasApprovedExitPermission) {
             $status = 'absent';
             $qualifiesForPunctualityBonus = false;
         }

@@ -60,6 +60,15 @@ class AttendanceReportController extends Controller implements HasMiddleware
             ->when(! empty($holidayDates), fn ($q) => $q->whereNotIn('work_date', $holidayDates))
             ->get();
 
+        // Días justificados por incidencias aprobadas (vacación, incapacidad,
+        // permiso, falta justificada): NO cuentan como falta en el reporte —
+        // la misma regla que respeta la nómina (Incident::typeJustifiesAbsence).
+        $justifiedDates = Incident::justifiedDatesByEmployee(
+            $activeEmployeeIds,
+            $startDate->toDateString(),
+            $endDate->toDateString()
+        );
+
         $noShowByEmp = [];
         $thresholdByEmp = [];
 
@@ -68,6 +77,9 @@ class AttendanceReportController extends Controller implements HasMiddleware
             $emp = $employees[$eid] ?? null;
             if (! $emp || ! $this->isWorkingDayForEmployee($emp, $row->work_date)) {
                 continue;
+            }
+            if (isset($justifiedDates[$eid][Carbon::parse($row->work_date)->toDateString()])) {
+                continue; // falta justificada por incidencia aprobada
             }
             if (is_null($row->check_in)) {
                 $expected = $this->formatTime($this->entryTimeForDate($emp, $row->work_date));
@@ -409,12 +421,22 @@ class AttendanceReportController extends Controller implements HasMiddleware
         $totalEarlyDepartures = $rows->count();
         $totalEarlyMinutes = $rows->sum('early_departure_minutes');
 
-        $byEmployee = collect($grouped)->map(function ($records, $eid) use ($earlyDepartureThreshold, $earlyDepartureIsAbsence, $employees) {
+        // Un permiso de salida (PSA) u otra incidencia aprobada que cubra la
+        // fecha exime la "falta" por salida temprana — igual que el sync y el
+        // detector de anomalías.
+        $justifiedDates = Incident::justifiedDatesByEmployee(
+            $activeEmployeeIds,
+            $startDate->toDateString(),
+            $endDate->toDateString()
+        );
+
+        $byEmployee = collect($grouped)->map(function ($records, $eid) use ($earlyDepartureThreshold, $earlyDepartureIsAbsence, $employees, $justifiedDates) {
             $count = count($records);
             $totalMinutes = array_sum(array_column($records, 'early_departure_minutes'));
-            $faltasCount = $earlyDepartureIsAbsence
-                ? count(array_filter($records, fn ($r) => $r->early_departure_minutes >= $earlyDepartureThreshold))
-                : 0;
+            $isFalta = fn ($r) => $earlyDepartureIsAbsence
+                && $r->early_departure_minutes >= $earlyDepartureThreshold
+                && ! isset($justifiedDates[$eid][Carbon::parse($r->work_date)->toDateString()]);
+            $faltasCount = count(array_filter($records, $isFalta));
 
             return [
                 'employee' => $employees[$eid] ?? null,
@@ -427,7 +449,7 @@ class AttendanceReportController extends Controller implements HasMiddleware
                     'minutes' => $r->early_departure_minutes,
                     'check_out' => $r->check_out,
                     'expected_exit' => $this->exitTimeForDate($employees[$eid], $r->work_date),
-                    'is_falta' => $earlyDepartureIsAbsence && $r->early_departure_minutes >= $earlyDepartureThreshold,
+                    'is_falta' => $isFalta($r),
                 ], $records),
             ];
         })->filter(fn ($e) => $e['employee'] !== null)

@@ -3,10 +3,12 @@
 namespace App\Http\Controllers;
 
 use App\Http\Traits\VerifiesTwoFactor;
+use App\Models\AttendanceRecord;
 use App\Models\Employee;
 use App\Models\Holiday;
 use App\Models\Incident;
 use App\Models\IncidentType;
+use App\Services\ZktecoSyncService;
 use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -240,6 +242,12 @@ class IncidentController extends Controller
             $employee->increment('vacation_days_used', $incident->days_count);
         }
 
+        // Una incidencia auto-aprobada surte efecto de inmediato sobre la
+        // asistencia (PSA/PEN cambian status y permission_hours).
+        if ($autoApproved) {
+            $this->recalculateAttendanceForIncident($incident);
+        }
+
         return redirect()->route('incidents.index')
             ->with('success', 'Incidencia creada exitosamente.');
     }
@@ -399,6 +407,10 @@ class IncidentController extends Controller
             if ($status === 'approved' && $incidentType->deducts_vacation) {
                 $employee->increment('vacation_days_used', $daysCount);
             }
+
+            if ($status === 'approved') {
+                $this->recalculateAttendanceForIncident($incident);
+            }
             $count++;
         }
 
@@ -501,11 +513,18 @@ class IncidentController extends Controller
         // Refund vacation balance if we're deleting an already-approved deducts_vacation incident.
         // Otherwise the days stay consumed and the employee loses balance silently.
         $incidentType = $incident->incidentType;
-        if ($incident->status === 'approved' && $incidentType?->deducts_vacation) {
+        $wasApproved = $incident->status === 'approved';
+        if ($wasApproved && $incidentType?->deducts_vacation) {
             $incident->employee?->decrement('vacation_days_used', $incident->days_count);
         }
 
         $incident->delete();
+
+        // Si estaba aprobada, su efecto sobre la asistencia debe revertirse
+        // (el recálculo ya no la encontrará porque está soft-deleted).
+        if ($wasApproved) {
+            $this->recalculateAttendanceForIncident($incident);
+        }
 
         return redirect()->route('incidents.index')
             ->with('success', 'Incidencia eliminada.');
@@ -544,6 +563,11 @@ class IncidentController extends Controller
             $employee->increment('vacation_days_used', $incident->days_count);
         }
 
+        // La aprobación surte efecto de inmediato sobre la asistencia, igual
+        // que AuthorizationController::approve (auditoría C2 / DECISIONES §8):
+        // un permiso aprobado tarde revierte la falta/retardo ya marcada.
+        $this->recalculateAttendanceForIncident($incident);
+
         return redirect()->back()->with('success', 'Incidencia aprobada.');
     }
 
@@ -566,5 +590,33 @@ class IncidentController extends Controller
         $incident->reject(auth()->user(), $validated['rejection_reason']);
 
         return redirect()->back()->with('success', 'Incidencia rechazada.');
+    }
+
+    /**
+     * Recalcula los attendance_records cubiertos por la incidencia para que
+     * su efecto (o la ausencia de él) se refleje de inmediato — espejo de lo
+     * que AuthorizationController::approve ya hace para autorizaciones.
+     *
+     * Seguro para registros sin checada: calculateAttendanceMetrics los deja
+     * en 'absent' (guarda al inicio del método).
+     */
+    private function recalculateAttendanceForIncident(Incident $incident): void
+    {
+        $records = AttendanceRecord::where('employee_id', $incident->employee_id)
+            ->whereBetween('work_date', [
+                Carbon::parse($incident->start_date)->toDateString(),
+                Carbon::parse($incident->end_date)->toDateString(),
+            ])
+            ->get();
+
+        if ($records->isEmpty()) {
+            return;
+        }
+
+        $sync = app(ZktecoSyncService::class);
+
+        foreach ($records as $record) {
+            $sync->recalculateAttendanceRecord($record);
+        }
     }
 }

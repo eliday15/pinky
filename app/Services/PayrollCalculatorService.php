@@ -116,6 +116,12 @@ class PayrollCalculatorService
         // Calculate incident days
         $incidentMetrics = $this->calculateIncidentMetrics($incidents, $startDate, $endDate);
 
+        // Días justificados por incidencias aprobadas (DECISIONES §8): un día
+        // absent/late cubierto por vacación, incapacidad, permiso o falta
+        // justificada NO rompe los bonos de asistencia; solo lo sin justificar
+        // penaliza.
+        $justifiedDates = $this->justifiedDates($incidents, $startDate, $endDate);
+
         // ----------------------------------------------------------------
         // Period payment scope.
         // The nómina is split in two: a WEEKLY period pays the base salary
@@ -181,8 +187,8 @@ class PayrollCalculatorService
 
             // FASE 3.2: Attendance bonuses (paid with the extras)
             $punctualityBonus = $metrics['punctual_days'] * (float) SystemSetting::get('punctuality_bonus_amount', 50);
-            $weeklyBonus = $this->calculateWeeklyBonus($employee, $period, $attendance);
-            $monthlyBonus = $this->calculateMonthlyBonus($employee, $period, $attendance);
+            $weeklyBonus = $this->calculateWeeklyBonus($employee, $period, $attendance, $justifiedDates);
+            $monthlyBonus = $this->calculateMonthlyBonus($employee, $period, $attendance, $justifiedDates);
 
             $authorizedOvertimeHours = $veladaMetrics['overtime_authorized_hours'];
 
@@ -370,14 +376,56 @@ class PayrollCalculatorService
     }
 
     /**
+     * Fechas del periodo cubiertas por incidencias aprobadas que justifican
+     * (regla compartida con reportes: Incident::typeJustifiesAbsence).
+     *
+     * @return array<string, true> set de fechas 'Y-m-d'
+     */
+    private function justifiedDates(Collection $incidents, Carbon $startDate, Carbon $endDate): array
+    {
+        $dates = [];
+
+        foreach ($incidents as $incident) {
+            if (! $incident->incidentType || ! Incident::typeJustifiesAbsence($incident->incidentType)) {
+                continue;
+            }
+
+            $from = Carbon::parse($incident->start_date)->max($startDate);
+            $to = Carbon::parse($incident->end_date)->min($endDate);
+
+            for ($day = $from->copy(); $day->lte($to); $day->addDay()) {
+                $dates[$day->toDateString()] = true;
+            }
+        }
+
+        return $dates;
+    }
+
+    /**
+     * ¿El registro rompe la asistencia perfecta? Solo cuando es absent/late
+     * y el día NO está justificado por una incidencia aprobada.
+     */
+    private function breaksPerfectAttendance(mixed $record, array $justifiedDates): bool
+    {
+        if (! in_array($record->status, ['absent', 'late'], true)) {
+            return false;
+        }
+
+        return ! isset($justifiedDates[Carbon::parse($record->work_date)->toDateString()]);
+    }
+
+    /**
      * FASE 3.2: Calculate weekly bonus based on perfect attendance.
+     *
+     * Lo justificado no rompe el bono (DECISIONES §8).
      *
      * @param  Employee  $employee  Employee
      * @param  PayrollPeriod  $period  Payroll period
      * @param  Collection  $attendance  Attendance records
+     * @param  array<string, true>  $justifiedDates  Fechas justificadas por incidencia aprobada
      * @return float Weekly bonus amount
      */
-    private function calculateWeeklyBonus(Employee $employee, PayrollPeriod $period, Collection $attendance): float
+    private function calculateWeeklyBonus(Employee $employee, PayrollPeriod $period, Collection $attendance, array $justifiedDates): float
     {
         $weeklyBonusAmount = (float) SystemSetting::get('weekly_bonus_amount', 0);
         if ($weeklyBonusAmount <= 0) {
@@ -389,10 +437,9 @@ class PayrollCalculatorService
         $attendanceByWeek = $attendance->groupBy(fn ($record) => Carbon::parse($record->work_date)->weekOfYear);
 
         foreach ($attendanceByWeek as $weekRecords) {
-            $hasAbsence = $weekRecords->contains(fn ($r) => $r->status === 'absent');
-            $hasLate = $weekRecords->contains(fn ($r) => $r->status === 'late');
+            $imperfect = $weekRecords->contains(fn ($r) => $this->breaksPerfectAttendance($r, $justifiedDates));
 
-            if (! $hasAbsence && ! $hasLate) {
+            if (! $imperfect) {
                 $weeklyPerfect++;
             }
         }
@@ -403,12 +450,15 @@ class PayrollCalculatorService
     /**
      * FASE 3.2: Calculate monthly bonus based on perfect attendance.
      *
+     * Lo justificado no rompe el bono (DECISIONES §8).
+     *
      * @param  Employee  $employee  Employee
      * @param  PayrollPeriod  $period  Payroll period
      * @param  Collection  $attendance  Attendance records
+     * @param  array<string, true>  $justifiedDates  Fechas justificadas por incidencia aprobada
      * @return float Monthly bonus amount
      */
-    private function calculateMonthlyBonus(Employee $employee, PayrollPeriod $period, Collection $attendance): float
+    private function calculateMonthlyBonus(Employee $employee, PayrollPeriod $period, Collection $attendance, array $justifiedDates): float
     {
         $monthlyBonusAmount = (float) SystemSetting::get('monthly_bonus_amount', 0);
         if ($monthlyBonusAmount <= 0) {
@@ -416,10 +466,9 @@ class PayrollCalculatorService
         }
 
         // Check for perfect attendance in the period
-        $hasAbsence = $attendance->contains(fn ($r) => $r->status === 'absent');
-        $hasLate = $attendance->contains(fn ($r) => $r->status === 'late');
+        $imperfect = $attendance->contains(fn ($r) => $this->breaksPerfectAttendance($r, $justifiedDates));
 
-        if (! $hasAbsence && ! $hasLate) {
+        if (! $imperfect) {
             return $monthlyBonusAmount;
         }
 
