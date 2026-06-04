@@ -275,14 +275,17 @@ class ReportControllerTest extends FeatureTestCase
     }
 
     // ------------------------------------------------------------------
-    // payroll: props with and without a selected period
+    // payroll: props with and without a selected period.
+    // NOTE: the report only lists CLOSED periods (approved/paid) — a draft
+    // or calculating period is not valid payroll and must not be reported
+    // (same criterion as payrollTrends). Hence the ->approved() states.
     // ------------------------------------------------------------------
 
     public function test_payroll_without_period_returns_empty_props(): void
     {
         $this->actingAsAdmin();
 
-        PayrollPeriod::factory()->weekly()->create();
+        PayrollPeriod::factory()->weekly()->approved()->create();
 
         $this->get(route('reports.payroll'))
             ->assertOk()
@@ -298,7 +301,7 @@ class ReportControllerTest extends FeatureTestCase
     {
         $admin = $this->actingAsAdmin();
 
-        $period = PayrollPeriod::factory()->weekly()->create(['created_by' => $admin->id]);
+        $period = PayrollPeriod::factory()->weekly()->approved()->create(['created_by' => $admin->id]);
         $employee = Employee::factory()->create();
         PayrollEntry::factory()->create([
             'payroll_period_id' => $period->id,
@@ -331,7 +334,7 @@ class ReportControllerTest extends FeatureTestCase
         $self = $this->attachEmployee($user);
         $other = Employee::factory()->create();
 
-        $period = PayrollPeriod::factory()->weekly()->create();
+        $period = PayrollPeriod::factory()->weekly()->approved()->create();
         PayrollEntry::factory()->create([
             'payroll_period_id' => $period->id,
             'employee_id' => $self->id,
@@ -808,7 +811,7 @@ class ReportControllerTest extends FeatureTestCase
     {
         $admin = $this->actingAsAdmin();
 
-        PayrollPeriod::factory()->count(14)->weekly()->create(['created_by' => $admin->id]);
+        PayrollPeriod::factory()->count(14)->weekly()->approved()->create(['created_by' => $admin->id]);
 
         $this->get(route('reports.payroll'))
             ->assertOk()

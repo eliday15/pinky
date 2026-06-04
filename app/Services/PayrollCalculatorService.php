@@ -8,7 +8,6 @@ use App\Models\CompensationType;
 use App\Models\Employee;
 use App\Models\Holiday;
 use App\Models\Incident;
-use App\Models\LateAccumulation;
 use App\Models\PayrollEntry;
 use App\Models\PayrollPeriod;
 use App\Models\SystemSetting;
@@ -22,9 +21,12 @@ class PayrollCalculatorService
 {
     private CompensationRateResolverService $resolver;
 
-    public function __construct(CompensationRateResolverService $resolver)
+    private LateAbsenceService $lateAbsences;
+
+    public function __construct(CompensationRateResolverService $resolver, LateAbsenceService $lateAbsences)
     {
         $this->resolver = $resolver;
+        $this->lateAbsences = $lateAbsences;
     }
 
     /**
@@ -65,27 +67,39 @@ class PayrollCalculatorService
         $startDate = Carbon::parse($period->start_date);
         $endDate = Carbon::parse($period->end_date);
 
+        // Regla mensual retardos→falta: garantizar que todo mes cerrado tenga
+        // su incidencia FRT generada ANTES de leer las incidencias del periodo
+        // (idempotente; la FRT cae en la primera nómina tras el cierre).
+        $this->lateAbsences->ensureMonthlyIncidentsGenerated($employee);
+
+        // Compare DATE columns against plain date strings (not Carbon
+        // datetimes): on SQLite a '2026-07-01' DATE sorts BEFORE the
+        // '2026-07-01 00:00:00' bound and rows on the period boundary would be
+        // silently dropped (MySQL treats them as equal).
+        $startDateStr = $startDate->toDateString();
+        $endDateStr = $endDate->toDateString();
+
         // Get attendance records for the period
         $attendance = AttendanceRecord::where('employee_id', $employee->id)
-            ->whereBetween('work_date', [$startDate, $endDate])
+            ->whereBetween('work_date', [$startDateStr, $endDateStr])
             ->get();
 
         // Get approved incidents for the period
         $incidents = Incident::where('employee_id', $employee->id)
             ->where('status', 'approved')
-            ->where(function ($q) use ($startDate, $endDate) {
-                $q->whereBetween('start_date', [$startDate, $endDate])
-                    ->orWhereBetween('end_date', [$startDate, $endDate])
-                    ->orWhere(function ($q2) use ($startDate, $endDate) {
-                        $q2->where('start_date', '<=', $startDate)
-                            ->where('end_date', '>=', $endDate);
+            ->where(function ($q) use ($startDateStr, $endDateStr) {
+                $q->whereBetween('start_date', [$startDateStr, $endDateStr])
+                    ->orWhereBetween('end_date', [$startDateStr, $endDateStr])
+                    ->orWhere(function ($q2) use ($startDateStr, $endDateStr) {
+                        $q2->where('start_date', '<=', $startDateStr)
+                            ->where('end_date', '>=', $endDateStr);
                     });
             })
             ->with('incidentType')
             ->get();
 
         // Get holidays in the period
-        $holidays = Holiday::whereBetween('date', [$startDate, $endDate])->get();
+        $holidays = Holiday::whereBetween('date', [$startDateStr, $endDateStr])->get();
         $holidayDates = $holidays->pluck('date')->map(fn ($d) => Carbon::parse($d)->toDateString())->toArray();
 
         // Get approved authorizations for the period (for holiday/weekend gating
@@ -126,11 +140,12 @@ class PayrollCalculatorService
         // ---- BASE (weekly): regular salary and absence/late deductions ----
         $regularPay = $metrics['regular_hours'] * $hourlyRate;
 
-        // FASE 3.1: Late-to-absence is a weekly deduction; only consume and
-        // apply it on base periods so a monthly run never "eats" the
-        // accumulation without deducting it.
-        $lateAbsencesGenerated = $payBase ? $this->calculateLateAbsences($employee, $period) : 0;
-        $totalAbsences = $incidentMetrics['unpaid_days'] + $lateAbsencesGenerated;
+        // Retardos→falta (regla mensual): las incidencias FRT generadas al
+        // cierre del mes entran por calculateIncidentMetrics como
+        // late_absence_days y ya forman parte de unpaid_days — un solo camino
+        // de descuento, sin doble conteo. Solo se cobran en periodos base.
+        $lateAbsencesGenerated = $payBase ? $incidentMetrics['late_absence_days'] : 0;
+        $totalAbsences = $incidentMetrics['unpaid_days'];
         $deductions = $payBase ? $totalAbsences * $dailySalary : 0.0;
 
         // ---- EXTRAS (monthly): overtime, velada, holiday, weekend, special
@@ -158,8 +173,9 @@ class PayrollCalculatorService
         $compensationConcepts = [];
 
         if ($payExtras) {
-            // FASE 3.3: Night shifts and dinner allowances
-            $nightShiftMetrics = $this->calculateNightShiftMetrics($employee, $startDate, $endDate);
+            // FASE 3.3: Night shifts and dinner allowances — pagados solo por
+            // noche realmente trabajada (velada en checadas) y autorizada.
+            $nightShiftMetrics = $this->calculateNightShiftMetrics($employee, $startDate, $endDate, $attendance);
 
             $vacationPay = $incidentMetrics['vacation_days'] * $dailySalary;
 
@@ -217,14 +233,17 @@ class PayrollCalculatorService
             }
         }
 
-        // Dinner: when the employee is on the CompensationType path, dinner is
-        // paid solely from approved CENA authorizations (above), so the legacy
-        // night_shift dinner allowance is suppressed to avoid double-paying.
+        // Dinner & night-shift bonus: when the employee is on the
+        // CompensationType path, dinner is paid solely from approved CENA
+        // authorizations and the velada is paid per hour via VEL, so BOTH
+        // legacy fixed concepts are suppressed to avoid double-paying
+        // (DECISIONES_NEGOCIO_2026-06-04.md §2).
         $dinnerAllowance = $useCompTypes ? 0.0 : $nightShiftMetrics['dinner_allowance'];
+        $nightShiftBonusPay = $useCompTypes ? 0.0 : $nightShiftMetrics['night_shift_bonus'];
 
         // Calculate total bonuses (0 on a weekly period)
         $totalBonuses = $punctualityBonus + $weeklyBonus + $monthlyBonus
-            + $nightShiftMetrics['night_shift_bonus']
+            + $nightShiftBonusPay
             + $dinnerAllowance;
 
         $basePay = $payBase ? $regularPay : 0.0;
@@ -255,12 +274,14 @@ class PayrollCalculatorService
             ],
             'late_accumulation' => [
                 'late_absences_generated' => $lateAbsencesGenerated,
+                'source' => 'frt_incidents_mensuales',
             ],
             'night_shifts' => [
                 'hours' => $nightShiftMetrics['night_shift_hours'],
                 'days' => $nightShiftMetrics['night_shift_days'],
-                'bonus' => $nightShiftMetrics['night_shift_bonus'],
-                'dinner_allowance' => $nightShiftMetrics['dinner_allowance'],
+                'bonus' => $nightShiftBonusPay,
+                'dinner_allowance' => $dinnerAllowance,
+                'suppressed_by_comp_types' => $useCompTypes,
             ],
             'velada' => [
                 'total_hours' => $veladaMetrics['velada_hours'],
@@ -336,7 +357,7 @@ class PayrollCalculatorService
                 'vacation_pay' => $vacationPay,
                 'punctuality_bonus' => $punctualityBonus,
                 'dinner_allowance' => $dinnerAllowance,
-                'night_shift_bonus' => $nightShiftMetrics['night_shift_bonus'],
+                'night_shift_bonus' => $nightShiftBonusPay,
                 'weekly_bonus' => $weeklyBonus,
                 'monthly_bonus' => $monthlyBonus,
                 'bonuses' => $totalBonuses,
@@ -346,42 +367,6 @@ class PayrollCalculatorService
                 'calculation_breakdown' => $breakdown,
             ]
         );
-    }
-
-    /**
-     * FASE 3.1: Calculate absences generated from late accumulation.
-     *
-     * @param  Employee  $employee  Employee to check
-     * @param  PayrollPeriod  $period  Payroll period
-     * @return int Number of absences generated from late accumulation
-     */
-    private function calculateLateAbsences(Employee $employee, PayrollPeriod $period): int
-    {
-        $startDate = Carbon::parse($period->start_date);
-
-        // Get late accumulation for the period's month
-        $lateAccumulation = LateAccumulation::where('employee_id', $employee->id)
-            ->where('year', $startDate->year)
-            ->where('week', $startDate->weekOfYear)
-            ->first();
-
-        if (! $lateAccumulation) {
-            return 0;
-        }
-
-        // Get configurable threshold
-        $lateToAbsenceCount = (int) SystemSetting::get('late_to_absence_count', 6);
-
-        if ($lateAccumulation->late_count >= $lateToAbsenceCount && ! $lateAccumulation->absence_generated) {
-            $absencesGenerated = floor($lateAccumulation->late_count / $lateToAbsenceCount);
-
-            // Mark the accumulation as processed
-            $lateAccumulation->update(['absence_generated' => true]);
-
-            return (int) $absencesGenerated;
-        }
-
-        return 0;
     }
 
     /**
@@ -444,12 +429,19 @@ class PayrollCalculatorService
     /**
      * FASE 3.3: Calculate night shift metrics including hours, bonus, and dinner allowance.
      *
+     * El bono fijo de velada y el vale de cena se pagan por NOCHE REALMENTE
+     * TRABAJADA Y AUTORIZADA (DECISIONES_NEGOCIO_2026-06-04.md §2): máximo una
+     * vez por (empleado, fecha) aunque existan filas de autorización
+     * duplicadas, y solo cuando la checada de esa fecha registró velada real
+     * (velada_hours > 0).
+     *
      * @param  Employee  $employee  Employee
      * @param  Carbon  $startDate  Start date
      * @param  Carbon  $endDate  End date
+     * @param  Collection  $attendance  Attendance records of the period
      * @return array Night shift metrics
      */
-    private function calculateNightShiftMetrics(Employee $employee, Carbon $startDate, Carbon $endDate): array
+    private function calculateNightShiftMetrics(Employee $employee, Carbon $startDate, Carbon $endDate, Collection $attendance): array
     {
         $nightShiftBonus = (float) SystemSetting::get('night_shift_bonus', 100);
         $dinnerAllowanceAmount = (float) SystemSetting::get('dinner_allowance_amount', 75);
@@ -462,7 +454,20 @@ class PayrollCalculatorService
             ->get();
 
         $nightShiftHours = $approvedNightShifts->sum('hours');
-        $nightShiftDays = $approvedNightShifts->count();
+
+        // Fechas con velada real en checadas (velada_hours > 0)
+        $veladaWorkedDates = $attendance
+            ->filter(fn ($record) => (float) ($record->velada_hours ?? 0) > 0)
+            ->map(fn ($record) => Carbon::parse($record->work_date)->toDateString())
+            ->unique()
+            ->all();
+
+        // Noches pagables: fechas únicas autorizadas ∩ fechas con velada real
+        $nightShiftDays = $approvedNightShifts
+            ->map(fn ($authorization) => Carbon::parse($authorization->date)->toDateString())
+            ->unique()
+            ->filter(fn ($date) => in_array($date, $veladaWorkedDates, true))
+            ->count();
 
         return [
             'night_shift_hours' => round($nightShiftHours, 2),
@@ -621,10 +626,29 @@ class PayrollCalculatorService
         $permissionDays = 0;
         $absenceDays = 0;
         $unpaidDays = 0;
+        $lateAbsenceDays = 0;
 
         foreach ($incidents as $incident) {
             $incidentStart = Carbon::parse($incident->start_date);
             $incidentEnd = Carbon::parse($incident->end_date);
+
+            $category = $incident->incidentType->category;
+            $isPaid = $incident->incidentType->is_paid;
+
+            // Retardos→falta (FRT): la incidencia está fechada el día 1 del
+            // mes siguiente al acumulado y carga days_count completo en el
+            // periodo que CONTIENE esa fecha — nunca se prorratea por solape
+            // (DECISIONES_NEGOCIO_2026-06-04.md §1).
+            if ($category === 'late_accumulation') {
+                if ($incidentStart->betweenIncluded($startDate, $endDate)) {
+                    $frtDays = max(1, (int) $incident->days_count);
+                    $lateAbsenceDays += $frtDays;
+                    $absenceDays += $frtDays;
+                    $unpaidDays += $frtDays;
+                }
+
+                continue;
+            }
 
             // Calculate overlapping days with the period
             $overlapStart = $incidentStart->max($startDate);
@@ -634,9 +658,6 @@ class PayrollCalculatorService
             if ($days <= 0) {
                 continue;
             }
-
-            $category = $incident->incidentType->category;
-            $isPaid = $incident->incidentType->is_paid;
 
             switch ($category) {
                 case 'vacation':
@@ -652,7 +673,6 @@ class PayrollCalculatorService
                     }
                     break;
                 case 'absence':
-                case 'late_accumulation':
                     $absenceDays += $days;
                     $unpaidDays += $days;
                     break;
@@ -665,6 +685,7 @@ class PayrollCalculatorService
             'permission_days' => $permissionDays,
             'absence_days' => $absenceDays,
             'unpaid_days' => $unpaidDays,
+            'late_absence_days' => $lateAbsenceDays,
         ];
     }
 

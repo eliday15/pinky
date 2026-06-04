@@ -6,7 +6,9 @@ use App\Http\Controllers\Concerns\ScopesReportEmployees;
 use App\Models\AttendanceRecord;
 use App\Models\Employee;
 use App\Models\Holiday;
+use App\Models\Incident;
 use App\Models\SystemSetting;
+use App\Services\LateAbsenceService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controllers\HasMiddleware;
@@ -39,7 +41,8 @@ class AttendanceReportController extends Controller implements HasMiddleware
         [$startDate, $endDate] = $this->getDateRange($request);
         $activeEmployeeIds = $this->scopedActiveEmployeeIds();
 
-        $lateToAbsenceCount = (int) SystemSetting::get('late_to_absence_count', 6);
+        $lateAbsenceService = app(LateAbsenceService::class);
+        $lateToAbsenceCount = $lateAbsenceService->threshold();
         $maxLateBeforeAbsence = (int) SystemSetting::get('max_late_minutes_before_absence', 60);
         $earlyDepartureThreshold = (int) SystemSetting::get('early_departure_absence_threshold', 30);
         $earlyDepartureIsAbsence = (bool) SystemSetting::get('early_departure_is_absence', true);
@@ -106,10 +109,50 @@ class AttendanceReportController extends Controller implements HasMiddleware
             $lateByEmpMonth[$row->employee_id][$month] = ($lateByEmpMonth[$row->employee_id][$month] ?? 0) + 1;
         }
 
+        // Faltas por retardos: la fuente de verdad para meses CERRADOS son las
+        // incidencias FRT generadas al cierre (las mismas que cobra la nómina,
+        // DECISIONES_NEGOCIO §1). El mes en curso se muestra como proyección
+        // claramente etiquetada; los meses previos al corte de la regla solo
+        // muestran el conteo de retardos sin faltas.
+        $monthsInRange = [];
+        for ($cursor = $startDate->copy()->startOfMonth(); $cursor->lte($endDate); $cursor->addMonthNoOverflow()) {
+            $monthsInRange[] = $cursor->format('Y-m');
+        }
+
+        $ruleStartKey = $lateAbsenceService->startMonth()?->format('Y-m');
+        $currentMonthKey = Carbon::today()->format('Y-m');
+
+        $frtIncidents = Incident::where('status', 'approved')
+            ->whereIn('employee_id', $activeEmployeeIds)
+            ->whereIn('late_month', $monthsInRange)
+            ->get(['employee_id', 'late_month', 'days_count', 'start_date']);
+
         $retardoFaltasByEmployee = [];
         $retardoDetailsByEmployee = [];
+        $chargedMonthsByEmployee = [];
+
+        foreach ($frtIncidents as $incident) {
+            $eid = $incident->employee_id;
+            $faltas = max(1, (int) $incident->days_count);
+            $retardoFaltasByEmployee[$eid] = ($retardoFaltasByEmployee[$eid] ?? 0) + $faltas;
+            $chargedMonthsByEmployee[$eid][$incident->late_month] = true;
+            $retardoDetailsByEmployee[$eid][] = [
+                'month' => $incident->late_month,
+                'late_count' => $lateByEmpMonth[$eid][$incident->late_month] ?? 0,
+                'faltas' => $faltas,
+                'source' => 'cobrada',
+                'charged_on' => Carbon::parse($incident->start_date)->toDateString(),
+            ];
+        }
+
         foreach ($lateByEmpMonth as $eid => $months) {
             foreach ($months as $month => $cnt) {
+                if (isset($chargedMonthsByEmployee[$eid][$month])) {
+                    continue; // ya cobrada vía incidencia FRT
+                }
+                if ($ruleStartKey !== null && $month < $ruleStartKey) {
+                    continue; // mes previo al corte: lo manejó el sistema legado
+                }
                 $faltas = intdiv($cnt, $lateToAbsenceCount);
                 if ($faltas > 0) {
                     $retardoFaltasByEmployee[$eid] = ($retardoFaltasByEmployee[$eid] ?? 0) + $faltas;
@@ -117,6 +160,7 @@ class AttendanceReportController extends Controller implements HasMiddleware
                         'month' => $month,
                         'late_count' => $cnt,
                         'faltas' => $faltas,
+                        'source' => $month === $currentMonthKey ? 'proyeccion' : 'pendiente_cierre',
                     ];
                 }
             }

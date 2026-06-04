@@ -7,6 +7,7 @@ use App\Models\AttendanceRecord;
 use App\Models\Employee;
 use App\Models\Incident;
 use App\Models\SystemSetting;
+use App\Services\LateAbsenceService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controllers\HasMiddleware;
@@ -303,7 +304,6 @@ class ReportExportController extends Controller implements HasMiddleware
         $startDate = $request->get('start_date', Carbon::now()->startOfWeek()->toDateString());
         $endDate = $request->get('end_date', Carbon::now()->endOfWeek()->toDateString());
         $activeEmployeeIds = $this->scopedActiveEmployeeIds();
-        $lateToAbsenceCount = (int) SystemSetting::get('late_to_absence_count', 6);
         $maxLateBeforeAbsence = (int) SystemSetting::get('max_late_minutes_before_absence', 60);
         $earlyDepartureThreshold = (int) SystemSetting::get('early_departure_absence_threshold', 30);
         $earlyDepartureIsAbsence = (bool) SystemSetting::get('early_departure_is_absence', true);
@@ -322,22 +322,71 @@ class ReportExportController extends Controller implements HasMiddleware
             ->where('status', 'late')
             ->get();
 
-        // Calculate retardo faltas per employee (monthly)
+        // Faltas por retardos: para meses CERRADOS la fuente de verdad son las
+        // incidencias FRT del cierre mensual (las mismas que cobra la nómina,
+        // DECISIONES_NEGOCIO §1); el mes en curso se exporta como proyección
+        // etiquetada usando el MISMO conteo del servicio (días laborables, sin
+        // festivos) para que coincida con lo que se cobrará.
+        $lateAbsenceService = app(LateAbsenceService::class);
+        $ruleStartKey = $lateAbsenceService->startMonth()?->format('Y-m');
+        $currentMonthKey = Carbon::today()->format('Y-m');
+
+        $monthsInRange = [];
+        for ($cursor = Carbon::parse($startDate)->startOfMonth(); $cursor->lte(Carbon::parse($endDate)); $cursor->addMonthNoOverflow()) {
+            $monthsInRange[] = $cursor->format('Y-m');
+        }
+
+        $frtIncidents = Incident::where('status', 'approved')
+            ->whereIn('employee_id', $activeEmployeeIds)
+            ->whereIn('late_month', $monthsInRange)
+            ->get(['employee_id', 'late_month', 'days_count']);
+
         $retardoFaltas = [];
         $retardoDetalles = [];
+        $chargedMonths = [];
+
+        foreach ($frtIncidents as $incident) {
+            $eid = $incident->employee_id;
+            $faltasMes = max(1, (int) $incident->days_count);
+            $retardoFaltas[$eid] = ($retardoFaltas[$eid] ?? 0) + $faltasMes;
+            $chargedMonths[$eid][$incident->late_month] = true;
+            $mes = Carbon::parse($incident->late_month.'-01')->locale('es')->isoFormat('MMM YYYY');
+            $retardoDetalles[$eid][] = "{$mes}: {$faltasMes} falta".($faltasMes > 1 ? 's' : '').' por retardos (cobrada en nómina)';
+        }
+
+        $pendingPairs = [];
         foreach ($lateRecords->groupBy('employee_id') as $employeeId => $empRecords) {
             $byMonth = $empRecords->groupBy(fn ($r) => Carbon::parse($r->work_date)->format('Y-m'));
-            $total = 0;
             foreach ($byMonth as $month => $monthRecords) {
-                $faltasMes = intdiv($monthRecords->count(), $lateToAbsenceCount);
-                $total += $faltasMes;
-                if ($faltasMes > 0) {
-                    $mes = Carbon::parse($month.'-01')->locale('es')->isoFormat('MMM YYYY');
-                    $retardoDetalles[$employeeId][] = "{$mes}: {$monthRecords->count()} retardos = {$faltasMes} falta".($faltasMes > 1 ? 's' : '');
+                if (isset($chargedMonths[$employeeId][$month])) {
+                    continue; // ya cobrada vía incidencia FRT
                 }
+                if ($ruleStartKey !== null && $month < $ruleStartKey) {
+                    continue; // mes previo al corte de la regla mensual
+                }
+                $pendingPairs[$employeeId][] = $month;
             }
-            if ($total > 0) {
-                $retardoFaltas[$employeeId] = $total;
+        }
+
+        if ($pendingPairs !== []) {
+            $pendingEmployees = Employee::whereIn('id', array_keys($pendingPairs))->get()->keyBy('id');
+
+            foreach ($pendingPairs as $employeeId => $months) {
+                $employee = $pendingEmployees[$employeeId] ?? null;
+                if (! $employee) {
+                    continue;
+                }
+                foreach ($months as $month) {
+                    $cnt = $lateAbsenceService->lateCountForMonth($employee, Carbon::parse($month.'-01'));
+                    $faltasMes = $lateAbsenceService->absencesFromLates($cnt);
+                    if ($faltasMes < 1) {
+                        continue;
+                    }
+                    $retardoFaltas[$employeeId] = ($retardoFaltas[$employeeId] ?? 0) + $faltasMes;
+                    $mes = Carbon::parse($month.'-01')->locale('es')->isoFormat('MMM YYYY');
+                    $etiqueta = $month === $currentMonthKey ? 'proyección, mes en curso' : 'pendiente de cierre';
+                    $retardoDetalles[$employeeId][] = "{$mes}: {$cnt} retardos = {$faltasMes} falta".($faltasMes > 1 ? 's' : '')." ({$etiqueta})";
+                }
             }
         }
 

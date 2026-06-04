@@ -10,6 +10,7 @@ use App\Models\Holiday;
 use App\Models\Incident;
 use App\Models\PayrollEntry;
 use App\Models\PayrollPeriod;
+use App\Services\LateAbsenceService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controllers\HasMiddleware;
@@ -233,7 +234,11 @@ class ReportController extends Controller implements HasMiddleware
     {
         $periodId = $request->period;
 
-        $periods = PayrollPeriod::orderBy('start_date', 'desc')
+        // Solo periodos cerrados (aprobados/pagados): un periodo en borrador o
+        // en cálculo no es nómina válida y no debe reportarse como tal (mismo
+        // criterio que payrollTrends).
+        $periods = PayrollPeriod::whereIn('status', ['approved', 'paid'])
+            ->orderBy('start_date', 'desc')
             ->take(12)
             ->get(['id', 'name', 'start_date', 'end_date', 'status']);
 
@@ -242,7 +247,7 @@ class ReportController extends Controller implements HasMiddleware
         $summary = null;
 
         if ($periodId) {
-            $selectedPeriod = PayrollPeriod::find($periodId);
+            $selectedPeriod = PayrollPeriod::whereIn('status', ['approved', 'paid'])->find($periodId);
 
             if ($selectedPeriod) {
                 $entries = PayrollEntry::with(['employee.department'])
@@ -412,8 +417,10 @@ class ReportController extends Controller implements HasMiddleware
             ];
         })->sortByDesc('late_count')->values();
 
-        // Calculate how many have 6+ tardies (generates absence)
-        $criticalCount = $byEmployee->filter(fn ($e) => $e['late_count'] >= 6)->count();
+        // Empleados en zona crítica: umbral configurable (el mismo que usa la
+        // regla mensual retardos→falta), nunca hardcodeado.
+        $lateToAbsenceCount = app(LateAbsenceService::class)->threshold();
+        $criticalCount = $byEmployee->filter(fn ($e) => $e['late_count'] >= $lateToAbsenceCount)->count();
 
         $summary = [
             'total_late_records' => $records->count(),
@@ -421,6 +428,7 @@ class ReportController extends Controller implements HasMiddleware
             'total_late_minutes' => $records->sum('late_minutes'),
             'avg_late_minutes' => $records->count() > 0 ? round($records->avg('late_minutes'), 0) : 0,
             'critical_employees' => $criticalCount,
+            'late_to_absence_threshold' => $lateToAbsenceCount,
         ];
 
         return Inertia::render('Reports/LateArrivals', [

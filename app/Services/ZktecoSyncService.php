@@ -7,8 +7,6 @@ use App\Models\Department;
 use App\Models\Employee;
 use App\Models\Holiday;
 use App\Models\Incident;
-use App\Models\IncidentType;
-use App\Models\LateAccumulation;
 use App\Models\Position;
 use App\Models\Schedule;
 use App\Models\SyncLog;
@@ -831,89 +829,11 @@ class ZktecoSyncService
             'requires_review' => $requiresReview,
         ]);
 
-        // Process late accumulation (FASE 2.2: X retardos = 1 falta)
-        if ($lateMinutes > 0 && ! $hasApprovedEntryPermission) {
-            $this->processLateAccumulation($employee, $workDate);
-        }
-    }
-
-    /**
-     * Process late accumulation for an employee.
-     * When the configured threshold is reached, generates an absence incident.
-     *
-     * @param  Employee  $employee  The employee
-     * @param  Carbon  $workDate  The date of the late arrival
-     */
-    private function processLateAccumulation(Employee $employee, Carbon $workDate): void
-    {
-        $year = $workDate->year;
-        $week = $workDate->weekOfYear;
-
-        // Get or create accumulation record for this week
-        $accumulation = LateAccumulation::firstOrCreate(
-            [
-                'employee_id' => $employee->id,
-                'year' => $year,
-                'week' => $week,
-            ],
-            [
-                'late_count' => 0,
-                'absence_generated' => false,
-            ]
-        );
-
-        // Increment late count
-        $accumulation->incrementLate();
-
-        // Check if we should generate an absence
-        if ($accumulation->shouldGenerateAbsence()) {
-            $this->generateAbsenceFromLateAccumulation($employee, $accumulation, $workDate);
-        }
-    }
-
-    /**
-     * Generate an absence incident from late accumulation.
-     *
-     * @param  Employee  $employee  The employee
-     * @param  LateAccumulation  $accumulation  The accumulation record
-     * @param  Carbon  $workDate  The date to use for the incident
-     */
-    private function generateAbsenceFromLateAccumulation(
-        Employee $employee,
-        LateAccumulation $accumulation,
-        Carbon $workDate
-    ): void {
-        // Find the incident type for late accumulation absence (code: FRT)
-        $incidentType = IncidentType::where('code', 'FRT')->first();
-
-        if (! $incidentType) {
-            Log::warning("IncidentType with code 'FRT' not found. Cannot generate absence from late accumulation.");
-
-            return;
-        }
-
-        $threshold = (int) SystemSetting::get('late_to_absence_count', 6);
-
-        // Create the incident
-        $incident = Incident::create([
-            'employee_id' => $employee->id,
-            'incident_type_id' => $incidentType->id,
-            'start_date' => $workDate->toDateString(),
-            'end_date' => $workDate->toDateString(),
-            'days_count' => 1,
-            'reason' => "Falta generada automáticamente por acumulación de {$accumulation->late_count} retardos (umbral: {$threshold}) en la semana {$accumulation->week} del año {$accumulation->year}.",
-            'status' => $incidentType->requires_approval ? 'pending' : 'approved',
-            'approved_by' => $incidentType->requires_approval ? null : 1, // System user
-            'approved_at' => $incidentType->requires_approval ? null : now(),
-        ]);
-
-        // Mark the accumulation as having generated an absence
-        $accumulation->update([
-            'absence_generated' => true,
-            'generated_incident_id' => $incident->id,
-        ]);
-
-        Log::info("Generated absence incident #{$incident->id} for employee {$employee->id} from {$accumulation->late_count} late arrivals in week {$accumulation->week}/{$accumulation->year}");
+        // NOTA: la conversión retardos→falta es ahora MENSUAL al cierre y vive
+        // exclusivamente en LateAbsenceService (DECISIONES_NEGOCIO §1). El sync
+        // ya no mantiene contadores semanales ni genera incidencias FRT — eso
+        // también elimina el re-incremento de retardos que ocurría en cada
+        // recalculateAttendanceRecord() (p.ej. al aprobar una autorización).
     }
 
     /**

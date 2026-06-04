@@ -32,6 +32,7 @@ class Incident extends Model
         'end_date',
         'days_count',
         'reason',
+        'late_month',
         'document_path',
         'start_time',
         'end_time',
