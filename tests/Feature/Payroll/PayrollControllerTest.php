@@ -662,11 +662,32 @@ class PayrollControllerTest extends FeatureTestCase
         $this->assertDatabaseMissing('payroll_entries', ['id' => $entry->id]);
     }
 
-    public function test_destroy_blocked_for_non_draft_period(): void
+    public function test_admin_can_destroy_non_draft_period(): void
     {
+        // Admins may delete periods in any status (post-hoc cleanup power);
+        // the draft-only guard applies to non-admin users.
         $period = PayrollPeriod::factory()->approved()->create();
+        $entry = PayrollEntry::factory()->create(['payroll_period_id' => $period->id]);
 
         $this->actingAsAdmin();
+
+        $this->delete(route('payroll.destroy', $period))
+            ->assertRedirect(route('payroll.index'))
+            ->assertSessionHas('success');
+
+        $this->assertDatabaseMissing('payroll_periods', ['id' => $period->id]);
+        $this->assertDatabaseMissing('payroll_entries', ['id' => $entry->id]);
+    }
+
+    public function test_destroy_blocked_for_non_draft_period_without_admin_role(): void
+    {
+        // A user holding payroll.create directly (no admin role) keeps the
+        // original draft-only restriction.
+        $period = PayrollPeriod::factory()->approved()->create();
+
+        $user = $this->createUser();
+        $user->givePermissionTo('payroll.create');
+        $this->actingAs($user);
 
         $this->from(route('payroll.show', $period))
             ->delete(route('payroll.destroy', $period))
