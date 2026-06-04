@@ -20,6 +20,8 @@ return [
         'vacation_pay'  => env('CONTPAQI_CODE_VACACIONES', 'P005'),
         'bonuses'       => env('CONTPAQI_CODE_BONOS', 'P006'),
         'other_compensation_pay' => env('CONTPAQI_CODE_OTROS', 'P007'),
+        'vacation_premium_pay' => env('CONTPAQI_CODE_PRIMA_VACACIONAL', 'P008'),
+        'sick_leave_pay' => env('CONTPAQI_CODE_INCAPACIDAD', 'P009'),
 
         // Deducciones
         'deductions'    => env('CONTPAQI_CODE_DEDUCCIONES', 'D001'),

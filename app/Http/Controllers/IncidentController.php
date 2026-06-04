@@ -189,14 +189,11 @@ class IncidentController extends Controller
         // Get employee and their schedule for working days calculation
         $employee = Employee::with('schedule')->find($validated['employee_id']);
 
-        // FASE 2.2: Calculate WORKING days (not calendar days)
+        // Días contados según el count_mode del tipo (DECISIONES §6):
+        // hábiles para vacaciones/permisos, calendario para incapacidades.
         $startDate = Carbon::parse($validated['start_date']);
         $endDate = Carbon::parse($validated['end_date']);
-        $validated['days_count'] = $this->calculateWorkingDays(
-            $startDate,
-            $endDate,
-            $employee->getEffectiveSchedule()?->working_days ?? ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
-        );
+        $validated['days_count'] = $this->calculateDaysCount($incidentType, $startDate, $endDate, $employee);
 
         // Reject overlapping incidents for the same employee (any non-rejected status).
         $overlapExists = Incident::where('employee_id', $validated['employee_id'])
@@ -250,6 +247,23 @@ class IncidentController extends Controller
 
         return redirect()->route('incidents.index')
             ->with('success', 'Incidencia creada exitosamente.');
+    }
+
+    /**
+     * Días de la incidencia según el count_mode del tipo (DECISIONES §6).
+     * El MISMO conteo aplica en captura, saldo de vacaciones y nómina.
+     */
+    private function calculateDaysCount(IncidentType $incidentType, Carbon $startDate, Carbon $endDate, Employee $employee): int
+    {
+        if (($incidentType->count_mode ?? IncidentType::COUNT_WORKING_DAYS) === IncidentType::COUNT_CALENDAR_DAYS) {
+            return max(1, (int) $startDate->diffInDays($endDate) + 1);
+        }
+
+        return $this->calculateWorkingDays(
+            $startDate,
+            $endDate,
+            $employee->getEffectiveSchedule()?->working_days ?? ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
+        );
     }
 
     /**
@@ -364,11 +378,7 @@ class IncidentController extends Controller
 
             $startDate = Carbon::parse($validated['start_date']);
             $endDate = Carbon::parse($validated['end_date']);
-            $daysCount = $this->calculateWorkingDays(
-                $startDate,
-                $endDate,
-                $employee->getEffectiveSchedule()?->working_days ?? ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
-            );
+            $daysCount = $this->calculateDaysCount($incidentType, $startDate, $endDate, $employee);
 
             // Skip overlaps: don't double-book the same employee for these dates.
             $overlap = Incident::where('employee_id', $employeeId)
@@ -489,13 +499,10 @@ class IncidentController extends Controller
         }
 
         $employee = Employee::with('schedule')->find($validated['employee_id']);
+        $updateType = IncidentType::find($validated['incident_type_id']);
         $startDate = Carbon::parse($validated['start_date']);
         $endDate = Carbon::parse($validated['end_date']);
-        $validated['days_count'] = $this->calculateWorkingDays(
-            $startDate,
-            $endDate,
-            $employee->getEffectiveSchedule()?->working_days ?? ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
-        );
+        $validated['days_count'] = $this->calculateDaysCount($updateType, $startDate, $endDate, $employee);
 
         $incident->update($validated);
 

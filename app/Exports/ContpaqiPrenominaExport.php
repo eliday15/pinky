@@ -77,6 +77,9 @@ class ContpaqiPrenominaExport implements FromCollection, WithHeadings, WithMappi
             $columns[] = ['heading' => 'HORAS_REGULARES', 'value' => fn ($e) => $this->formatNumber($e->regular_hours)];
             $columns[] = ['heading' => 'DIAS_TRABAJADOS', 'value' => fn ($e) => $e->days_worked];
             $columns[] = ['heading' => 'DIAS_AUSENCIA', 'value' => fn ($e) => $e->days_absent];
+            // Concilia DEDUCCIONES: la única deducción monetaria es la falta
+            // por retardos (días FRT × sueldo diario) — "solo no pagar el día".
+            $columns[] = ['heading' => 'DIAS_FALTA_RETARDOS', 'value' => fn ($e) => $e->late_absences_generated];
         }
 
         if ($this->paysExtras()) {
@@ -85,6 +88,8 @@ class ContpaqiPrenominaExport implements FromCollection, WithHeadings, WithMappi
             $columns[] = ['heading' => $codes['weekend_pay'].'_FIN_SEMANA', 'value' => fn ($e) => $this->formatNumber($e->weekend_pay)];
             $columns[] = ['heading' => $codes['other_compensation_pay'].'_OTROS', 'value' => fn ($e) => $this->formatNumber($e->other_compensation_pay)];
             $columns[] = ['heading' => $codes['vacation_pay'].'_VACACIONES', 'value' => fn ($e) => $this->formatNumber($e->vacation_pay)];
+            $columns[] = ['heading' => $codes['vacation_premium_pay'].'_PRIMA_VACACIONAL', 'value' => fn ($e) => $this->formatNumber($e->vacation_premium_pay)];
+            $columns[] = ['heading' => $codes['sick_leave_pay'].'_INCAPACIDAD', 'value' => fn ($e) => $this->formatNumber($e->sick_leave_pay)];
             $columns[] = ['heading' => $codes['bonuses'].'_BONOS', 'value' => fn ($e) => $this->formatNumber($e->bonuses)];
             $columns[] = ['heading' => 'HORAS_EXTRA', 'value' => fn ($e) => $this->formatNumber($e->overtime_hours)];
         }

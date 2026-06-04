@@ -8,6 +8,7 @@ use App\Models\CompensationType;
 use App\Models\Employee;
 use App\Models\Holiday;
 use App\Models\Incident;
+use App\Models\IncidentType;
 use App\Models\PayrollEntry;
 use App\Models\PayrollPeriod;
 use App\Models\SystemSetting;
@@ -114,7 +115,7 @@ class PayrollCalculatorService
         $metrics = $this->calculateAttendanceMetrics($attendance, $employee, $holidayDates, $approvedAuthorizations);
 
         // Calculate incident days
-        $incidentMetrics = $this->calculateIncidentMetrics($incidents, $startDate, $endDate);
+        $incidentMetrics = $this->calculateIncidentMetrics($incidents, $startDate, $endDate, $employee, $holidayDates);
 
         // Días justificados por incidencias aprobadas (DECISIONES §8): un día
         // absent/late cubierto por vacación, incapacidad, permiso o falta
@@ -146,12 +147,14 @@ class PayrollCalculatorService
         // ---- BASE (weekly): regular salary and absence/late deductions ----
         $regularPay = $metrics['regular_hours'] * $hourlyRate;
 
-        // Retardos→falta (regla mensual): las incidencias FRT generadas al
-        // cierre del mes entran por calculateIncidentMetrics como
-        // late_absence_days y ya forman parte de unpaid_days — un solo camino
-        // de descuento, sin doble conteo. Solo se cobran en periodos base.
+        // Deducciones — regla "solo no pagar el día" (DECISIONES §5 revisada):
+        // como el sueldo base se paga por horas trabajadas, un día ausente o
+        // un permiso sin goce ya vale $0 por sí mismo; descontarlo además
+        // sería castigar doble. La ÚNICA deducción monetaria es la falta por
+        // retardos (FRT): esos días SÍ se trabajaron y pagaron, así que la
+        // deducción es el único mecanismo de la sanción. Solo en periodos base.
         $lateAbsencesGenerated = $payBase ? $incidentMetrics['late_absence_days'] : 0;
-        $totalAbsences = $incidentMetrics['unpaid_days'];
+        $totalAbsences = $lateAbsencesGenerated;
         $deductions = $payBase ? $totalAbsences * $dailySalary : 0.0;
 
         // ---- EXTRAS (monthly): overtime, velada, holiday, weekend, special
@@ -173,6 +176,8 @@ class PayrollCalculatorService
         $weekendPay = 0.0;
         $otherCompensationPay = 0.0;
         $vacationPay = 0.0;
+        $vacationPremiumPay = 0.0;
+        $sickLeavePay = 0.0;
         $punctualityBonus = 0.0;
         $weeklyBonus = 0.0;
         $monthlyBonus = 0.0;
@@ -184,6 +189,14 @@ class PayrollCalculatorService
             $nightShiftMetrics = $this->calculateNightShiftMetrics($employee, $startDate, $endDate, $attendance);
 
             $vacationPay = $incidentMetrics['vacation_days'] * $dailySalary;
+
+            // Prima vacacional (DECISIONES §3): se paga con cada día de
+            // vacación como concepto separado, con el % del empleado.
+            $vacationPremiumPay = $vacationPay * ((float) ($employee->vacation_premium_percentage ?? 0) / 100);
+
+            // Incapacidades (DECISIONES §4): con goce se pagan; sin goce el
+            // día simplemente no se paga (vía horas), sin deducción extra.
+            $sickLeavePay = $incidentMetrics['sick_leave_paid_days'] * $dailySalary;
 
             // FASE 3.2: Attendance bonuses (paid with the extras)
             $punctualityBonus = $metrics['punctual_days'] * (float) SystemSetting::get('punctuality_bonus_amount', 50);
@@ -254,7 +267,8 @@ class PayrollCalculatorService
 
         $basePay = $payBase ? $regularPay : 0.0;
         $grossPay = $basePay + $overtimePay + $veladaPay + $holidayPay + $weekendPay
-            + $otherCompensationPay + $vacationPay + $totalBonuses;
+            + $otherCompensationPay + $vacationPay + $vacationPremiumPay + $sickLeavePay
+            + $totalBonuses;
         $netPay = $grossPay - $deductions;
 
         // Build calculation breakdown for transparency
@@ -274,9 +288,12 @@ class PayrollCalculatorService
             'incidents' => [
                 'vacation_days' => $incidentMetrics['vacation_days'],
                 'sick_leave_days' => $incidentMetrics['sick_leave_days'],
+                'sick_leave_paid_days' => $incidentMetrics['sick_leave_paid_days'],
                 'permission_days' => $incidentMetrics['permission_days'],
                 'absence_days' => $incidentMetrics['absence_days'],
-                'unpaid_days' => $incidentMetrics['unpaid_days'],
+                // "Solo no pagar el día": ausencias y permisos sin goce ya
+                // valen $0 vía horas; la única deducción monetaria es la FRT.
+                'unpaid_days' => $incidentMetrics['late_absence_days'],
             ],
             'late_accumulation' => [
                 'late_absences_generated' => $lateAbsencesGenerated,
@@ -322,6 +339,8 @@ class PayrollCalculatorService
                 'weekend_pay' => $weekendPay,
                 'other_compensation_pay' => $otherCompensationPay,
                 'vacation_pay' => $vacationPay,
+                'vacation_premium_pay' => $vacationPremiumPay,
+                'sick_leave_pay' => $sickLeavePay,
                 'gross_pay' => $grossPay,
                 'deductions' => $deductions,
                 'net_pay' => $netPay,
@@ -355,12 +374,15 @@ class PayrollCalculatorService
                 'night_shift_days' => $payExtras ? $nightShiftMetrics['night_shift_days'] : 0,
                 'late_absences_generated' => $lateAbsencesGenerated,
                 'vacation_days_paid' => $payExtras ? $incidentMetrics['vacation_days'] : 0,
+                'sick_leave_days' => $payExtras ? $incidentMetrics['sick_leave_days'] : 0,
                 'regular_pay' => $basePay,
                 'overtime_pay' => $overtimePay,
                 'holiday_pay' => $holidayPay,
                 'weekend_pay' => $weekendPay,
                 'other_compensation_pay' => $otherCompensationPay,
                 'vacation_pay' => $vacationPay,
+                'vacation_premium_pay' => $vacationPremiumPay,
+                'sick_leave_pay' => $sickLeavePay,
                 'punctuality_bonus' => $punctualityBonus,
                 'dinner_allowance' => $dinnerAllowance,
                 'night_shift_bonus' => $nightShiftBonusPay,
@@ -668,18 +690,22 @@ class PayrollCalculatorService
     /**
      * Calculate incident-related days for the period.
      */
-    private function calculateIncidentMetrics(Collection $incidents, Carbon $startDate, Carbon $endDate): array
-    {
+    private function calculateIncidentMetrics(
+        Collection $incidents,
+        Carbon $startDate,
+        Carbon $endDate,
+        Employee $employee,
+        array $holidayDates,
+    ): array {
         $vacationDays = 0;
         $sickLeaveDays = 0;
+        $sickLeavePaidDays = 0;
         $permissionDays = 0;
         $absenceDays = 0;
-        $unpaidDays = 0;
         $lateAbsenceDays = 0;
 
         foreach ($incidents as $incident) {
             $incidentStart = Carbon::parse($incident->start_date);
-            $incidentEnd = Carbon::parse($incident->end_date);
 
             $category = $incident->incidentType->category;
             $isPaid = $incident->incidentType->is_paid;
@@ -693,37 +719,38 @@ class PayrollCalculatorService
                     $frtDays = max(1, (int) $incident->days_count);
                     $lateAbsenceDays += $frtDays;
                     $absenceDays += $frtDays;
-                    $unpaidDays += $frtDays;
                 }
 
                 continue;
             }
 
-            // Calculate overlapping days with the period
-            $overlapStart = $incidentStart->max($startDate);
-            $overlapEnd = $incidentEnd->min($endDate);
-            $days = $overlapStart->diffInDays($overlapEnd) + 1;
+            // Días del solape contados según el count_mode del TIPO
+            // (DECISIONES §6): hábiles para vacaciones/permisos, calendario
+            // para incapacidades — el mismo conteo que la captura y el saldo.
+            $days = $this->incidentOverlapDays($incident, $startDate, $endDate, $employee, $holidayDates);
 
             if ($days <= 0) {
                 continue;
             }
 
+            // "Solo no pagar el día" (DECISIONES §5 revisada): ausencias y
+            // permisos sin goce NO generan deducción monetaria — el día ya
+            // vale $0 porque el sueldo base se paga por horas trabajadas.
             switch ($category) {
                 case 'vacation':
                     $vacationDays += $days;
                     break;
                 case 'sick_leave':
                     $sickLeaveDays += $days;
+                    if ($isPaid) {
+                        $sickLeavePaidDays += $days;
+                    }
                     break;
                 case 'permission':
                     $permissionDays += $days;
-                    if (! $isPaid) {
-                        $unpaidDays += $days;
-                    }
                     break;
                 case 'absence':
                     $absenceDays += $days;
-                    $unpaidDays += $days;
                     break;
             }
         }
@@ -731,11 +758,50 @@ class PayrollCalculatorService
         return [
             'vacation_days' => $vacationDays,
             'sick_leave_days' => $sickLeaveDays,
+            'sick_leave_paid_days' => $sickLeavePaidDays,
             'permission_days' => $permissionDays,
             'absence_days' => $absenceDays,
-            'unpaid_days' => $unpaidDays,
             'late_absence_days' => $lateAbsenceDays,
         ];
+    }
+
+    /**
+     * Días del solape incidencia↔periodo según el count_mode del tipo:
+     * calendario = días corridos; hábiles = solo días laborables del
+     * empleado, excluyendo festivos.
+     */
+    private function incidentOverlapDays(
+        Incident $incident,
+        Carbon $startDate,
+        Carbon $endDate,
+        Employee $employee,
+        array $holidayDates,
+    ): int {
+        $from = Carbon::parse($incident->start_date)->max($startDate);
+        $to = Carbon::parse($incident->end_date)->min($endDate);
+
+        if ($from->gt($to)) {
+            return 0;
+        }
+
+        $countMode = $incident->incidentType->count_mode ?? IncidentType::COUNT_WORKING_DAYS;
+
+        if ($countMode === IncidentType::COUNT_CALENDAR_DAYS) {
+            return (int) $from->diffInDays($to) + 1;
+        }
+
+        $days = 0;
+
+        for ($day = $from->copy(); $day->lte($to); $day->addDay()) {
+            if (in_array($day->toDateString(), $holidayDates, true)) {
+                continue;
+            }
+            if ($employee->isEffectiveWorkingDay($day->englishDayOfWeek)) {
+                $days++;
+            }
+        }
+
+        return $days;
     }
 
     /**

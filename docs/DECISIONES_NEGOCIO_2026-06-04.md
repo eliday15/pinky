@@ -22,9 +22,11 @@ Decisiones tomadas por el dueño del producto para resolver las incoherencias de
 ## 4. Incapacidades (sick_leave)
 - **Según `is_paid` del tipo:** con goce → se pagan esos días; sin goce → se descuentan. El flag por fin se respeta.
 
-## 5. Faltas reales sin incidencia
-- **Descuentan automáticamente:** todo día `absent` sin incidencia aprobada que lo cubra descuenta día completo.
-- Regla anti-doble-conteo: un mismo día solo puede descontarse UNA vez (por status absent O por incidencia O por FRT — conciliación a nivel de día).
+## 5. Faltas y días sin goce — "Solo no pagar el día" (REVISADA 2026-06-04)
+- Como el sueldo base se paga por **horas trabajadas**, un día ausente o sin goce ya vale **$0 por sí mismo**. Descontarlo además sería castigar doble.
+- **Sin deducción monetaria adicional** para: faltas `absent` (con o sin incidencia), FIN, suspensión, permiso sin goce. El "descuento" es no pagar el día — automático vía horas.
+- **La ÚNICA deducción monetaria es la FRT** (falta por retardos): esos días SÍ se trabajaron y pagaron, así que la deducción es el único mecanismo de la sanción.
+- En CONTPAQi, `DEDUCCIONES` concilia con `DIAS_FALTA_RETARDOS × sueldo diario`.
 
 ## 6. Días hábiles vs calendario
 - **Configurable por tipo de incidencia** (nueva propiedad `count_mode`: working_days | calendar_days).

@@ -14,11 +14,22 @@ class IncidentType extends Model
 {
     use HasFactory;
 
+    /**
+     * Modos de conteo de días (DECISIONES_NEGOCIO §6): hábiles excluye
+     * descansos y festivos según el horario del empleado; calendario cuenta
+     * días corridos (estándar IMSS para incapacidades). El MISMO modo aplica
+     * en captura, saldo de vacaciones y nómina.
+     */
+    public const COUNT_WORKING_DAYS = 'working_days';
+
+    public const COUNT_CALENDAR_DAYS = 'calendar_days';
+
     protected $fillable = [
         'name',
         'code',
         'description',
         'category',
+        'count_mode',
         'is_paid',
         'deducts_vacation',
         'requires_approval',
