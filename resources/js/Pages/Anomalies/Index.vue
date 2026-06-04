@@ -1,9 +1,22 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
+import ResolveAnomalyModal from '@/Components/Anomalies/ResolveAnomalyModal.vue';
+import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import { ref, watch, computed } from 'vue';
 import debounce from 'lodash/debounce';
 import { formatDate as fmtDate } from '@/utils/date';
+import {
+    severityColors,
+    severityLabels,
+    statusColors,
+    statusLabels,
+    typeIcons,
+    fallbackTypeIcon,
+    typeLabels,
+    TYPE_GROUPS,
+    resolutionMethodLabels,
+    resolutionMethodColors,
+} from '@/utils/anomalyConstants';
 
 const props = defineProps({
     anomalies: Object,
@@ -69,42 +82,27 @@ const clearFilters = () => {
     applyFilters();
 };
 
-const severityColors = {
-    critical: 'bg-red-100 text-red-800',
-    warning: 'bg-yellow-100 text-yellow-800',
-    info: 'bg-blue-100 text-blue-800',
+/* ----- Stat-card / quick-chip filters ----- */
+const applyStatFilter = (kind) => {
+    status.value = 'open';
+    severity.value = kind === 'open' ? '' : kind;
+    // applyFilters fires via the existing watcher on [status, severity, ...].
 };
 
-const severityLabels = {
-    critical: 'Critica',
-    warning: 'Advertencia',
-    info: 'Informativa',
+const isStatActive = (kind) =>
+    status.value === 'open' && (kind === 'open' ? severity.value === '' : severity.value === kind);
+
+const statRing = {
+    open: 'ring-pink-500',
+    critical: 'ring-red-500',
+    warning: 'ring-yellow-500',
+    info: 'ring-blue-500',
 };
 
-const statusColors = {
-    open: 'bg-yellow-100 text-yellow-800',
-    resolved: 'bg-green-100 text-green-800',
-    dismissed: 'bg-gray-100 text-gray-800',
-    linked: 'bg-blue-100 text-blue-800',
-};
-
-const statusLabels = {
-    open: 'Abierta',
-    resolved: 'Resuelta',
-    dismissed: 'Descartada',
-    linked: 'Vinculada',
-};
-
-const typeIcons = {
-    missing_check_in: 'M11 16l-4-4m0 0l4-4m-4 4h14',
-    missing_check_out: 'M17 16l4-4m0 0l-4-4m4 4H3',
-    late_arrival: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z',
-    early_departure: 'M17 16l4-4m0 0l-4-4m4 4H7',
-    excessive_overtime: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z',
-    unscheduled_attendance: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z',
-    schedule_deviation: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2',
-    missing_attendance: 'M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636',
-};
+const chipClass = (active) => [
+    'px-3 py-1 rounded-full text-xs font-medium transition',
+    active ? 'bg-pink-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200',
+];
 
 const formatDate = (date) => fmtDate(date);
 
@@ -113,53 +111,40 @@ const truncate = (text, length) => {
     return text.length > length ? text.substring(0, length) + '...' : text;
 };
 
-/* ----- Modals for individual actions ----- */
+/* ----- Guided resolution modal ----- */
 const showResolveModal = ref(false);
-const showDismissModal = ref(false);
 const selectedAnomaly = ref(null);
+const loadingLinkables = ref(false);
+const linkables = ref({ authorizations: [], incidents: [] });
 
-const resolveForm = useForm({
-    resolution_notes: '',
-    two_factor_code: '',
-});
-
-const dismissForm = useForm({
-    resolution_notes: '',
-    two_factor_code: '',
-});
-
-const openResolveModal = (anomaly) => {
+const openResolve = (anomaly) => {
     selectedAnomaly.value = anomaly;
-    resolveForm.resolution_notes = '';
-    resolveForm.two_factor_code = '';
-    resolveForm.clearErrors();
+    linkables.value = { authorizations: [], incidents: [] };
     showResolveModal.value = true;
+
+    // Lazy-load the linkable authorization/incident lists for this anomaly —
+    // the paginated rows don't carry them. The modal opens instantly with the
+    // row data; the link-action cards appear when the lists land.
+    loadingLinkables.value = true;
+    window.axios
+        .get(route('anomalies.linkables', anomaly.id))
+        .then(({ data }) => {
+            linkables.value = {
+                authorizations: data.authorizations ?? [],
+                incidents: data.incidents ?? [],
+            };
+        })
+        .catch(() => {
+            linkables.value = { authorizations: [], incidents: [] };
+        })
+        .finally(() => {
+            loadingLinkables.value = false;
+        });
 };
 
-const openDismissModal = (anomaly) => {
-    selectedAnomaly.value = anomaly;
-    dismissForm.resolution_notes = '';
-    dismissForm.two_factor_code = '';
-    dismissForm.clearErrors();
-    showDismissModal.value = true;
-};
-
-const submitResolve = () => {
-    resolveForm.post(route('anomalies.resolve', selectedAnomaly.value.id), {
-        onSuccess: () => {
-            showResolveModal.value = false;
-            selectedAnomaly.value = null;
-        },
-    });
-};
-
-const submitDismiss = () => {
-    dismissForm.post(route('anomalies.dismiss', selectedAnomaly.value.id), {
-        onSuccess: () => {
-            showDismissModal.value = false;
-            selectedAnomaly.value = null;
-        },
-    });
+const onResolved = () => {
+    selectedAnomaly.value = null;
+    router.reload({ only: ['anomalies', 'stats'] });
 };
 
 /* ----- Bulk actions ----- */
@@ -221,9 +206,13 @@ const cancelBulkAction = () => {
             </div>
         </div>
 
-        <!-- Stats Cards -->
+        <!-- Stats Cards (clickable: filter by severity) -->
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            <div class="bg-white rounded-lg shadow p-6">
+            <button
+                type="button"
+                @click="applyStatFilter('open')"
+                :class="['bg-white rounded-lg shadow p-6 text-left transition cursor-pointer hover:shadow-md', isStatActive('open') ? `ring-2 ring-offset-1 ${statRing.open}` : '']"
+            >
                 <div class="flex items-center">
                     <div class="p-3 rounded-full bg-gray-100">
                         <svg class="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -235,9 +224,13 @@ const cancelBulkAction = () => {
                         <p class="text-2xl font-bold text-gray-900">{{ stats.open }}</p>
                     </div>
                 </div>
-            </div>
+            </button>
 
-            <div class="bg-white rounded-lg shadow p-6">
+            <button
+                type="button"
+                @click="applyStatFilter('critical')"
+                :class="['bg-white rounded-lg shadow p-6 text-left transition cursor-pointer hover:shadow-md', isStatActive('critical') ? `ring-2 ring-offset-1 ${statRing.critical}` : '']"
+            >
                 <div class="flex items-center">
                     <div class="p-3 rounded-full bg-red-100">
                         <svg class="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -245,13 +238,17 @@ const cancelBulkAction = () => {
                         </svg>
                     </div>
                     <div class="ml-4">
-                        <p class="text-sm font-medium text-gray-500">Criticas</p>
+                        <p class="text-sm font-medium text-gray-500">Críticas</p>
                         <p class="text-2xl font-bold text-red-600">{{ stats.critical }}</p>
                     </div>
                 </div>
-            </div>
+            </button>
 
-            <div class="bg-white rounded-lg shadow p-6">
+            <button
+                type="button"
+                @click="applyStatFilter('warning')"
+                :class="['bg-white rounded-lg shadow p-6 text-left transition cursor-pointer hover:shadow-md', isStatActive('warning') ? `ring-2 ring-offset-1 ${statRing.warning}` : '']"
+            >
                 <div class="flex items-center">
                     <div class="p-3 rounded-full bg-yellow-100">
                         <svg class="w-6 h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -263,9 +260,13 @@ const cancelBulkAction = () => {
                         <p class="text-2xl font-bold text-yellow-600">{{ stats.warning }}</p>
                     </div>
                 </div>
-            </div>
+            </button>
 
-            <div class="bg-white rounded-lg shadow p-6">
+            <button
+                type="button"
+                @click="applyStatFilter('info')"
+                :class="['bg-white rounded-lg shadow p-6 text-left transition cursor-pointer hover:shadow-md', isStatActive('info') ? `ring-2 ring-offset-1 ${statRing.info}` : '']"
+            >
                 <div class="flex items-center">
                     <div class="p-3 rounded-full bg-blue-100">
                         <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -277,7 +278,7 @@ const cancelBulkAction = () => {
                         <p class="text-2xl font-bold text-blue-600">{{ stats.info }}</p>
                     </div>
                 </div>
-            </div>
+            </button>
         </div>
 
         <!-- Filters -->
@@ -331,9 +332,11 @@ const cancelBulkAction = () => {
                         @change="applyFilters"
                     >
                         <option value="">Todos</option>
-                        <option v-for="t in anomalyTypes" :key="t.value" :value="t.value">
-                            {{ t.label }}
-                        </option>
+                        <optgroup v-for="group in TYPE_GROUPS" :key="group.label" :label="group.label">
+                            <option v-for="t in group.types" :key="t" :value="t">
+                                {{ typeLabels[t] }}
+                            </option>
+                        </optgroup>
                     </select>
                 </div>
 
@@ -386,7 +389,19 @@ const cancelBulkAction = () => {
                 </div>
             </div>
 
-            <div class="mt-4 flex justify-end">
+            <div class="mt-4 flex flex-wrap items-center justify-between gap-3">
+                <!-- Quick filter chips -->
+                <div class="flex flex-wrap gap-2">
+                    <button type="button" @click="applyStatFilter('critical')" :class="chipClass(isStatActive('critical'))">
+                        Solo críticas
+                    </button>
+                    <button type="button" @click="applyStatFilter('warning')" :class="chipClass(isStatActive('warning'))">
+                        Advertencias
+                    </button>
+                    <button type="button" @click="applyStatFilter('open')" :class="chipClass(isStatActive('open'))">
+                        Todas las abiertas
+                    </button>
+                </div>
                 <button
                     @click="clearFilters"
                     class="px-4 py-2 text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200"
@@ -534,7 +549,7 @@ const cancelBulkAction = () => {
                         <td class="px-6 py-4 whitespace-nowrap">
                             <div class="flex items-center">
                                 <svg class="w-4 h-4 text-gray-400 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" :d="typeIcons[anomaly.type] || 'M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z'" />
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" :d="typeIcons[anomaly.anomaly_type] || fallbackTypeIcon" />
                                 </svg>
                                 <span class="text-sm text-gray-900">{{ anomaly.type_name }}</span>
                             </div>
@@ -551,6 +566,12 @@ const cancelBulkAction = () => {
                             <span :class="[statusColors[anomaly.status], 'px-2 py-1 text-xs font-medium rounded-full']">
                                 {{ statusLabels[anomaly.status] }}
                             </span>
+                            <span
+                                v-if="anomaly.resolution_method"
+                                :class="[resolutionMethodColors[anomaly.resolution_method] || 'bg-gray-100 text-gray-700', 'mt-1 block w-fit px-2 py-0.5 text-[10px] font-medium rounded-full']"
+                            >
+                                {{ resolutionMethodLabels[anomaly.resolution_method] || anomaly.resolution_method }}
+                            </span>
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
                             <Link
@@ -559,22 +580,13 @@ const cancelBulkAction = () => {
                             >
                                 Ver
                             </Link>
-                            <template v-if="anomaly.status === 'open'">
-                                <button
-                                    v-if="can.resolve"
-                                    @click="openResolveModal(anomaly)"
-                                    class="text-green-600 hover:text-green-900"
-                                >
-                                    Resolver
-                                </button>
-                                <button
-                                    v-if="can.dismiss"
-                                    @click="openDismissModal(anomaly)"
-                                    class="text-gray-600 hover:text-gray-900"
-                                >
-                                    Descartar
-                                </button>
-                            </template>
+                            <button
+                                v-if="anomaly.status === 'open' && (can.resolve || can.dismiss)"
+                                @click="openResolve(anomaly)"
+                                class="text-green-600 hover:text-green-900"
+                            >
+                                Resolver
+                            </button>
                         </td>
                     </tr>
                     <tr v-if="anomalies.data.length === 0">
@@ -615,136 +627,16 @@ const cancelBulkAction = () => {
             </div>
         </div>
 
-        <!-- Resolve Modal -->
-        <div v-if="showResolveModal" class="fixed inset-0 z-50 overflow-y-auto">
-            <div class="flex items-center justify-center min-h-screen px-4">
-                <div class="fixed inset-0 bg-gray-500 bg-opacity-75" @click="showResolveModal = false"></div>
-                <div class="relative bg-white rounded-lg shadow-xl max-w-md w-full p-6">
-                    <h3 class="text-lg font-semibold text-gray-900 mb-4">
-                        Resolver Anomalia
-                    </h3>
-                    <p class="text-sm text-gray-600 mb-4">
-                        {{ selectedAnomaly?.type_name }} - {{ selectedAnomaly?.employee?.full_name }}
-                    </p>
-                    <form @submit.prevent="submitResolve">
-                        <div class="mb-4">
-                            <label class="block text-sm font-medium text-gray-700 mb-1">
-                                Notas de resolucion
-                            </label>
-                            <textarea
-                                v-model="resolveForm.resolution_notes"
-                                rows="3"
-                                :class="{ 'border-red-500': resolveForm.errors.resolution_notes }"
-                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                                placeholder="Describa como se resolvio esta anomalia..."
-                            ></textarea>
-                            <p v-if="resolveForm.errors.resolution_notes" class="mt-1 text-sm text-red-600">
-                                {{ resolveForm.errors.resolution_notes }}
-                            </p>
-                        </div>
-                        <div v-if="hasTwoFactor" class="mb-4">
-                            <label class="block text-sm font-medium text-gray-700 mb-1">
-                                Codigo de verificacion
-                            </label>
-                            <input
-                                v-model="resolveForm.two_factor_code"
-                                type="text"
-                                inputmode="numeric"
-                                autocomplete="one-time-code"
-                                maxlength="6"
-                                :class="{ 'border-red-500': resolveForm.errors.two_factor_code }"
-                                class="w-full text-center text-lg tracking-widest rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                                placeholder="000000"
-                            />
-                            <p v-if="resolveForm.errors.two_factor_code" class="mt-1 text-sm text-red-600">
-                                {{ resolveForm.errors.two_factor_code }}
-                            </p>
-                        </div>
-                        <div class="flex justify-end space-x-3">
-                            <button
-                                type="button"
-                                @click="showResolveModal = false"
-                                class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
-                            >
-                                Cancelar
-                            </button>
-                            <button
-                                type="submit"
-                                :disabled="resolveForm.processing"
-                                class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
-                            >
-                                Resolver
-                            </button>
-                        </div>
-                    </form>
-                </div>
-            </div>
-        </div>
-
-        <!-- Dismiss Modal -->
-        <div v-if="showDismissModal" class="fixed inset-0 z-50 overflow-y-auto">
-            <div class="flex items-center justify-center min-h-screen px-4">
-                <div class="fixed inset-0 bg-gray-500 bg-opacity-75" @click="showDismissModal = false"></div>
-                <div class="relative bg-white rounded-lg shadow-xl max-w-md w-full p-6">
-                    <h3 class="text-lg font-semibold text-gray-900 mb-4">
-                        Descartar Anomalia
-                    </h3>
-                    <p class="text-sm text-gray-600 mb-4">
-                        {{ selectedAnomaly?.type_name }} - {{ selectedAnomaly?.employee?.full_name }}
-                    </p>
-                    <form @submit.prevent="submitDismiss">
-                        <div class="mb-4">
-                            <label class="block text-sm font-medium text-gray-700 mb-1">
-                                Motivo del descarte
-                            </label>
-                            <textarea
-                                v-model="dismissForm.resolution_notes"
-                                rows="3"
-                                :class="{ 'border-red-500': dismissForm.errors.resolution_notes }"
-                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                                placeholder="Indique por que se descarta esta anomalia..."
-                            ></textarea>
-                            <p v-if="dismissForm.errors.resolution_notes" class="mt-1 text-sm text-red-600">
-                                {{ dismissForm.errors.resolution_notes }}
-                            </p>
-                        </div>
-                        <div v-if="hasTwoFactor" class="mb-4">
-                            <label class="block text-sm font-medium text-gray-700 mb-1">
-                                Codigo de verificacion
-                            </label>
-                            <input
-                                v-model="dismissForm.two_factor_code"
-                                type="text"
-                                inputmode="numeric"
-                                autocomplete="one-time-code"
-                                maxlength="6"
-                                :class="{ 'border-red-500': dismissForm.errors.two_factor_code }"
-                                class="w-full text-center text-lg tracking-widest rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                                placeholder="000000"
-                            />
-                            <p v-if="dismissForm.errors.two_factor_code" class="mt-1 text-sm text-red-600">
-                                {{ dismissForm.errors.two_factor_code }}
-                            </p>
-                        </div>
-                        <div class="flex justify-end space-x-3">
-                            <button
-                                type="button"
-                                @click="showDismissModal = false"
-                                class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
-                            >
-                                Cancelar
-                            </button>
-                            <button
-                                type="submit"
-                                :disabled="dismissForm.processing"
-                                class="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50"
-                            >
-                                Descartar
-                            </button>
-                        </div>
-                    </form>
-                </div>
-            </div>
-        </div>
+        <!-- Guided resolution modal -->
+        <ResolveAnomalyModal
+            :show="showResolveModal"
+            :anomaly="selectedAnomaly"
+            :linkable-authorizations="linkables.authorizations"
+            :linkable-incidents="linkables.incidents"
+            :loading-linkables="loadingLinkables"
+            :can="can"
+            @close="showResolveModal = false"
+            @resolved="onResolved"
+        />
     </AppLayout>
 </template>

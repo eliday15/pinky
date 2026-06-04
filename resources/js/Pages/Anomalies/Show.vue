@@ -1,49 +1,26 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { Head, Link, useForm, router, usePage } from '@inertiajs/vue3';
-import { ref, computed } from 'vue';
+import ResolveAnomalyModal from '@/Components/Anomalies/ResolveAnomalyModal.vue';
+import { Head, Link } from '@inertiajs/vue3';
+import { ref } from 'vue';
 import { formatDate as fmtDate, formatDateTime as fmtDateTime } from '@/utils/date';
+import {
+    severityBorderColors as severityColors,
+    severityLabels,
+    statusBorderColors as statusColors,
+    statusLabels,
+    resolutionMethodLabels,
+    resolutionMethodColors,
+} from '@/utils/anomalyConstants';
 
 const props = defineProps({
     anomaly: Object,
     relatedAnomalies: Array,
     relatedAuthorizations: Array,
+    linkableAuthorizations: { type: Array, default: () => [] },
+    linkableIncidents: { type: Array, default: () => [] },
     can: Object,
 });
-
-const canCreateAuthorizationFromAnomaly = computed(() => {
-    if (props.anomaly.status !== 'open') return false;
-    if (!props.can?.createAuthorization) return false;
-    return ['unauthorized_overtime', 'unauthorized_velada'].includes(props.anomaly.anomaly_type);
-});
-
-const hasTwoFactor = computed(() => usePage().props.auth.has_two_factor);
-
-const severityColors = {
-    critical: 'bg-red-100 text-red-800 border-red-300',
-    warning: 'bg-yellow-100 text-yellow-800 border-yellow-300',
-    info: 'bg-blue-100 text-blue-800 border-blue-300',
-};
-
-const severityLabels = {
-    critical: 'Critica',
-    warning: 'Advertencia',
-    info: 'Informativa',
-};
-
-const statusColors = {
-    open: 'bg-yellow-100 text-yellow-800 border-yellow-300',
-    resolved: 'bg-green-100 text-green-800 border-green-300',
-    dismissed: 'bg-gray-100 text-gray-800 border-gray-300',
-    linked: 'bg-blue-100 text-blue-800 border-blue-300',
-};
-
-const statusLabels = {
-    open: 'Abierta',
-    resolved: 'Resuelta',
-    dismissed: 'Descartada',
-    linked: 'Vinculada',
-};
 
 const authStatusLabels = {
     pending: 'Pendiente',
@@ -66,47 +43,8 @@ const formatTime = (time) => {
     return time;
 };
 
-/* ----- Resolve action ----- */
-const resolveForm = useForm({
-    resolution_notes: '',
-    two_factor_code: '',
-});
-
-const showResolveForm = ref(false);
-
-const submitResolve = () => {
-    resolveForm.post(route('anomalies.resolve', props.anomaly.id), {
-        onSuccess: () => {
-            showResolveForm.value = false;
-        },
-    });
-};
-
-/* ----- Dismiss action ----- */
-const dismissForm = useForm({
-    resolution_notes: '',
-    two_factor_code: '',
-});
-
-const showDismissForm = ref(false);
-
-const submitDismiss = () => {
-    dismissForm.post(route('anomalies.dismiss', props.anomaly.id), {
-        onSuccess: () => {
-            showDismissForm.value = false;
-        },
-    });
-};
-
-/* ----- Link to authorization ----- */
-const selectedAuthorizationId = ref('');
-
-const linkToAuthorization = () => {
-    if (!selectedAuthorizationId.value) return;
-    router.post(route('anomalies.linkAuthorization', props.anomaly.id), {
-        authorization_id: selectedAuthorizationId.value,
-    });
-};
+/* ----- Guided resolution modal ----- */
+const showResolveModal = ref(false);
 </script>
 
 <template>
@@ -242,7 +180,15 @@ const linkToAuthorization = () => {
 
                 <!-- Resolution Card -->
                 <div v-if="anomaly.status !== 'open'" class="bg-white rounded-lg shadow p-6">
-                    <h3 class="text-lg font-semibold text-gray-800 mb-4">Resolucion</h3>
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-semibold text-gray-800">Resolucion</h3>
+                        <span
+                            v-if="anomaly.resolution_method"
+                            :class="[resolutionMethodColors[anomaly.resolution_method] || 'bg-gray-100 text-gray-700', 'px-2 py-1 text-xs font-medium rounded-full']"
+                        >
+                            {{ resolutionMethodLabels[anomaly.resolution_method] || anomaly.resolution_method }}
+                        </span>
+                    </div>
                     <dl class="space-y-3">
                         <div>
                             <dt class="text-sm font-medium text-gray-500">Resuelto por</dt>
@@ -281,6 +227,21 @@ const linkToAuthorization = () => {
                                 </div>
                             </dl>
                         </div>
+                        <div v-if="anomaly.linked_incident" class="mt-4 p-4 bg-teal-50 rounded-lg">
+                            <h4 class="text-sm font-medium text-teal-700 mb-2">Permiso / Incidencia Vinculada</h4>
+                            <dl class="space-y-2">
+                                <div>
+                                    <dt class="text-xs text-teal-600">Tipo</dt>
+                                    <dd class="text-sm text-teal-900">{{ anomaly.linked_incident.incident_type?.name || 'Incidencia' }}</dd>
+                                </div>
+                                <div>
+                                    <dt class="text-xs text-teal-600">Periodo</dt>
+                                    <dd class="text-sm text-teal-900">
+                                        {{ formatDate(anomaly.linked_incident.start_date) }} — {{ formatDate(anomaly.linked_incident.end_date) }}
+                                    </dd>
+                                </div>
+                            </dl>
+                        </div>
                     </dl>
                 </div>
             </div>
@@ -291,155 +252,19 @@ const linkToAuthorization = () => {
                 <div v-if="anomaly.status === 'open'" class="bg-white rounded-lg shadow p-6">
                     <h3 class="text-lg font-semibold text-gray-800 mb-4">Acciones</h3>
 
-                    <!-- Create Authorization from Anomaly -->
-                    <div v-if="canCreateAuthorizationFromAnomaly" class="mb-6">
-                        <Link
-                            :href="route('authorizations.create', { anomaly: anomaly.id })"
-                            class="block w-full px-4 py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700 text-center"
-                        >
-                            Crear Autorizacion
-                        </Link>
-                        <p class="mt-2 text-xs text-gray-500">
-                            Se abrira el formulario con horarios sugeridos a partir de las checadas reales.
-                        </p>
-                    </div>
-
-                    <!-- Resolve -->
-                    <div v-if="can.resolve" class="mb-6">
-                        <button
-                            v-if="!showResolveForm"
-                            @click="showResolveForm = true; showDismissForm = false;"
-                            class="w-full px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
-                        >
-                            Resolver
-                        </button>
-                        <div v-if="showResolveForm">
-                            <form @submit.prevent="submitResolve">
-                                <label class="block text-sm font-medium text-gray-700 mb-1">Notas de resolucion</label>
-                                <textarea
-                                    v-model="resolveForm.resolution_notes"
-                                    rows="3"
-                                    :class="{ 'border-red-500': resolveForm.errors.resolution_notes }"
-                                    class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 mb-2"
-                                    placeholder="Describa como se resolvio..."
-                                ></textarea>
-                                <p v-if="resolveForm.errors.resolution_notes" class="mb-2 text-sm text-red-600">
-                                    {{ resolveForm.errors.resolution_notes }}
-                                </p>
-                                <div v-if="hasTwoFactor" class="mb-2">
-                                    <label class="block text-sm font-medium text-gray-700 mb-1">Codigo de verificacion</label>
-                                    <input
-                                        v-model="resolveForm.two_factor_code"
-                                        type="text"
-                                        inputmode="numeric"
-                                        autocomplete="one-time-code"
-                                        maxlength="6"
-                                        :class="{ 'border-red-500': resolveForm.errors.two_factor_code }"
-                                        class="w-full text-center text-lg tracking-widest rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                                        placeholder="000000"
-                                    />
-                                    <p v-if="resolveForm.errors.two_factor_code" class="mt-1 text-sm text-red-600">
-                                        {{ resolveForm.errors.two_factor_code }}
-                                    </p>
-                                </div>
-                                <div class="flex space-x-2">
-                                    <button
-                                        type="submit"
-                                        :disabled="resolveForm.processing"
-                                        class="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
-                                    >
-                                        Confirmar
-                                    </button>
-                                    <button
-                                        type="button"
-                                        @click="showResolveForm = false"
-                                        class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
-                                    >
-                                        Cancelar
-                                    </button>
-                                </div>
-                            </form>
-                        </div>
-                    </div>
-
-                    <!-- Dismiss -->
-                    <div v-if="can.dismiss" class="mb-6">
-                        <button
-                            v-if="!showDismissForm"
-                            @click="showDismissForm = true; showResolveForm = false;"
-                            class="w-full px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
-                        >
-                            Descartar
-                        </button>
-                        <div v-if="showDismissForm">
-                            <form @submit.prevent="submitDismiss">
-                                <label class="block text-sm font-medium text-gray-700 mb-1">Motivo del descarte</label>
-                                <textarea
-                                    v-model="dismissForm.resolution_notes"
-                                    rows="3"
-                                    :class="{ 'border-red-500': dismissForm.errors.resolution_notes }"
-                                    class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 mb-2"
-                                    placeholder="Indique por que se descarta..."
-                                ></textarea>
-                                <p v-if="dismissForm.errors.resolution_notes" class="mb-2 text-sm text-red-600">
-                                    {{ dismissForm.errors.resolution_notes }}
-                                </p>
-                                <div v-if="hasTwoFactor" class="mb-2">
-                                    <label class="block text-sm font-medium text-gray-700 mb-1">Codigo de verificacion</label>
-                                    <input
-                                        v-model="dismissForm.two_factor_code"
-                                        type="text"
-                                        inputmode="numeric"
-                                        autocomplete="one-time-code"
-                                        maxlength="6"
-                                        :class="{ 'border-red-500': dismissForm.errors.two_factor_code }"
-                                        class="w-full text-center text-lg tracking-widest rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                                        placeholder="000000"
-                                    />
-                                    <p v-if="dismissForm.errors.two_factor_code" class="mt-1 text-sm text-red-600">
-                                        {{ dismissForm.errors.two_factor_code }}
-                                    </p>
-                                </div>
-                                <div class="flex space-x-2">
-                                    <button
-                                        type="submit"
-                                        :disabled="dismissForm.processing"
-                                        class="flex-1 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50"
-                                    >
-                                        Confirmar
-                                    </button>
-                                    <button
-                                        type="button"
-                                        @click="showDismissForm = false"
-                                        class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
-                                    >
-                                        Cancelar
-                                    </button>
-                                </div>
-                            </form>
-                        </div>
-                    </div>
-
-                    <!-- Link to Authorization -->
-                    <div v-if="can.resolve && relatedAuthorizations.length > 0">
-                        <h4 class="text-sm font-medium text-gray-700 mb-2">Vincular a Autorizacion</h4>
-                        <select
-                            v-model="selectedAuthorizationId"
-                            class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 mb-2"
-                        >
-                            <option value="">Seleccionar autorizacion...</option>
-                            <option v-for="auth in relatedAuthorizations" :key="auth.id" :value="auth.id">
-                                #{{ auth.id }} - {{ auth.type }} ({{ formatDate(auth.date) }})
-                            </option>
-                        </select>
-                        <button
-                            @click="linkToAuthorization"
-                            :disabled="!selectedAuthorizationId"
-                            class="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-                        >
-                            Vincular
-                        </button>
-                    </div>
+                    <button
+                        v-if="can.resolve || can.dismiss"
+                        @click="showResolveModal = true"
+                        class="w-full px-4 py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700"
+                    >
+                        Resolver anomalía
+                    </button>
+                    <p v-if="can.resolve || can.dismiss" class="mt-2 text-xs text-gray-500">
+                        Se abrirá el formulario guiado con las opciones que aplican a este tipo de anomalía.
+                    </p>
+                    <p v-else class="text-sm text-gray-500">
+                        No tienes permisos para resolver esta anomalía.
+                    </p>
                 </div>
 
                 <!-- Related Anomalies Card -->
@@ -501,5 +326,16 @@ const linkToAuthorization = () => {
                 </div>
             </div>
         </div>
+
+        <!-- Guided resolution modal (linkable lists come as page props here) -->
+        <ResolveAnomalyModal
+            :show="showResolveModal"
+            :anomaly="anomaly"
+            :linkable-authorizations="linkableAuthorizations"
+            :linkable-incidents="linkableIncidents"
+            :can="can"
+            @close="showResolveModal = false"
+            @resolved="showResolveModal = false"
+        />
     </AppLayout>
 </template>
