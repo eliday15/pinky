@@ -6,11 +6,14 @@ use App\Http\Traits\VerifiesTwoFactor;
 use App\Models\AttendanceAnomaly;
 use App\Models\Authorization;
 use App\Models\Employee;
+use App\Models\Incident;
 use App\Services\AnomalyDetectorService;
 use Carbon\Carbon;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -20,6 +23,19 @@ use Inertia\Response;
 class AnomalyResolutionController extends Controller
 {
     use VerifiesTwoFactor;
+
+    /** Authorization types that can resolve a given anomaly type. */
+    private const ANOMALY_AUTH_TYPES = [
+        AttendanceAnomaly::TYPE_UNAUTHORIZED_OVERTIME => [Authorization::TYPE_OVERTIME],
+        AttendanceAnomaly::TYPE_UNAUTHORIZED_VELADA => [Authorization::TYPE_NIGHT_SHIFT],
+        AttendanceAnomaly::TYPE_VELADA_MISSING_CONFIRMATION => [Authorization::TYPE_NIGHT_SHIFT],
+    ];
+
+    /** Incident codes (permisos) that can resolve a given anomaly type. */
+    private const ANOMALY_INCIDENT_CODES = [
+        AttendanceAnomaly::TYPE_EARLY_DEPARTURE => ['PSA'], // Permiso de Salida
+        AttendanceAnomaly::TYPE_LATE_ARRIVAL => ['PEN'],    // Permiso de Entrada
+    ];
 
     /**
      * Display anomalies dashboard.
@@ -89,6 +105,8 @@ class AnomalyResolutionController extends Controller
             'can' => [
                 'resolve' => $user->hasPermissionTo('anomalies.resolve'),
                 'dismiss' => $user->hasPermissionTo('anomalies.dismiss'),
+                'createAuthorization' => $user->hasPermissionTo('authorizations.create'),
+                'editAttendance' => $user->hasPermissionTo('attendance.edit'),
             ],
         ]);
     }
@@ -110,7 +128,7 @@ class AnomalyResolutionController extends Controller
             'attendanceRecord',
             'resolvedByUser',
             'linkedAuthorization.approvedBy',
-            'linkedIncident',
+            'linkedIncident.incidentType',
         ]);
 
         // Get related anomalies for the same employee/date
@@ -124,14 +142,19 @@ class AnomalyResolutionController extends Controller
             ->where('date', $anomaly->work_date)
             ->get();
 
+        $linkables = $this->buildLinkables($anomaly);
+
         return Inertia::render('Anomalies/Show', [
             'anomaly' => $anomaly,
             'relatedAnomalies' => $relatedAnomalies,
             'relatedAuthorizations' => $relatedAuthorizations,
+            'linkableAuthorizations' => $linkables['authorizations'],
+            'linkableIncidents' => $linkables['incidents'],
             'can' => [
                 'resolve' => $user->hasPermissionTo('anomalies.resolve'),
                 'dismiss' => $user->hasPermissionTo('anomalies.dismiss'),
                 'createAuthorization' => $user->hasPermissionTo('authorizations.create'),
+                'editAttendance' => $user->hasPermissionTo('attendance.edit'),
             ],
         ]);
     }
@@ -149,10 +172,14 @@ class AnomalyResolutionController extends Controller
         $this->verifyTwoFactorCode($request);
 
         $validated = $request->validate([
-            'resolution_notes' => ['nullable', 'string', 'max:1000'],
+            'resolution_method' => ['required', Rule::in([
+                AttendanceAnomaly::METHOD_JUSTIFIED,
+                AttendanceAnomaly::METHOD_FALSE_POSITIVE,
+            ])],
+            'resolution_notes' => ['required', 'string', 'min:5', 'max:1000'],
         ]);
 
-        $anomaly->resolve($user, $validated['resolution_notes'] ?? null);
+        $anomaly->resolve($user, $validated['resolution_notes'], $validated['resolution_method']);
 
         // Update attendance record anomaly count
         $this->updateRecordAnomalyCount($anomaly->attendance_record_id);
@@ -173,10 +200,10 @@ class AnomalyResolutionController extends Controller
         $this->verifyTwoFactorCode($request);
 
         $validated = $request->validate([
-            'resolution_notes' => ['nullable', 'string', 'max:1000'],
+            'resolution_notes' => ['required', 'string', 'min:5', 'max:1000'],
         ]);
 
-        $anomaly->dismiss($user, $validated['resolution_notes'] ?? null);
+        $anomaly->dismiss($user, $validated['resolution_notes'], AttendanceAnomaly::METHOD_FALSE_POSITIVE);
 
         $this->updateRecordAnomalyCount($anomaly->attendance_record_id);
 
@@ -203,12 +230,143 @@ class AnomalyResolutionController extends Controller
         if ($authorization->employee_id !== $anomaly->employee_id) {
             return redirect()->back()->with('error', 'La autorizacion pertenece a otro empleado.');
         }
+        // Only an approved/paid authorization actually justifies the anomaly;
+        // a pending/rejected one would resolve it prematurely.
+        if (! in_array($authorization->status, [Authorization::STATUS_APPROVED, Authorization::STATUS_PAID], true)) {
+            return redirect()->back()->with('error', 'Solo se puede vincular una autorizacion aprobada.');
+        }
 
         $anomaly->linkToAuthorization($authorization);
 
         $this->updateRecordAnomalyCount($anomaly->attendance_record_id);
 
         return redirect()->back()->with('success', 'Anomalia vinculada a autorizacion.');
+    }
+
+    /**
+     * Link anomaly to an approved incident/permission (e.g. PSA/PEN).
+     *
+     * No 2FA — consistent with linkAuthorization (a linking action that
+     * references an already-approved document, not a destructive resolve).
+     */
+    public function linkIncident(Request $request, AttendanceAnomaly $anomaly): RedirectResponse
+    {
+        $user = Auth::user();
+        if (!$user->hasPermissionTo('anomalies.resolve')) {
+            abort(403);
+        }
+
+        // Only anomaly types with a permiso mapping can be justified by an
+        // incident (late_arrival -> PEN, early_departure -> PSA). Any other
+        // type (e.g. schedule_deviation) has no semantically valid permit.
+        $allowedCodes = self::ANOMALY_INCIDENT_CODES[$anomaly->anomaly_type] ?? null;
+        if (! $allowedCodes) {
+            return redirect()->back()->with('error', 'Este tipo de anomalia no admite vinculacion con permisos.');
+        }
+
+        $validated = $request->validate([
+            'incident_id' => ['required', 'exists:incidents,id'],
+        ]);
+
+        $incident = Incident::with('incidentType')->findOrFail($validated['incident_id']);
+
+        if ($incident->employee_id !== $anomaly->employee_id) {
+            return redirect()->back()->with('error', 'El permiso pertenece a otro empleado.');
+        }
+        if ($incident->status !== 'approved') {
+            return redirect()->back()->with('error', 'El permiso no esta aprobado.');
+        }
+        if (! in_array($incident->incidentType?->code, $allowedCodes, true)) {
+            return redirect()->back()->with('error', 'El permiso no corresponde a este tipo de anomalia.');
+        }
+
+        $workDate = Carbon::parse($anomaly->work_date)->toDateString();
+        if (Carbon::parse($incident->start_date)->toDateString() > $workDate
+            || Carbon::parse($incident->end_date)->toDateString() < $workDate) {
+            return redirect()->back()->with('error', 'El permiso no cubre la fecha de la anomalia.');
+        }
+
+        $anomaly->linkToIncident($incident, $user);
+
+        $this->updateRecordAnomalyCount($anomaly->attendance_record_id);
+
+        return redirect()->back()->with('success', 'Anomalia vinculada a permiso.');
+    }
+
+    /**
+     * Linkable authorizations and incidents for an anomaly (JSON).
+     *
+     * Used by the resolution modal on the index page, which only has the
+     * paginated row data — fetching on open avoids inflating every row with
+     * per-anomaly queries.
+     */
+    public function linkables(AttendanceAnomaly $anomaly): JsonResponse
+    {
+        $user = Auth::user();
+        if (!$user->hasPermissionTo('anomalies.resolve')) {
+            abort(403);
+        }
+
+        return response()->json($this->buildLinkables($anomaly));
+    }
+
+    /**
+     * Build the linkable approved authorizations and incidents for an anomaly.
+     *
+     * Authorizations: same employee + date, approved/paid, type matching the
+     * anomaly (per ANOMALY_AUTH_TYPES). Incidents: same employee, approved,
+     * covering the work_date; filtered to matching permiso codes when the
+     * anomaly type maps to one (per ANOMALY_INCIDENT_CODES).
+     *
+     * @return array{authorizations: \Illuminate\Support\Collection, incidents: \Illuminate\Support\Collection}
+     */
+    private function buildLinkables(AttendanceAnomaly $anomaly): array
+    {
+        $typeLabels = [
+            Authorization::TYPE_OVERTIME => 'Horas Extra',
+            Authorization::TYPE_NIGHT_SHIFT => 'Velada',
+            Authorization::TYPE_HOLIDAY_WORKED => 'Festivo Trabajado',
+            Authorization::TYPE_SPECIAL => 'Especial',
+        ];
+
+        $authTypes = self::ANOMALY_AUTH_TYPES[$anomaly->anomaly_type] ?? [];
+        $authorizations = empty($authTypes)
+            ? collect()
+            : Authorization::where('employee_id', $anomaly->employee_id)
+                ->where('date', $anomaly->work_date)
+                ->whereIn('type', $authTypes)
+                ->whereIn('status', [Authorization::STATUS_APPROVED, Authorization::STATUS_PAID])
+                ->get()
+                ->map(fn (Authorization $a) => [
+                    'id' => $a->id,
+                    'label' => ($typeLabels[$a->type] ?? $a->type) . ' #' . $a->id,
+                    'detail' => trim(($a->hours ? "{$a->hours}h · " : '') . Carbon::parse($a->date)->format('d/m/Y')),
+                ])
+                ->values();
+
+        // Only types with a permiso mapping can link an incident; for any other
+        // type there is no semantically valid permit, so offer none.
+        $incidentCodes = self::ANOMALY_INCIDENT_CODES[$anomaly->anomaly_type] ?? null;
+        $incidents = ! $incidentCodes
+            ? collect()
+            : Incident::where('employee_id', $anomaly->employee_id)
+                ->where('status', 'approved')
+                ->whereDate('start_date', '<=', $anomaly->work_date)
+                ->whereDate('end_date', '>=', $anomaly->work_date)
+                ->with('incidentType')
+                ->whereHas('incidentType', fn ($q) => $q->whereIn('code', $incidentCodes))
+                ->get()
+                ->map(fn (Incident $i) => [
+                    'id' => $i->id,
+                    'label' => ($i->incidentType?->name ?? 'Incidencia') . ' #' . $i->id,
+                    'detail' => Carbon::parse($i->start_date)->format('d/m/Y') . ' — ' . Carbon::parse($i->end_date)->format('d/m/Y'),
+                ])
+                ->values();
+
+        return [
+            'authorizations' => $authorizations,
+            'incidents' => $incidents,
+        ];
     }
 
     /**
@@ -248,7 +406,7 @@ class AnomalyResolutionController extends Controller
             if ($allowedEmployeeIds !== null && !in_array($anomaly->employee_id, $allowedEmployeeIds)) {
                 continue;
             }
-            $anomaly->resolve($user, $validated['resolution_notes'] ?? null);
+            $anomaly->resolve($user, $validated['resolution_notes'] ?? null, AttendanceAnomaly::METHOD_JUSTIFIED);
             $recordIds[] = $anomaly->attendance_record_id;
             $resolved++;
         }
@@ -297,7 +455,7 @@ class AnomalyResolutionController extends Controller
             if ($allowedEmployeeIds !== null && !in_array($anomaly->employee_id, $allowedEmployeeIds)) {
                 continue;
             }
-            $anomaly->dismiss($user, $validated['resolution_notes'] ?? null);
+            $anomaly->dismiss($user, $validated['resolution_notes'] ?? null, AttendanceAnomaly::METHOD_FALSE_POSITIVE);
             $recordIds[] = $anomaly->attendance_record_id;
             $dismissed++;
         }

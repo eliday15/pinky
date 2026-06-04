@@ -160,7 +160,7 @@ class AnomalyDetectorService
 
         return [[
             'anomaly_type' => 'missing_checkout',
-            'severity' => 'warning',
+            'severity' => AttendanceAnomaly::defaultSeverityFor(AttendanceAnomaly::TYPE_MISSING_CHECKOUT),
             'description' => 'El empleado registro entrada pero no registro salida.',
             'expected_value' => $schedule->exit_time,
             'actual_value' => null,
@@ -179,7 +179,7 @@ class AnomalyDetectorService
         if (! $record->check_in && $record->check_out) {
             return [[
                 'anomaly_type' => 'missing_checkin',
-                'severity' => 'warning',
+                'severity' => AttendanceAnomaly::defaultSeverityFor(AttendanceAnomaly::TYPE_MISSING_CHECKIN),
                 'description' => 'El empleado registro salida pero no registro entrada.',
                 'expected_value' => $schedule->entry_time,
                 'actual_value' => null,
@@ -228,7 +228,7 @@ class AnomalyDetectorService
         if (! $hasAuthorization) {
             return [[
                 'anomaly_type' => 'unauthorized_overtime',
-                'severity' => 'warning',
+                'severity' => AttendanceAnomaly::defaultSeverityFor(AttendanceAnomaly::TYPE_UNAUTHORIZED_OVERTIME),
                 'description' => "Se detectaron {$authorizableHours} horas extra autorizables sin autorizacion aprobada.",
                 'expected_value' => '0',
                 'actual_value' => (string) $authorizableHours,
@@ -273,7 +273,7 @@ class AnomalyDetectorService
         if (! $hasAuthorization) {
             return [[
                 'anomaly_type' => 'unauthorized_velada',
-                'severity' => 'critical',
+                'severity' => AttendanceAnomaly::defaultSeverityFor(AttendanceAnomaly::TYPE_UNAUTHORIZED_VELADA),
                 'description' => "Se detectaron {$authorizableHours} horas de velada autorizables sin autorizacion aprobada.",
                 'expected_value' => '0',
                 'actual_value' => (string) $authorizableHours,
@@ -288,7 +288,7 @@ class AnomalyDetectorService
 
             return [[
                 'anomaly_type' => AttendanceAnomaly::TYPE_VELADA_MISSING_CONFIRMATION,
-                'severity' => 'warning',
+                'severity' => AttendanceAnomaly::defaultSeverityFor(AttendanceAnomaly::TYPE_VELADA_MISSING_CONFIRMATION),
                 'description' => "Velada autorizada pero sin checada de confirmacion entre {$confirmStart}:00 y {$confirmEnd}:00.",
                 'expected_value' => "{$confirmStart}:00-{$confirmEnd}:00",
                 'actual_value' => null,
@@ -346,7 +346,7 @@ class AnomalyDetectorService
 
             return [[
                 'anomaly_type' => 'excessive_break',
-                'severity' => 'info',
+                'severity' => AttendanceAnomaly::defaultSeverityFor(AttendanceAnomaly::TYPE_EXCESSIVE_BREAK),
                 'description' => "Comida excedio por {$deviation} minutos (tomado: {$record->actual_break_minutes} min, programado: {$scheduledBreak} min).",
                 'expected_value' => (string) $scheduledBreak,
                 'actual_value' => (string) $record->actual_break_minutes,
@@ -376,7 +376,7 @@ class AnomalyDetectorService
             if (! $record->lunch_out && ! $record->lunch_in) {
                 return [[
                     'anomaly_type' => 'missing_lunch',
-                    'severity' => 'info',
+                    'severity' => AttendanceAnomaly::defaultSeverityFor(AttendanceAnomaly::TYPE_MISSING_LUNCH),
                     'description' => 'No se registro checada de comida.',
                     'expected_value' => $schedule->break_start ?? '12:00',
                     'actual_value' => null,
@@ -399,7 +399,7 @@ class AnomalyDetectorService
         if ($record->late_minutes > 30) { // Only flag significant lateness
             return [[
                 'anomaly_type' => 'late_arrival',
-                'severity' => $record->late_minutes > 60 ? 'warning' : 'info',
+                'severity' => AttendanceAnomaly::defaultSeverityFor(AttendanceAnomaly::TYPE_LATE_ARRIVAL, (int) $record->late_minutes),
                 'description' => "Llegada con {$record->late_minutes} minutos de retraso.",
                 'expected_value' => $schedule->entry_time,
                 'actual_value' => $record->check_in,
@@ -430,7 +430,7 @@ class AnomalyDetectorService
             if (! $hasPermission) {
                 return [[
                     'anomaly_type' => 'early_departure',
-                    'severity' => $record->early_departure_minutes > 60 ? 'warning' : 'info',
+                    'severity' => AttendanceAnomaly::defaultSeverityFor(AttendanceAnomaly::TYPE_EARLY_DEPARTURE, (int) $record->early_departure_minutes),
                     'description' => "Salida anticipada de {$record->early_departure_minutes} minutos sin permiso.",
                     'expected_value' => $schedule->exit_time,
                     'actual_value' => $record->check_out,
@@ -463,7 +463,7 @@ class AnomalyDetectorService
         if ($diffMinutes < -60) {
             return [[
                 'anomaly_type' => 'schedule_deviation',
-                'severity' => 'info',
+                'severity' => AttendanceAnomaly::defaultSeverityFor(AttendanceAnomaly::TYPE_SCHEDULE_DEVIATION),
                 'description' => 'Entrada significativamente antes del horario programado ('.abs($diffMinutes).' min antes).',
                 'expected_value' => $schedule->entry_time,
                 'actual_value' => $record->check_in,
@@ -486,7 +486,7 @@ class AnomalyDetectorService
         if (count($rawPunches) > 8) {
             return [[
                 'anomaly_type' => 'duplicate_punches',
-                'severity' => 'info',
+                'severity' => AttendanceAnomaly::defaultSeverityFor(AttendanceAnomaly::TYPE_DUPLICATE_PUNCHES),
                 'description' => 'Se detectaron '.count($rawPunches).' checadas en el dia (mas de lo normal).',
                 'expected_value' => '4-6',
                 'actual_value' => (string) count($rawPunches),
@@ -497,15 +497,69 @@ class AnomalyDetectorService
     }
 
     /**
-     * Auto-resolve open per-hour anomalies that no longer meet the
-     * authorization standard.
+     * Build a map of anomaly_type => bool "the raw condition still holds on
+     * the record".
      *
-     * An unauthorized_overtime / unauthorized_velada anomaly is redundant when
-     * the detected time rounds to 0 hours under the official company ladder
-     * (<30 min → 0h): nothing can ever be authorized for it, so it would sit
-     * open forever. Anomalies covered by an approved authorization are NOT
-     * touched here — those get linked (status linked_to_authorization) by the
-     * approval flow, which preserves the audit trail to the authorization.
+     * Authorization / permission existence is deliberately IGNORED here: those
+     * resolutions are owned by the linking flow (linkToAuthorization /
+     * linkToIncident), which must not be overridden by generic self-heal.
+     * Only structural facts about the punches/metrics are evaluated.
+     * schedule_deviation and velada_missing_confirmation are intentionally
+     * omitted (no clean structural "gone" signal — left for manual review).
+     *
+     * @param  AttendanceRecord  $record  The attendance record
+     * @param  mixed  $schedule  The employee's effective schedule for the day
+     * @return array<string, bool>
+     */
+    private function conditionStillHolds(AttendanceRecord $record, $schedule): array
+    {
+        $maxBreakDeviation = (int) SystemSetting::get('lunch_max_deviation_minutes', 15);
+        $scheduledBreak = $schedule->break_minutes ?? 60;
+
+        return [
+            // Mirrors detectMissingCheckout's structural guards, minus the
+            // night-shift authorization check.
+            AttendanceAnomaly::TYPE_MISSING_CHECKOUT => (bool) $record->check_in
+                && ! $record->check_out
+                && $record->status !== 'absent'
+                && ($record->velada_hours ?? 0) <= 0,
+
+            AttendanceAnomaly::TYPE_MISSING_CHECKIN => ! $record->check_in && (bool) $record->check_out,
+
+            // Per-hour types keep the authorization rounding standard:
+            // <30 min rounds to 0h and is never authorizable.
+            AttendanceAnomaly::TYPE_UNAUTHORIZED_OVERTIME => $record->overtime_hours > 0
+                && $this->rounder->detectOvertimeHours($record, $schedule, Carbon::parse($record->work_date)->toDateString()) > 0,
+
+            AttendanceAnomaly::TYPE_UNAUTHORIZED_VELADA => ($record->velada_hours ?? 0) > 0
+                && $this->rounder->roundMinutes((int) round(($record->velada_hours ?? 0) * 60)) > 0,
+
+            AttendanceAnomaly::TYPE_EXCESSIVE_BREAK => $record->actual_break_minutes > 0
+                && $record->actual_break_minutes > ($scheduledBreak + $maxBreakDeviation),
+
+            AttendanceAnomaly::TYPE_MISSING_LUNCH => $record->worked_hours >= 5
+                && ($schedule->break_minutes ?? 0) > 0
+                && ! $record->lunch_out && ! $record->lunch_in,
+
+            AttendanceAnomaly::TYPE_LATE_ARRIVAL => $record->late_minutes > 30,
+            AttendanceAnomaly::TYPE_EARLY_DEPARTURE => ($record->early_departure_minutes ?? 0) > 15,
+            AttendanceAnomaly::TYPE_DUPLICATE_PUNCHES => count($record->raw_punches ?? []) > 8,
+        ];
+    }
+
+    /**
+     * Auto-resolve open auto-detected anomalies whose condition no longer
+     * holds on the record.
+     *
+     * Two cases, with distinct notes:
+     *  1. Per-hour types whose time rounds to 0h under the official ladder
+     *     (<30 min): nothing can ever be authorized, so the anomaly is noise.
+     *  2. Structural types whose raw condition disappeared (e.g. a manual edit
+     *     added the missing check_out): resolved as "record corrected".
+     *
+     * Anomalies covered by an approved authorization or incident are NOT
+     * touched here — conditionStillHolds() ignores authorizations on purpose,
+     * so the linking flow keeps ownership and the audit trail.
      *
      * @param  AttendanceRecord  $record  The attendance record
      * @param  mixed  $schedule  The employee's effective schedule for the day
@@ -517,34 +571,52 @@ class AnomalyDetectorService
             return;
         }
 
-        $staleTypes = [];
+        $holds = $this->conditionStillHolds($record, $schedule);
 
-        $authorizableOvertime = $record->overtime_hours > 0
-            ? $this->rounder->detectOvertimeHours($record, $schedule, Carbon::parse($record->work_date)->toDateString())
-            : 0.0;
-        if ($authorizableOvertime <= 0) {
-            $staleTypes[] = AttendanceAnomaly::TYPE_UNAUTHORIZED_OVERTIME;
+        // 1) Per-hour types: keep the original rounding-standard marker note
+        //    (the historical cleanup migration and its test depend on it).
+        $staleRounding = array_values(array_filter([
+            AttendanceAnomaly::TYPE_UNAUTHORIZED_OVERTIME,
+            AttendanceAnomaly::TYPE_UNAUTHORIZED_VELADA,
+        ], fn (string $type) => ! $holds[$type]));
+
+        if (! empty($staleRounding)) {
+            AttendanceAnomaly::where('attendance_record_id', $record->id)
+                ->whereIn('anomaly_type', $staleRounding)
+                ->where('status', AttendanceAnomaly::STATUS_OPEN)
+                ->where('auto_detected', true)
+                ->update([
+                    'status' => AttendanceAnomaly::STATUS_RESOLVED,
+                    'resolution_method' => AttendanceAnomaly::METHOD_RECORD_CORRECTED,
+                    'resolved_at' => now(),
+                    'resolution_notes' => 'Auto-resuelto: tiempo menor a 30 minutos se redondea a 0 horas (estandar de autorizaciones).',
+                ]);
         }
 
-        $authorizableVelada = ($record->velada_hours ?? 0) > 0
-            ? $this->rounder->roundMinutes((int) round($record->velada_hours * 60))
-            : 0.0;
-        if ($authorizableVelada <= 0) {
-            $staleTypes[] = AttendanceAnomaly::TYPE_UNAUTHORIZED_VELADA;
-        }
+        // 2) Structural types: the raw condition is gone (e.g. a manual edit
+        //    added the missing check_out) — resolve as record_corrected.
+        $corrected = array_values(array_filter([
+            AttendanceAnomaly::TYPE_MISSING_CHECKOUT,
+            AttendanceAnomaly::TYPE_MISSING_CHECKIN,
+            AttendanceAnomaly::TYPE_EXCESSIVE_BREAK,
+            AttendanceAnomaly::TYPE_MISSING_LUNCH,
+            AttendanceAnomaly::TYPE_LATE_ARRIVAL,
+            AttendanceAnomaly::TYPE_EARLY_DEPARTURE,
+            AttendanceAnomaly::TYPE_DUPLICATE_PUNCHES,
+        ], fn (string $type) => ! $holds[$type]));
 
-        if (empty($staleTypes)) {
-            return;
+        if (! empty($corrected)) {
+            AttendanceAnomaly::where('attendance_record_id', $record->id)
+                ->whereIn('anomaly_type', $corrected)
+                ->where('status', AttendanceAnomaly::STATUS_OPEN)
+                ->where('auto_detected', true)
+                ->update([
+                    'status' => AttendanceAnomaly::STATUS_RESOLVED,
+                    'resolution_method' => AttendanceAnomaly::METHOD_RECORD_CORRECTED,
+                    'resolved_at' => now(),
+                    'resolution_notes' => 'Auto-resuelto: el registro fue corregido y la condicion ya no aplica.',
+                ]);
         }
-
-        AttendanceAnomaly::where('attendance_record_id', $record->id)
-            ->whereIn('anomaly_type', $staleTypes)
-            ->where('status', AttendanceAnomaly::STATUS_OPEN)
-            ->update([
-                'status' => AttendanceAnomaly::STATUS_RESOLVED,
-                'resolved_at' => now(),
-                'resolution_notes' => 'Auto-resuelto: tiempo menor a 30 minutos se redondea a 0 horas (estandar de autorizaciones).',
-            ]);
     }
 
     /**

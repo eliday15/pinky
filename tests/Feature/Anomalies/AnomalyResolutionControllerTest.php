@@ -315,6 +315,7 @@ class AnomalyResolutionControllerTest extends FeatureTestCase
 
         $this->from(route('anomalies.show', $anomaly))
             ->post(route('anomalies.resolve', $anomaly), [
+                'resolution_method' => AttendanceAnomaly::METHOD_JUSTIFIED,
                 'resolution_notes' => 'Revisado.',
                 'two_factor_code' => $this->validTwoFactorCode(),
             ])
@@ -326,6 +327,7 @@ class AnomalyResolutionControllerTest extends FeatureTestCase
             'status' => AttendanceAnomaly::STATUS_RESOLVED,
             'resolved_by' => $admin->id,
             'resolution_notes' => 'Revisado.',
+            'resolution_method' => AttendanceAnomaly::METHOD_JUSTIFIED,
         ]);
     }
 
@@ -454,7 +456,7 @@ class AnomalyResolutionControllerTest extends FeatureTestCase
         $admin = $this->actingAsAdmin();
         $anomaly = $this->makeAnomaly();
 
-        $authorization = Authorization::factory()->create([
+        $authorization = Authorization::factory()->approved()->create([
             'employee_id' => $anomaly->employee_id,
             'date' => $anomaly->work_date,
             'requested_by' => $admin->id,
@@ -898,18 +900,18 @@ class AnomalyResolutionControllerTest extends FeatureTestCase
 
     public function test_link_authorization_relinks_an_already_linked_anomaly(): void
     {
-        // The controller has NO status guard on linkAuthorization, so an anomaly
-        // that is already linked can be re-pointed at another authorization for the
-        // same employee. This documents the actual (guardless) behavior.
+        // An already-linked anomaly can be re-pointed at another approved
+        // authorization for the same employee (there is no status guard on the
+        // anomaly's side — only the authorization must be approved/paid).
         $admin = $this->actingAsAdmin();
         $anomaly = $this->makeAnomaly();
 
-        $first = Authorization::factory()->create([
+        $first = Authorization::factory()->approved()->create([
             'employee_id' => $anomaly->employee_id,
             'date' => $anomaly->work_date,
             'requested_by' => $admin->id,
         ]);
-        $second = Authorization::factory()->create([
+        $second = Authorization::factory()->approved()->create([
             'employee_id' => $anomaly->employee_id,
             'date' => $anomaly->work_date,
             'requested_by' => $admin->id,

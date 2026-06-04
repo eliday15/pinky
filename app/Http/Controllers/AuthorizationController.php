@@ -763,8 +763,26 @@ class AuthorizationController extends Controller
             ->where('status', 'open')
             ->get();
 
+        $recordIds = [];
         foreach ($anomalies as $anomaly) {
             $anomaly->linkToAuthorization($authorization);
+            if ($anomaly->attendance_record_id) {
+                $recordIds[$anomaly->attendance_record_id] = true;
+            }
+        }
+
+        // Linking removes anomalies from the open set, so refresh the parent
+        // records' open-anomaly counters (mirrors what the manual resolution
+        // actions do — the sync recalc never touches these columns).
+        foreach (array_keys($recordIds) as $recordId) {
+            $open = AttendanceAnomaly::where('attendance_record_id', $recordId)
+                ->where('status', 'open')
+                ->count();
+
+            AttendanceRecord::where('id', $recordId)->update([
+                'has_anomalies' => $open > 0,
+                'anomaly_count' => $open,
+            ]);
         }
     }
 

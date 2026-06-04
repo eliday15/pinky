@@ -10,6 +10,7 @@ use App\Models\Department;
 use App\Models\Employee;
 use App\Models\SyncLog;
 use App\Policies\AttendanceRecordPolicy;
+use App\Services\AnomalyDetectorService;
 use App\Services\ZktecoSyncService;
 use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
@@ -319,9 +320,16 @@ class AttendanceController extends Controller
      * Update an attendance record.
      *
      * Requires a manual_edit_reason and records who edited the record and when.
+     * After saving, re-runs anomaly detection so stale anomalies self-heal
+     * (e.g. missing_checkout closes once a check_out is added). The canonical
+     * metric recalculation is deliberately NOT run here — it would overwrite
+     * the status the editor chose explicitly (manual edit wins).
      */
-    public function update(Request $request, AttendanceRecord $attendance): RedirectResponse
-    {
+    public function update(
+        Request $request,
+        AttendanceRecord $attendance,
+        AnomalyDetectorService $detector
+    ): RedirectResponse {
         $this->authorize('update', $attendance);
 
         $validated = $request->validate([
@@ -373,6 +381,17 @@ class AttendanceController extends Controller
         $validated['manually_edited_at'] = now();
 
         $attendance->update($validated);
+
+        // Self-heal: re-run anomaly detection on the edited punches so
+        // anomalies whose condition no longer holds auto-resolve via
+        // closeRedundantAnomalies(). This reliably clears missing_checkin/
+        // missing_checkout (driven by raw check_in/check_out presence, which the
+        // edit does change). Derived metrics (late_minutes, early_departure_minutes,
+        // velada_hours, actual_break_minutes) are only recomputed by the ZKTeco
+        // sync, so late/early/break anomalies won't auto-close from a manual edit
+        // — the editor resolves those explicitly via the resolution modal.
+        $attendance->refresh();
+        $detector->detectForRecord($attendance);
 
         return redirect()->route('attendance.index', ['date' => $attendance->work_date->toDateString()])
             ->with('success', 'Registro actualizado.');

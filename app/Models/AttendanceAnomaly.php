@@ -42,6 +42,13 @@ class AttendanceAnomaly extends Model
     public const STATUS_DISMISSED = 'dismissed';
     public const STATUS_LINKED = 'linked_to_authorization';
 
+    // Resolution methods (how an anomaly was resolved)
+    public const METHOD_JUSTIFIED = 'justified';
+    public const METHOD_FALSE_POSITIVE = 'false_positive';
+    public const METHOD_RECORD_CORRECTED = 'record_corrected';
+    public const METHOD_LINKED_AUTHORIZATION = 'linked_authorization';
+    public const METHOD_LINKED_INCIDENT = 'linked_incident';
+
     protected $fillable = [
         'attendance_record_id',
         'employee_id',
@@ -56,12 +63,13 @@ class AttendanceAnomaly extends Model
         'resolved_by',
         'resolved_at',
         'resolution_notes',
+        'resolution_method',
         'linked_authorization_id',
         'linked_incident_id',
         'auto_detected',
     ];
 
-    protected $appends = ['type_name'];
+    protected $appends = ['type_name', 'resolution_method_label'];
 
     protected $casts = [
         'work_date' => 'date:Y-m-d',
@@ -69,6 +77,38 @@ class AttendanceAnomaly extends Model
         'auto_detected' => 'boolean',
         'deviation_minutes' => 'integer',
     ];
+
+    /**
+     * Single source of truth for the type -> severity mapping.
+     *
+     * CRITICAL means broken attendance data that affects payroll (incomplete
+     * punches); unpaid extra time is a WARNING (operational follow-up, not an
+     * emergency); the rest is informational. Used by the detector and by the
+     * historical re-mapping migration so both stay in sync by construction.
+     *
+     * @param  string  $type  One of the TYPE_* constants.
+     * @param  int|null  $deviationMinutes  Used only for late_arrival / early_departure.
+     */
+    public static function defaultSeverityFor(string $type, ?int $deviationMinutes = null): string
+    {
+        return match ($type) {
+            self::TYPE_MISSING_CHECKOUT,
+            self::TYPE_MISSING_CHECKIN => self::SEVERITY_CRITICAL,
+
+            self::TYPE_UNAUTHORIZED_VELADA,
+            self::TYPE_UNAUTHORIZED_OVERTIME,
+            self::TYPE_VELADA_MISSING_CONFIRMATION => self::SEVERITY_WARNING,
+
+            self::TYPE_LATE_ARRIVAL,
+            self::TYPE_EARLY_DEPARTURE => ($deviationMinutes ?? 0) > 60
+                ? self::SEVERITY_WARNING
+                : self::SEVERITY_INFO,
+
+            // excessive_break, missing_lunch, schedule_deviation,
+            // duplicate_punches and the legacy excessive_overtime.
+            default => self::SEVERITY_INFO,
+        };
+    }
 
     public function attendanceRecord(): BelongsTo
     {
@@ -118,27 +158,37 @@ class AttendanceAnomaly extends Model
 
     /**
      * Resolve the anomaly.
+     *
+     * @param  User  $user  The user resolving the anomaly.
+     * @param  string|null  $notes  Resolution notes.
+     * @param  string|null  $method  One of the METHOD_* constants.
      */
-    public function resolve(User $user, ?string $notes = null): void
+    public function resolve(User $user, ?string $notes = null, ?string $method = null): void
     {
         $this->update([
             'status' => self::STATUS_RESOLVED,
             'resolved_by' => $user->id,
             'resolved_at' => now(),
             'resolution_notes' => $notes,
+            'resolution_method' => $method,
         ]);
     }
 
     /**
      * Dismiss the anomaly.
+     *
+     * @param  User  $user  The user dismissing the anomaly.
+     * @param  string|null  $notes  Dismissal notes.
+     * @param  string|null  $method  One of the METHOD_* constants.
      */
-    public function dismiss(User $user, ?string $notes = null): void
+    public function dismiss(User $user, ?string $notes = null, ?string $method = null): void
     {
         $this->update([
             'status' => self::STATUS_DISMISSED,
             'resolved_by' => $user->id,
             'resolved_at' => now(),
             'resolution_notes' => $notes,
+            'resolution_method' => $method,
         ]);
     }
 
@@ -150,8 +200,28 @@ class AttendanceAnomaly extends Model
         $this->update([
             'status' => self::STATUS_LINKED,
             'linked_authorization_id' => $authorization->id,
+            'resolution_method' => self::METHOD_LINKED_AUTHORIZATION,
             'resolved_at' => now(),
             'resolution_notes' => "Auto-resuelto al aprobar autorizacion #{$authorization->id}.",
+        ]);
+    }
+
+    /**
+     * Link to an approved incident/permission (resolves the anomaly).
+     *
+     * Status stays `resolved` (the status enum is authorization-specific for
+     * links); `resolution_method = linked_incident` plus `linked_incident_id`
+     * are the discriminator the UI uses to show "Vinculada a permiso".
+     */
+    public function linkToIncident(Incident $incident, User $user): void
+    {
+        $this->update([
+            'status' => self::STATUS_RESOLVED,
+            'linked_incident_id' => $incident->id,
+            'resolution_method' => self::METHOD_LINKED_INCIDENT,
+            'resolved_by' => $user->id,
+            'resolved_at' => now(),
+            'resolution_notes' => "Vinculada a incidencia/permiso #{$incident->id}.",
         ]);
     }
 
@@ -187,6 +257,21 @@ class AttendanceAnomaly extends Model
             self::SEVERITY_WARNING => 'yellow',
             self::SEVERITY_CRITICAL => 'red',
             default => 'gray',
+        };
+    }
+
+    /**
+     * Get human-readable resolution method label for UI.
+     */
+    public function getResolutionMethodLabelAttribute(): ?string
+    {
+        return match ($this->resolution_method) {
+            self::METHOD_JUSTIFIED => 'Justificada',
+            self::METHOD_FALSE_POSITIVE => 'Falso positivo',
+            self::METHOD_RECORD_CORRECTED => 'Checadas corregidas',
+            self::METHOD_LINKED_AUTHORIZATION => 'Autorización',
+            self::METHOD_LINKED_INCIDENT => 'Incidencia',
+            default => null,
         };
     }
 

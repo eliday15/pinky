@@ -91,11 +91,13 @@ class AnomalyDetectorStandardsTest extends FeatureTestCase
 
         app(AnomalyDetectorService::class)->detectForRecord($record);
 
+        // Unpaid extra work is an operational follow-up, not an emergency:
+        // warning under the re-calibrated severity map.
         $this->assertDatabaseHas('attendance_anomalies', [
             'attendance_record_id' => $record->id,
             'anomaly_type' => AttendanceAnomaly::TYPE_UNAUTHORIZED_VELADA,
             'status' => AttendanceAnomaly::STATUS_OPEN,
-            'severity' => AttendanceAnomaly::SEVERITY_CRITICAL,
+            'severity' => AttendanceAnomaly::SEVERITY_WARNING,
             'actual_value' => '2',
         ]);
     }

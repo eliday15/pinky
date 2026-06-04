@@ -178,6 +178,8 @@ Route::middleware(['auth', 'password-changed', 'two-factor-setup'])->group(funct
     Route::post('/anomalies/{anomaly}/resolve', [AnomalyResolutionController::class, 'resolve'])->name('anomalies.resolve');
     Route::post('/anomalies/{anomaly}/dismiss', [AnomalyResolutionController::class, 'dismiss'])->name('anomalies.dismiss');
     Route::post('/anomalies/{anomaly}/link-authorization', [AnomalyResolutionController::class, 'linkAuthorization'])->name('anomalies.linkAuthorization');
+    Route::post('/anomalies/{anomaly}/link-incident', [AnomalyResolutionController::class, 'linkIncident'])->name('anomalies.linkIncident');
+    Route::get('/anomalies/{anomaly}/linkables', [AnomalyResolutionController::class, 'linkables'])->name('anomalies.linkables');
 
     // Users
     Route::resource('users', UserController::class)->except(['show']);
