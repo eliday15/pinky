@@ -821,20 +821,23 @@ class ReportControllerTest extends FeatureTestCase
     }
 
     // ------------------------------------------------------------------
-    // overtime: estimated_cost math = overtime_hours * hourly_rate * 1.5.
+    // overtime: el costo estimado se calcula sobre las horas AUTORIZADAS
+    // (las que paga nómina), nunca sobre las crudas detectadas. El reporte
+    // muestra ambas columnas para conciliar (Fase C, DECISIONES derivadas).
     // ------------------------------------------------------------------
 
-    public function test_overtime_computes_estimated_cost(): void
+    public function test_overtime_computes_estimated_cost_from_authorized_hours(): void
     {
         $this->actingAsAdmin();
 
-        $employee = Employee::factory()->create(['hourly_rate' => 100.00]);
+        $employee = Employee::factory()->create(['hourly_rate' => 100.00, 'overtime_rate' => 1.5]);
         AttendanceRecord::factory()->create([
             'employee_id' => $employee->id,
             'work_date' => '2026-03-12',
             'status' => 'present',
             'worked_hours' => 8.00,
-            'overtime_hours' => 2.00,
+            'overtime_hours' => 2.50,
+            'overtime_authorized_hours' => 1.50,
         ]);
 
         $this->get(route('reports.overtime', [
@@ -845,10 +848,38 @@ class ReportControllerTest extends FeatureTestCase
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Reports/Overtime')
                 ->has('byEmployee', 1)
+                ->where('byEmployee.0.total_overtime', 2.5)
+                ->where('byEmployee.0.total_authorized', 1.5)
+                // 1.5h autorizadas * 100 * 1.5 = 225 — lo que pagará nómina
+                ->where('byEmployee.0.estimated_cost', 225)
+                ->where('summary.total_overtime_hours', 2.5)
+                ->where('summary.total_authorized_hours', 1.5));
+    }
+
+    public function test_overtime_unauthorized_hours_cost_nothing(): void
+    {
+        $this->actingAsAdmin();
+
+        $employee = Employee::factory()->create(['hourly_rate' => 100.00]);
+        AttendanceRecord::factory()->create([
+            'employee_id' => $employee->id,
+            'work_date' => '2026-03-12',
+            'status' => 'present',
+            'worked_hours' => 8.00,
+            'overtime_hours' => 2.00,
+            'overtime_authorized_hours' => 0,
+        ]);
+
+        $this->get(route('reports.overtime', [
+            'start_date' => '2026-03-01',
+            'end_date' => '2026-03-31',
+        ]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Reports/Overtime')
                 ->where('byEmployee.0.total_overtime', 2)
-                // 2h * 100 * 1.5 = 300
-                ->where('byEmployee.0.estimated_cost', 300)
-                ->where('summary.total_overtime_hours', 2));
+                ->where('byEmployee.0.total_authorized', 0)
+                ->where('byEmployee.0.estimated_cost', 0, 'sin autorización no hay costo: nómina no las paga'));
     }
 
     // ------------------------------------------------------------------

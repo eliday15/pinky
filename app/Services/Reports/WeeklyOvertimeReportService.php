@@ -212,13 +212,13 @@ class WeeklyOvertimeReportService
 
         $byCode = $dayAuthorizations->groupBy(fn (Authorization $a) => $this->normalizeCode($a->compensationType?->code));
 
-        $overtimeHours = 0.0;
+        $authorizedOvertimeRaw = 0.0;
         foreach (self::OVERTIME_CODES as $code) {
-            $overtimeHours += (float) $byCode->get($code, collect())->sum('hours');
+            $authorizedOvertimeRaw += (float) $byCode->get($code, collect())->sum('hours');
         }
 
         $weekendHours = (float) $byCode->get(self::WEEKEND_CODE, collect())->sum('hours');
-        $veladaHours = (float) $byCode->get(self::VELADA_CODE, collect())->sum('hours');
+        $authorizedVeladaRaw = (float) $byCode->get(self::VELADA_CODE, collect())->sum('hours');
 
         $veladaMarker = $byCode->has(self::VELADA_CODE) ? 1 : 0;
         $cenaMarker = $byCode->has(self::CENA_CODE) ? 1 : 0;
@@ -227,16 +227,24 @@ class WeeklyOvertimeReportService
         $isNightShift = (bool) $record->is_night_shift;
         $isWeekendWork = (bool) $record->is_weekend_work;
 
-        $mHours = $isNightShift ? 0.0 : $overtimeHours;
-        $vHours = $isNightShift ? $overtimeHours : 0.0;
-
         $dayName = $dateObj->format('l');
         $schedule = $employee->getEffectiveScheduleForDay($dayName);
         $detectedHours = $this->rounding->detectOvertimeHours($record, $schedule, $date);
-        // Approved is what the supervisor signed off on (HE codes + Velada).
-        // Pending = detected minus approved-overtime — so we don't double-count
-        // hours that were already authorized.
-        $approvedForGap = $overtimeHours + $veladaHours;
+
+        // Tope al timecard (auditoría #20 / DECISIONES derivadas): las horas
+        // autorizadas mostradas no pueden exceder lo realmente detectado en
+        // checadas — el mismo tope que aplica la nómina al pagar. Si se
+        // aprobaron más horas de las trabajadas, el reporte muestra lo
+        // pagable, no la autorización inflada.
+        $overtimeHours = min($authorizedOvertimeRaw, $detectedHours);
+        $veladaHours = min($authorizedVeladaRaw, (float) ($record->velada_hours ?? 0));
+
+        $mHours = $isNightShift ? 0.0 : $overtimeHours;
+        $vHours = $isNightShift ? $overtimeHours : 0.0;
+
+        // Approved is what the supervisor signed off on (HE codes + Velada),
+        // SIN topar — pending mide lo detectado no cubierto por autorización.
+        $approvedForGap = $authorizedOvertimeRaw + $authorizedVeladaRaw;
         $pendingHours = max($detectedHours - $approvedForGap, 0.0);
 
         return [

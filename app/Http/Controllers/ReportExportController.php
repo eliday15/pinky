@@ -274,17 +274,22 @@ class ReportExportController extends Controller implements HasMiddleware
         $startDate = $request->get('start_date', Carbon::now()->startOfMonth()->toDateString());
         $endDate = $request->get('end_date', Carbon::now()->endOfMonth()->toDateString());
 
+        // Detectadas vs autorizadas: la columna "a pagar" es la que usa la
+        // nómina (overtime_authorized_hours) — el CSV concilia con el recibo.
         $records = AttendanceRecord::with(['employee.department'])
             ->whereIn('employee_id', $this->scopedActiveEmployeeIds())
             ->whereBetween('work_date', [$startDate, $endDate])
-            ->where('overtime_hours', '>', 0)
+            ->where(function ($q) {
+                $q->where('overtime_hours', '>', 0)
+                    ->orWhere('overtime_authorized_hours', '>', 0);
+            })
             ->orderBy('work_date')
             ->orderBy('employee_id')
             ->get();
 
         return $this->exportCsv(
             "reporte_horas_extra_{$startDate}_{$endDate}.csv",
-            ['Fecha', 'Empleado', 'No. Empleado', 'Departamento', 'Horas Trabajadas', 'Horas Extra'],
+            ['Fecha', 'Empleado', 'No. Empleado', 'Departamento', 'Horas Trabajadas', 'Horas Extra Detectadas', 'Horas Extra Autorizadas (a pagar)'],
             $records->map(fn ($record) => [
                 $record->work_date,
                 $record->employee?->full_name ?? '-',
@@ -292,6 +297,7 @@ class ReportExportController extends Controller implements HasMiddleware
                 $record->employee?->department?->name ?? '-',
                 $record->worked_hours ?? 0,
                 $record->overtime_hours ?? 0,
+                $record->overtime_authorized_hours ?? 0,
             ])->toArray()
         );
     }

@@ -17,9 +17,16 @@ use Carbon\Carbon;
  * - Overtime = extra hours before midnight (or before velada start)
  * - Velada = hours worked after midnight (or after velada start hour)
  * - Only authorized hours get paid
+ * - Overtime is rounded with the company ladder (OvertimeRoundingService)
+ *   BEFORE capping at the authorized hours (DECISIONES_NEGOCIO §10), so the
+ *   weekly report and payroll always use the same rounded figure.
  */
 class VeladaCalculatorService
 {
+    public function __construct(
+        private readonly OvertimeRoundingService $rounding = new OvertimeRoundingService(),
+    ) {}
+
     /**
      * Calculate overtime and velada split for an attendance record.
      *
@@ -122,14 +129,22 @@ class VeladaCalculatorService
             $overtimeHours = $extraHours;
         }
 
-        // Check authorized hours
-        $overtimeAuthorized = $this->getAuthorizedHours($record->employee_id, $record->work_date, Authorization::TYPE_OVERTIME);
-        $veladaAuthorized = $this->getAuthorizedHours($record->employee_id, $record->work_date, Authorization::TYPE_NIGHT_SHIFT);
+        // Check authorized hours (fecha como string: comparar un DATE contra
+        // un Carbon datetime pierde filas en el límite — quirk de SQLite).
+        $overtimeAuthorized = $this->getAuthorizedHours($record->employee_id, $dateStr, Authorization::TYPE_OVERTIME);
+        $veladaAuthorized = $this->getAuthorizedHours($record->employee_id, $dateStr, Authorization::TYPE_NIGHT_SHIFT);
+
+        // Escalera de redondeo al PAGO (DECISIONES_NEGOCIO §10): las horas
+        // extra se redondean con la regla de la empresa (<30min→0,
+        // 30-49→0.5h, 50-59→1h) ANTES de topar a lo autorizado — la misma
+        // escalera del reporte semanal, para que reporte y nómina nunca
+        // diverjan. La velada se paga por horas exactas en ventana (VEL).
+        $overtimePayable = $this->rounding->roundMinutes((int) round($overtimeHours * 60));
 
         return [
             'overtime_hours' => round($overtimeHours, 2),
             'velada_hours' => round($veladaHours, 2),
-            'overtime_authorized' => round(min($overtimeHours, $overtimeAuthorized), 2),
+            'overtime_authorized' => round(min($overtimePayable, $overtimeAuthorized), 2),
             'velada_authorized' => round(min($veladaHours, $veladaAuthorized), 2),
         ];
     }
@@ -145,7 +160,7 @@ class VeladaCalculatorService
     private function getAuthorizedHours(int $employeeId, $date, string $type): float
     {
         return (float) Authorization::where('employee_id', $employeeId)
-            ->where('date', $date)
+            ->whereDate('date', Carbon::parse($date)->toDateString())
             ->where('type', $type)
             ->whereIn('status', [Authorization::STATUS_APPROVED, Authorization::STATUS_PAID])
             ->sum('hours');

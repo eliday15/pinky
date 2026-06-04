@@ -285,27 +285,39 @@ class ReportController extends Controller implements HasMiddleware
 
         $activeEmployeeIds = $this->scopedActiveEmployeeIds();
 
+        // Detectadas vs autorizadas: la nómina solo paga las horas
+        // AUTORIZADAS (overtime_authorized_hours, ya redondeadas con la
+        // escalera de la empresa). El reporte muestra ambas columnas para
+        // conciliar, y el costo estimado se calcula sobre lo autorizado con
+        // la tarifa del empleado — nunca sobre horas crudas sin autorizar.
         $records = AttendanceRecord::with(['employee.department'])
             ->whereIn('employee_id', $activeEmployeeIds)
             ->whereBetween('work_date', [$startDate->toDateString(), $endDate->toDateString()])
-            ->where('overtime_hours', '>', 0)
+            ->where(function ($q) {
+                $q->where('overtime_hours', '>', 0)
+                    ->orWhere('overtime_authorized_hours', '>', 0);
+            })
             ->get();
 
         $byEmployee = $records->groupBy('employee_id')->map(function ($group) {
             $employee = $group->first()->employee;
             $hourlyRate = (float) ($employee?->hourly_rate ?? 0);
+            $overtimeMultiplier = (float) ($employee?->overtime_rate ?? 1.5);
+            $authorizedHours = round($group->sum('overtime_authorized_hours'), 2);
 
             return [
                 'employee' => $employee,
                 'days_with_overtime' => $group->count(),
                 'total_overtime' => round($group->sum('overtime_hours'), 2),
-                'estimated_cost' => round($group->sum('overtime_hours') * $hourlyRate * 1.5, 2),
+                'total_authorized' => $authorizedHours,
+                'estimated_cost' => round($authorizedHours * $hourlyRate * $overtimeMultiplier, 2),
             ];
         })->sortByDesc('total_overtime')->values();
 
         $summary = [
             'total_employees' => $byEmployee->count(),
             'total_overtime_hours' => round($records->sum('overtime_hours'), 2),
+            'total_authorized_hours' => round($records->sum('overtime_authorized_hours'), 2),
             'total_days_with_overtime' => $records->count(),
         ];
 
