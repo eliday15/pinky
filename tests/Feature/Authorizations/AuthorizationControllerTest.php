@@ -7,6 +7,7 @@ use App\Models\AttendanceRecord;
 use App\Models\CompensationType;
 use App\Models\Department;
 use App\Models\Employee;
+use App\Models\PayrollPeriod;
 use App\Models\Position;
 use App\Models\Schedule;
 use App\Models\User;
@@ -474,6 +475,114 @@ class AuthorizationControllerTest extends FeatureTestCase
     // ─────────────────────────────────────────────────────────────────────
     // createBulk / storeBulk
     // ─────────────────────────────────────────────────────────────────────
+
+    /**
+     * Auditoría #78/88 + DECISIONES §7: la auto-aprobación debe correr el
+     * MISMO pipeline que la aprobación manual — recalcular el attendance
+     * (horas autorizadas) e invalidar la nómina del periodo que cubre la
+     * fecha. Antes hacía un update() crudo y se saltaba todo.
+     */
+    public function test_auto_approval_recalculates_attendance_and_invalidates_payroll(): void
+    {
+        $this->actingAsAdmin();
+        $emp = Employee::factory()->create();
+        $record = AttendanceRecord::factory()->create([
+            'employee_id' => $emp->id,
+            'work_date' => '2026-06-08',
+            'check_in' => '08:00:00',
+            'check_out' => '19:00:00',
+            'overtime_hours' => 2,
+            'overtime_authorized_hours' => 0,
+        ]);
+
+        // Periodo APROBADO que cubre la fecha: debe quedar marcado
+        // "requiere recálculo" cuando la auto-aprobación surta efecto.
+        $period = PayrollPeriod::factory()->weekly()->create([
+            'start_date' => '2026-06-08',
+            'end_date' => '2026-06-14',
+            'status' => 'approved',
+            'requires_recalculation' => false,
+        ]);
+
+        $this->from(route('authorizations.create'))->post(route('authorizations.store'), [
+            'employee_id' => $emp->id,
+            'type' => Authorization::TYPE_OVERTIME,
+            'date' => '2026-06-08',
+            'start_time' => '17:00',
+            'end_time' => '19:00',
+            'hours' => 2,
+            'reason' => 'Matches detected overtime',
+        ])->assertRedirect(route('authorizations.index'));
+
+        $this->assertSame(Authorization::STATUS_APPROVED, Authorization::first()->status);
+        $this->assertEqualsWithDelta(2.0, (float) $record->fresh()->overtime_authorized_hours, 0.01, 'la auto-aprobación recalcula las horas autorizadas del attendance');
+        $this->assertTrue((bool) $period->fresh()->requires_recalculation, 'la auto-aprobación invalida la nómina (DECISIONES §7)');
+    }
+
+    /**
+     * Auditoría #78: la auto-aprobación usa Authorization::approve(), que
+     * firma al jefe de departamento cuando viene asignado.
+     */
+    public function test_auto_approval_signs_department_head(): void
+    {
+        $this->actingAsAdmin();
+        $head = Employee::factory()->create();
+        $emp = Employee::factory()->create();
+        AttendanceRecord::factory()->create([
+            'employee_id' => $emp->id,
+            'work_date' => '2026-06-08',
+            'check_in' => '08:00:00',
+            'check_out' => '19:00:00',
+            'overtime_hours' => 2,
+        ]);
+
+        $this->from(route('authorizations.createBulk'))->post(route('authorizations.storeBulk'), [
+            'type' => Authorization::TYPE_OVERTIME,
+            'reason' => 'Bulk overtime detectado',
+            'department_head_id' => $head->id,
+            'entries' => [[
+                'employee_id' => $emp->id,
+                'date' => '2026-06-08',
+                'start_time' => '17:00',
+                'end_time' => '19:00',
+                'hours' => 2,
+            ]],
+        ])->assertRedirect(route('authorizations.index'));
+
+        $auth = Authorization::first();
+        $this->assertSame(Authorization::STATUS_APPROVED, $auth->status);
+        $this->assertNotNull($auth->department_head_signed_at, 'la auto-aprobación firma al jefe de departamento igual que la manual');
+    }
+
+    /**
+     * DECISIONES §2 (dedup): re-correr el alta masiva no duplica la
+     * autorización viva del mismo (empleado, fecha, tipo, concepto).
+     */
+    public function test_store_bulk_skips_duplicate_active_authorizations(): void
+    {
+        $this->actingAsAdmin();
+        $emp = Employee::factory()->create();
+
+        Authorization::factory()->create([
+            'employee_id' => $emp->id,
+            'type' => Authorization::TYPE_SPECIAL,
+            'compensation_type_id' => null,
+            'date' => '2026-06-10',
+            'status' => Authorization::STATUS_PENDING,
+        ]);
+
+        $resp = $this->from(route('authorizations.createBulk'))->post(route('authorizations.storeBulk'), [
+            'type' => Authorization::TYPE_SPECIAL,
+            'reason' => 'Bulk repetido',
+            'employee_ids' => [$emp->id],
+            'date' => '2026-06-10',
+            'hours' => 1,
+        ]);
+
+        $resp->assertRedirect(route('authorizations.index'));
+        $this->assertSame(1, Authorization::count(), 'la corrida repetida no crea un duplicado');
+        $this->assertStringContainsString('omitidas por duplicado', session('success'));
+    }
 
     public function test_create_bulk_renders_with_all_props(): void
     {

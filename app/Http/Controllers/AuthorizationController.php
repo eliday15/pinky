@@ -446,6 +446,7 @@ class AuthorizationController extends Controller
         $bulkGroupId = 'bulk_' . now()->format('YmdHis') . '_' . Auth::id();
         $count = 0;
         $autoApprovedCount = 0;
+        $duplicateCount = 0;
 
         $rounder = new OvertimeRoundingService();
 
@@ -515,6 +516,15 @@ class AuthorizationController extends Controller
                 $isPreAuth = Carbon::parse($entry['date'])->isFuture()
                     || Carbon::parse($entry['date'])->isToday();
 
+                // Dedup (DECISIONES §2): re-correr el alta masiva sobre el
+                // mismo rango no debe duplicar la autorización viva del mismo
+                // (empleado, fecha, tipo, concepto) — cada fila duplicada era
+                // ruido en BD aunque el pago ya esté neutralizado.
+                if ($this->activeDuplicateExists((int) $entry['employee_id'], $entry['date'], $validated['type'], $validated['compensation_type_id'] ?? null)) {
+                    $duplicateCount++;
+                    continue;
+                }
+
                 $auth = Authorization::create([
                     'employee_id' => $entry['employee_id'],
                     'requested_by' => Auth::id(),
@@ -546,6 +556,12 @@ class AuthorizationController extends Controller
                 || Carbon::parse($validated['date'])->isToday();
 
             foreach ($validated['employee_ids'] as $employeeId) {
+                // Mismo dedup que la rama de entries (DECISIONES §2).
+                if ($this->activeDuplicateExists((int) $employeeId, $validated['date'], $validated['type'], $validated['compensation_type_id'] ?? null)) {
+                    $duplicateCount++;
+                    continue;
+                }
+
                 $auth = Authorization::create([
                     'employee_id' => $employeeId,
                     'requested_by' => Auth::id(),
@@ -572,8 +588,30 @@ class AuthorizationController extends Controller
         $msg = $autoApprovedCount > 0
             ? "Se crearon {$count} autorizaciones, {$autoApprovedCount} auto-aprobadas (coinciden con checadas)."
             : "Se crearon {$count} autorizaciones exitosamente.";
+        if ($duplicateCount > 0) {
+            $msg .= " {$duplicateCount} omitidas por duplicado (ya existe una autorización viva del mismo tipo para ese empleado y fecha).";
+        }
 
         return redirect()->route('authorizations.index')->with('success', $msg);
+    }
+
+    /**
+     * ¿Existe ya una autorización VIVA (pendiente/aprobada/pagada) del mismo
+     * (empleado, fecha, tipo, concepto)? Las rechazadas no bloquean: re-pedir
+     * algo rechazado es legítimo.
+     */
+    private function activeDuplicateExists(int $employeeId, string $date, string $type, ?int $compensationTypeId): bool
+    {
+        return Authorization::where('employee_id', $employeeId)
+            ->whereDate('date', Carbon::parse($date)->toDateString())
+            ->where('type', $type)
+            ->where('compensation_type_id', $compensationTypeId)
+            ->whereIn('status', [
+                Authorization::STATUS_PENDING,
+                Authorization::STATUS_APPROVED,
+                Authorization::STATUS_PAID,
+            ])
+            ->exists();
     }
 
     /**
@@ -720,6 +758,20 @@ class AuthorizationController extends Controller
 
         $authorization->approve($user, $overrideHours);
 
+        $this->applyApprovalEffects($authorization, $syncService);
+
+        return redirect()->back()->with('success', 'Autorizacion aprobada.');
+    }
+
+    /**
+     * Efectos posteriores a TODA aprobación — manual, masiva o automática:
+     * recalcular el attendance del día, cerrar anomalías cubiertas e
+     * invalidar la nómina de los periodos que tocan la fecha (DECISIONES §7).
+     * Un solo pipeline para que ningún camino de aprobación se quede corto
+     * (auditoría #78/88: la auto-aprobación se saltaba todo esto).
+     */
+    private function applyApprovalEffects(Authorization $authorization, ZktecoSyncService $syncService): void
+    {
         // FASE 1.4: Recalculate attendance if this affects an existing record
         if ($authorization->attendance_record_id) {
             $syncService->recalculateAttendanceRecord($authorization->attendanceRecord);
@@ -746,8 +798,6 @@ class AuthorizationController extends Controller
             $authorization->employee_id,
             Carbon::parse($authorization->date)->toDateString(),
         );
-
-        return redirect()->back()->with('success', 'Autorizacion aprobada.');
     }
 
     /**
@@ -847,23 +897,7 @@ class AuthorizationController extends Controller
 
             $authorization->approve($user);
 
-            if ($authorization->attendance_record_id) {
-                $syncService->recalculateAttendanceRecord($authorization->attendanceRecord);
-            } else {
-                $record = AttendanceRecord::where('employee_id', $authorization->employee_id)
-                    ->whereDate('work_date', Carbon::parse($authorization->date)->toDateString())
-                    ->first();
-                if ($record) {
-                    $syncService->recalculateAttendanceRecord($record);
-                }
-            }
-
-            $this->autoResolveAnomalies($authorization);
-
-            app(PayrollInvalidationService::class)->invalidate(
-                $authorization->employee_id,
-                Carbon::parse($authorization->date)->toDateString(),
-            );
+            $this->applyApprovalEffects($authorization, $syncService);
 
             $approved++;
         }
@@ -1548,11 +1582,12 @@ class AuthorizationController extends Controller
                 && $seg['end_time'] === $authEnd
                 && abs((float) $seg['hours'] - $authHours) < 0.01
             ) {
-                $authorization->update([
-                    'status' => Authorization::STATUS_APPROVED,
-                    'approved_by' => Auth::id(),
-                    'approved_at' => now(),
-                ]);
+                // El MISMO flujo que la aprobación manual (auditoría #78/88):
+                // approve() firma al jefe de departamento, y los efectos
+                // recalculan el attendance, cierran anomalías cubiertas e
+                // invalidan la nómina (DECISIONES §7).
+                $authorization->approve(Auth::user());
+                $this->applyApprovalEffects($authorization, app(ZktecoSyncService::class));
                 return;
             }
         }
