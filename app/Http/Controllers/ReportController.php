@@ -413,6 +413,17 @@ class ReportController extends Controller implements HasMiddleware
             ->orderBy('late_minutes', 'desc')
             ->get();
 
+        // Retardos cubiertos por una incidencia aprobada que justifica no se
+        // reportan — la misma regla que faltas/retardos y nómina (auditoría #3).
+        $justifiedDates = Incident::justifiedDatesByEmployee(
+            $activeEmployeeIds,
+            $startDate->toDateString(),
+            $endDate->toDateString()
+        );
+        $records = $records->reject(
+            fn ($r) => isset($justifiedDates[$r->employee_id][Carbon::parse($r->work_date)->toDateString()])
+        )->values();
+
         $byEmployee = $records->groupBy('employee_id')->map(function ($group) {
             $employee = $group->first()->employee;
 
@@ -568,24 +579,26 @@ class ReportController extends Controller implements HasMiddleware
             ->orderBy('start_date', 'desc')
             ->get();
 
-        // By type
+        // By type. Los DÍAS totalizados son solo de incidencias APROBADAS —
+        // el mismo criterio que la nómina (auditoría #58); pendientes y
+        // rechazadas se siguen contando aparte en su desglose.
         $byType = $incidents->groupBy(fn ($i) => $i->incidentType?->name ?? 'Sin Tipo')->map(function ($group, $typeName) {
             return [
                 'type' => $typeName ?: 'Sin Tipo',
                 'count' => $group->count(),
-                'total_days' => $group->sum('days_count'),
+                'total_days' => $group->where('status', 'approved')->sum('days_count'),
                 'approved' => $group->where('status', 'approved')->count(),
                 'pending' => $group->where('status', 'pending')->count(),
                 'rejected' => $group->where('status', 'rejected')->count(),
             ];
         })->sortByDesc('count')->values();
 
-        // By department
+        // By department (días = solo aprobadas, igual que arriba)
         $byDepartment = $incidents->groupBy(fn ($i) => $i->employee?->department?->name ?? 'Sin Departamento')->map(function ($group, $deptName) {
             return [
                 'department' => $deptName ?: 'Sin Departamento',
                 'count' => $group->count(),
-                'total_days' => $group->sum('days_count'),
+                'total_days' => $group->where('status', 'approved')->sum('days_count'),
             ];
         })->sortByDesc('count')->values();
 
@@ -598,7 +611,8 @@ class ReportController extends Controller implements HasMiddleware
 
         $summary = [
             'total_incidents' => $incidents->count(),
-            'total_days' => $incidents->sum('days_count'),
+            // Solo días de incidencias aprobadas: lo único con efecto real.
+            'total_days' => $incidents->where('status', 'approved')->sum('days_count'),
             'pending_count' => $byStatus['pending'],
             'approved_count' => $byStatus['approved'],
             'rejected_count' => $byStatus['rejected'],

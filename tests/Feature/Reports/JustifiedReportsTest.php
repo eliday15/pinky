@@ -130,6 +130,101 @@ class JustifiedReportsTest extends FeatureTestCase
         $this->assertStringContainsString($unjustified->full_name, $content);
     }
 
+    /**
+     * Retardo real tal como lo deja el sync (entrada 08:40 con horario 08:00
+     * y tolerancia 10 → 30 min tarde).
+     */
+    private function lateRecord(Employee $employee, string $date = '2026-06-03'): AttendanceRecord
+    {
+        return AttendanceRecord::factory()->for($employee)->create([
+            'work_date' => $date,
+            'check_in' => '08:40:00',
+            'check_out' => '17:00:00',
+            'status' => 'late',
+            'late_minutes' => 30,
+        ]);
+    }
+
+    /**
+     * Incidencia FJU aprobada cubriendo la fecha del retardo.
+     */
+    private function justifyDate(Employee $employee, string $date = '2026-06-03'): void
+    {
+        Incident::factory()->approved()->create([
+            'employee_id' => $employee->id,
+            'incident_type_id' => $this->fjuType()->id,
+            'start_date' => $date,
+            'end_date' => $date,
+            'days_count' => 1,
+        ]);
+    }
+
+    public function test_retardos_report_excludes_justified_lates(): void
+    {
+        $justified = $this->employee();
+        $unjustified = $this->employee();
+
+        $this->lateRecord($justified);
+        $this->lateRecord($unjustified);
+        $this->justifyDate($justified);
+
+        $this->actingAsAdmin();
+
+        $this->get(route('reports.retardos', [
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-30',
+        ]))->assertInertia(fn (Assert $page) => $page
+            ->component('Reports/Retardos')
+            ->has('byEmployee', 1)
+            ->where('byEmployee.0.employee.id', $unjustified->id)
+        );
+    }
+
+    public function test_late_arrivals_report_excludes_justified_lates(): void
+    {
+        $justified = $this->employee();
+        $unjustified = $this->employee();
+
+        $this->lateRecord($justified);
+        $this->lateRecord($unjustified);
+        $this->justifyDate($justified);
+
+        $this->actingAsAdmin();
+
+        $this->get(route('reports.lateArrivals', [
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-30',
+        ]))->assertInertia(fn (Assert $page) => $page
+            ->component('Reports/LateArrivals')
+            ->has('byEmployee', 1)
+            ->where('summary.total_late_records', 1)
+            ->where('summary.employees_with_lates', 1)
+        );
+    }
+
+    public function test_export_retardos_excludes_justified_lates(): void
+    {
+        $justified = $this->employee();
+        $unjustified = $this->employee();
+
+        $this->lateRecord($justified);
+        $this->lateRecord($unjustified);
+        $this->justifyDate($justified);
+
+        $this->actingAsAdmin();
+
+        $response = $this->get(route('reports.export.retardos', [
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-30',
+        ]));
+
+        $response->assertOk();
+        $content = $response->streamedContent();
+
+        $this->assertStringNotContainsString($justified->full_name, $content, 'el retardo justificado no se exporta');
+        $this->assertStringContainsString($unjustified->full_name, $content);
+    }
+
     public function test_early_departures_report_respects_approved_exit_permission(): void
     {
         $withPermission = $this->employee();

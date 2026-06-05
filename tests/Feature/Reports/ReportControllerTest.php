@@ -1068,14 +1068,17 @@ class ReportControllerTest extends FeatureTestCase
                 ->has('byDepartment', 1)
                 ->where('byDepartment.0.department', 'Compras')
                 ->where('byDepartment.0.count', 2)
-                ->where('byDepartment.0.total_days', 5)
+                // total_days cuenta SOLO incidencias aprobadas (auditoría #58,
+                // mismo criterio que nómina): 3 de vacación; la incapacidad
+                // pendiente (2) no suma días hasta aprobarse.
+                ->where('byDepartment.0.total_days', 3)
                 ->has('byStatus', fn (Assert $bs) => $bs
                     ->where('pending', 1)
                     ->where('approved', 1)
                     ->where('rejected', 0))
                 ->has('summary', fn (Assert $s) => $s
                     ->where('total_incidents', 2)
-                    ->where('total_days', 5)
+                    ->where('total_days', 3)
                     ->where('pending_count', 1)
                     ->where('approved_count', 1)
                     ->where('rejected_count', 0)));

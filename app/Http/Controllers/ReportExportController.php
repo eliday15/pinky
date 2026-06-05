@@ -547,13 +547,26 @@ class ReportExportController extends Controller implements HasMiddleware
         $startDate = $request->get('start_date', Carbon::now()->startOfWeek()->toDateString());
         $endDate = $request->get('end_date', Carbon::now()->endOfWeek()->toDateString());
 
+        $activeEmployeeIds = $this->scopedActiveEmployeeIds();
+
         $records = AttendanceRecord::with(['employee.department'])
             ->whereBetween('work_date', [$startDate, $endDate])
-            ->whereIn('employee_id', $this->scopedActiveEmployeeIds())
+            ->whereIn('employee_id', $activeEmployeeIds)
             ->where('status', 'late')
             ->orderBy('work_date')
             ->orderBy('employee_id')
             ->get();
+
+        // Retardos justificados por incidencia aprobada no se exportan — la
+        // misma regla que exportFaltas, el reporte web y la nómina (#3).
+        $justifiedDates = Incident::justifiedDatesByEmployee(
+            $activeEmployeeIds,
+            Carbon::parse($startDate)->toDateString(),
+            Carbon::parse($endDate)->toDateString()
+        );
+        $records = $records->reject(
+            fn ($r) => isset($justifiedDates[$r->employee_id][Carbon::parse($r->work_date)->toDateString()])
+        )->values();
 
         return $this->exportCsv(
             "reporte_retardos_{$startDate}_{$endDate}.csv",

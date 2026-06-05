@@ -71,7 +71,7 @@ const statusLabels = {
             </div>
             <div class="bg-white rounded-lg shadow p-4 text-center">
                 <p class="text-2xl font-bold text-blue-600">{{ summary.total_days }}</p>
-                <p class="text-xs text-gray-500">Dias Totales</p>
+                <p class="text-xs text-gray-500">Dias Aprobados</p>
             </div>
             <div class="bg-white rounded-lg shadow p-4 text-center">
                 <p class="text-2xl font-bold text-yellow-600">{{ summary.pending_count }}</p>
@@ -95,7 +95,7 @@ const statusLabels = {
                     <div v-for="item in byType" :key="item.type" class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                         <div>
                             <p class="font-medium text-gray-800">{{ item.type }}</p>
-                            <p class="text-xs text-gray-500">{{ item.total_days }} dias</p>
+                            <p class="text-xs text-gray-500">{{ item.total_days }} dias aprobados</p>
                         </div>
                         <div class="flex items-center space-x-2">
                             <span class="px-2 py-1 bg-green-100 text-green-800 text-xs rounded">{{ item.approved }}</span>
@@ -113,7 +113,7 @@ const statusLabels = {
                     <div v-for="item in byDepartment" :key="item.department" class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                         <div>
                             <p class="font-medium text-gray-800">{{ item.department }}</p>
-                            <p class="text-xs text-gray-500">{{ item.total_days }} dias</p>
+                            <p class="text-xs text-gray-500">{{ item.total_days }} dias aprobados</p>
                         </div>
                         <span class="px-3 py-1 bg-pink-100 text-pink-800 font-bold rounded">{{ item.count }}</span>
                     </div>

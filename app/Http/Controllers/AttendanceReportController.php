@@ -332,6 +332,16 @@ class AttendanceReportController extends Controller implements HasMiddleware
         $employees = $this->getEmployeeLookup($activeEmployeeIds);
         $holidayDates = $this->getHolidayDates($startDate, $endDate);
 
+        // Retardos cubiertos por una incidencia aprobada que justifica (FJU,
+        // vacación, incapacidad…) no se reportan — la misma regla que faltas
+        // y nómina (auditoría #3). PEN ya revierte el status en el recálculo;
+        // esto cubre las justificaciones de día completo que no lo tocan.
+        $justifiedDates = Incident::justifiedDatesByEmployee(
+            $activeEmployeeIds,
+            $startDate->toDateString(),
+            $endDate->toDateString()
+        );
+
         $rows = DB::table('attendance_records')
             ->select('employee_id', 'work_date', 'late_minutes', 'check_in')
             ->whereBetween('work_date', [$startDate->toDateString(), $endDate->toDateString()])
@@ -341,7 +351,8 @@ class AttendanceReportController extends Controller implements HasMiddleware
             ->orderBy('late_minutes', 'desc')
             ->get()
             ->filter(fn ($r) => isset($employees[$r->employee_id])
-                && $this->isWorkingDayForEmployee($employees[$r->employee_id], $r->work_date))
+                && $this->isWorkingDayForEmployee($employees[$r->employee_id], $r->work_date)
+                && ! isset($justifiedDates[$r->employee_id][Carbon::parse($r->work_date)->toDateString()]))
             ->values();
 
         $grouped = [];
