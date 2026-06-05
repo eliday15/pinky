@@ -141,7 +141,11 @@ class PayrollCalculatorService
 
         // Get rates
         $hourlyRate = $employee->hourly_rate;
-        $dailySalary = $hourlyRate * 8;
+        // Sueldo diario por la JORNADA REAL del empleado (DECISIONES §11,
+        // auditoría #87): daily_salary explícito si existe; si no,
+        // hourly_rate × daily_work_hours del horario efectivo (fallback 8).
+        // Un empleado de 6h ya no cobra vacación/prima/incapacidad como de 8.
+        $dailySalary = $employee->daily_salary_computed;
 
         // Legacy fallback rates (used when employee has no comp types)
         $overtimeMultiplier = $employee->overtime_rate ?? 1.5;

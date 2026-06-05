@@ -7,6 +7,7 @@ use App\Models\Employee;
 use App\Models\Incident;
 use App\Models\IncidentType;
 use App\Models\PayrollPeriod;
+use App\Models\Schedule;
 use App\Services\PayrollCalculatorService;
 use Tests\FeatureTestCase;
 
@@ -145,6 +146,38 @@ class FaseDPayrollConceptsTest extends FeatureTestCase
         $this->assertEqualsWithDelta(1000.00, (float) $entry->vacation_premium_pay, 0.01, 'prima 25% sobre la vacación');
         $this->assertSame(5, (int) $entry->vacation_days_paid);
         $this->assertGreaterThanOrEqual(5000.00, (float) $entry->gross_pay);
+    }
+
+    /**
+     * DECISIONES §11 (auditoría #87): el sueldo diario usa la JORNADA REAL
+     * del horario efectivo, no 8 horas fijas. Un empleado de 6 horas cobra
+     * su vacación (y prima) a 6 × tarifa.
+     */
+    public function test_daily_salary_uses_real_schedule_hours(): void
+    {
+        $schedule = Schedule::factory()->create(['daily_work_hours' => 6]);
+        $employee = $this->employee([
+            'schedule_id' => $schedule->id,
+            'vacation_premium_percentage' => 25.00,
+        ]);
+
+        $vac = $this->typeWithCode('VAC', [
+            'category' => 'vacation',
+            'is_paid' => true,
+            'count_mode' => IncidentType::COUNT_WORKING_DAYS,
+        ]);
+        // Miércoles, 1 día hábil.
+        $this->approvedIncident($employee, $vac, '2026-06-03', '2026-06-03', 1);
+
+        $monthly = PayrollPeriod::factory()->monthly()->create([
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-30',
+        ]);
+
+        $entry = $this->calculator()->calculateEmployeePayroll($monthly, $employee);
+
+        $this->assertEqualsWithDelta(600.00, (float) $entry->vacation_pay, 0.01, '1 día × (100 × 6h), no × 8h');
+        $this->assertEqualsWithDelta(150.00, (float) $entry->vacation_premium_pay, 0.01, 'prima 25% sobre la jornada real');
     }
 
     public function test_vacation_pays_working_days_not_calendar(): void

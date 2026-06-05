@@ -54,3 +54,14 @@ Decisiones tomadas por el dueño del producto para resolver las incoherencias de
 
 ## 10. Redondeo de horas extra
 - **La escalera de redondeo aplica también al PAGO** (<30min→0, 30-49min→0.5h, 50-59min→1h, por segmento de entrada anticipada y salida tardía). Nómina y reportes usan exactamente la misma fórmula redondeada (`OvertimeRoundingService` pasa a ser la única vía, consumida por `VeladaCalculatorService` antes de topar a lo autorizado).
+
+## 11. Sueldo diario por jornada real (agregada 2026-06-04, cierre de revisión e2e)
+- **El sueldo diario usa la jornada REAL del horario efectivo**, no 8 horas fijas: `daily_salary` explícito del empleado si existe; si no, `hourly_rate × daily_work_hours` del horario (fallback 8). Aplica a vacaciones, prima vacacional, incapacidades con goce y deducción FRT — un empleado de 6 horas cobra y descuenta a 6.
+
+## 12. Bono de puntualidad: 10 minutos (agregada 2026-06-04, cierre de revisión e2e)
+- **El umbral default es 10 minutos de anticipación**, como promete la propuesta comercial (auditoría #76). Sigue siendo configurable (`punctuality_bonus_minutes`); la migración solo corrige el valor si seguía en el 5 original.
+- Aclaración de alcance de §8: el bono de puntualidad es **aditivo por día** (premia llegar temprano). Un retardo justificado no es día puntual y no gana ese día — pero tampoco "rompe" nada: los demás días puntuales se pagan. Lo todo-o-nada que §8 protege son los bonos de asistencia perfecta. El flag se recalcula en cada recálculo de checada (aprobaciones incluidas), no queda congelado al sync.
+
+## Verificado sin cambio (revisión e2e 2026-06-04)
+- **Rechazar/editar/eliminar incidencias y autorizaciones** solo opera sobre PENDIENTES (guards en controllers y policies). Una pendiente jamás afectó asistencia ni nómina, así que §7 se cumple **prohibiendo la mutación** de lo aprobado en lugar de invalidar después. `markPaid` bloquea además cualquier ajuste sobre autorizaciones ya pagadas.
+- **Las anomalías no son insumo de nómina** (ningún servicio de cálculo las lee): resolverlas o vincularlas es bitácora operativa; el efecto monetario siempre viaja por la incidencia/autorización aprobada, que ya recalcula e invalida.
