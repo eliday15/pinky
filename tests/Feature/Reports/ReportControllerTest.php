@@ -9,6 +9,7 @@ use App\Models\Incident;
 use App\Models\IncidentType;
 use App\Models\PayrollEntry;
 use App\Models\PayrollPeriod;
+use App\Models\Schedule;
 use Carbon\Carbon;
 use Inertia\Testing\AssertableInertia as Assert;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -272,6 +273,45 @@ class ReportControllerTest extends FeatureTestCase
                 ->has('summary', fn (Assert $s) => $s
                     ->where('total_employees', 1)
                     ->etc()));
+    }
+
+    /**
+     * Auditoría #86: los días de vacación/incapacidad del reporte mensual se
+     * PRORRATEAN al mes con el count_mode del tipo (Incident::overlapDays, la
+     * misma fuente que usa la nómina) — ya no se suma days_count crudo.
+     * Vacación Lun 30 mar – Vie 3 abr (5 días hábiles): en marzo solo
+     * cuentan el 30 y 31.
+     */
+    public function test_monthly_prorates_incident_days_to_the_month(): void
+    {
+        $this->actingAsAdmin();
+
+        $employee = Employee::factory()->create([
+            'schedule_id' => Schedule::factory()->create()->id,
+        ]);
+        AttendanceRecord::factory()->create([
+            'employee_id' => $employee->id,
+            'work_date' => '2026-03-16',
+            'status' => 'present',
+            'worked_hours' => 8.00,
+        ]);
+
+        $vacationType = IncidentType::factory()->vacation()->create();
+        Incident::factory()->approved()->create([
+            'employee_id' => $employee->id,
+            'incident_type_id' => $vacationType->id,
+            'start_date' => '2026-03-30',
+            'end_date' => '2026-04-03',
+            'days_count' => 5,
+        ]);
+
+        $this->get(route('reports.monthly', ['month' => '2026-03']))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Reports/Monthly')
+                ->has('byEmployee', 1)
+                ->where('byEmployee.0.vacation_days', 2)
+                ->where('summary.total_vacation_days', 2));
     }
 
     // ------------------------------------------------------------------

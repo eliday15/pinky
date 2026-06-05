@@ -783,31 +783,9 @@ class PayrollCalculatorService
         Employee $employee,
         array $holidayDates,
     ): int {
-        $from = Carbon::parse($incident->start_date)->max($startDate);
-        $to = Carbon::parse($incident->end_date)->min($endDate);
-
-        if ($from->gt($to)) {
-            return 0;
-        }
-
-        $countMode = $incident->incidentType->count_mode ?? IncidentType::COUNT_WORKING_DAYS;
-
-        if ($countMode === IncidentType::COUNT_CALENDAR_DAYS) {
-            return (int) $from->diffInDays($to) + 1;
-        }
-
-        $days = 0;
-
-        for ($day = $from->copy(); $day->lte($to); $day->addDay()) {
-            if (in_array($day->toDateString(), $holidayDates, true)) {
-                continue;
-            }
-            if ($employee->isEffectiveWorkingDay($day->englishDayOfWeek)) {
-                $days++;
-            }
-        }
-
-        return $days;
+        // Fuente única del prorrateo con count_mode: vive en el modelo para
+        // que nómina y reportes cuenten exactamente igual (auditoría #86).
+        return $incident->overlapDays($startDate, $endDate, $employee, $holidayDates);
     }
 
     /**

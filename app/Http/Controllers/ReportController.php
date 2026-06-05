@@ -174,16 +174,32 @@ class ReportController extends Controller implements HasMiddleware
             ->where('status', 'approved')
             ->where(function ($q) use ($startDate, $endDate) {
                 $q->whereBetween('start_date', [$startDate, $endDate])
-                    ->orWhereBetween('end_date', [$startDate, $endDate]);
+                    ->orWhereBetween('end_date', [$startDate, $endDate])
+                    // Incidencias que envuelven el mes completo (empiezan
+                    // antes y terminan después) — mismo criterio que nómina.
+                    ->orWhere(function ($q2) use ($startDate, $endDate) {
+                        $q2->where('start_date', '<=', $startDate)
+                            ->where('end_date', '>=', $endDate);
+                    });
             })
             ->get();
 
-        $byEmployee = $records->groupBy('employee_id')->map(function ($group) use ($incidents) {
+        // Días PRORRATEADOS al mes con el count_mode del tipo (auditoría #86):
+        // una vacación 28 jun–4 jul ya no aparece con 7 días en junio, y las
+        // incapacidades cuentan calendario igual que la nómina.
+        $holidayDates = Holiday::whereBetween('date', [$startDate->toDateString(), $endDate->toDateString()])
+            ->pluck('date')
+            ->map(fn ($d) => Carbon::parse($d)->toDateString())
+            ->all();
+
+        $byEmployee = $records->groupBy('employee_id')->map(function ($group) use ($incidents, $startDate, $endDate, $holidayDates) {
             $employee = $group->first()->employee;
             $empIncidents = $incidents->where('employee_id', $employee->id);
 
-            $vacationDays = $empIncidents->filter(fn ($i) => $i->incidentType?->category === 'vacation')->sum('days_count');
-            $sickDays = $empIncidents->filter(fn ($i) => $i->incidentType?->category === 'sick_leave')->sum('days_count');
+            $vacationDays = $empIncidents->filter(fn ($i) => $i->incidentType?->category === 'vacation')
+                ->sum(fn ($i) => $i->overlapDays($startDate, $endDate, $employee, $holidayDates));
+            $sickDays = $empIncidents->filter(fn ($i) => $i->incidentType?->category === 'sick_leave')
+                ->sum(fn ($i) => $i->overlapDays($startDate, $endDate, $employee, $holidayDates));
 
             return [
                 'employee' => $employee,
@@ -206,8 +222,11 @@ class ReportController extends Controller implements HasMiddleware
             ];
         });
 
-        $totalVacationDays = $incidents->filter(fn ($i) => $i->incidentType?->category === 'vacation')->sum('days_count');
-        $totalSickDays = $incidents->filter(fn ($i) => $i->incidentType?->category === 'sick_leave')->sum('days_count');
+        // Totales con el mismo prorrateo por solape/count_mode que arriba.
+        $totalVacationDays = $incidents->filter(fn ($i) => $i->incidentType?->category === 'vacation')
+            ->sum(fn ($i) => $i->employee ? $i->overlapDays($startDate, $endDate, $i->employee, $holidayDates) : 0);
+        $totalSickDays = $incidents->filter(fn ($i) => $i->incidentType?->category === 'sick_leave')
+            ->sum(fn ($i) => $i->employee ? $i->overlapDays($startDate, $endDate, $i->employee, $holidayDates) : 0);
 
         $summary = [
             'total_employees' => $byEmployee->count(),

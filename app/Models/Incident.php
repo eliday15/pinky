@@ -163,6 +163,45 @@ class Incident extends Model
     }
 
     /**
+     * Días de ESTA incidencia que solapan el rango [start, end], contados
+     * según el count_mode del tipo (DECISIONES §6): calendario para
+     * incapacidades (estándar IMSS), hábiles para vacaciones/permisos.
+     *
+     * Fuente ÚNICA del prorrateo: la consumen la nómina y los reportes
+     * (auditoría #86 — el reporte mensual sumaba days_count crudo).
+     *
+     * @param  list<string>  $holidayDates  fechas 'Y-m-d' festivas del rango
+     */
+    public function overlapDays(Carbon $startDate, Carbon $endDate, Employee $employee, array $holidayDates = []): int
+    {
+        $from = Carbon::parse($this->start_date)->max($startDate);
+        $to = Carbon::parse($this->end_date)->min($endDate);
+
+        if ($from->gt($to)) {
+            return 0;
+        }
+
+        $countMode = $this->incidentType->count_mode ?? IncidentType::COUNT_WORKING_DAYS;
+
+        if ($countMode === IncidentType::COUNT_CALENDAR_DAYS) {
+            return (int) $from->diffInDays($to) + 1;
+        }
+
+        $days = 0;
+
+        for ($day = $from->copy(); $day->lte($to); $day->addDay()) {
+            if (in_array($day->toDateString(), $holidayDates, true)) {
+                continue;
+            }
+            if ($employee->isEffectiveWorkingDay($day->englishDayOfWeek)) {
+                $days++;
+            }
+        }
+
+        return $days;
+    }
+
+    /**
      * Approve this incident.
      */
     public function approve(User $user): void
