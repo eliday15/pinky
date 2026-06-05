@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Controllers\Concerns\ScopesReportEmployees;
 use App\Models\AttendanceRecord;
 use App\Models\Employee;
+use App\Models\Holiday;
 use App\Models\Incident;
 use App\Models\SystemSetting;
 use App\Services\LateAbsenceService;
@@ -467,9 +468,17 @@ class ReportExportController extends Controller implements HasMiddleware
         $endDate = Carbon::parse($request->get('end_date', Carbon::now()->endOfWeek()->toDateString()));
 
         $employees = Employee::with(['schedule', 'department'])->active()->whereIn('id', $this->scopedActiveEmployeeIds())->get();
-        $allRecords = AttendanceRecord::whereBetween('work_date', [$startDate, $endDate])
+        $allRecords = AttendanceRecord::whereBetween('work_date', [$startDate->toDateString(), $endDate->toDateString()])
             ->whereIn('employee_id', $employees->pluck('id'))
             ->get();
+
+        // MISMO tratamiento de festivos que el reporte web (auditoría #28):
+        // los festivos no cuentan como días esperados y una fila obsoleta en
+        // fecha festiva no rompe la asistencia perfecta.
+        $holidayDates = Holiday::whereBetween('date', [$startDate->toDateString(), $endDate->toDateString()])
+            ->pluck('date')
+            ->map(fn ($d) => Carbon::parse($d)->toDateString())
+            ->all();
 
         $data = [];
         foreach ($employees as $employee) {
@@ -486,7 +495,8 @@ class ReportExportController extends Controller implements HasMiddleware
             $expectedDays = 0;
             $currentDate = $startDate->copy();
             while ($currentDate->lte($endDate)) {
-                if (in_array(strtolower($currentDate->englishDayOfWeek), $workingDays)) {
+                if (in_array(strtolower($currentDate->englishDayOfWeek), $workingDays)
+                    && ! in_array($currentDate->toDateString(), $holidayDates)) {
                     $expectedDays++;
                 }
                 $currentDate->addDay();
@@ -497,17 +507,19 @@ class ReportExportController extends Controller implements HasMiddleware
             }
 
             $records = $allRecords->where('employee_id', $employee->id);
-            $excusedDays = $records->whereIn('status', ['holiday', 'vacation', 'sick_leave', 'permission'])->count();
+            $excusedDays = $records->filter(fn ($r) => in_array($r->status, ['holiday', 'vacation', 'sick_leave', 'permission'])
+                || in_array(Carbon::parse($r->work_date)->toDateString(), $holidayDates))->count();
             $adjustedExpected = $expectedDays - $excusedDays;
 
             if ($adjustedExpected <= 0) {
                 continue;
             }
 
-            $presentRecords = $records->where('status', 'present');
-            $hasLate = $records->where('late_minutes', '>', 0)->isNotEmpty();
-            $hasEarlyDeparture = $records->where('early_departure_minutes', '>', 0)->isNotEmpty();
-            $hasAbsence = $records->where('status', 'absent')->isNotEmpty();
+            $nonHolidayRecords = $records->filter(fn ($r) => ! in_array(Carbon::parse($r->work_date)->toDateString(), $holidayDates));
+            $presentRecords = $nonHolidayRecords->where('status', 'present');
+            $hasLate = $nonHolidayRecords->where('late_minutes', '>', 0)->isNotEmpty();
+            $hasEarlyDeparture = $nonHolidayRecords->where('early_departure_minutes', '>', 0)->isNotEmpty();
+            $hasAbsence = $nonHolidayRecords->where('status', 'absent')->isNotEmpty();
 
             if ($presentRecords->count() >= $adjustedExpected && ! $hasLate && ! $hasEarlyDeparture && ! $hasAbsence) {
                 $data[] = [

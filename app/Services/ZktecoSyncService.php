@@ -805,9 +805,13 @@ class ZktecoSyncService
         // La salida temprana solo escala a falta si el negocio así lo decidió
         // (early_departure_is_absence) — el mismo flag que ya respetan los
         // reportes de faltas y salidas tempranas (DECISIONES, derivadas).
+        // Operador >= : el umbral mismo ya cuenta como falta — el MISMO
+        // criterio que usan los reportes de faltas y salidas tempranas
+        // (auditoría: un registro exactamente en el umbral era falta en el
+        // reporte pero no para el sync).
         $earlyDepartureThreshold = (int) SystemSetting::get('early_departure_absence_threshold', 30);
         $earlyDepartureIsAbsence = (bool) SystemSetting::get('early_departure_is_absence', true);
-        if ($earlyDepartureIsAbsence && $earlyDepartureMinutes > $earlyDepartureThreshold && ! $hasApprovedExitPermission) {
+        if ($earlyDepartureIsAbsence && $earlyDepartureMinutes >= $earlyDepartureThreshold && ! $hasApprovedExitPermission) {
             $status = 'absent';
             $qualifiesForPunctualityBonus = false;
         }

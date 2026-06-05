@@ -5,6 +5,7 @@ namespace Tests\Feature\Reports;
 use App\Models\AttendanceRecord;
 use App\Models\Department;
 use App\Models\Employee;
+use App\Models\Holiday;
 use App\Models\Incident;
 use App\Models\IncidentType;
 use App\Models\Schedule;
@@ -495,6 +496,56 @@ class ReportExportTest extends FeatureTestCase
         $body = $this->streamedBody($response);
         $this->assertStringContainsString('Dias Trabajados', $body);
         $this->assertStringContainsString('Horas Totales', $body);
+    }
+
+    /**
+     * Auditoría #63/85: el CSV de asistencia perfecta ahora trata los festivos
+     * IGUAL que el reporte web — un festivo no cuenta como día esperado y una
+     * fila obsoleta (absent) en fecha festiva no rompe la racha perfecta.
+     * Antes el export exigía 5 días y contaba el absent del festivo: el mismo
+     * empleado salía "perfecto" en pantalla y desaparecía del CSV.
+     */
+    public function test_asistencia_export_excludes_holidays_like_web_report(): void
+    {
+        $this->actingAsAdmin();
+
+        Holiday::factory()->onDate(self::MONDAY)->create();
+
+        $employee = $this->weekdayEmployee([
+            'full_name' => 'Festiva Perfecta',
+            'employee_number' => 'EMP-AS-FEST',
+        ]);
+
+        // Fila obsoleta del sync en el festivo: no debe romper la asistencia.
+        AttendanceRecord::factory()->create([
+            'employee_id' => $employee->id,
+            'work_date' => self::MONDAY,
+            'status' => 'absent',
+            'check_in' => null,
+            'worked_hours' => 0,
+        ]);
+
+        // Semana perfecta el resto de los días hábiles (Mar–Vie).
+        foreach (['2026-03-10', '2026-03-11', '2026-03-12', '2026-03-13'] as $day) {
+            AttendanceRecord::factory()->create([
+                'employee_id' => $employee->id,
+                'work_date' => $day,
+                'status' => 'present',
+                'worked_hours' => 8.00,
+                'late_minutes' => 0,
+                'early_departure_minutes' => 0,
+            ]);
+        }
+
+        $response = $this->get(route('reports.export.asistencia', [
+            'start_date' => self::MONDAY,
+            'end_date' => self::WEEK_END,
+        ]));
+        $this->assertCsvDownload($response);
+
+        $body = $this->streamedBody($response);
+        $this->assertStringContainsString('Festiva Perfecta', $body, 'el festivo no cuenta como día esperado ni su fila obsoleta rompe la asistencia perfecta');
+        $this->assertStringContainsString('EMP-AS-FEST', $body);
     }
 
     /**

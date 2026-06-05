@@ -256,4 +256,25 @@ class IncidentAttendanceRecalcTest extends FeatureTestCase
 
         $this->assertSame('absent', $record->fresh()->status, 'default: salida temprana excesiva sin permiso es falta');
     }
+
+    public function test_early_departure_exactly_at_threshold_is_absence(): void
+    {
+        // Auditoría #79: un registro EXACTAMENTE en el umbral (30 min default)
+        // era falta para los reportes (>=) pero no para el sync (>). El sync
+        // ahora usa >= — el mismo criterio en todos los módulos.
+        $employee = $this->employee();
+        $record = AttendanceRecord::factory()->for($employee)->create([
+            'work_date' => '2026-06-03',
+            'check_in' => '08:00:00',
+            'check_out' => '16:30:00', // 30 min antes de la salida de las 17:00
+            'status' => 'present',
+        ]);
+
+        app(ZktecoSyncService::class)->recalculateAttendanceRecord($record);
+
+        $record->refresh();
+
+        $this->assertSame(30, (int) $record->early_departure_minutes);
+        $this->assertSame('absent', $record->status, 'el umbral exacto ya cuenta como falta (>=), igual que en los reportes');
+    }
 }
