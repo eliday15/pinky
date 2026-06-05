@@ -43,7 +43,8 @@ class SystemSettingsSeeder extends Seeder
             ],
             [
                 'key' => 'punctuality_bonus_minutes',
-                'value' => '5',
+                // 10: lo prometido en la propuesta comercial (auditoría #76).
+                'value' => '10',
                 'type' => 'integer',
                 'group' => 'attendance',
                 'label' => 'Minutos Anticipados para Bono Puntualidad',

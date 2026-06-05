@@ -225,14 +225,17 @@ class ReportExportController extends Controller implements HasMiddleware
 
         return $this->exportCsv(
             'reporte_saldo_vacaciones.csv',
-            ['Empleado', 'No. Empleado', 'Departamento', 'Dias Asignados', 'Dias Usados', 'Saldo'],
+            ['Empleado', 'No. Empleado', 'Departamento', 'Dias Asignados', 'Dias Usados', 'Dias Apartados', 'Saldo'],
             $employees->map(fn ($employee) => [
                 $employee->full_name,
                 $employee->employee_number,
                 $employee->department?->name ?? '-',
                 $employee->vacation_days_entitled ?? 0,
                 $employee->vacation_days_used ?? 0,
-                ($employee->vacation_days_entitled ?? 0) - ($employee->vacation_days_used ?? 0),
+                $employee->vacation_days_reserved ?? 0,
+                // Mismo saldo que el modelo y el reporte web: resta también
+                // los días apartados (auditoría #83).
+                $employee->vacation_days_remaining,
             ])->toArray()
         );
     }

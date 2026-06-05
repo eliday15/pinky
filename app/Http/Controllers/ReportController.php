@@ -500,13 +500,17 @@ class ReportController extends Controller implements HasMiddleware
         $employees = $query->get()->map(function ($employee) {
             $entitled = $employee->vacation_days_entitled ?? 0;
             $used = $employee->vacation_days_used ?? 0;
-            $available = $entitled - $used;
+            // Saldo vía el accessor del modelo: resta también los días ya
+            // APARTADOS (vacation_days_reserved) — auditoría #83: el reporte
+            // mostraba más saldo del realmente disponible.
+            $available = $employee->vacation_days_remaining;
             $percentage = $entitled > 0 ? round(($used / $entitled) * 100, 0) : 0;
 
             return [
                 'employee' => $employee,
                 'entitled' => $entitled,
                 'used' => $used,
+                'reserved' => $employee->vacation_days_reserved ?? 0,
                 'available' => $available,
                 'percentage' => $percentage,
             ];

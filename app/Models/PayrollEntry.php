@@ -120,14 +120,22 @@ class PayrollEntry extends Model
 
     /**
      * Calculate gross pay from components.
+     *
+     * Mismos conceptos que persiste PayrollCalculatorService (auditoría #90:
+     * faltaban velada, otros conceptos, prima vacacional e incapacidad, y el
+     * método divergía del gross_pay guardado).
      */
     public function calculateGrossPay(): float
     {
         return $this->regular_pay
             + $this->overtime_pay
+            + $this->velada_pay
             + $this->holiday_pay
             + $this->weekend_pay
+            + $this->other_compensation_pay
             + $this->vacation_pay
+            + $this->vacation_premium_pay
+            + $this->sick_leave_pay
             + $this->bonuses;
     }
 

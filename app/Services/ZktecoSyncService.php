@@ -690,7 +690,8 @@ class ZktecoSyncService
         }
 
         // Punctuality bonus
-        $punctualityBonusMinutes = (int) SystemSetting::get('punctuality_bonus_minutes', 5);
+        // Default 10: lo que promete la propuesta comercial (auditoría #76).
+        $punctualityBonusMinutes = (int) SystemSetting::get('punctuality_bonus_minutes', 10);
         $qualifiesForPunctualityBonus = $actualEntry->lte($expectedEntry->copy()->subMinutes($punctualityBonusMinutes));
 
         // Early departure

@@ -29,6 +29,10 @@ class IncidentTypesSeeder extends Seeder
                 'is_paid' => true,
                 'deducts_vacation' => false,
                 'requires_approval' => true,
+                // DECISIONES §6: incapacidades cuentan días CALENDARIO
+                // (estándar IMSS). Sin esto, una instalación desde cero
+                // quedaba en working_days (el default de la columna).
+                'count_mode' => 'calendar_days',
                 'color' => '#F59E0B',
             ],
             [
