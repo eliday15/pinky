@@ -36,22 +36,6 @@ class ContpaqiPrenominaExport implements FromCollection, WithHeadings, WithMappi
     }
 
     /**
-     * Whether this period pays the base salary (weekly/biweekly).
-     */
-    private function paysBase(): bool
-    {
-        return in_array($this->period->type, ['weekly', 'biweekly'], true);
-    }
-
-    /**
-     * Whether this period pays the extras (monthly/biweekly).
-     */
-    private function paysExtras(): bool
-    {
-        return in_array($this->period->type, ['monthly', 'biweekly'], true);
-    }
-
-    /**
      * Column definitions (heading + value resolver), scoped to the period type.
      *
      * A weekly period exports only the base salary and absence deductions; a
@@ -71,18 +55,22 @@ class ContpaqiPrenominaExport implements FromCollection, WithHeadings, WithMappi
             ['heading' => 'PUESTO', 'value' => fn ($e) => $e->employee->position?->name ?? ''],
         ];
 
-        if ($this->paysBase()) {
+        if ($this->period->paysBase()) {
             $columns[] = ['heading' => $codes['regular_pay'].'_SUELDO', 'value' => fn ($e) => $this->formatNumber($e->regular_pay)];
             $columns[] = ['heading' => $codes['deductions'].'_DEDUCCIONES', 'value' => fn ($e) => $this->formatNumber($e->deductions)];
             $columns[] = ['heading' => 'HORAS_REGULARES', 'value' => fn ($e) => $this->formatNumber($e->regular_hours)];
             $columns[] = ['heading' => 'DIAS_TRABAJADOS', 'value' => fn ($e) => $e->days_worked];
-            $columns[] = ['heading' => 'DIAS_AUSENCIA', 'value' => fn ($e) => $e->days_absent];
+            // Informativo, SIN efecto monetario (DECISIONES §5 "solo no pagar
+            // el día"): el sueldo se paga por horas, así que estos días ya
+            // valen $0 sin deducción. El sufijo evita que el contador espere
+            // que esta columna concilie con DEDUCCIONES (auditoría #55).
+            $columns[] = ['heading' => 'DIAS_AUSENCIA_SIN_DESCUENTO', 'value' => fn ($e) => $e->days_absent];
             // Concilia DEDUCCIONES: la única deducción monetaria es la falta
             // por retardos (días FRT × sueldo diario) — "solo no pagar el día".
             $columns[] = ['heading' => 'DIAS_FALTA_RETARDOS', 'value' => fn ($e) => $e->late_absences_generated];
         }
 
-        if ($this->paysExtras()) {
+        if ($this->period->paysExtras()) {
             $columns[] = ['heading' => $codes['overtime_pay'].'_HORAS_EXTRA', 'value' => fn ($e) => $this->formatNumber($e->overtime_pay)];
             $columns[] = ['heading' => $codes['holiday_pay'].'_FESTIVO', 'value' => fn ($e) => $this->formatNumber($e->holiday_pay)];
             $columns[] = ['heading' => $codes['weekend_pay'].'_FIN_SEMANA', 'value' => fn ($e) => $this->formatNumber($e->weekend_pay)];

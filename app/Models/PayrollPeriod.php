@@ -87,4 +87,25 @@ class PayrollPeriod extends Model
     {
         return in_array($this->status, ['draft', 'calculating', 'review']);
     }
+
+    /**
+     * ¿Este periodo paga el sueldo BASE (semanal/quincenal legacy)?
+     *
+     * Fuente única de la regla de alcance base/extras: la consume la nómina
+     * (PayrollCalculatorService) y el export CONTPAQi — antes cada uno tenía
+     * su copia y podían divergir (auditoría #64).
+     */
+    public function paysBase(): bool
+    {
+        return in_array($this->type, ['weekly', 'biweekly'], true);
+    }
+
+    /**
+     * ¿Este periodo paga los EXTRAS (mensual/quincenal legacy): horas extra,
+     * velada, festivo, fin de semana, conceptos especiales, vacaciones y bonos?
+     */
+    public function paysExtras(): bool
+    {
+        return in_array($this->type, ['monthly', 'biweekly'], true);
+    }
 }

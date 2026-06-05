@@ -136,8 +136,8 @@ class PayrollCalculatorService
         // velada, holiday, weekend, special concepts) plus vacations and all
         // bonuses. A legacy BIWEEKLY period pays everything together.
         // ----------------------------------------------------------------
-        $payBase = in_array($period->type, ['weekly', 'biweekly'], true);
-        $payExtras = in_array($period->type, ['monthly', 'biweekly'], true);
+        $payBase = $period->paysBase();
+        $payExtras = $period->paysExtras();
 
         // Get rates
         $hourlyRate = $employee->hourly_rate;

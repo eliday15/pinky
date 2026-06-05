@@ -246,6 +246,12 @@ class PayrollSplitTest extends FeatureTestCase
         $this->assertNotContains('P002_HORAS_EXTRA', $weeklyHeadings);
         $this->assertNotContains('P007_OTROS', $weeklyHeadings);
 
+        // Auditoría #55: la columna de ausencias declara que NO concilia con
+        // DEDUCCIONES ("solo no pagar el día"); la que concilia es la de FRT.
+        $this->assertContains('DIAS_AUSENCIA_SIN_DESCUENTO', $weeklyHeadings);
+        $this->assertNotContains('DIAS_AUSENCIA', $weeklyHeadings);
+        $this->assertContains('DIAS_FALTA_RETARDOS', $weeklyHeadings);
+
         // Monthly exports the extras (incl. OTROS = cena/comida/dominical), not the base.
         $this->assertContains('P002_HORAS_EXTRA', $monthlyHeadings);
         $this->assertContains('P007_OTROS', $monthlyHeadings);
