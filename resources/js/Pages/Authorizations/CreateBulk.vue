@@ -12,6 +12,9 @@ const props = defineProps({
     types: Array,
     departments: Array,
     holidays: { type: Array, default: () => [] },
+    // Cuando el usuario puede aprobar, el alta masiva queda aprobada en el mismo
+    // paso; el botón lo refleja ("Crear y aprobar").
+    canApprove: { type: Boolean, default: false },
 });
 
 const holidaySet = computed(() => new Set(props.holidays || []));
@@ -1109,7 +1112,7 @@ const canSubmit = computed(() => {
                         :disabled="!canSubmit"
                         class="px-6 py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700 transition-colors disabled:opacity-50"
                     >
-                        {{ form.processing ? 'Creando...' : `Crear ${submitButtonCount} Autorizaciones` }}
+                        {{ form.processing ? 'Creando...' : (canApprove ? `Crear y aprobar ${submitButtonCount}` : `Crear ${submitButtonCount} Autorizaciones`) }}
                     </button>
                 </div>
             </form>

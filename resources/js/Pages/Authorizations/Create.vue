@@ -15,6 +15,9 @@ const props = defineProps({
     prefill: { type: Object, default: null },
     departments: { type: Array, default: () => [] },
     holidays: { type: Array, default: () => [] },
+    // Cuando el usuario puede aprobar, el alta queda aprobada en el mismo paso;
+    // el botón lo refleja ("Crear y aprobar").
+    canApprove: { type: Boolean, default: false },
 });
 
 const holidaySet = computed(() => new Set(props.holidays || []));
@@ -870,7 +873,9 @@ const submitCount = computed(() => {
                     </Link>
                     <button type="submit" :disabled="!canSubmit"
                         class="px-6 py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700 transition-colors disabled:opacity-50">
-                        {{ form.processing ? 'Guardando...' : (submitCount > 1 ? `Crear ${submitCount} Autorizaciones` : 'Crear Autorización') }}
+                        {{ form.processing ? 'Guardando...' : (canApprove
+                            ? (submitCount > 1 ? `Crear y aprobar ${submitCount}` : 'Crear y aprobar')
+                            : (submitCount > 1 ? `Crear ${submitCount} Autorizaciones` : 'Crear Autorización')) }}
                     </button>
                 </div>
             </form>

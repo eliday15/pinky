@@ -205,6 +205,9 @@ class AuthorizationController extends Controller
             'prefill' => $prefill,
             'departments' => \App\Models\Department::active()->orderBy('name')->get(['id', 'name']),
             'holidays' => \App\Models\Holiday::pluck('date')->map(fn($d) => $d->toDateString())->values()->all(),
+            // Quien puede aprobar verá "Crear y aprobar": su alta queda aprobada
+            // en el mismo paso (approveOnCreate).
+            'canApprove' => $user->hasPermissionTo('authorizations.approve'),
         ]);
     }
 
@@ -403,6 +406,9 @@ class AuthorizationController extends Controller
                 ->orderBy('full_name')
                 ->get(['id', 'full_name', 'department_id']),
             'holidays' => \App\Models\Holiday::pluck('date')->map(fn($d) => $d->toDateString())->values()->all(),
+            // Quien puede aprobar verá "Crear y aprobar": su alta masiva queda
+            // aprobada en el mismo paso (approveOnCreate).
+            'canApprove' => $user->hasPermissionTo('authorizations.approve'),
         ]);
     }
 
