@@ -43,9 +43,12 @@ class PayrollCalculatorService
 
         $period->update(['status' => 'calculating']);
 
-        // Eager load compensation types to avoid N+1
+        // Eager load compensation types + department (weekend unit rule) to avoid N+1
         $employees = Employee::active()
-            ->with(['compensationTypes' => fn ($q) => $q->wherePivot('is_active', true)])
+            ->with([
+                'compensationTypes' => fn ($q) => $q->wherePivot('is_active', true),
+                'department',
+            ])
             ->get();
 
         foreach ($employees as $employee) {
@@ -216,6 +219,11 @@ class PayrollCalculatorService
             $authorizedOvertimeHours = $veladaMetrics['overtime_authorized_hours'];
 
             if ($useCompTypes) {
+                // Almacén PT (u otro depto con weekend_unit_hours) paga el fin de
+                // semana por unidades de N horas trabajadas, no por día. NULL =
+                // pago normal por fila/día.
+                $weekendUnitHours = $employee->department?->weekend_unit_hours;
+
                 $compensationPayments = $this->resolver->calculateAllCompensation(
                     $employee,
                     [
@@ -228,6 +236,7 @@ class PayrollCalculatorService
                     $dailySalary,
                     $approvedAuthorizations,
                     $holidayDates,
+                    $weekendUnitHours,
                 );
 
                 $compensationConcepts = $compensationPayments['concepts'];

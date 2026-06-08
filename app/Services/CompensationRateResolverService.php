@@ -229,6 +229,7 @@ class CompensationRateResolverService
         float $dailySalary,
         ?Collection $authorizations = null,
         array $holidayDates = [],
+        ?int $weekendUnitHours = null,
     ): array {
         $concepts = [];
         $total = 0;
@@ -391,15 +392,104 @@ class CompensationRateResolverService
             $dailySalary,
             $consumedAuthIds,
             $holidayDates,
+            // Cuando el depto cuenta el fin de semana por unidades de horas
+            // trabajadas, NO se paga por fila/día aquí: se paga abajo por unidades.
+            $weekendUnitHours !== null,
         );
         foreach ($generic['concepts'] as $concept) {
             $concepts[] = $concept;
         }
         $total += $generic['total'];
 
+        // Fin de semana por unidades (Almacén PT): el pago se basa en las horas
+        // realmente trabajadas en sáb/dom, no por fila/día. unidades =
+        // horas_fin_de_semana ÷ weekend_unit_hours, y se paga unidades × valor
+        // de una unidad del concepto FIN.
+        if ($weekendUnitHours && (float) ($metrics['weekend_hours'] ?? 0) > 0 && $authorizations) {
+            $weekendConcept = $this->weekendUnitsConcept(
+                $employee,
+                $authorizations,
+                $hourlyRate,
+                $dailySalary,
+                (float) $metrics['weekend_hours'],
+                $weekendUnitHours,
+            );
+            if ($weekendConcept) {
+                $concepts[] = $weekendConcept;
+                $total += $weekendConcept['amount'];
+            }
+        }
+
         return [
             'total' => round($total, 2),
             'concepts' => $concepts,
+        ];
+    }
+
+    /**
+     * Build the weekend pay concept for departments that count the weekend by
+     * worked-hour units (e.g. Almacén PT: 6 h = 1 fin de semana). Pays
+     * `unidades × valor de una unidad`, where unidades = weekendHours ÷
+     * weekendUnitHours and the per-unit value follows the FIN comp type's mode
+     * (per_day / per_hour / one_time) so it stays proportional regardless of
+     * how the concept is configured. Returns null when there is no weekend
+     * comp type on the authorizations or the amount resolves to zero.
+     */
+    private function weekendUnitsConcept(
+        Employee $employee,
+        Collection $authorizations,
+        float $hourlyRate,
+        float $dailySalary,
+        float $weekendHours,
+        int $weekendUnitHours,
+    ): ?array {
+        if ($weekendUnitHours <= 0) {
+            return null;
+        }
+
+        $weekendAuth = $authorizations->first(
+            fn (Authorization $a) => $a->compensationType?->hasWeekendPullRule()
+        );
+        $compType = $weekendAuth?->compensationType;
+        if (! $compType) {
+            return null;
+        }
+
+        $units = round($weekendHours / $weekendUnitHours, 2);
+        if ($units <= 0) {
+            return null;
+        }
+
+        $rate = $this->resolveRate($employee, $compType);
+
+        // Valor de UNA unidad de fin de semana según el modo del concepto.
+        $perUnit = match ($compType->application_mode) {
+            CompensationType::APPLICATION_PER_HOUR => $compType->calculateCompensation(
+                $hourlyRate, $dailySalary, (float) $weekendUnitHours, 0, $rate['percentage'], $rate['fixed_amount'],
+            ),
+            CompensationType::APPLICATION_PER_DAY => $compType->calculateCompensation(
+                $hourlyRate, $dailySalary, 0, 1, $rate['percentage'], $rate['fixed_amount'],
+            ),
+            default => $compType->calculateCompensation(
+                $hourlyRate, $dailySalary, 0, 0, $rate['percentage'], $rate['fixed_amount'],
+            ),
+        };
+
+        $amount = round($units * $perUnit, 2);
+        if ($amount <= 0) {
+            return null;
+        }
+
+        return [
+            'code' => $compType->code,
+            'name' => $compType->name,
+            'hours' => round($weekendHours, 2),
+            'days' => $units,
+            'rate' => $rate,
+            'amount' => $amount,
+            'authorization_type' => $compType->authorization_type,
+            'attendance_pull_rule' => $compType->attendance_pull_rule,
+            'source' => 'weekend_units',
         ];
     }
 
@@ -432,6 +522,7 @@ class CompensationRateResolverService
         float $dailySalary,
         array $consumedAuthIds,
         array $holidayDates = [],
+        bool $skipWeekendPullRule = false,
     ): array {
         $concepts = [];
         $total = 0.0;
@@ -441,6 +532,11 @@ class CompensationRateResolverService
             // Only pay authorizations that carry a compensation type — mirrors
             // the report, which ignores authorizations without a comp type.
             if (! $auth->compensation_type_id) {
+                continue;
+            }
+            // Cuando el depto paga el fin de semana por unidades de horas
+            // trabajadas, el concepto FIN se paga aparte (no por fila/día).
+            if ($skipWeekendPullRule && $auth->compensationType?->hasWeekendPullRule()) {
                 continue;
             }
             // Never re-pay something the overtime/velada paths already paid.

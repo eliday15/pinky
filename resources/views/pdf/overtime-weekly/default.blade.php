@@ -5,6 +5,9 @@
         if ($v <= 0) return '0';
         return rtrim(rtrim(number_format((float) $v, 2, '.', ''), '0'), '.');
     };
+    // Almacén PT muestra el FIN DE SEMANA como conteo de unidades (horas ÷ N)
+    // en vez de horas.
+    $weekendByUnits = ! empty($report['weekend_unit_hours']);
 @endphp
 
 @section('content')
@@ -16,7 +19,7 @@
                 <th>{{ \Carbon\Carbon::parse($date)->format('d/m/Y') }}</th>
             @endforeach
             <th>TOTAL HORAS</th>
-            <th>FIN DE SEMANA</th>
+            <th>{{ $weekendByUnits ? 'FINES DE SEMANA' : 'FIN DE SEMANA' }}</th>
             <th>COMIDA</th>
             <th>VELADA</th>
             <th>CENA</th>
@@ -32,7 +35,7 @@
                     <td class="num {{ $extra <= 0 ? 'zero' : '' }}">{{ $fmt($extra) }}</td>
                 @endforeach
                 <td class="num">{{ $fmt($row['totals']['total_hours']) }}</td>
-                <td class="num">{{ $fmt($row['totals']['weekend_hours']) }}</td>
+                <td class="num">{{ $weekendByUnits ? $fmt($row['totals']['weekend_units']) : $fmt($row['totals']['weekend_hours']) }}</td>
                 <td class="center {{ $row['totals']['comida_count'] === 0 ? 'zero' : '' }}">{{ $row['totals']['comida_count'] }}</td>
                 <td class="center {{ $row['totals']['velada_count'] === 0 ? 'zero' : '' }}">{{ $row['totals']['velada_count'] }}</td>
                 <td class="center {{ $row['totals']['cena_count'] === 0 ? 'zero' : '' }}">{{ $row['totals']['cena_count'] }}</td>
@@ -57,7 +60,7 @@
                     <td class="num">{{ $fmt($colSum) }}</td>
                 @endforeach
                 <td class="num">{{ $fmt($report['totals']['total_hours']) }}</td>
-                <td class="num">{{ $fmt($report['totals']['weekend_hours']) }}</td>
+                <td class="num">{{ $weekendByUnits ? $fmt($report['totals']['weekend_units']) : $fmt($report['totals']['weekend_hours']) }}</td>
                 <td class="center">{{ $report['totals']['comida_count'] }}</td>
                 <td class="center">{{ $report['totals']['velada_count'] }}</td>
                 <td class="center">{{ $report['totals']['cena_count'] }}</td>

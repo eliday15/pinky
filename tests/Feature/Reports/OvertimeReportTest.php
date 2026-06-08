@@ -146,9 +146,73 @@ class OvertimeReportTest extends FeatureTestCase
                     ->where('department.name', 'Producción')
                     ->where('week_start', self::WEEK_START)
                     ->has('week_end')
+                    ->where('weekend_unit_hours', null) // depto sin regla de unidades
                     ->has('dates', 7)
                     ->has('rows')
                     ->has('totals')));
+    }
+
+    /**
+     * Rango libre ("de qué día a qué día"): al mandar end_date el reporte cubre
+     * el rango literal [week_start, end_date], sin normalizar a la semana lun–dom.
+     */
+    public function test_preview_supports_custom_date_range(): void
+    {
+        $this->actingAsAdmin();
+
+        $dept = Department::factory()->create(['name' => 'Almacén PT', 'code' => 'ALMACENPT']);
+
+        // Miércoles a viernes: 3 días exactos.
+        $this->get(route('reports.overtime-weekly.preview', [
+            'department_id' => $dept->id,
+            'week_start' => '2026-03-11', // miércoles
+            'end_date' => '2026-03-13',   // viernes
+        ]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Reports/OvertimeWeekly/Preview')
+                ->where('report.week_start', '2026-03-11')
+                ->where('report.week_end', '2026-03-13')
+                ->has('report.dates', 3));
+    }
+
+    /**
+     * Sin end_date se conserva el comportamiento semanal: cualquier fecha se
+     * normaliza a su semana lun–dom (7 días).
+     */
+    public function test_preview_without_end_date_falls_back_to_week(): void
+    {
+        $this->actingAsAdmin();
+
+        $dept = Department::factory()->create();
+
+        $this->get(route('reports.overtime-weekly.preview', [
+            'department_id' => $dept->id,
+            'week_start' => '2026-03-11', // miércoles → semana 09–15 mar
+        ]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('report.week_start', '2026-03-09')
+                ->where('report.week_end', '2026-03-15')
+                ->has('report.dates', 7));
+    }
+
+    /**
+     * end_date anterior a week_start se rechaza (regla after_or_equal).
+     */
+    public function test_preview_rejects_end_date_before_start(): void
+    {
+        $this->actingAsAdmin();
+
+        $dept = Department::factory()->create();
+
+        $this->from(route('reports.overtime-weekly.index'))
+            ->get(route('reports.overtime-weekly.preview', [
+                'department_id' => $dept->id,
+                'week_start' => '2026-03-13',
+                'end_date' => '2026-03-11',
+            ]))
+            ->assertSessionHasErrors(['end_date']);
     }
 
     /**

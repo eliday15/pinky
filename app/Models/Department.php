@@ -31,6 +31,7 @@ class Department extends Model
         'code',
         'description',
         'default_break_minutes',
+        'weekend_unit_hours',
         'supervisor_user_id',
         'is_active',
     ];
@@ -38,6 +39,7 @@ class Department extends Model
     protected $casts = [
         'is_active' => 'boolean',
         'default_break_minutes' => 'integer',
+        'weekend_unit_hours' => 'integer',
     ];
 
     /**

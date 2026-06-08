@@ -56,10 +56,20 @@ class WeeklyOvertimeReportService
      * Returns:
      *     Array with department, dates, rows and totals ready for templates.
      */
-    public function buildReport(Department $department, Carbon $weekStart): array
+    public function buildReport(Department $department, Carbon $weekStart, ?Carbon $rangeEnd = null): array
     {
-        $start = $weekStart->copy()->startOfWeek();
-        $end = $start->copy()->endOfWeek();
+        // Rango libre: si viene una fecha fin se respeta el rango literal
+        // [inicio, fin] que pidió el usuario ("de qué día a qué día"). Sin
+        // fecha fin se conserva el comportamiento semanal de siempre (la
+        // semana lun–dom que contiene la fecha dada), por lo que los llamados
+        // existentes no cambian.
+        if ($rangeEnd !== null) {
+            $start = $weekStart->copy()->startOfDay();
+            $end = $rangeEnd->copy()->startOfDay();
+        } else {
+            $start = $weekStart->copy()->startOfWeek();
+            $end = $start->copy()->endOfWeek();
+        }
 
         $dates = [];
         $cursor = $start->copy();
@@ -88,14 +98,20 @@ class WeeklyOvertimeReportService
             ->get()
             ->groupBy('employee_id');
 
+        // Departamentos como Almacén PT cuentan el fin de semana por unidades de
+        // N horas trabajadas (weekend_unit_hours) en vez de por día. NULL =
+        // comportamiento normal (se muestran las horas/conteo de siempre).
+        $weekendUnitHours = $department->weekend_unit_hours;
+
         $rows = $employees->map(fn (Employee $employee) => $this->buildEmployeeRow(
             $employee,
             $dates,
             $records->get($employee->id, collect()),
             $authorizations->get($employee->id, collect()),
+            $weekendUnitHours,
         ))->values()->all();
 
-        $totals = $this->buildGrandTotals($rows);
+        $totals = $this->buildGrandTotals($rows, $weekendUnitHours);
 
         return [
             'department' => [
@@ -105,6 +121,7 @@ class WeeklyOvertimeReportService
             ],
             'week_start' => $start->toDateString(),
             'week_end' => $end->toDateString(),
+            'weekend_unit_hours' => $weekendUnitHours,
             'dates' => $dates,
             'rows' => $rows,
             'totals' => $totals,
@@ -119,6 +136,7 @@ class WeeklyOvertimeReportService
         array $dates,
         Collection $records,
         Collection $authorizations,
+        ?int $weekendUnitHours = null,
     ): array {
         $recordsByDate = $records->keyBy(fn (AttendanceRecord $r) => $r->work_date->toDateString());
         $authsByDate = $authorizations->groupBy(fn (Authorization $a) => $a->date->toDateString());
@@ -126,6 +144,7 @@ class WeeklyOvertimeReportService
         $days = [];
         $weeklyExtra = 0.0;
         $weeklyWeekend = 0.0;
+        $weeklyWeekendWorked = 0.0;
         $veladaCount = 0;
         $cenaCount = 0;
         $comidaCount = 0;
@@ -142,6 +161,7 @@ class WeeklyOvertimeReportService
             $days[$date] = $day;
             $weeklyExtra += $day['overtime_hours'];
             $weeklyWeekend += $day['weekend_hours'];
+            $weeklyWeekendWorked += $day['weekend_worked_hours'];
             $weeklyDetected += $day['detected_overtime_hours'];
             $weeklyPending += $day['pending_overtime_hours'];
             $veladaCount += $day['velada_marker'];
@@ -160,6 +180,12 @@ class WeeklyOvertimeReportService
             'totals' => [
                 'total_hours' => round($weeklyExtra, 2),
                 'weekend_hours' => round($weeklyWeekend, 2),
+                'weekend_worked_hours' => round($weeklyWeekendWorked, 2),
+                // Unidades de fin de semana (horas trabajadas ÷ N). Null cuando
+                // el depto no usa el conteo por unidades.
+                'weekend_units' => $weekendUnitHours
+                    ? round($weeklyWeekendWorked / $weekendUnitHours, 2)
+                    : null,
                 'detected_hours' => round($weeklyDetected, 2),
                 'pending_hours' => round($weeklyPending, 2),
                 'velada_count' => $veladaCount,
@@ -194,6 +220,7 @@ class WeeklyOvertimeReportService
             'overtime_hours' => 0.0,
             'velada_hours' => 0.0,
             'weekend_hours' => 0.0,
+            'weekend_worked_hours' => 0.0,
             'worked_hours' => 0.0,
             'detected_overtime_hours' => 0.0,
             'pending_overtime_hours' => 0.0,
@@ -253,6 +280,11 @@ class WeeklyOvertimeReportService
             'overtime_hours' => round($overtimeHours, 2),
             'velada_hours' => round($veladaHours, 2),
             'weekend_hours' => round($weekendHours, 2),
+            // Horas realmente trabajadas ese día cuando hay autorización de fin
+            // de semana (FIN): base del conteo por unidades de Almacén PT.
+            'weekend_worked_hours' => $byCode->has(self::WEEKEND_CODE)
+                ? round((float) ($record->worked_hours ?? 0), 2)
+                : 0.0,
             'worked_hours' => round((float) ($record->worked_hours ?? 0), 2),
             'detected_overtime_hours' => round($detectedHours, 2),
             'pending_overtime_hours' => round($pendingHours, 2),
@@ -311,10 +343,11 @@ class WeeklyOvertimeReportService
     /**
      * Sum totals across all rows.
      */
-    private function buildGrandTotals(array $rows): array
+    private function buildGrandTotals(array $rows, ?int $weekendUnitHours = null): array
     {
         $totalHours = 0.0;
         $weekendHours = 0.0;
+        $weekendWorked = 0.0;
         $detectedHours = 0.0;
         $pendingHours = 0.0;
         $veladaCount = 0;
@@ -324,6 +357,7 @@ class WeeklyOvertimeReportService
         foreach ($rows as $row) {
             $totalHours += $row['totals']['total_hours'];
             $weekendHours += $row['totals']['weekend_hours'];
+            $weekendWorked += $row['totals']['weekend_worked_hours'] ?? 0;
             $detectedHours += $row['totals']['detected_hours'] ?? 0;
             $pendingHours += $row['totals']['pending_hours'] ?? 0;
             $veladaCount += $row['totals']['velada_count'];
@@ -334,6 +368,10 @@ class WeeklyOvertimeReportService
         return [
             'total_hours' => round($totalHours, 2),
             'weekend_hours' => round($weekendHours, 2),
+            'weekend_worked_hours' => round($weekendWorked, 2),
+            'weekend_units' => $weekendUnitHours
+                ? round($weekendWorked / $weekendUnitHours, 2)
+                : null,
             'detected_hours' => round($detectedHours, 2),
             'pending_hours' => round($pendingHours, 2),
             'velada_count' => $veladaCount,

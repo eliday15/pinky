@@ -9,30 +9,62 @@ const props = defineProps({
 });
 
 const selectedDepartment = ref(props.departments[0]?.id ?? null);
-const weekStart = ref(props.defaultWeekStart);
 
-const formatRange = computed(() => {
-    if (!weekStart.value) return '';
-    const start = new Date(weekStart.value + 'T00:00:00');
-    const dow = (start.getDay() + 6) % 7;
-    start.setDate(start.getDate() - dow);
-    const end = new Date(start);
-    end.setDate(end.getDate() + 6);
-    const fmt = (d) => d.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' });
-    return `${fmt(start)} al ${fmt(end)}`;
+// El periodo se elige de qué día a qué día. Por defecto arranca en la semana
+// actual (lun–dom), pero el usuario puede mover libremente inicio y fin.
+const addDays = (dateStr, days) => {
+    const d = new Date(dateStr + 'T00:00:00');
+    d.setDate(d.getDate() + days);
+    return d.toISOString().split('T')[0];
+};
+
+const startDate = ref(props.defaultWeekStart);
+const endDate = ref(addDays(props.defaultWeekStart, 6));
+
+const rangeValid = computed(() => {
+    if (!startDate.value || !endDate.value) return false;
+    return startDate.value <= endDate.value;
 });
 
-const changeWeek = (delta) => {
-    const d = new Date(weekStart.value + 'T00:00:00');
-    d.setDate(d.getDate() + delta * 7);
-    weekStart.value = d.toISOString().split('T')[0];
+const dayCount = computed(() => {
+    if (!rangeValid.value) return 0;
+    const s = new Date(startDate.value + 'T00:00:00');
+    const e = new Date(endDate.value + 'T00:00:00');
+    return Math.round((e - s) / 86400000) + 1;
+});
+
+const formatRange = computed(() => {
+    if (!rangeValid.value) return '';
+    const fmt = (str) =>
+        new Date(str + 'T00:00:00').toLocaleDateString('es-MX', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+        });
+    return `${fmt(startDate.value)} al ${fmt(endDate.value)}`;
+});
+
+// Salto rápido: mueve TODO el rango una semana (mantiene su duración).
+const shiftWeek = (delta) => {
+    startDate.value = addDays(startDate.value, delta * 7);
+    endDate.value = addDays(endDate.value, delta * 7);
+};
+
+// Atajo: encuadra el rango a la semana lun–dom que contiene la fecha inicio.
+const snapToWeek = () => {
+    const d = new Date(startDate.value + 'T00:00:00');
+    const dow = (d.getDay() + 6) % 7; // 0 = lunes
+    const monday = addDays(startDate.value, -dow);
+    startDate.value = monday;
+    endDate.value = addDays(monday, 6);
 };
 
 const generate = () => {
-    if (!selectedDepartment.value || !weekStart.value) return;
+    if (!selectedDepartment.value || !rangeValid.value) return;
     router.get(route('reports.overtime-weekly.preview'), {
         department_id: selectedDepartment.value,
-        week_start: weekStart.value,
+        week_start: startDate.value,
+        end_date: endDate.value,
     });
 };
 </script>
@@ -43,7 +75,7 @@ const generate = () => {
     <AppLayout>
         <template #header>
             <h2 class="text-xl font-semibold leading-tight text-gray-800">
-                Formato de Tiempo Extra (Semanal)
+                Formato de Tiempo Extra
             </h2>
         </template>
 
@@ -70,11 +102,11 @@ const generate = () => {
                 </div>
 
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Semana</label>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Periodo</label>
                     <div class="flex items-center gap-2">
                         <button
                             type="button"
-                            @click="changeWeek(-1)"
+                            @click="shiftWeek(-1)"
                             class="p-2 rounded hover:bg-gray-100"
                             aria-label="Semana anterior"
                         >
@@ -82,14 +114,29 @@ const generate = () => {
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
                             </svg>
                         </button>
-                        <input
-                            v-model="weekStart"
-                            type="date"
-                            class="flex-1 rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                        />
+                        <div class="flex-1 grid grid-cols-2 gap-2">
+                            <div>
+                                <span class="block text-xs text-gray-500 mb-1">Desde</span>
+                                <input
+                                    v-model="startDate"
+                                    type="date"
+                                    :max="endDate"
+                                    class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                />
+                            </div>
+                            <div>
+                                <span class="block text-xs text-gray-500 mb-1">Hasta</span>
+                                <input
+                                    v-model="endDate"
+                                    type="date"
+                                    :min="startDate"
+                                    class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                />
+                            </div>
+                        </div>
                         <button
                             type="button"
-                            @click="changeWeek(1)"
+                            @click="shiftWeek(1)"
                             class="p-2 rounded hover:bg-gray-100"
                             aria-label="Semana siguiente"
                         >
@@ -98,7 +145,15 @@ const generate = () => {
                             </svg>
                         </button>
                     </div>
-                    <p class="text-xs text-gray-500 mt-1">Semana del {{ formatRange }}</p>
+                    <div class="flex items-center justify-between mt-1">
+                        <p v-if="rangeValid" class="text-xs text-gray-500">
+                            Del {{ formatRange }} ({{ dayCount }} {{ dayCount === 1 ? 'día' : 'días' }})
+                        </p>
+                        <p v-else class="text-xs text-red-600">La fecha "Desde" debe ser anterior o igual a "Hasta".</p>
+                        <button type="button" @click="snapToWeek" class="text-xs text-pink-600 hover:text-pink-800">
+                            Ajustar a semana (lun–dom)
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -106,7 +161,7 @@ const generate = () => {
                 <button
                     type="button"
                     @click="generate"
-                    :disabled="!selectedDepartment || !weekStart"
+                    :disabled="!selectedDepartment || !rangeValid"
                     class="inline-flex items-center px-4 py-2 bg-pink-600 text-white rounded-lg shadow hover:bg-pink-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                     Generar reporte

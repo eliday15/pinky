@@ -62,9 +62,9 @@ class OvertimeReportController extends Controller implements HasMiddleware
      */
     public function preview(Request $request): Response
     {
-        [$department, $weekStart] = $this->resolveInputs($request);
+        [$department, $start, $end] = $this->resolveInputs($request);
 
-        $report = $this->reportService->buildReport($department, $weekStart);
+        $report = $this->reportService->buildReport($department, $start, $end);
         $template = $this->registry->for($department);
 
         return Inertia::render('Reports/OvertimeWeekly/Preview', [
@@ -78,9 +78,9 @@ class OvertimeReportController extends Controller implements HasMiddleware
      */
     public function exportPdf(Request $request): HttpResponse
     {
-        [$department, $weekStart] = $this->resolveInputs($request);
+        [$department, $start, $end] = $this->resolveInputs($request);
 
-        $report = $this->reportService->buildReport($department, $weekStart);
+        $report = $this->reportService->buildReport($department, $start, $end);
         $template = $this->registry->for($department);
 
         $pdf = Pdf::loadView($template->pdfView(), ['report' => $report])
@@ -96,13 +96,13 @@ class OvertimeReportController extends Controller implements HasMiddleware
      */
     public function exportExcel(Request $request): BinaryFileResponse
     {
-        [$department, $weekStart] = $this->resolveInputs($request);
+        [$department, $start, $end] = $this->resolveInputs($request);
 
-        $report = $this->reportService->buildReport($department, $weekStart);
+        $report = $this->reportService->buildReport($department, $start, $end);
         $template = $this->registry->for($department);
 
         $title = sprintf(
-            'FORMATO DE TIEMPO EXTRA %s - SEMANA DEL %s AL %s',
+            'FORMATO DE TIEMPO EXTRA %s - PERIODO DEL %s AL %s',
             strtoupper($report['department']['name']),
             Carbon::parse($report['week_start'])->format('d/m/Y'),
             Carbon::parse($report['week_end'])->format('d/m/Y'),
@@ -120,21 +120,29 @@ class OvertimeReportController extends Controller implements HasMiddleware
     }
 
     /**
-     * Validate and parse request inputs into a Department + Carbon.
+     * Validate and parse request inputs into a Department, start date and an
+     * optional range end.
      *
-     * @return array{0: Department, 1: Carbon}
+     * `week_start` is the range start (kept for backwards compatibility).
+     * `end_date` is optional: when present the report covers the literal range
+     * [week_start, end_date]; when absent it falls back to the lun–dom week
+     * that contains week_start.
+     *
+     * @return array{0: Department, 1: Carbon, 2: ?Carbon}
      */
     private function resolveInputs(Request $request): array
     {
         $validated = $request->validate([
             'department_id' => ['required', 'integer', 'exists:departments,id'],
             'week_start' => ['required', 'date'],
+            'end_date' => ['nullable', 'date', 'after_or_equal:week_start'],
         ]);
 
         $department = Department::findOrFail($validated['department_id']);
-        $weekStart = Carbon::parse($validated['week_start']);
+        $start = Carbon::parse($validated['week_start']);
+        $end = ! empty($validated['end_date']) ? Carbon::parse($validated['end_date']) : null;
 
-        return [$department, $weekStart];
+        return [$department, $start, $end];
     }
 
     /**

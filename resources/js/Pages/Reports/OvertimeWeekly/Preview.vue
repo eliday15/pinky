@@ -46,6 +46,7 @@ const tableComponent = computed(() => {
 const exportParams = computed(() => ({
     department_id: props.report.department.id,
     week_start: props.report.week_start,
+    end_date: props.report.week_end,
 }));
 
 const pdfHref = computed(() => route('reports.overtime-weekly.export.pdf', exportParams.value));
@@ -69,7 +70,7 @@ const excelHref = computed(() => route('reports.overtime-weekly.export.excel', e
                     &larr; Cambiar semana / departamento
                 </Link>
                 <span class="text-sm text-gray-500">
-                    Semana del <strong>{{ formatDate(report.week_start) }}</strong> al
+                    Periodo del <strong>{{ formatDate(report.week_start) }}</strong> al
                     <strong>{{ formatDate(report.week_end) }}</strong>
                 </span>
             </div>
@@ -114,8 +115,8 @@ const excelHref = computed(() => route('reports.overtime-weekly.export.excel', e
                 <p class="text-xs text-gray-500">Pendientes por aprobar</p>
             </div>
             <div class="bg-white rounded-lg shadow p-3 text-center">
-                <p class="text-2xl font-bold text-amber-600">{{ report.totals.weekend_hours }}h</p>
-                <p class="text-xs text-gray-500">Fin de Semana</p>
+                <p class="text-2xl font-bold text-amber-600">{{ report.weekend_unit_hours ? report.totals.weekend_units : report.totals.weekend_hours + 'h' }}</p>
+                <p class="text-xs text-gray-500">{{ report.weekend_unit_hours ? 'Fines de Semana' : 'Fin de Semana' }}</p>
             </div>
             <div class="bg-white rounded-lg shadow p-3 text-center">
                 <p class="text-2xl font-bold text-purple-600">{{ report.totals.velada_count }}</p>

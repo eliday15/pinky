@@ -25,7 +25,7 @@
 <body>
     <h1>FORMATO DE TIEMPO EXTRA - {{ strtoupper($report['department']['name']) }}</h1>
     <div class="subtitle">
-        SEMANA DEL: {{ \Carbon\Carbon::parse($report['week_start'])->format('d/m/Y') }}
+        PERIODO DEL: {{ \Carbon\Carbon::parse($report['week_start'])->format('d/m/Y') }}
         AL {{ \Carbon\Carbon::parse($report['week_end'])->format('d/m/Y') }}
     </div>
 

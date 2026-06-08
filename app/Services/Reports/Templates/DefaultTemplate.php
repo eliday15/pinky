@@ -28,7 +28,7 @@ class DefaultTemplate extends AbstractOvertimeReportTemplate
             $headings[] = $this->formatDate($date);
         }
         $headings[] = 'TOTAL HORAS';
-        $headings[] = 'FIN DE SEMANA';
+        $headings[] = ! empty($report['weekend_unit_hours']) ? 'FINES DE SEMANA' : 'FIN DE SEMANA';
         $headings[] = 'COMIDA';
         $headings[] = 'VELADA';
         $headings[] = 'CENA';
@@ -51,7 +51,9 @@ class DefaultTemplate extends AbstractOvertimeReportTemplate
             }
 
             $line[] = $this->formatHours($row['totals']['total_hours']);
-            $line[] = $this->formatHours($row['totals']['weekend_hours']);
+            $line[] = ! empty($report['weekend_unit_hours'])
+                ? $row['totals']['weekend_units']
+                : $this->formatHours($row['totals']['weekend_hours']);
             $line[] = $row['totals']['comida_count'];
             $line[] = $row['totals']['velada_count'];
             $line[] = $row['totals']['cena_count'];

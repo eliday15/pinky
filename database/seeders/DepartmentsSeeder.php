@@ -15,7 +15,9 @@ class DepartmentsSeeder extends Seeder
         $departments = [
             ['name' => 'Corte', 'code' => 'CORTE'],
             ['name' => 'Diseño', 'code' => 'DISENO'],
-            ['name' => 'Almacén PT', 'code' => 'ALMACENPT'],
+            // Almacén PT cuenta y paga el fin de semana por unidades de 6 h
+            // (12 h trabajadas en sáb/dom = 2 fines de semana).
+            ['name' => 'Almacén PT', 'code' => 'ALMACENPT', 'weekend_unit_hours' => 6],
             ['name' => 'Producción', 'code' => 'PRODUCCION'],
             ['name' => 'Control de Calidad', 'code' => 'CALIDAD'],
             ['name' => 'Empaque', 'code' => 'EMPAQUE'],

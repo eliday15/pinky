@@ -27,7 +27,7 @@ const colSums = computed(() => {
                     <th class="border px-3 py-2 text-left">NOMBRE</th>
                     <th v-for="d in report.dates" :key="d" class="border px-3 py-2">{{ formatDate(d) }}</th>
                     <th class="border px-3 py-2">TOTAL HORAS</th>
-                    <th class="border px-3 py-2">FIN DE SEMANA</th>
+                    <th class="border px-3 py-2">{{ report.weekend_unit_hours ? 'FINES DE SEMANA' : 'FIN DE SEMANA' }}</th>
                     <th class="border px-3 py-2">COMIDA</th>
                     <th class="border px-3 py-2">VELADA</th>
                     <th class="border px-3 py-2">CENA</th>
@@ -43,7 +43,7 @@ const colSums = computed(() => {
                     <td class="border px-3 py-2 text-right align-top">
                         <OvertimeCell :approved="row.totals.total_hours" :pending="row.totals.pending_hours || 0" :show-zero="false" />
                     </td>
-                    <td class="border px-3 py-2 text-right">{{ formatHours(row.totals.weekend_hours) }}</td>
+                    <td class="border px-3 py-2 text-right">{{ report.weekend_unit_hours ? row.totals.weekend_units : formatHours(row.totals.weekend_hours) }}</td>
                     <td class="border px-3 py-2 text-center" :class="row.totals.comida_count === 0 ? 'text-gray-300' : ''">
                         {{ row.totals.comida_count }}
                     </td>
@@ -63,7 +63,7 @@ const colSums = computed(() => {
                     <td class="border px-3 py-2 text-right align-top">
                         <OvertimeCell :approved="report.totals.total_hours" :pending="report.totals.pending_hours || 0" :show-zero="false" />
                     </td>
-                    <td class="border px-3 py-2 text-right">{{ formatHours(report.totals.weekend_hours) }}</td>
+                    <td class="border px-3 py-2 text-right">{{ report.weekend_unit_hours ? report.totals.weekend_units : formatHours(report.totals.weekend_hours) }}</td>
                     <td class="border px-3 py-2 text-center">{{ report.totals.comida_count }}</td>
                     <td class="border px-3 py-2 text-center">{{ report.totals.velada_count }}</td>
                     <td class="border px-3 py-2 text-center">{{ report.totals.cena_count }}</td>
