@@ -266,13 +266,16 @@ class AuthorizationControllerTest extends FeatureTestCase
     // store
     // ─────────────────────────────────────────────────────────────────────
 
-    public function test_store_creates_overtime_authorization(): void
+    public function test_store_creates_and_approves_overtime_authorization_for_admin(): void
     {
         $admin = $this->actingAsAdmin();
         // Default schedule is Mon-Fri 08:00-17:00; use a Sunday so the
         // overlapsWorkSchedule guard (rest day → no schedule) doesn't fire.
         $emp = Employee::factory()->create();
 
+        // No hay checada que coincida, pero quien crea (admin) también puede
+        // aprobar, así que la autorización queda APROBADA en el mismo "Guardar
+        // y crear" — sin paso extra de aprobación.
         $resp = $this->from(route('authorizations.create'))->post(route('authorizations.store'), [
             'employee_id' => $emp->id,
             'type' => Authorization::TYPE_OVERTIME,
@@ -288,8 +291,58 @@ class AuthorizationControllerTest extends FeatureTestCase
         $this->assertDatabaseHas('authorizations', [
             'employee_id' => $emp->id,
             'type' => Authorization::TYPE_OVERTIME,
-            'status' => Authorization::STATUS_PENDING,
+            'status' => Authorization::STATUS_APPROVED,
+            'approved_by' => $admin->id,
             'requested_by' => $admin->id,
+        ]);
+    }
+
+    public function test_store_approves_special_on_create_for_admin(): void
+    {
+        // "Que se aprueben solas": un concepto especial (sin rango ni checada
+        // que coincida) también queda aprobado al crearlo un admin.
+        $admin = $this->actingAsAdmin();
+        $emp = Employee::factory()->create();
+
+        $this->from(route('authorizations.create'))->post(route('authorizations.store'), [
+            'employee_id' => $emp->id,
+            'type' => Authorization::TYPE_SPECIAL,
+            'date' => '2026-06-10',
+            'hours' => 3,
+            'reason' => 'Bono especial',
+        ])->assertRedirect(route('authorizations.index'));
+
+        $this->assertDatabaseHas('authorizations', [
+            'employee_id' => $emp->id,
+            'type' => Authorization::TYPE_SPECIAL,
+            'status' => Authorization::STATUS_APPROVED,
+            'approved_by' => $admin->id,
+        ]);
+    }
+
+    public function test_store_keeps_pending_when_creator_cannot_approve(): void
+    {
+        // Un supervisor puede crear pero NO aprobar (sin authorizations.approve):
+        // su alta cae al auto-aprobado por coincidencia con checadas y, sin
+        // checada que coincida, queda PENDIENTE para revisión humana. Así la
+        // aprobación-al-crear no rompe el RBAC.
+        $this->actingAsSupervisor();
+        $emp = Employee::factory()->create();
+
+        $this->from(route('authorizations.create'))->post(route('authorizations.store'), [
+            'employee_id' => $emp->id,
+            'type' => Authorization::TYPE_OVERTIME,
+            'date' => '2026-06-07', // domingo — sin jornada
+            'start_time' => '18:00',
+            'end_time' => '20:00',
+            'hours' => 2,
+            'reason' => 'Captura de supervisor',
+        ])->assertRedirect(route('authorizations.index'));
+
+        $this->assertDatabaseHas('authorizations', [
+            'employee_id' => $emp->id,
+            'type' => Authorization::TYPE_OVERTIME,
+            'status' => Authorization::STATUS_PENDING,
         ]);
     }
 
@@ -619,6 +672,32 @@ class AuthorizationControllerTest extends FeatureTestCase
         $this->assertDatabaseHas('authorizations', ['employee_id' => $e1->id, 'is_bulk_generated' => true]);
         $this->assertDatabaseHas('authorizations', ['employee_id' => $e2->id, 'is_bulk_generated' => true]);
         $this->assertEquals(2, Authorization::count());
+    }
+
+    public function test_store_bulk_approves_all_on_create_for_admin(): void
+    {
+        // "Que se aprueben solas" también en el alta masiva: cada autorización
+        // creada por un admin queda aprobada en el mismo "Guardar y crear".
+        $admin = $this->actingAsAdmin();
+        $e1 = Employee::factory()->create();
+        $e2 = Employee::factory()->create();
+
+        $resp = $this->from(route('authorizations.createBulk'))->post(route('authorizations.storeBulk'), [
+            'type' => Authorization::TYPE_SPECIAL,
+            'reason' => 'Bulk aprobado al crear',
+            'employee_ids' => [$e1->id, $e2->id],
+            'date' => '2026-06-10',
+            'hours' => 1,
+        ]);
+
+        $resp->assertRedirect(route('authorizations.index'));
+        $this->assertSame(2, Authorization::where('status', Authorization::STATUS_APPROVED)->count());
+        $this->assertStringContainsString('aprobadas', session('success'));
+        $this->assertDatabaseHas('authorizations', [
+            'employee_id' => $e1->id,
+            'status' => Authorization::STATUS_APPROVED,
+            'approved_by' => $admin->id,
+        ]);
     }
 
     public function test_store_bulk_with_entries_creates_one_per_row(): void

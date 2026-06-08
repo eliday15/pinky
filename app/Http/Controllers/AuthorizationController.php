@@ -349,7 +349,7 @@ class AuthorizationController extends Controller
         unset($validated['evidence']);
 
         $authorization = Authorization::create($validated);
-        $this->autoApproveIfDetected($authorization);
+        $this->approveOnCreate($authorization);
 
         if ($anomalyId) {
             $anomaly = AttendanceAnomaly::find($anomalyId);
@@ -359,7 +359,7 @@ class AuthorizationController extends Controller
         }
 
         $msg = $authorization->fresh()->status === Authorization::STATUS_APPROVED
-            ? 'Autorización creada y auto-aprobada (coincide con las checadas).'
+            ? 'Autorización creada y aprobada.'
             : 'Autorización creada exitosamente.';
 
         return redirect()->route('authorizations.index')->with('success', $msg);
@@ -540,7 +540,7 @@ class AuthorizationController extends Controller
                     'is_bulk_generated' => true,
                     'bulk_group_id' => $bulkGroupId,
                 ]);
-                $this->autoApproveIfDetected($auth);
+                $this->approveOnCreate($auth);
                 if ($auth->fresh()->status === Authorization::STATUS_APPROVED) {
                     $autoApprovedCount++;
                 }
@@ -577,7 +577,7 @@ class AuthorizationController extends Controller
                     'is_bulk_generated' => true,
                     'bulk_group_id' => $bulkGroupId,
                 ]);
-                $this->autoApproveIfDetected($auth);
+                $this->approveOnCreate($auth);
                 if ($auth->fresh()->status === Authorization::STATUS_APPROVED) {
                     $autoApprovedCount++;
                 }
@@ -586,7 +586,7 @@ class AuthorizationController extends Controller
         }
 
         $msg = $autoApprovedCount > 0
-            ? "Se crearon {$count} autorizaciones, {$autoApprovedCount} auto-aprobadas (coinciden con checadas)."
+            ? "Se crearon {$count} autorizaciones, {$autoApprovedCount} aprobadas."
             : "Se crearon {$count} autorizaciones exitosamente.";
         if ($duplicateCount > 0) {
             $msg .= " {$duplicateCount} omitidas por duplicado (ya existe una autorización viva del mismo tipo para ese empleado y fecha).";
@@ -1518,6 +1518,34 @@ class AuthorizationController extends Controller
             'hours' => '1',
             'summary' => 'Comida: fin de semana trabajado.',
         ];
+    }
+
+    /**
+     * Al crear (alta individual o masiva), dejar la autorización APROBADA en el
+     * mismo "Guardar y crear" cuando quien la captura también puede aprobarla
+     * (p. ej. un admin). Corre el MISMO pipeline que la aprobación manual
+     * (firma al jefe, recalcula la asistencia, cierra anomalías cubiertas e
+     * invalida la nómina — DECISIONES §7). No pide 2FA: es una aprobación que
+     * el propio capturista dispara en el alta, no una acción separada sobre una
+     * autorización ajena ya existente.
+     *
+     * Si quien crea NO puede aprobar (p. ej. un supervisor sin
+     * authorizations.approve), cae al auto-aprobado por coincidencia exacta con
+     * las checadas y, si no coincide, la autorización queda pendiente para
+     * revisión humana.
+     */
+    private function approveOnCreate(Authorization $authorization): void
+    {
+        $authorization->refresh();
+
+        if ($authorization->isPending() && Auth::user()->can('approve', $authorization)) {
+            $authorization->approve(Auth::user());
+            $this->applyApprovalEffects($authorization, app(ZktecoSyncService::class));
+
+            return;
+        }
+
+        $this->autoApproveIfDetected($authorization);
     }
 
     /**
