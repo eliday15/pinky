@@ -420,7 +420,14 @@ class ReportExportController extends Controller implements HasMiddleware
             ->merge(array_keys($retardoFaltas))
             ->unique();
 
-        $data = [];
+        // Cada observación (cada fecha) se exporta en su propia columna
+        // ("Observación 1", "Observación 2", …) en lugar de concatenarse con
+        // " | " en una sola celda, para que cada fecha quede en una celda
+        // independiente. Se acumulan las observaciones por fila y, al final, se
+        // rellena cada fila hasta el máximo para que todas tengan las mismas
+        // columnas.
+        $rows = [];
+        $maxObservaciones = 0;
         foreach ($allEmployeeIds as $employeeId) {
             $empNoShow = $noShowRecords->where('employee_id', $employeeId);
             $empThreshold = $thresholdRecords->where('employee_id', $employeeId);
@@ -429,35 +436,56 @@ class ReportExportController extends Controller implements HasMiddleware
             $threshold = $empThreshold->count();
             $retardo = $retardoFaltas[$employeeId] ?? 0;
 
-            // Observaciones: qué día fue cada falta y por qué, aclarando de qué
-            // día es la checada (una salida de madrugada parece del día
-            // siguiente). Mismos textos que el detalle del reporte web.
+            // Observaciones por día (inasistencias y umbral juntas, en orden
+            // cronológico) y luego el detalle mensual de faltas por retardos.
+            // Cada texto aclara de qué día es la checada (una salida de
+            // madrugada parece del día siguiente). Mismos textos que el detalle
+            // del reporte web.
             $observaciones = [];
-            foreach ($empNoShow->sortBy('work_date') as $r) {
-                $observaciones[] = $this->faltaObservacion($r, $maxLateBeforeAbsence, $earlyDepartureThreshold, $earlyDepartureIsAbsence);
-            }
-            foreach ($empThreshold->sortBy('work_date') as $r) {
+            foreach ($empNoShow->merge($empThreshold)->sortBy('work_date') as $r) {
                 $observaciones[] = $this->faltaObservacion($r, $maxLateBeforeAbsence, $earlyDepartureThreshold, $earlyDepartureIsAbsence);
             }
             foreach ($retardoDetalles[$employeeId] ?? [] as $detalle) {
                 $observaciones[] = $detalle;
             }
 
-            $data[] = [
-                $employee?->full_name ?? '-',
-                $employee?->employee_number ?? '-',
-                $employee?->department?->name ?? '-',
-                $noShow,
-                $threshold,
-                $retardo,
-                $noShow + $threshold + $retardo,
-                implode(' | ', $observaciones),
+            $maxObservaciones = max($maxObservaciones, count($observaciones));
+
+            $rows[] = [
+                'fixed' => [
+                    $employee?->full_name ?? '-',
+                    $employee?->employee_number ?? '-',
+                    $employee?->department?->name ?? '-',
+                    $noShow,
+                    $threshold,
+                    $retardo,
+                    $noShow + $threshold + $retardo,
+                ],
+                'observaciones' => $observaciones,
             ];
         }
 
+        // Una columna por observación; las filas con menos observaciones se
+        // rellenan con celdas vacías para cuadrar con el encabezado.
+        $observacionHeaders = [];
+        for ($i = 1; $i <= $maxObservaciones; $i++) {
+            $observacionHeaders[] = "Observación {$i}";
+        }
+
+        $data = array_map(
+            fn ($row) => array_merge(
+                $row['fixed'],
+                array_pad($row['observaciones'], $maxObservaciones, '')
+            ),
+            $rows
+        );
+
         return $this->exportCsv(
             "reporte_faltas_{$startDate}_{$endDate}.csv",
-            ['Empleado', 'No. Empleado', 'Departamento', 'Inasistencias', 'Por Umbral', 'Faltas por Retardos', 'Total Faltas', 'Observaciones'],
+            array_merge(
+                ['Empleado', 'No. Empleado', 'Departamento', 'Inasistencias', 'Por Umbral', 'Faltas por Retardos', 'Total Faltas'],
+                $observacionHeaders
+            ),
             $data
         );
     }
