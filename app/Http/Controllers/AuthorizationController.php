@@ -69,6 +69,12 @@ class AuthorizationController extends Controller
             ->when($request->type, function ($q, $type) {
                 $q->where('type', $type);
             })
+            // El filtro "Tipo" del UI distingue cada concepto (Cena, Comida,
+            // Fin de Semana…) por su compensation_type_id, no por el bucket
+            // base `type` (varios conceptos comparten type='special').
+            ->when($request->compensation_type_id, function ($q, $compensationTypeId) {
+                $q->where('compensation_type_id', $compensationTypeId);
+            })
             ->when($request->employee, function ($q, $employee) {
                 $q->where('employee_id', $employee);
             })
@@ -143,7 +149,7 @@ class AuthorizationController extends Controller
             'employees' => $employeesQuery->get(['id', 'full_name', 'employee_number']),
             'departments' => Department::active()->orderBy('name')->get(['id', 'name']),
             'pendingCount' => $pendingCount,
-            'filters' => $request->only(['status', 'type', 'employee', 'department', 'search', 'from_date', 'to_date']),
+            'filters' => $request->only(['status', 'type', 'compensation_type_id', 'employee', 'department', 'search', 'from_date', 'to_date']),
             'types' => $this->getAuthorizationTypes(),
             'can' => [
                 'create' => $user->can('create', Authorization::class),

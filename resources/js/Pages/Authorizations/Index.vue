@@ -21,6 +21,7 @@ const hasTwoFactor = computed(() => usePage().props.auth.has_two_factor);
 const filters = ref({
     status: props.filters.status || '',
     type: props.filters.type || '',
+    compensation_type_id: props.filters.compensation_type_id || '',
     employee: props.filters.employee || '',
     department: props.filters.department || '',
     from_date: props.filters.from_date || '',
@@ -28,12 +29,14 @@ const filters = ref({
     search: props.filters.search || '',
 });
 
-/** Deduplicate types by value for the filter dropdown. */
+/** One option per concept (Cena, Comida, Fin de Semana…), keyed by its
+ *  compensation_type_id. Several concepts share the same base `type`
+ *  (e.g. 'special'), so the filter distinguishes them by id, not by type. */
 const uniqueFilterTypes = computed(() => {
     const seen = new Set();
     return props.types.filter(t => {
-        if (seen.has(t.value)) return false;
-        seen.add(t.value);
+        if (seen.has(t.compensation_type_id)) return false;
+        seen.add(t.compensation_type_id);
         return true;
     });
 });
@@ -49,6 +52,7 @@ const clearFilters = () => {
     filters.value = {
         status: '',
         type: '',
+        compensation_type_id: '',
         employee: '',
         department: '',
         from_date: '',
@@ -291,12 +295,12 @@ const typeLabels = {
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Tipo</label>
                     <select
-                        v-model="filters.type"
+                        v-model="filters.compensation_type_id"
                         class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
                         @change="applyFilters"
                     >
                         <option value="">Todos</option>
-                        <option v-for="type in uniqueFilterTypes" :key="type.value" :value="type.value">
+                        <option v-for="type in uniqueFilterTypes" :key="type.compensation_type_id" :value="type.compensation_type_id">
                             {{ type.label }}
                         </option>
                     </select>

@@ -195,6 +195,37 @@ class AuthorizationControllerTest extends FeatureTestCase
                 ->where('authorizations.data.0.type', Authorization::TYPE_SPECIAL));
     }
 
+    public function test_index_compensation_type_filter_distinguishes_concepts_sharing_a_type(): void
+    {
+        $this->actingAsAdmin();
+
+        // Two concepts (e.g. Cena vs Fin de Semana) under the SAME base type.
+        $cena = CompensationType::factory()->create(['name' => 'Cena']);
+        $finde = CompensationType::factory()->create(['name' => 'Fin de Semana']);
+
+        $base = [
+            'requested_by' => User::factory()->create()->id,
+            'status' => Authorization::STATUS_PENDING,
+        ];
+        Authorization::factory()->special()->create($base + [
+            'employee_id' => Employee::factory()->create()->id,
+            'compensation_type_id' => $cena->id,
+        ]);
+        Authorization::factory()->special()->create($base + [
+            'employee_id' => Employee::factory()->create()->id,
+            'compensation_type_id' => $finde->id,
+        ]);
+
+        // Filtering by Fin de Semana must NOT return the Cena row, even though
+        // both share type='special'.
+        $this->get(route('authorizations.index', ['compensation_type_id' => $finde->id]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->has('authorizations.data', 1)
+                ->where('filters.compensation_type_id', (string) $finde->id)
+                ->where('authorizations.data.0.compensation_type_id', $finde->id));
+    }
+
     public function test_index_employee_filter_is_applied(): void
     {
         $this->actingAsAdmin();
