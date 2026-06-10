@@ -877,6 +877,72 @@ class AuthorizationController extends Controller
     }
 
     /**
+     * Revierte los efectos de una aprobación cuando una autorización aprobada
+     * se rechaza: reabre las anomalías que se auto-resolvieron al vincular,
+     * recalcula la asistencia del día (las horas autorizadas dejan de contar
+     * porque solo se suman las aprobadas/pagadas) e invalida la nómina de los
+     * periodos que tocan la fecha. Espejo de applyApprovalEffects().
+     */
+    private function revertApprovalEffects(Authorization $authorization, ZktecoSyncService $syncService): void
+    {
+        $this->reopenLinkedAnomalies($authorization);
+
+        if ($authorization->attendance_record_id) {
+            $syncService->recalculateAttendanceRecord($authorization->attendanceRecord);
+        } else {
+            $attendanceRecord = AttendanceRecord::where('employee_id', $authorization->employee_id)
+                ->whereDate('work_date', Carbon::parse($authorization->date)->toDateString())
+                ->first();
+
+            if ($attendanceRecord) {
+                $syncService->recalculateAttendanceRecord($attendanceRecord);
+            }
+        }
+
+        app(PayrollInvalidationService::class)->invalidate(
+            $authorization->employee_id,
+            Carbon::parse($authorization->date)->toDateString(),
+        );
+    }
+
+    /**
+     * Reabre las anomalías que se cerraron al vincularse a esta autorización
+     * (inverso de autoResolveAnomalies) y refresca los contadores de
+     * anomalías abiertas del registro de asistencia afectado.
+     */
+    private function reopenLinkedAnomalies(Authorization $authorization): void
+    {
+        $anomalies = AttendanceAnomaly::where('linked_authorization_id', $authorization->id)
+            ->where('status', AttendanceAnomaly::STATUS_LINKED)
+            ->get();
+
+        $recordIds = [];
+        foreach ($anomalies as $anomaly) {
+            $anomaly->update([
+                'status' => AttendanceAnomaly::STATUS_OPEN,
+                'linked_authorization_id' => null,
+                'resolution_method' => null,
+                'resolved_at' => null,
+                'resolution_notes' => null,
+            ]);
+            if ($anomaly->attendance_record_id) {
+                $recordIds[$anomaly->attendance_record_id] = true;
+            }
+        }
+
+        foreach (array_keys($recordIds) as $recordId) {
+            $open = AttendanceAnomaly::where('attendance_record_id', $recordId)
+                ->where('status', AttendanceAnomaly::STATUS_OPEN)
+                ->count();
+
+            AttendanceRecord::where('id', $recordId)->update([
+                'has_anomalies' => $open > 0,
+                'anomaly_count' => $open,
+            ]);
+        }
+    }
+
+    /**
      * Reject an authorization.
      */
     public function reject(Request $request, Authorization $authorization): RedirectResponse
@@ -884,15 +950,29 @@ class AuthorizationController extends Controller
         $this->authorize('reject', $authorization);
         $this->verifyTwoFactorCode($request);
 
-        if (! $authorization->isPending()) {
-            return redirect()->back()->with('error', 'Esta autorizacion ya fue procesada.');
+        // Se puede rechazar una pendiente o revertir una ya aprobada; una
+        // pagada o ya rechazada no se toca (la nómina pagada queda firme).
+        if ($authorization->isPaid()) {
+            return redirect()->back()->with('error', 'No se puede rechazar una autorizacion ya pagada.');
+        }
+        if ($authorization->isRejected()) {
+            return redirect()->back()->with('error', 'Esta autorizacion ya fue rechazada.');
         }
 
         $validated = $request->validate([
             'rejection_reason' => ['required', 'string', 'max:500'],
         ]);
 
+        $wasApproved = $authorization->isApproved();
+
         $authorization->reject(Auth::user(), $validated['rejection_reason']);
+
+        // Revertir los efectos de una aprobación previa: reabrir las anomalías
+        // que se vincularon, recalcular la asistencia (las horas autorizadas
+        // dejan de contar al estar rechazada) e invalidar la nómina del periodo.
+        if ($wasApproved) {
+            $this->revertApprovalEffects($authorization, app(ZktecoSyncService::class));
+        }
 
         return redirect()->back()->with('success', 'Autorizacion rechazada.');
     }

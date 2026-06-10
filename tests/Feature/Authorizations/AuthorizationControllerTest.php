@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Authorizations;
 
+use App\Models\AttendanceAnomaly;
 use App\Models\Authorization;
 use App\Models\AttendanceRecord;
 use App\Models\CompensationType;
@@ -1381,7 +1382,23 @@ class AuthorizationControllerTest extends FeatureTestCase
             ->assertSessionHasErrors(['rejection_reason']);
     }
 
-    public function test_reject_already_processed_returns_error(): void
+    public function test_reject_paid_authorization_is_forbidden(): void
+    {
+        [$admin, $code] = $this->privilegedWithTwoFactor();
+        $this->actingAs($admin);
+        $auth = Authorization::factory()->paid()->create([
+            'employee_id' => Employee::factory()->create()->id,
+            'requested_by' => User::factory()->create()->id,
+        ]);
+
+        // A paid authorization can't be rejected (payroll already paid) → policy 403.
+        $this->post(route('authorizations.reject', $auth), [
+            'two_factor_code' => $code,
+            'rejection_reason' => 'late',
+        ])->assertForbidden();
+    }
+
+    public function test_admin_can_reject_an_already_approved_authorization(): void
     {
         [$admin, $code] = $this->privilegedWithTwoFactor();
         $this->actingAs($admin);
@@ -1390,11 +1407,53 @@ class AuthorizationControllerTest extends FeatureTestCase
             'requested_by' => User::factory()->create()->id,
         ]);
 
-        // Policy reject() requires pending → already-approved denies at authorize → 403.
+        $this->from(route('authorizations.show', $auth))
+            ->post(route('authorizations.reject', $auth), [
+                'two_factor_code' => $code,
+                'rejection_reason' => 'Se autorizó por error',
+            ])
+            ->assertRedirect(route('authorizations.show', $auth))
+            ->assertSessionHas('success');
+
+        $auth->refresh();
+        $this->assertEquals(Authorization::STATUS_REJECTED, $auth->status);
+        $this->assertEquals('Se autorizó por error', $auth->rejection_reason);
+    }
+
+    public function test_rejecting_approved_authorization_reopens_linked_anomalies(): void
+    {
+        [$admin, $code] = $this->privilegedWithTwoFactor();
+        $this->actingAs($admin);
+
+        $employee = Employee::factory()->create();
+        $record = AttendanceRecord::factory()->create([
+            'employee_id' => $employee->id,
+            'work_date' => '2026-06-05',
+            'has_anomalies' => false,
+            'anomaly_count' => 0,
+        ]);
+        $auth = Authorization::factory()->approved()->create([
+            'employee_id' => $employee->id,
+            'requested_by' => User::factory()->create()->id,
+            'date' => '2026-06-05',
+        ]);
+        // An anomaly that was auto-resolved by linking to this approved auth.
+        $anomaly = AttendanceAnomaly::factory()->create([
+            'employee_id' => $employee->id,
+            'attendance_record_id' => $record->id,
+            'work_date' => '2026-06-05',
+            'status' => AttendanceAnomaly::STATUS_LINKED,
+            'linked_authorization_id' => $auth->id,
+        ]);
+
         $this->post(route('authorizations.reject', $auth), [
             'two_factor_code' => $code,
-            'rejection_reason' => 'late',
-        ])->assertForbidden();
+            'rejection_reason' => 'Revertir',
+        ])->assertSessionHas('success');
+
+        $anomaly->refresh();
+        $this->assertEquals(AttendanceAnomaly::STATUS_OPEN, $anomaly->status);
+        $this->assertNull($anomaly->linked_authorization_id);
     }
 
     public function test_reject_forbidden_for_rrhh(): void

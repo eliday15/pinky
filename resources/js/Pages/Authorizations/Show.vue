@@ -307,7 +307,7 @@ const submitReject = () => {
                             {{ approveLabel }}
                         </button>
                         <button
-                            v-if="can.reject && authorization.status === 'pending'"
+                            v-if="can.reject && ['pending', 'approved'].includes(authorization.status)"
                             @click="showRejectModal = true"
                             class="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
                         >
@@ -409,6 +409,11 @@ const submitReject = () => {
                     <h3 class="text-lg font-semibold text-gray-900 mb-4">
                         Rechazar Autorizacion
                     </h3>
+                    <p v-if="isAlreadyApproved" class="text-sm text-amber-600 mb-4">
+                        Esta autorización ya estaba aprobada. Al rechazarla se revertirá:
+                        se recalcula la asistencia, se reabren las anomalías vinculadas y
+                        se marca la nómina del periodo para recálculo.
+                    </p>
                     <form @submit.prevent="submitReject">
                         <div class="mb-4">
                             <label class="block text-sm font-medium text-gray-700 mb-1">

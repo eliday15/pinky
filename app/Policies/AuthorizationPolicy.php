@@ -143,6 +143,13 @@ class AuthorizationPolicy
             return false;
         }
 
+        // Full-access admins (RRHH/admin) can also reject an already-approved
+        // authorization — reverting the approval — for anything not yet paid
+        // out (and not already rejected). Mirrors approve()'s post-hoc power.
+        if ($user->hasPermissionTo('authorizations.view_all')) {
+            return ! $authorization->isPaid() && ! $authorization->isRejected();
+        }
+
         return $authorization->isPending();
     }
 
