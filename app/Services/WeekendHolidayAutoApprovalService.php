@@ -33,6 +33,7 @@ class WeekendHolidayAutoApprovalService
     public function __construct(
         private ZktecoSyncService $syncService,
         private PayrollInvalidationService $payrollInvalidation,
+        private CompanionConceptService $companionConcept,
     ) {}
 
     /**
@@ -47,6 +48,9 @@ class WeekendHolidayAutoApprovalService
 
         $authorization->approve($approver);
         $this->applyEffects($authorization);
+
+        // Fin de Semana → Comida: capturar el acompañante al auto-aprobar.
+        $this->companionConcept->captureForApproved($authorization);
 
         return true;
     }

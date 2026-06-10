@@ -6,6 +6,7 @@ use App\Traits\Auditable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
  * Authorization model for managing overtime, night shifts, and permissions.
@@ -66,6 +67,7 @@ class Authorization extends Model
         'approved_at',
         'is_pre_authorization',
         'attendance_record_id',
+        'generated_from_authorization_id',
         'department_head_id',
         'department_head_signed_at',
         'is_bulk_generated',
@@ -121,6 +123,24 @@ class Authorization extends Model
     public function compensationType(): BelongsTo
     {
         return $this->belongsTo(CompensationType::class);
+    }
+
+    /**
+     * The velada / fin de semana authorization whose approval auto-generated
+     * this companion (Cena / Comida). Null for normal authorizations.
+     */
+    public function generatedFrom(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'generated_from_authorization_id');
+    }
+
+    /**
+     * The companion authorizations (Cena / Comida) auto-generated when this
+     * velada / fin de semana was approved.
+     */
+    public function generatedCompanions(): HasMany
+    {
+        return $this->hasMany(self::class, 'generated_from_authorization_id');
     }
 
     /**

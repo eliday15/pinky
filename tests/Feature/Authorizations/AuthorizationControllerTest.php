@@ -12,6 +12,7 @@ use App\Models\PayrollPeriod;
 use App\Models\Position;
 use App\Models\Schedule;
 use App\Models\User;
+use App\Services\CompanionConceptService;
 use Illuminate\Support\Facades\Crypt;
 use Inertia\Testing\AssertableInertia as Assert;
 use PragmaRX\Google2FA\Google2FA;
@@ -1254,6 +1255,72 @@ class AuthorizationControllerTest extends FeatureTestCase
         $auth->refresh();
         $this->assertEquals(Authorization::STATUS_APPROVED, $auth->status);
         $this->assertEquals('3.00', (string) $auth->hours);
+    }
+
+    public function test_approving_a_velada_auto_captures_a_cena(): void
+    {
+        [$admin, $code] = $this->privilegedWithTwoFactor();
+        $this->actingAs($admin);
+
+        $cena = CompensationType::factory()->create([
+            'name' => 'Cena',
+            'application_mode' => 'per_day',
+            'authorization_type' => 'special',
+            'attendance_pull_rule' => CompensationType::PULL_RULE_MEAL,
+        ]);
+        $employee = Employee::factory()->create();
+        $employee->compensationTypes()->attach($cena->id, ['is_active' => true]);
+
+        $velada = Authorization::factory()->nightShift()->create([
+            'employee_id' => $employee->id,
+            'requested_by' => User::factory()->create()->id,
+            'status' => Authorization::STATUS_PENDING,
+            'date' => '2026-06-05',
+            'hours' => 3,
+        ]);
+
+        $this->from(route('authorizations.show', $velada))
+            ->post(route('authorizations.approve', $velada), ['two_factor_code' => $code])
+            ->assertRedirect();
+
+        $this->assertDatabaseHas('authorizations', [
+            'generated_from_authorization_id' => $velada->id,
+            'compensation_type_id' => $cena->id,
+            'status' => Authorization::STATUS_APPROVED,
+        ]);
+    }
+
+    public function test_rejecting_a_velada_also_rejects_its_generated_cena(): void
+    {
+        [$admin, $code] = $this->privilegedWithTwoFactor();
+        $this->actingAs($admin);
+
+        $cena = CompensationType::factory()->create([
+            'name' => 'Cena',
+            'application_mode' => 'per_day',
+            'authorization_type' => 'special',
+            'attendance_pull_rule' => CompensationType::PULL_RULE_MEAL,
+        ]);
+        $employee = Employee::factory()->create();
+        $employee->compensationTypes()->attach($cena->id, ['is_active' => true]);
+
+        $velada = Authorization::factory()->nightShift()->create([
+            'employee_id' => $employee->id,
+            'requested_by' => User::factory()->create()->id,
+            'approved_by' => $admin->id,
+            'status' => Authorization::STATUS_APPROVED,
+            'date' => '2026-06-05',
+            'hours' => 3,
+        ]);
+        $companion = app(CompanionConceptService::class)->captureForApproved($velada);
+        $this->assertNotNull($companion);
+
+        $this->post(route('authorizations.reject', $velada), [
+            'two_factor_code' => $code,
+            'rejection_reason' => 'Revertir',
+        ])->assertSessionHas('success');
+
+        $this->assertSame(Authorization::STATUS_REJECTED, $companion->refresh()->status);
     }
 
     public function test_approve_requires_two_factor_code(): void

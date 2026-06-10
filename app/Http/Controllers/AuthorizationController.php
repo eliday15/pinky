@@ -10,6 +10,7 @@ use App\Models\CompensationType;
 use App\Models\Department;
 use App\Models\Employee;
 use App\Models\SystemSetting;
+use App\Services\CompanionConceptService;
 use App\Services\OvertimeRoundingService;
 use App\Services\PayrollInvalidationService;
 use App\Services\WeekendHolidayAutoApprovalService;
@@ -827,6 +828,11 @@ class AuthorizationController extends Controller
             $authorization->employee_id,
             Carbon::parse($authorization->date)->toDateString(),
         );
+
+        // Velada → Cena, Fin de Semana → Comida: al aprobar el concepto madre se
+        // captura solo el acompañante (regla de Luis, 2026-06-10). No recursa:
+        // la Cena/Comida no tiene acompañante.
+        app(CompanionConceptService::class)->captureForApproved($authorization);
     }
 
     /**
@@ -902,6 +908,15 @@ class AuthorizationController extends Controller
         app(PayrollInvalidationService::class)->invalidate(
             $authorization->employee_id,
             Carbon::parse($authorization->date)->toDateString(),
+        );
+
+        // Si esta velada / fin de semana había generado una Cena/Comida
+        // automática, rechazarla también: su pago ya no aplica al revertirse la
+        // madre (regla de Luis, 2026-06-10).
+        app(CompanionConceptService::class)->rejectCompanionsOf(
+            $authorization,
+            Auth::user(),
+            "Rechazada automáticamente al revertir la autorización #{$authorization->id}.",
         );
     }
 
