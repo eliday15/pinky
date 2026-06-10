@@ -928,11 +928,42 @@ class AuthorizationControllerTest extends FeatureTestCase
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Authorizations/Show')
                 ->has('authorization')
+                ->has('punches')
                 ->has('can')
                 ->has('can.edit')
                 ->has('can.delete')
                 ->has('can.approve')
                 ->has('can.reject'));
+    }
+
+    public function test_show_includes_original_system_punches_for_the_day(): void
+    {
+        $this->actingAsAdmin();
+        $employee = Employee::factory()->create();
+        AttendanceRecord::factory()->create([
+            'employee_id' => $employee->id,
+            'work_date' => '2026-06-06',
+            'check_in' => '09:00:00',
+            'check_out' => '18:00:00',
+            'raw_punches' => [
+                ['time' => '09:00:00', 'type' => 'in'],
+                ['time' => '18:00:00', 'type' => 'out'],
+            ],
+        ]);
+        $auth = Authorization::factory()->special()->create([
+            'employee_id' => $employee->id,
+            'requested_by' => User::factory()->create()->id,
+            'date' => '2026-06-06',
+            'status' => Authorization::STATUS_PENDING,
+        ]);
+
+        $this->get(route('authorizations.show', $auth))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('punches.found', true)
+                ->where('punches.check_in', '09:00:00')
+                ->where('punches.check_out', '18:00:00')
+                ->has('punches.raw', 2));
     }
 
     public function test_show_forbidden_for_rrhh(): void

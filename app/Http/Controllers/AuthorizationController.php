@@ -12,6 +12,7 @@ use App\Models\Employee;
 use App\Models\SystemSetting;
 use App\Services\OvertimeRoundingService;
 use App\Services\PayrollInvalidationService;
+use App\Services\WeekendHolidayAutoApprovalService;
 use App\Services\ZktecoSyncService;
 use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
@@ -636,8 +637,24 @@ class AuthorizationController extends Controller
         $user = Auth::user();
         $authorization->load(['employee.department', 'requestedBy', 'approvedBy', 'attendanceRecord']);
 
+        // Checadas originales del sistema para el día de la autorización, para
+        // que el revisor vea las marcas reales (entrada/salida emparejadas y
+        // todas las marcas del día) sin salir de esta pantalla.
+        $dateString = Carbon::parse($authorization->date)->toDateString();
+        $record = AttendanceRecord::where('employee_id', $authorization->employee_id)
+            ->whereDate('work_date', $dateString)
+            ->first();
+
         return Inertia::render('Authorizations/Show', [
             'authorization' => $authorization,
+            'punches' => [
+                'found' => (bool) $record,
+                'check_in' => $record?->check_in,
+                'check_out' => $record?->check_out,
+                'is_weekend_work' => (bool) $record?->is_weekend_work,
+                'is_holiday' => (bool) $record?->is_holiday,
+                'raw' => $record?->raw_punches ?? [],
+            ],
             'can' => [
                 'edit' => $user->can('update', $authorization),
                 'delete' => $user->can('delete', $authorization),
@@ -1554,6 +1571,13 @@ class AuthorizationController extends Controller
             $authorization->approve(Auth::user());
             $this->applyApprovalEffects($authorization, app(ZktecoSyncService::class));
 
+            return;
+        }
+
+        // Fin de semana / Comida / Día festivo con checada de entrada y salida:
+        // se aprueban solas aunque quien captura no pueda aprobar (regla de
+        // Luis, 2026-06-10). Misma lógica que usa el barrido por consola.
+        if (app(WeekendHolidayAutoApprovalService::class)->autoApprove($authorization, Auth::user())) {
             return;
         }
 

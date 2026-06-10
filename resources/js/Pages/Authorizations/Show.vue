@@ -6,8 +6,25 @@ import { formatDate as fmtDate, formatDateTime } from '@/utils/date';
 
 const props = defineProps({
     authorization: Object,
+    punches: Object,
     can: Object,
 });
+
+/** Format a punch time ('HH:MM:SS', 'HH:MM' or an ISO datetime) as 'HH:MM'. */
+const fmtTime = (t) => {
+    if (!t) return '—';
+    const m = String(t).match(/(\d{2}):(\d{2})/);
+    return m ? `${m[1]}:${m[2]}` : String(t);
+};
+
+/** Human label for a raw punch type stored by the ZKTeco sync. */
+const punchTypeLabel = (type) => ({
+    in: 'entrada',
+    out: 'salida',
+    lunch_out: 'sale a comer',
+    lunch_in: 'regresa de comer',
+    punch: 'marca',
+}[type] || type || 'marca');
 
 const hasTwoFactor = computed(() => usePage().props.auth.has_two_factor);
 
@@ -185,6 +202,46 @@ const submitReject = () => {
                 <div class="bg-white rounded-lg shadow p-6">
                     <h3 class="text-lg font-semibold text-gray-800 mb-4">Justificacion</h3>
                     <p class="text-gray-700 whitespace-pre-wrap">{{ authorization.reason }}</p>
+                </div>
+
+                <!-- Checadas originales del sistema -->
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">Checadas originales del sistema</h3>
+                    <template v-if="punches && punches.found">
+                        <dl class="grid grid-cols-2 gap-4 mb-4">
+                            <div>
+                                <dt class="text-sm font-medium text-gray-500">Entrada</dt>
+                                <dd class="mt-1 text-sm text-gray-900">{{ fmtTime(punches.check_in) }}</dd>
+                            </div>
+                            <div>
+                                <dt class="text-sm font-medium text-gray-500">Salida</dt>
+                                <dd class="mt-1 text-sm text-gray-900">{{ fmtTime(punches.check_out) }}</dd>
+                            </div>
+                        </dl>
+                        <div v-if="punches.raw && punches.raw.length">
+                            <p class="text-sm font-medium text-gray-500 mb-2">Todas las marcas del día</p>
+                            <ul class="flex flex-wrap gap-2">
+                                <li
+                                    v-for="(p, i) in punches.raw"
+                                    :key="i"
+                                    class="px-3 py-1 rounded-full bg-gray-100 text-sm text-gray-800"
+                                >
+                                    {{ fmtTime(p.time) }}
+                                    <span class="text-gray-400">· {{ punchTypeLabel(p.type) }}</span>
+                                </li>
+                            </ul>
+                        </div>
+                        <p v-else class="text-sm text-gray-500">
+                            No hay marcas individuales registradas para este día.
+                        </p>
+                        <p v-if="punches.is_weekend_work || punches.is_holiday" class="mt-3 text-xs text-gray-500">
+                            <span v-if="punches.is_weekend_work">Trabajo de fin de semana. </span>
+                            <span v-if="punches.is_holiday">Día festivo.</span>
+                        </p>
+                    </template>
+                    <p v-else class="text-sm text-gray-500">
+                        No se encontraron checadas del sistema para este día.
+                    </p>
                 </div>
 
                 <!-- Approval Info -->
