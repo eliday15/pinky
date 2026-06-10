@@ -109,16 +109,18 @@ class CompanionConceptService
             return null;
         }
 
-        // Dedup: no duplicar si ya hay una activa (pendiente/aprobada/pagada) del
-        // mismo concepto para ese empleado y día.
+        // Dedup: nunca duplicar la Cena/Comida. Se compara por CATEGORÍA de
+        // concepto (la misma pull rule), no por el id exacto, para no crear una
+        // segunda aunque ya exista por otra vía (capturada a mano o con otro id
+        // del mismo tipo). Cuenta cualquier activa (pendiente/aprobada/pagada).
         $exists = Authorization::where('employee_id', $parent->employee_id)
             ->whereDate('date', $this->dateString($parent))
-            ->where('compensation_type_id', $companionType->id)
             ->whereIn('status', [
                 Authorization::STATUS_PENDING,
                 Authorization::STATUS_APPROVED,
                 Authorization::STATUS_PAID,
             ])
+            ->whereHas('compensationType', fn ($q) => $q->where('attendance_pull_rule', $pullRule))
             ->exists();
         if ($exists) {
             return null;

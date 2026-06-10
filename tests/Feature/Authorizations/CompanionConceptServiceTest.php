@@ -136,6 +136,26 @@ class CompanionConceptServiceTest extends FeatureTestCase
         $this->assertSame(1, Authorization::where('generated_from_authorization_id', $velada->id)->count());
     }
 
+    public function test_no_companion_when_a_meal_already_exists_for_the_day(): void
+    {
+        $approver = $this->adminUser();
+        $cena = $this->compType(CompensationType::PULL_RULE_MEAL, 'Cena');
+        $employee = $this->enrolledEmployee($cena);
+        $velada = $this->approvedVelada($employee, $approver);
+
+        // Ya existe una Cena capturada por otra vía ese mismo día.
+        Authorization::factory()->special()->create([
+            'employee_id' => $employee->id,
+            'requested_by' => User::factory()->create()->id,
+            'compensation_type_id' => $cena->id,
+            'date' => '2026-06-05',
+            'status' => Authorization::STATUS_PENDING,
+        ]);
+
+        $this->assertNull($this->service()->captureForApproved($velada));
+        $this->assertSame(1, Authorization::where('compensation_type_id', $cena->id)->count());
+    }
+
     public function test_reject_companions_of_rejects_the_generated_companion(): void
     {
         $approver = $this->adminUser();
