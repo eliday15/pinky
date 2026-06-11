@@ -359,6 +359,16 @@ class AuthorizationController extends Controller
         }
         unset($validated['evidence']);
 
+        // Evita duplicar el mismo concepto para un empleado y día — la misma
+        // regla que ya aplica el alta masiva (DECISIONES §2). La nómina paga
+        // 1 fila aprobada = 1 día, así que dos filas iguales se pagarían dos
+        // veces; el control vive aquí, no en la nómina.
+        if ($this->activeDuplicateExists((int) $validated['employee_id'], $validated['date'], $validated['type'], $validated['compensation_type_id'] ?? null)) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'compensation_type_id' => 'Ya existe una autorización activa de este concepto para ese empleado y ese día.',
+            ]);
+        }
+
         $authorization = Authorization::create($validated);
         $this->approveOnCreate($authorization);
 

@@ -398,6 +398,39 @@ class AuthorizationControllerTest extends FeatureTestCase
         ]);
     }
 
+    public function test_store_blocks_a_duplicate_concept_for_the_same_employee_and_day(): void
+    {
+        $this->actingAsAdmin();
+        $emp = Employee::factory()->create();
+        $cena = CompensationType::factory()->create([
+            'name' => 'Cena',
+            'application_mode' => 'per_day',
+            'authorization_type' => 'special',
+            'attendance_pull_rule' => CompensationType::PULL_RULE_MEAL,
+        ]);
+
+        $payload = [
+            'employee_id' => $emp->id,
+            'type' => Authorization::TYPE_SPECIAL,
+            'compensation_type_id' => $cena->id,
+            'date' => '2026-06-06',
+            'hours' => 1,
+            'reason' => 'Cena fin de semana',
+        ];
+
+        $this->from(route('authorizations.create'))->post(route('authorizations.store'), $payload)
+            ->assertRedirect(route('authorizations.index'));
+
+        // Segunda alta idéntica → rechazada por duplicado.
+        $this->from(route('authorizations.create'))->post(route('authorizations.store'), $payload)
+            ->assertSessionHasErrors('compensation_type_id');
+
+        $this->assertSame(1, Authorization::where('employee_id', $emp->id)
+            ->where('compensation_type_id', $cena->id)
+            ->whereDate('date', '2026-06-06')
+            ->count());
+    }
+
     public function test_store_validates_required_fields(): void
     {
         $this->actingAsAdmin();
