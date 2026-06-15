@@ -229,6 +229,9 @@ class PayrollCalculatorService
                     [
                         'overtime_hours' => $authorizedOvertimeHours,
                         'velada_hours' => $veladaMetrics['velada_authorized_hours'],
+                        // Noches de velada pagables (1 por noche trabajada y
+                        // autorizada): base del pago por monto fijo por velada.
+                        'velada_days' => $nightShiftMetrics['night_shift_days'],
                         'holiday_hours' => $metrics['holiday_hours'],
                         'weekend_hours' => $metrics['weekend_hours'],
                     ],
@@ -329,6 +332,9 @@ class PayrollCalculatorService
                 'total_hours' => $veladaMetrics['velada_hours'],
                 'authorized_hours' => $veladaMetrics['velada_authorized_hours'],
                 'overtime_authorized_hours' => $veladaMetrics['overtime_authorized_hours'],
+                // Veladas pagadas (1 por noche). Con conceptos se paga el monto
+                // fijo por velada; el multiplicador solo aplica en la ruta legada.
+                'days' => $nightShiftMetrics['night_shift_days'],
                 'multiplier' => $useCompTypes ? null : $veladaMultiplier,
                 'pay' => $veladaPay,
             ],
@@ -383,6 +389,7 @@ class PayrollCalculatorService
                 'velada_authorized_hours' => $payExtras ? $veladaMetrics['velada_authorized_hours'] : 0,
                 'velada_multiplier' => $veladaMultiplier,
                 'velada_pay' => $veladaPay,
+                'velada_days' => $payExtras ? $nightShiftMetrics['night_shift_days'] : 0,
                 'holiday_hours' => $payExtras ? $metrics['holiday_hours'] : 0,
                 'weekend_hours' => $payExtras ? $metrics['weekend_hours'] : 0,
                 'night_shift_hours' => $payExtras ? $nightShiftMetrics['night_shift_hours'] : 0,

@@ -188,6 +188,105 @@ class PayrollSplitTest extends FeatureTestCase
     }
 
     /**
+     * Velada pagada por NOCHE a monto fijo vía conceptos (regla 2026-06-15):
+     * el "Monto" del concepto VEL se paga tal cual por cada noche trabajada y
+     * autorizada — 1 velada = monto, 2 veladas = 2 × monto — sin multiplicar por
+     * horas ni por el multiplicador 2x. El conteo (velada_days) se guarda.
+     */
+    public function test_monthly_velada_pays_fixed_amount_per_night_via_comp_types(): void
+    {
+        $employee = $this->makeEmployee();
+
+        // Concepto VEL como monto fijo por día/noche: $472 por velada.
+        $velada = CompensationType::factory()->fixed(472.00)->create([
+            'name' => 'Velada',
+            'code' => 'VEL',
+            'application_mode' => CompensationType::APPLICATION_PER_DAY,
+            'authorization_type' => Authorization::TYPE_NIGHT_SHIFT,
+        ]);
+        $employee->compensationTypes()->attach($velada->id, ['is_active' => true]);
+
+        $user = User::factory()->create();
+
+        // Dos noches distintas con velada real en checadas + autorización aprobada.
+        foreach (['2026-06-03', '2026-06-10'] as $date) {
+            AttendanceRecord::factory()->for($employee)->create([
+                'work_date' => $date,
+                'status' => 'present',
+                'worked_hours' => 10.00,
+                'velada_hours' => 4.00,
+                'velada_authorized_hours' => 4.00,
+            ]);
+            Authorization::create([
+                'employee_id' => $employee->id,
+                'requested_by' => $user->id,
+                'type' => Authorization::TYPE_NIGHT_SHIFT,
+                'date' => $date,
+                'hours' => 4,
+                'reason' => 'velada',
+                'status' => Authorization::STATUS_APPROVED,
+            ]);
+        }
+
+        $period = PayrollPeriod::factory()->monthly()->create([
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-30',
+        ]);
+
+        $entry = $this->calculator()->calculateEmployeePayroll($period, $employee->fresh());
+
+        // 2 veladas × $472 = $944, sin importar las 4 h de cada noche.
+        $this->assertSame(2, (int) $entry->velada_days, '2 noches de velada contadas');
+        $this->assertEqualsWithDelta(944.00, (float) $entry->velada_pay, 0.01, '2 × monto fijo, no por horas');
+    }
+
+    /**
+     * Sin "Monto" configurado, la velada por conceptos paga 0 (regla 2026-06-15):
+     * el monto fijo global del concepto VEL es 0 y no hay override por empleado,
+     * así que no se paga nada aunque la noche esté autorizada y trabajada.
+     */
+    public function test_monthly_velada_without_amount_pays_zero(): void
+    {
+        $employee = $this->makeEmployee();
+
+        $velada = CompensationType::factory()->fixed(0.00)->create([
+            'name' => 'Velada',
+            'code' => 'VEL',
+            'application_mode' => CompensationType::APPLICATION_PER_DAY,
+            'authorization_type' => Authorization::TYPE_NIGHT_SHIFT,
+        ]);
+        $employee->compensationTypes()->attach($velada->id, ['is_active' => true]);
+
+        $user = User::factory()->create();
+        AttendanceRecord::factory()->for($employee)->create([
+            'work_date' => '2026-06-03',
+            'status' => 'present',
+            'worked_hours' => 10.00,
+            'velada_hours' => 4.00,
+            'velada_authorized_hours' => 4.00,
+        ]);
+        Authorization::create([
+            'employee_id' => $employee->id,
+            'requested_by' => $user->id,
+            'type' => Authorization::TYPE_NIGHT_SHIFT,
+            'date' => '2026-06-03',
+            'hours' => 4,
+            'reason' => 'velada',
+            'status' => Authorization::STATUS_APPROVED,
+        ]);
+
+        $period = PayrollPeriod::factory()->monthly()->create([
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-30',
+        ]);
+
+        $entry = $this->calculator()->calculateEmployeePayroll($period, $employee->fresh());
+
+        $this->assertSame(1, (int) $entry->velada_days, 'la noche se cuenta');
+        $this->assertEqualsWithDelta(0.00, (float) $entry->velada_pay, 0.01, 'sin monto → 0');
+    }
+
+    /**
      * A COMIDA (attendance_pull_rule = comida) authorization pays through the same
      * generic authorization pass as cena — one fixed lunch per approved weekend-work
      * day — and lands in other_compensation_pay (the monthly "otros" bucket), proving

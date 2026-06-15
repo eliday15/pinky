@@ -318,64 +318,45 @@ class CompensationRateResolverService
             }
         }
 
-        // Velada: prefer explicit auth comp_type (allows future variations beyond VEL).
+        // Velada: se paga por NOCHE trabajada y autorizada (velada_days), no por
+        // hora. El valor por noche sigue el modo del concepto VEL: per_day +
+        // fixed paga el "Monto" del empleado tal cual (1 velada = monto, n
+        // veladas = n × monto, sin multiplicar por horas); per_hour (config
+        // legada) sigue pagando por hora. El concepto se toma de la autorización
+        // explícita o, si no la trae, del que tenga asignado el empleado (VEL).
         $veladaHours = (float) ($metrics['velada_hours'] ?? 0);
-        $remainingVelada = $veladaHours;
+        $veladaDays = (int) ($metrics['velada_days'] ?? 0);
 
-        foreach ($explicitVelada as $auth) {
-            $compType = $auth->compensationType;
-            if (! $compType) {
-                continue;
-            }
-            $hours = min((float) $auth->hours, $remainingVelada);
-            if ($hours <= 0) {
-                continue;
-            }
-            $rate = $this->resolveRate($employee, $compType);
-            $amount = $compType->calculateCompensation(
+        $veladaType = $explicitVelada->first()?->compensationType
+            ?? $this->findApplicableType($employee, 'night_shift');
+
+        if ($veladaType && ($veladaDays > 0 || $veladaHours > 0)) {
+            $rate = $this->resolveRate($employee, $veladaType);
+            $amount = $veladaType->calculateCompensation(
                 $hourlyRate,
                 $dailySalary,
-                $hours,
-                0,
+                $veladaHours,
+                $veladaDays,
                 $rate['percentage'],
                 $rate['fixed_amount'],
             );
+            $isPerDay = $veladaType->application_mode === CompensationType::APPLICATION_PER_DAY;
             $concepts[] = [
-                'code' => $compType->code,
-                'name' => $compType->name,
-                'hours' => round($hours, 2),
-                'days' => 0,
+                'code' => $veladaType->code,
+                'name' => $veladaType->name,
+                'hours' => $isPerDay ? 0 : round($veladaHours, 2),
+                'days' => $isPerDay ? $veladaDays : 0,
                 'rate' => $rate,
                 'amount' => $amount,
-                'source' => 'explicit_authorization',
+                'authorization_type' => $veladaType->authorization_type,
+                'source' => $explicitVelada->isNotEmpty() ? 'explicit_authorization' : 'auto_tier',
             ];
             $total += $amount;
-            $remainingVelada -= $hours;
-            $consumedAuthIds[] = $auth->id;
-        }
 
-        if ($remainingVelada > 0) {
-            $veladaType = $this->findApplicableType($employee, 'night_shift');
-            if ($veladaType) {
-                $rate = $this->resolveRate($employee, $veladaType);
-                $amount = $veladaType->calculateCompensation(
-                    $hourlyRate,
-                    $dailySalary,
-                    $remainingVelada,
-                    0,
-                    $rate['percentage'],
-                    $rate['fixed_amount'],
-                );
-                $concepts[] = [
-                    'code' => $veladaType->code,
-                    'name' => $veladaType->name,
-                    'hours' => round($remainingVelada, 2),
-                    'days' => 0,
-                    'rate' => $rate,
-                    'amount' => $amount,
-                    'source' => 'auto_tier',
-                ];
-                $total += $amount;
+            // La velada es metric-gated: marca sus autorizaciones como pagadas
+            // para que el pase genérico no las vuelva a pagar.
+            foreach ($explicitVelada as $auth) {
+                $consumedAuthIds[] = $auth->id;
             }
         }
 

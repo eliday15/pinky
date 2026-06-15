@@ -150,6 +150,10 @@ const breakdown = props.entry.calculation_breakdown || {};
                         <span class="text-gray-600">Dias de vacaciones pagados</span>
                         <span class="font-medium text-purple-600">{{ entry.vacation_days_paid }}</span>
                     </div>
+                    <div v-if="entry.velada_days > 0" class="flex justify-between items-center">
+                        <span class="text-gray-600">Veladas</span>
+                        <span class="font-medium text-indigo-600">{{ entry.velada_days }}</span>
+                    </div>
                 </div>
             </div>
         </div>
@@ -232,6 +236,15 @@ const breakdown = props.entry.calculation_breakdown || {};
                         </span>
                     </div>
                     <span class="font-medium text-blue-600">{{ formatCurrency(entry.holiday_pay) }}</span>
+                </div>
+                <div v-if="entry.velada_pay > 0" class="flex justify-between items-center py-2 border-b">
+                    <div>
+                        <span class="text-gray-600">Pago velada</span>
+                        <span v-if="entry.velada_days > 0" class="text-xs text-gray-400 ml-2">
+                            ({{ entry.velada_days }} velada{{ entry.velada_days > 1 ? 's' : '' }})
+                        </span>
+                    </div>
+                    <span class="font-medium text-indigo-600">{{ formatCurrency(entry.velada_pay) }}</span>
                 </div>
                 <div class="flex justify-between items-center py-2 border-b">
                     <div>

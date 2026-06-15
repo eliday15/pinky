@@ -61,6 +61,7 @@ class PayrollEntry extends Model
         'velada_authorized_hours',
         'velada_multiplier',
         'velada_pay',
+        'velada_days',
         'overtime_authorized_hours',
         'deductions',
         'gross_pay',
@@ -98,6 +99,7 @@ class PayrollEntry extends Model
         'velada_authorized_hours' => 'decimal:2',
         'velada_multiplier' => 'decimal:2',
         'velada_pay' => 'decimal:2',
+        'velada_days' => 'integer',
         'overtime_authorized_hours' => 'decimal:2',
         'calculation_breakdown' => 'array',
     ];
