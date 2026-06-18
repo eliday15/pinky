@@ -277,4 +277,33 @@ class IncidentAttendanceRecalcTest extends FeatureTestCase
         $this->assertSame(30, (int) $record->early_departure_minutes);
         $this->assertSame('absent', $record->status, 'el umbral exacto ya cuenta como falta (>=), igual que en los reportes');
     }
+
+    /**
+     * Regresión (caso Cecilia Miranda, 2026-06-09): llegar muchísimo tarde
+     * (retardo >= max_late_minutes_before_absence) y por ello trabajar < 4 h
+     * debe quedar como FALTA ('absent'), nunca como 'partial'. Antes, el bloque
+     * "jornada corta -> partial" se ejecutaba DESPUÉS del retardo y sobreescribía
+     * el 'absent', por lo que la falta desaparecía del reporte y de la nómina
+     * (ambos solo miran status='absent'). El estado 'partial' ya no existe:
+     * un día es falta o no lo es.
+     */
+    public function test_severe_lateness_with_short_day_is_absence_not_partial(): void
+    {
+        $employee = $this->employee(); // horario 08:00-17:00, tolerancia 10 min
+        $record = AttendanceRecord::factory()->for($employee)->create([
+            'work_date' => '2026-06-09',
+            'check_in' => '13:59:00', // ~6 h tarde
+            'check_out' => '17:40:00', // < 4 h trabajadas
+            'status' => 'present',
+        ]);
+
+        app(ZktecoSyncService::class)->recalculateAttendanceRecord($record);
+
+        $record->refresh();
+
+        $this->assertGreaterThanOrEqual(60, (int) $record->late_minutes, 'el retardo supera el umbral de falta');
+        $this->assertLessThan(4.0, (float) $record->worked_hours, 'trabajó menos de 4 h (antes esto la marcaba parcial)');
+        $this->assertNotSame('partial', $record->status, "'partial' ya no existe: es falta o no");
+        $this->assertSame('absent', $record->status, 'retardo extremo con jornada corta es falta, no parcial');
+    }
 }

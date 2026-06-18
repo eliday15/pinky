@@ -796,9 +796,16 @@ class ZktecoSyncService
                 $status = 'late';
             }
         }
-        if ($workedHours < 4 && $workedHours > 0) {
-            $status = 'partial';
-        }
+        // El estado "Parcial" se eliminó por regla de negocio (2026-06-18): un
+        // día es FALTA o no lo es, sin limbo intermedio. La falta la deciden
+        // EXCLUSIVAMENTE las reglas de retardo y salida temprana:
+        //   - retardo  <  max_late_minutes_before_absence    -> 'late'   (retardo)
+        //   - retardo  >= max_late_minutes_before_absence    -> 'absent' (falta)
+        //   - salida temprana >= early_departure_absence_threshold -> 'absent' (falta)
+        // Antes, una jornada corta (<4 h) se marcaba 'parcial' y sobreescribía el
+        // 'absent' del retardo extremo (p. ej. llegar ~6 h tarde y trabajar 3.68 h):
+        // como el reporte de faltas y la nómina solo miran status='absent', la
+        // falta desaparecía por completo (caso Cecilia Miranda, 2026-06-09).
         if ($attendance->is_holiday) {
             $status = 'holiday';
         }
