@@ -547,7 +547,14 @@ const submit = () => {
     // per employee), and any extra manual rows ride along as additional entries.
     // We fold both into entries[] so a single code path on the backend handles
     // it; otherwise entries[] and the legacy date shape are mutually exclusive.
-    if (isQuantityMode.value && form.entries.length > 0) {
+    //
+    // Attendance-pull concepts (fin de semana / comida / cena) are also per_day,
+    // but they NEVER use the legacy range card: every row already lives in
+    // form.entries with its real punched date. Folding in form.date here would
+    // inject a bogus row dated "today" per employee (e.g. a "fin de semana" on a
+    // Thursday) on top of the real weekend one — so they fall through to the
+    // plain entries-only submit below.
+    if (isQuantityMode.value && !isAttendancePull.value && form.entries.length > 0) {
         const rangeRows = form.employee_ids.map((empId) => {
             const emp = props.employees.find(e => e.id === empId);
             return {

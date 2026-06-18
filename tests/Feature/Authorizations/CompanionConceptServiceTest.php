@@ -87,7 +87,13 @@ class CompanionConceptServiceTest extends FeatureTestCase
     {
         $approver = $this->adminUser();
         $weekendType = $this->compType(CompensationType::PULL_RULE_WEEKEND, 'Fin de Semana');
-        $comida = $this->compType(CompensationType::PULL_RULE_COMIDA, 'Comida');
+        // El concepto "Comida" (code COM) ya viene de migraciones con pull rule
+        // 'comida' — es el que el servicio resuelve como acompañante del fin de
+        // semana (orderBy priority). Usamos ese mismo en vez de crear un duplicado.
+        $comida = CompensationType::active()
+            ->where('attendance_pull_rule', CompensationType::PULL_RULE_COMIDA)
+            ->orderBy('priority')
+            ->firstOrFail();
         $employee = $this->enrolledEmployee($comida);
         $weekend = $this->approvedWeekend($employee, $approver, $weekendType);
 
