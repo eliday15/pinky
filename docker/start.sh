@@ -35,6 +35,10 @@ run_as_web() {
 
 run_as_web "php artisan storage:link" 2>/dev/null || true
 run_as_web "php artisan migrate --force" 2>&1 || echo "Migration failed but continuing..."
+# Re-seed roles/permissions (idempotente: firstOrCreate + syncPermissions) para
+# que permisos nuevos como payroll.pay_cash existan tras cada deploy sin un paso
+# manual. NO crea usuarios ni toca asignaciones usuario->rol.
+run_as_web "php artisan db:seed --class=RolesPermissionsSeeder --force" 2>&1 || echo "Roles/permissions seed failed but continuing..."
 run_as_web "php artisan config:cache"
 run_as_web "php artisan route:cache"
 run_as_web "php artisan view:cache"

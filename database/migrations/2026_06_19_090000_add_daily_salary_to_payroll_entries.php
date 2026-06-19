@@ -13,6 +13,13 @@ return new class extends Migration
 {
     public function up(): void
     {
+        // Idempotente: en prod la columna ya existía (migración previa con otro
+        // nombre de archivo), así que sin esta guarda el ALTER falla con
+        // "Duplicate column 'daily_salary'" y aborta el resto del migrate.
+        if (Schema::hasColumn('payroll_entries', 'daily_salary')) {
+            return;
+        }
+
         Schema::table('payroll_entries', function (Blueprint $table) {
             $table->decimal('daily_salary', 10, 2)->default(0)->after('hourly_rate');
         });

@@ -16,6 +16,10 @@ return new class extends Migration
 {
     public function up(): void
     {
+        if (Schema::hasColumn('payroll_periods', 'cash_closed_at')) {
+            return;
+        }
+
         Schema::table('payroll_periods', function (Blueprint $table) {
             $table->timestamp('cash_closed_at')->nullable()->after('recalculation_flagged_at');
         });

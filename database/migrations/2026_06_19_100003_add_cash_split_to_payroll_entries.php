@@ -17,8 +17,12 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('payroll_entries', function (Blueprint $table) {
-            $table->decimal('cash_amount', 12, 2)->default(0)->after('net_pay');
-            $table->decimal('bank_amount', 12, 2)->default(0)->after('cash_amount');
+            if (! Schema::hasColumn('payroll_entries', 'cash_amount')) {
+                $table->decimal('cash_amount', 12, 2)->default(0)->after('net_pay');
+            }
+            if (! Schema::hasColumn('payroll_entries', 'bank_amount')) {
+                $table->decimal('bank_amount', 12, 2)->default(0)->after('cash_amount');
+            }
         });
     }
 

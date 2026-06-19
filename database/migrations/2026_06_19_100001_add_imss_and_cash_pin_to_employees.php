@@ -18,8 +18,12 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('employees', function (Blueprint $table) {
-            $table->boolean('is_imss_enrolled')->default(false)->after('imss_number');
-            $table->string('cash_pin')->nullable()->after('is_imss_enrolled');
+            if (! Schema::hasColumn('employees', 'is_imss_enrolled')) {
+                $table->boolean('is_imss_enrolled')->default(false)->after('imss_number');
+            }
+            if (! Schema::hasColumn('employees', 'cash_pin')) {
+                $table->string('cash_pin')->nullable()->after('is_imss_enrolled');
+            }
         });
     }
 

@@ -19,6 +19,10 @@ return new class extends Migration
 {
     public function up(): void
     {
+        if (Schema::hasColumn('compensation_types', 'payment_period')) {
+            return;
+        }
+
         Schema::table('compensation_types', function (Blueprint $table) {
             $table->string('payment_period')->default('monthly')->after('priority');
         });
