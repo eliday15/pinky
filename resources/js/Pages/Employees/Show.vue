@@ -236,12 +236,12 @@ const supervisorIsAutoResolved = props.employee.position?.supervisor_position_id
                         <h3 class="text-lg font-semibold text-gray-800 mb-4">Compensacion</h3>
                         <div class="space-y-3">
                             <div class="flex justify-between">
-                                <span class="text-gray-500">Tarifa por hora</span>
-                                <span class="font-medium">{{ formatCurrency(employee.hourly_rate) }}</span>
-                            </div>
-                            <div v-if="employee.daily_salary" class="flex justify-between">
-                                <span class="text-gray-500">Salario diario integrado</span>
+                                <span class="text-gray-500">Sueldo diario</span>
                                 <span class="font-medium">{{ formatCurrency(employee.daily_salary) }}</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-500">Sueldo semanal (x7)</span>
+                                <span class="font-medium">{{ formatCurrency((employee.daily_salary || 0) * 7) }}</span>
                             </div>
                             <div v-if="employee.is_minimum_wage" class="flex justify-between">
                                 <span class="text-gray-500">Salario Minimo</span>

@@ -30,7 +30,7 @@ use Illuminate\Support\Collection;
 class WeeklyOvertimeReportService
 {
     public function __construct(
-        private readonly OvertimeRoundingService $rounding = new OvertimeRoundingService(),
+        private readonly OvertimeRoundingService $rounding = new OvertimeRoundingService,
     ) {}
 
     /**
@@ -181,10 +181,11 @@ class WeeklyOvertimeReportService
                 'total_hours' => round($weeklyExtra, 2),
                 'weekend_hours' => round($weeklyWeekend, 2),
                 'weekend_worked_hours' => round($weeklyWeekendWorked, 2),
-                // Unidades de fin de semana (horas trabajadas ÷ N). Null cuando
-                // el depto no usa el conteo por unidades.
+                // Unidades de fin de semana (horas trabajadas ÷ N), a números
+                // cerrados: redondeo al entero más cercano para que coincida con
+                // la nómina. Null cuando el depto no usa el conteo por unidades.
                 'weekend_units' => $weekendUnitHours
-                    ? round($weeklyWeekendWorked / $weekendUnitHours, 2)
+                    ? round($weeklyWeekendWorked / $weekendUnitHours)
                     : null,
                 'detected_hours' => round($weeklyDetected, 2),
                 'pending_hours' => round($weeklyPending, 2),
@@ -369,8 +370,10 @@ class WeeklyOvertimeReportService
             'total_hours' => round($totalHours, 2),
             'weekend_hours' => round($weekendHours, 2),
             'weekend_worked_hours' => round($weekendWorked, 2),
+            // Unidades a números cerrados (redondeo al entero más cercano),
+            // consistente con la nómina y con cada fila.
             'weekend_units' => $weekendUnitHours
-                ? round($weekendWorked / $weekendUnitHours, 2)
+                ? round($weekendWorked / $weekendUnitHours)
                 : null,
             'detected_hours' => round($detectedHours, 2),
             'pending_hours' => round($pendingHours, 2),

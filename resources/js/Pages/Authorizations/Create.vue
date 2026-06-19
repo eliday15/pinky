@@ -108,9 +108,10 @@ const selectedPullRule = computed(() => {
     return t?.attendance_pull_rule || null;
 });
 
-/** Whether the selected type pulls per-day entries from check-ins (meal/weekend),
- *  as one entry per qualifying day, never auto-approved. */
-const isAttendancePull = computed(() => ['meal', 'weekend', 'comida'].includes(selectedPullRule.value));
+/** Whether the selected type pulls per-day entries from check-ins
+ *  (meal/weekend/comida/velada), as one entry per qualifying day, never
+ *  auto-approved. */
+const isAttendancePull = computed(() => ['meal', 'weekend', 'comida', 'velada'].includes(selectedPullRule.value));
 
 /** Copy for the attendance-pull card, by rule. */
 const pullCopy = computed(() => {
@@ -126,6 +127,13 @@ const pullCopy = computed(() => {
             title: 'Comidas a Autorizar',
             hint: 'Cada fila es una comida (un día). Elige un rango y carga desde checadas: se genera una comida por cada día de fin de semana trabajado (sáb/dom fuera de su horario).',
             unit: 'comida(s)',
+        };
+    }
+    if (selectedPullRule.value === 'velada') {
+        return {
+            title: 'Veladas a Autorizar',
+            hint: 'Cada fila es una velada (una noche). Elige un rango y carga desde checadas: se detecta una velada por cada noche trabajada en las marcas (reingreso nocturno o que cruza medianoche). Al aprobarla se genera sola la cena.',
+            unit: 'velada(s)',
         };
     }
     return {

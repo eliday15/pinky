@@ -4,12 +4,15 @@ namespace App\Http\Controllers;
 
 use App\Exports\ContpaqiPrenominaExport;
 use App\Http\Traits\VerifiesTwoFactor;
+use App\Models\CashPayout;
 use App\Models\PayrollEntry;
 use App\Models\PayrollPeriod;
+use App\Services\CashDenominationService;
 use App\Services\PayrollCalculatorService;
 use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 use Inertia\Response;
 use Maatwebsite\Excel\Excel;
@@ -20,7 +23,8 @@ class PayrollController extends Controller
     use VerifiesTwoFactor;
 
     public function __construct(
-        private PayrollCalculatorService $calculator
+        private PayrollCalculatorService $calculator,
+        private CashDenominationService $denominations,
     ) {}
 
     /**
@@ -29,7 +33,7 @@ class PayrollController extends Controller
     public function index(Request $request): Response
     {
         $user = auth()->user();
-        if (!$user->hasPermissionTo('payroll.view_basic') && !$user->hasPermissionTo('payroll.view_complete')) {
+        if (! $user->hasPermissionTo('payroll.view_basic') && ! $user->hasPermissionTo('payroll.view_complete')) {
             abort(403);
         }
 
@@ -49,7 +53,7 @@ class PayrollController extends Controller
      */
     public function create(): Response
     {
-        if (!auth()->user()->hasPermissionTo('payroll.create')) {
+        if (! auth()->user()->hasPermissionTo('payroll.create')) {
             abort(403);
         }
 
@@ -81,7 +85,7 @@ class PayrollController extends Controller
      */
     public function store(Request $request): RedirectResponse
     {
-        if (!auth()->user()->hasPermissionTo('payroll.create')) {
+        if (! auth()->user()->hasPermissionTo('payroll.create')) {
             abort(403);
         }
 
@@ -125,7 +129,7 @@ class PayrollController extends Controller
     public function show(PayrollPeriod $payroll): Response
     {
         $user = auth()->user();
-        if (!$user->hasPermissionTo('payroll.view_basic') && !$user->hasPermissionTo('payroll.view_complete')) {
+        if (! $user->hasPermissionTo('payroll.view_basic') && ! $user->hasPermissionTo('payroll.view_complete')) {
             abort(403);
         }
 
@@ -147,6 +151,7 @@ class PayrollController extends Controller
                 'calculate' => $user->hasPermissionTo('payroll.calculate'),
                 'approve' => $user->hasPermissionTo('payroll.approve'),
                 'export' => $user->hasPermissionTo('payroll.export'),
+                'payCash' => $user->hasPermissionTo('payroll.pay_cash'),
             ],
         ]);
     }
@@ -156,7 +161,7 @@ class PayrollController extends Controller
      */
     public function calculate(PayrollPeriod $payroll): RedirectResponse
     {
-        if (!auth()->user()->hasPermissionTo('payroll.calculate')) {
+        if (! auth()->user()->hasPermissionTo('payroll.calculate')) {
             abort(403);
         }
 
@@ -182,7 +187,7 @@ class PayrollController extends Controller
      */
     public function approve(Request $request, PayrollPeriod $payroll): RedirectResponse
     {
-        if (!auth()->user()->hasPermissionTo('payroll.approve')) {
+        if (! auth()->user()->hasPermissionTo('payroll.approve')) {
             abort(403);
         }
 
@@ -207,7 +212,7 @@ class PayrollController extends Controller
      */
     public function markPaid(Request $request, PayrollPeriod $payroll): RedirectResponse
     {
-        if (!auth()->user()->hasPermissionTo('payroll.approve')) {
+        if (! auth()->user()->hasPermissionTo('payroll.approve')) {
             abort(403);
         }
 
@@ -225,12 +230,199 @@ class PayrollController extends Controller
     }
 
     /**
+     * Cerrar y preparar el efectivo de un periodo aprobado.
+     *
+     * Crea/recalcula un CashPayout por empleado: monto del periodo (cash_amount
+     * redondeado al peso) + acumulado de lo no cobrado en periodos previos, con
+     * el desglose mínimo de billetes/monedas. Reabrible mientras el periodo no
+     * esté pagado; nunca pisa un payout ya cobrado.
+     */
+    public function closeCash(Request $request, PayrollPeriod $payroll): RedirectResponse
+    {
+        if (! auth()->user()->hasPermissionTo('payroll.pay_cash')) {
+            abort(403);
+        }
+
+        if ($payroll->status !== 'approved') {
+            return redirect()->back()
+                ->with('error', 'Solo se puede preparar el efectivo de una nomina aprobada.');
+        }
+
+        DB::transaction(function () use ($payroll) {
+            $entries = $payroll->entries()->get();
+
+            foreach ($entries as $entry) {
+                $existing = CashPayout::where('payroll_period_id', $payroll->id)
+                    ->where('employee_id', $entry->employee_id)
+                    ->first();
+
+                // Nunca recalcular un cobro ya realizado.
+                if ($existing && $existing->status === CashPayout::STATUS_PAID) {
+                    continue;
+                }
+
+                // Acumulado: el cobro previo más reciente aún pendiente ya
+                // arrastra (en su total_due) todo lo anterior, así que su saldo
+                // pendiente es el acumulado completo a la fecha.
+                $priorPending = CashPayout::where('employee_id', $entry->employee_id)
+                    ->where('payroll_period_id', '!=', $payroll->id)
+                    ->where('status', CashPayout::STATUS_PENDING)
+                    ->whereHas('payrollPeriod', fn ($q) => $q->where('start_date', '<', $payroll->start_date))
+                    ->with('payrollPeriod')
+                    ->get()
+                    ->sortByDesc(fn (CashPayout $p) => $p->payrollPeriod->start_date)
+                    ->first();
+
+                $openingBalance = $priorPending ? $priorPending->outstanding() : 0.0;
+                $periodAmount = $this->denominations->roundToPeso((float) $entry->cash_amount);
+                $totalDue = $periodAmount + $openingBalance;
+
+                CashPayout::updateOrCreate(
+                    ['payroll_period_id' => $payroll->id, 'employee_id' => $entry->employee_id],
+                    [
+                        'period_amount' => $periodAmount,
+                        'opening_balance' => $openingBalance,
+                        'total_due' => $totalDue,
+                        'amount_paid' => 0,
+                        'status' => CashPayout::STATUS_PENDING,
+                        'denomination_breakdown' => $this->denominations->breakdown((int) round($totalDue)),
+                    ]
+                );
+            }
+
+            $payroll->update(['cash_closed_at' => now()]);
+        });
+
+        return redirect()->route('payroll.cash', $payroll)
+            ->with('success', 'Efectivo preparado. Revisa el desglose de billetes.');
+    }
+
+    /**
+     * Página de pago en efectivo: desglose global de billetes y tabla por
+     * empleado con su monto, acumulado, total a cobrar y estado.
+     */
+    public function cash(PayrollPeriod $payroll): Response
+    {
+        $user = auth()->user();
+        if (! $user->hasPermissionTo('payroll.pay_cash')) {
+            abort(403);
+        }
+
+        $payouts = $payroll->cashPayouts()
+            ->with('employee:id,full_name,employee_number,cash_pin')
+            ->get()
+            ->sortBy(fn (CashPayout $p) => $p->employee?->full_name)
+            ->values()
+            ->map(fn (CashPayout $p) => [
+                'id' => $p->id,
+                'employee_name' => $p->employee?->full_name,
+                'employee_number' => $p->employee?->employee_number,
+                'has_cash_pin' => (bool) $p->employee?->hasCashPin(),
+                'period_amount' => (float) $p->period_amount,
+                'opening_balance' => (float) $p->opening_balance,
+                'total_due' => (float) $p->total_due,
+                'amount_paid' => (float) $p->amount_paid,
+                'status' => $p->status,
+                'collected_at' => $p->collected_at,
+                'denomination_breakdown' => $p->denomination_breakdown ?? [],
+            ]);
+
+        // El efectivo a retirar del banco es el desglose mínimo de lo que aún
+        // está pendiente de cobro.
+        $pendingAmounts = $payouts
+            ->where('status', CashPayout::STATUS_PENDING)
+            ->pluck('total_due');
+
+        return Inertia::render('Payroll/Cash', [
+            'period' => $payroll,
+            'payouts' => $payouts,
+            'globalBreakdown' => $this->denominations->breakdownGlobal($pendingAmounts),
+            'denominations' => CashDenominationService::DENOMINATIONS,
+            'summary' => [
+                'total_due' => (float) $payouts->sum('total_due'),
+                'total_paid' => (float) $payouts->sum('amount_paid'),
+                'total_pending' => (float) $payouts->where('status', CashPayout::STATUS_PENDING)->sum('total_due'),
+                'pending_count' => $payouts->where('status', CashPayout::STATUS_PENDING)->count(),
+                'paid_count' => $payouts->where('status', CashPayout::STATUS_PAID)->count(),
+            ],
+            'can' => [
+                'payCash' => $user->hasPermissionTo('payroll.pay_cash'),
+            ],
+        ]);
+    }
+
+    /**
+     * Marcar un cobro como realizado validando el PIN personal del empleado.
+     *
+     * Liquida el total a cobrar (que ya incluye el acumulado) y salda de paso
+     * los cobros previos pendientes que ese total arrastraba.
+     */
+    public function collectCash(Request $request, PayrollPeriod $payroll, CashPayout $payout): RedirectResponse
+    {
+        if (! auth()->user()->hasPermissionTo('payroll.pay_cash')) {
+            abort(403);
+        }
+
+        if ($payout->payroll_period_id !== $payroll->id) {
+            abort(404);
+        }
+
+        if (! $payroll->isCashClosed()) {
+            return redirect()->back()
+                ->with('error', 'Primero cierra y prepara el efectivo de este periodo.');
+        }
+
+        if ($payout->status === CashPayout::STATUS_PAID) {
+            return redirect()->back()
+                ->with('error', 'Este cobro ya fue registrado.');
+        }
+
+        $request->validate(['pin' => ['required', 'string']]);
+
+        $payout->loadMissing('employee');
+
+        if (! $payout->employee || ! $payout->employee->verifyCashPin($request->input('pin'))) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'pin' => 'Contraseña de cobro incorrecta.',
+            ]);
+        }
+
+        DB::transaction(function () use ($payout, $payroll) {
+            $payout->update([
+                'status' => CashPayout::STATUS_PAID,
+                'amount_paid' => $payout->total_due,
+                'collected_at' => now(),
+                'pin_verified' => true,
+                'collected_by' => auth()->id(),
+            ]);
+
+            // El total cobrado ya incluía el acumulado de periodos previos: saldar
+            // esos cobros pendientes para que no reaparezcan en el siguiente cierre.
+            CashPayout::where('employee_id', $payout->employee_id)
+                ->where('payroll_period_id', '!=', $payout->payroll_period_id)
+                ->where('status', CashPayout::STATUS_PENDING)
+                ->whereHas('payrollPeriod', fn ($q) => $q->where('start_date', '<', $payroll->start_date))
+                ->get()
+                ->each(function (CashPayout $prior) {
+                    $prior->update([
+                        'status' => CashPayout::STATUS_PAID,
+                        'amount_paid' => $prior->total_due,
+                        'collected_at' => now(),
+                    ]);
+                });
+        });
+
+        return redirect()->route('payroll.cash', $payroll)
+            ->with('success', "Cobro registrado para {$payout->employee->full_name}.");
+    }
+
+    /**
      * Show detail for a single employee's payroll entry.
      */
     public function entryDetail(PayrollEntry $entry): Response
     {
         $user = auth()->user();
-        if (!$user->hasPermissionTo('payroll.view_basic') && !$user->hasPermissionTo('payroll.view_complete')) {
+        if (! $user->hasPermissionTo('payroll.view_basic') && ! $user->hasPermissionTo('payroll.view_complete')) {
             abort(403);
         }
 
@@ -248,11 +440,11 @@ class PayrollController extends Controller
      */
     public function destroy(PayrollPeriod $payroll): RedirectResponse
     {
-        if (!auth()->user()->hasPermissionTo('payroll.create')) {
+        if (! auth()->user()->hasPermissionTo('payroll.create')) {
             abort(403);
         }
 
-        if ($payroll->status !== 'draft' && !auth()->user()->hasRole('admin')) {
+        if ($payroll->status !== 'draft' && ! auth()->user()->hasRole('admin')) {
             return redirect()->back()
                 ->with('error', 'Solo se pueden eliminar periodos en borrador.');
         }
@@ -269,7 +461,7 @@ class PayrollController extends Controller
      */
     public function exportContpaqi(Request $request, PayrollPeriod $payroll): BinaryFileResponse|RedirectResponse
     {
-        if (!auth()->user()->hasPermissionTo('payroll.export')) {
+        if (! auth()->user()->hasPermissionTo('payroll.export')) {
             abort(403);
         }
 

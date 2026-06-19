@@ -16,7 +16,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
  */
 class CompensationType extends Model
 {
-    use HasFactory, Auditable;
+    use Auditable, HasFactory;
 
     /**
      * Application mode constants.
@@ -37,12 +37,29 @@ class CompensationType extends Model
      * 'comida'  = one entry per (employee, day) where the employee worked a
      *             weekend (is_weekend_work) — a lunch given only for weekend work,
      *             unlike the cena which also fires on long days / veladas.
+     * 'velada'  = one entry per (employee, day) where a real velada night block is
+     *             detected in the day's punches (a night re-entry inside the velada
+     *             window or crossing midnight). Pays per night (velada_days), not by
+     *             hours; approving it auto-captures the companion Cena.
      */
     public const PULL_RULE_MEAL = 'meal';
 
     public const PULL_RULE_WEEKEND = 'weekend';
 
     public const PULL_RULE_COMIDA = 'comida';
+
+    public const PULL_RULE_VELADA = 'velada';
+
+    /**
+     * Payment period: in which nómina this concept is paid.
+     *
+     * WEEKLY pays on periods that pay the base (weekly/biweekly); MONTHLY pays
+     * on periods that pay extras (monthly/biweekly). Default is MONTHLY so all
+     * existing concepts keep paying exactly where they do today.
+     */
+    public const PAYMENT_PERIOD_WEEKLY = 'weekly';
+
+    public const PAYMENT_PERIOD_MONTHLY = 'monthly';
 
     /**
      * Module name for audit logging.
@@ -66,6 +83,7 @@ class CompensationType extends Model
         'authorization_type',
         'attendance_pull_rule',
         'priority',
+        'payment_period',
     ];
 
     protected $casts = [
@@ -209,10 +227,36 @@ class CompensationType extends Model
     }
 
     /**
-     * Whether this type pulls per-day entries from check-ins (meal, weekend or comida).
+     * Whether this type is loaded from check-ins using the velada rule (a night
+     * block detected from the day's punches). Pays per night, not by hours.
+     */
+    public function hasVeladaPullRule(): bool
+    {
+        return $this->attendance_pull_rule === self::PULL_RULE_VELADA;
+    }
+
+    /**
+     * Whether this type pulls per-day entries from check-ins (meal, weekend,
+     * comida or velada).
      */
     public function pullsFromAttendance(): bool
     {
-        return in_array($this->attendance_pull_rule, [self::PULL_RULE_MEAL, self::PULL_RULE_WEEKEND, self::PULL_RULE_COMIDA], true);
+        return in_array($this->attendance_pull_rule, [self::PULL_RULE_MEAL, self::PULL_RULE_WEEKEND, self::PULL_RULE_COMIDA, self::PULL_RULE_VELADA], true);
+    }
+
+    /**
+     * Whether this concept is paid on the weekly (base) nómina.
+     */
+    public function paidWeekly(): bool
+    {
+        return $this->payment_period === self::PAYMENT_PERIOD_WEEKLY;
+    }
+
+    /**
+     * Whether this concept is paid on the monthly (extras) nómina.
+     */
+    public function paidMonthly(): bool
+    {
+        return $this->payment_period !== self::PAYMENT_PERIOD_WEEKLY;
     }
 }

@@ -10,6 +10,7 @@ use App\Models\Holiday;
 use App\Models\Incident;
 use App\Models\PayrollEntry;
 use App\Models\PayrollPeriod;
+use App\Services\CompensationRateResolverService;
 use App\Services\LateAbsenceService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -308,8 +309,12 @@ class ReportController extends Controller implements HasMiddleware
         // AUTORIZADAS (overtime_authorized_hours, ya redondeadas con la
         // escalera de la empresa). El reporte muestra ambas columnas para
         // conciliar, y el costo estimado se calcula sobre lo autorizado con
-        // la tarifa del empleado — nunca sobre horas crudas sin autorizar.
-        $records = AttendanceRecord::with(['employee.department'])
+        // el MONTO FIJO por hora del concepto de horas extra del empleado —
+        // nunca sobre horas crudas sin autorizar ni por tarifa por hora.
+        $records = AttendanceRecord::with([
+            'employee.department',
+            'employee.compensationTypes' => fn ($q) => $q->wherePivot('is_active', true),
+        ])
             ->whereIn('employee_id', $activeEmployeeIds)
             ->whereBetween('work_date', [$startDate->toDateString(), $endDate->toDateString()])
             ->where(function ($q) {
@@ -318,18 +323,26 @@ class ReportController extends Controller implements HasMiddleware
             })
             ->get();
 
-        $byEmployee = $records->groupBy('employee_id')->map(function ($group) {
+        $resolver = app(CompensationRateResolverService::class);
+
+        $byEmployee = $records->groupBy('employee_id')->map(function ($group) use ($resolver) {
             $employee = $group->first()->employee;
-            $hourlyRate = (float) ($employee?->hourly_rate ?? 0);
-            $overtimeMultiplier = (float) ($employee?->overtime_rate ?? 1.5);
             $authorizedHours = round($group->sum('overtime_authorized_hours'), 2);
+
+            // Monto fijo por hora del concepto de horas extra asignado (HE).
+            $perHour = 0.0;
+            $overtimeType = $employee ? $resolver->findApplicableType($employee, 'overtime') : null;
+            if ($employee && $overtimeType) {
+                $rate = $resolver->resolveRate($employee, $overtimeType);
+                $perHour = (float) ($rate['fixed_amount'] ?? 0);
+            }
 
             return [
                 'employee' => $employee,
                 'days_with_overtime' => $group->count(),
                 'total_overtime' => round($group->sum('overtime_hours'), 2),
                 'total_authorized' => $authorizedHours,
-                'estimated_cost' => round($authorizedHours * $hourlyRate * $overtimeMultiplier, 2),
+                'estimated_cost' => round($authorizedHours * $perHour, 2),
             ];
         })->sortByDesc('total_overtime')->values();
 

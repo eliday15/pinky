@@ -16,7 +16,7 @@ use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 /**
  * Export payroll data in CONTPAQi-compatible format.
  */
-class ContpaqiPrenominaExport implements FromCollection, WithHeadings, WithMapping, WithStyles, ShouldAutoSize
+class ContpaqiPrenominaExport implements FromCollection, ShouldAutoSize, WithHeadings, WithMapping, WithStyles
 {
     use Exportable;
 
@@ -56,17 +56,16 @@ class ContpaqiPrenominaExport implements FromCollection, WithHeadings, WithMappi
         ];
 
         if ($this->period->paysBase()) {
+            // El sueldo se paga por DÍA: SUELDO = sueldo_diario × días pagados
+            // (séptimo día incluido), menos las faltas. Ver Art. 72 LFT.
+            $columns[] = ['heading' => 'SUELDO_DIARIO', 'value' => fn ($e) => $this->formatNumber($e->daily_salary)];
             $columns[] = ['heading' => $codes['regular_pay'].'_SUELDO', 'value' => fn ($e) => $this->formatNumber($e->regular_pay)];
             $columns[] = ['heading' => $codes['deductions'].'_DEDUCCIONES', 'value' => fn ($e) => $this->formatNumber($e->deductions)];
-            $columns[] = ['heading' => 'HORAS_REGULARES', 'value' => fn ($e) => $this->formatNumber($e->regular_hours)];
+            $columns[] = ['heading' => 'DIAS_PAGADOS', 'value' => fn ($e) => $this->basePaidDays($e)];
             $columns[] = ['heading' => 'DIAS_TRABAJADOS', 'value' => fn ($e) => $e->days_worked];
-            // Informativo, SIN efecto monetario (DECISIONES §5 "solo no pagar
-            // el día"): el sueldo se paga por horas, así que estos días ya
-            // valen $0 sin deducción. El sufijo evita que el contador espere
-            // que esta columna concilie con DEDUCCIONES (auditoría #55).
-            $columns[] = ['heading' => 'DIAS_AUSENCIA_SIN_DESCUENTO', 'value' => fn ($e) => $e->days_absent];
-            // Concilia DEDUCCIONES: la única deducción monetaria es la falta
-            // por retardos (días FRT × sueldo diario) — "solo no pagar el día".
+            // Faltas que SÍ descuentan (DEDUCCIONES = días × sueldo_diario × 7/D):
+            // injustificadas + faltas por retardos. Concilia con DEDUCCIONES.
+            $columns[] = ['heading' => 'DIAS_FALTA_DESCONTADOS', 'value' => fn ($e) => $this->absenceDeductionDays($e)];
             $columns[] = ['heading' => 'DIAS_FALTA_RETARDOS', 'value' => fn ($e) => $e->late_absences_generated];
         }
 
@@ -99,7 +98,7 @@ class ContpaqiPrenominaExport implements FromCollection, WithHeadings, WithMappi
     /**
      * Map each payroll entry row to export format, scoped to the period type.
      *
-     * @param PayrollEntry $entry
+     * @param  PayrollEntry  $entry
      */
     public function map($entry): array
     {
@@ -115,6 +114,24 @@ class ContpaqiPrenominaExport implements FromCollection, WithHeadings, WithMappi
             // Bold header row
             1 => ['font' => ['bold' => true]],
         ];
+    }
+
+    /**
+     * Días base efectivamente pagados (séptimo día incluido, menos los días
+     * pagados aparte). Se lee del desglose del cálculo.
+     */
+    private function basePaidDays(PayrollEntry $entry): int
+    {
+        return (int) ($entry->calculation_breakdown['base']['base_paid_days'] ?? 0);
+    }
+
+    /**
+     * Días de falta que descuentan (injustificadas + FRT). Reconcilia con la
+     * columna DEDUCCIONES: días × sueldo_diario × 7/D.
+     */
+    private function absenceDeductionDays(PayrollEntry $entry): int
+    {
+        return (int) ($entry->calculation_breakdown['base']['absence_deduction_days'] ?? 0);
     }
 
     /**

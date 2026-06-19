@@ -93,8 +93,9 @@ class CompensationTypeController extends Controller
             'is_active' => ['boolean'],
             'application_mode' => ['required', Rule::in(['per_hour', 'per_day', 'one_time'])],
             'authorization_type' => ['nullable', Rule::in(['overtime', 'night_shift', 'holiday_worked', 'special'])],
-            'attendance_pull_rule' => ['nullable', Rule::in([CompensationType::PULL_RULE_MEAL, CompensationType::PULL_RULE_WEEKEND, CompensationType::PULL_RULE_COMIDA])],
+            'attendance_pull_rule' => ['nullable', Rule::in([CompensationType::PULL_RULE_MEAL, CompensationType::PULL_RULE_WEEKEND, CompensationType::PULL_RULE_COMIDA, CompensationType::PULL_RULE_VELADA])],
             'priority' => ['integer', 'min:0'],
+            'payment_period' => ['nullable', Rule::in([CompensationType::PAYMENT_PERIOD_WEEKLY, CompensationType::PAYMENT_PERIOD_MONTHLY])],
             'position_ids' => ['nullable', 'array'],
             'position_ids.*' => ['exists:positions,id'],
             'position_percentages' => ['nullable', 'array'],
@@ -114,6 +115,7 @@ class CompensationTypeController extends Controller
                 'name', 'code', 'description', 'calculation_type',
                 'percentage_value', 'fixed_amount', 'is_active',
                 'application_mode', 'authorization_type', 'attendance_pull_rule', 'priority',
+                'payment_period',
             ])->toArray()
         );
 
@@ -167,8 +169,9 @@ class CompensationTypeController extends Controller
             'is_active' => ['boolean'],
             'application_mode' => ['required', Rule::in(['per_hour', 'per_day', 'one_time'])],
             'authorization_type' => ['nullable', Rule::in(['overtime', 'night_shift', 'holiday_worked', 'special'])],
-            'attendance_pull_rule' => ['nullable', Rule::in([CompensationType::PULL_RULE_MEAL, CompensationType::PULL_RULE_WEEKEND, CompensationType::PULL_RULE_COMIDA])],
+            'attendance_pull_rule' => ['nullable', Rule::in([CompensationType::PULL_RULE_MEAL, CompensationType::PULL_RULE_WEEKEND, CompensationType::PULL_RULE_COMIDA, CompensationType::PULL_RULE_VELADA])],
             'priority' => ['integer', 'min:0'],
+            'payment_period' => ['nullable', Rule::in([CompensationType::PAYMENT_PERIOD_WEEKLY, CompensationType::PAYMENT_PERIOD_MONTHLY])],
             'position_ids' => ['nullable', 'array'],
             'position_ids.*' => ['exists:positions,id'],
             'position_percentages' => ['nullable', 'array'],
@@ -188,6 +191,7 @@ class CompensationTypeController extends Controller
                 'name', 'code', 'description', 'calculation_type',
                 'percentage_value', 'fixed_amount', 'is_active',
                 'application_mode', 'authorization_type', 'attendance_pull_rule', 'priority',
+                'payment_period',
             ])->toArray()
         );
 

@@ -3,6 +3,7 @@
 namespace Tests\Feature\Reports;
 
 use App\Models\AttendanceRecord;
+use App\Models\CompensationType;
 use App\Models\Department;
 use App\Models\Employee;
 use App\Models\Incident;
@@ -870,7 +871,20 @@ class ReportControllerTest extends FeatureTestCase
     {
         $this->actingAsAdmin();
 
-        $employee = Employee::factory()->create(['hourly_rate' => 100.00, 'overtime_rate' => 1.5]);
+        $employee = Employee::factory()->create(['daily_salary' => 800.00]);
+        // Horas extra por MONTO FIJO por hora: el costo estimado usa el monto
+        // del concepto HE asignado, no la tarifa por hora.
+        $he = CompensationType::factory()->create([
+            'code' => 'HE',
+            'authorization_type' => 'overtime',
+            'application_mode' => 'per_hour',
+            'calculation_type' => 'fixed',
+            'fixed_amount' => 150.00,
+            'priority' => 10,
+            'is_active' => true,
+        ]);
+        $employee->compensationTypes()->attach($he->id, ['is_active' => true]);
+
         AttendanceRecord::factory()->create([
             'employee_id' => $employee->id,
             'work_date' => '2026-03-12',
@@ -890,7 +904,7 @@ class ReportControllerTest extends FeatureTestCase
                 ->has('byEmployee', 1)
                 ->where('byEmployee.0.total_overtime', 2.5)
                 ->where('byEmployee.0.total_authorized', 1.5)
-                // 1.5h autorizadas * 100 * 1.5 = 225 — lo que pagará nómina
+                // 1.5h autorizadas * 150 (monto fijo HE) = 225 — lo que paga nómina
                 ->where('byEmployee.0.estimated_cost', 225)
                 ->where('summary.total_overtime_hours', 2.5)
                 ->where('summary.total_authorized_hours', 1.5));

@@ -38,7 +38,7 @@ class EmployeeControllerTest extends FeatureTestCase
             'department_id' => $department->id,
             'position_id' => $position->id,
             'schedule_id' => $schedule->id,
-            'hourly_rate' => 75.50,
+            'daily_salary' => 604.00,
         ], $overrides);
     }
 
@@ -151,7 +151,7 @@ class EmployeeControllerTest extends FeatureTestCase
                 ->where('canEditAll', true));
     }
 
-    public function test_rrhh_can_view_create_form_with_canEditAll_false(): void
+    public function test_rrhh_can_view_create_form_with_can_edit_all_false(): void
     {
         $this->actingAsRrhh();
 
@@ -202,6 +202,66 @@ class EmployeeControllerTest extends FeatureTestCase
             ->post(route('employees.store'), [])
             ->assertRedirect(route('employees.create'))
             ->assertSessionHasErrors(['employee_number', 'zkteco_user_id', 'first_name', 'last_name', 'hire_date']);
+    }
+
+    public function test_admin_can_set_imss_flag_and_hashed_cash_pin(): void
+    {
+        $this->actingAsAdmin();
+
+        $payload = $this->validStorePayload([
+            'is_imss_enrolled' => true,
+            'cash_pin' => '4321',
+            'cash_pin_confirmation' => '4321',
+        ]);
+
+        $this->post(route('employees.store'), $payload)
+            ->assertRedirect(route('employees.index'));
+
+        $employee = Employee::where('employee_number', 'EMP-9001')->firstOrFail();
+        $this->assertTrue((bool) $employee->is_imss_enrolled);
+        $this->assertTrue($employee->hasCashPin());
+        $this->assertNotSame('4321', $employee->getAttributes()['cash_pin'], 'PIN debe guardarse hasheado');
+        $this->assertTrue($employee->verifyCashPin('4321'));
+    }
+
+    public function test_cash_pin_is_hidden_from_serialization(): void
+    {
+        $employee = Employee::factory()->create(['cash_pin' => '4321']);
+
+        $this->assertArrayNotHasKey('cash_pin', $employee->fresh()->toArray());
+    }
+
+    public function test_store_requires_cash_pin_confirmation(): void
+    {
+        $this->actingAsAdmin();
+
+        $payload = $this->validStorePayload([
+            'cash_pin' => '4321',
+            'cash_pin_confirmation' => 'nope',
+        ]);
+
+        $this->from(route('employees.create'))
+            ->post(route('employees.store'), $payload)
+            ->assertSessionHasErrors(['cash_pin']);
+    }
+
+    public function test_rrhh_cannot_set_cash_pin_on_create(): void
+    {
+        $this->actingAsRrhh();
+
+        $payload = $this->validStorePayload([
+            'employee_number' => 'EMP-RRHH-1',
+            'cash_pin' => '4321',
+            'cash_pin_confirmation' => '4321',
+            'is_imss_enrolled' => true,
+        ]);
+
+        $this->post(route('employees.store'), $payload)
+            ->assertRedirect(route('employees.index'));
+
+        $employee = Employee::where('employee_number', 'EMP-RRHH-1')->firstOrFail();
+        $this->assertFalse($employee->hasCashPin(), 'RRHH no puede fijar el PIN');
+        $this->assertFalse((bool) $employee->is_imss_enrolled, 'RRHH no puede marcar IMSS');
     }
 
     public function test_store_rejects_duplicate_employee_number(): void
@@ -319,7 +379,7 @@ class EmployeeControllerTest extends FeatureTestCase
                 ->where('canEditAll', true));
     }
 
-    public function test_rrhh_can_view_edit_form_with_canEditAll_false(): void
+    public function test_rrhh_can_view_edit_form_with_can_edit_all_false(): void
     {
         $this->actingAsRrhh();
         $employee = Employee::factory()->create();
@@ -448,7 +508,7 @@ class EmployeeControllerTest extends FeatureTestCase
             'department_id' => $employee->department_id,
             'position_id' => $employee->position_id,
             'schedule_id' => $employee->schedule_id,
-            'hourly_rate' => (float) $employee->hourly_rate,
+            'daily_salary' => (float) $employee->daily_salary_computed,
             'vacation_days_entitled' => 12,
             'vacation_days_used' => 0,
             'status' => 'active',
@@ -525,20 +585,20 @@ class EmployeeControllerTest extends FeatureTestCase
     public function test_admin_can_bulk_adjust_compensation_fixed(): void
     {
         $this->actingAsAdmin();
-        $employee = Employee::factory()->create(['hourly_rate' => 100.00]);
+        $employee = Employee::factory()->create(['daily_salary' => 800.00]);
 
         $this->post(route('employees.bulkUpdate'), [
             'apply_to' => 'selected',
             'employee_ids' => [$employee->id],
             'operation_type' => 'adjust_compensation',
-            'compensation_field' => 'hourly_rate',
+            'compensation_field' => 'daily_salary',
             'adjustment_type' => 'fixed',
             'adjustment_value' => 25,
         ])
             ->assertRedirect(route('employees.index'))
             ->assertSessionHas('success');
 
-        $this->assertDatabaseHas('employees', ['id' => $employee->id, 'hourly_rate' => 125.00]);
+        $this->assertDatabaseHas('employees', ['id' => $employee->id, 'daily_salary' => 825.00]);
     }
 
     public function test_bulk_update_validates_operation_type(): void
@@ -1014,20 +1074,20 @@ class EmployeeControllerTest extends FeatureTestCase
     public function test_admin_can_bulk_adjust_compensation_percentage(): void
     {
         $this->actingAsAdmin();
-        $employee = Employee::factory()->create(['hourly_rate' => 100.00]);
+        $employee = Employee::factory()->create(['daily_salary' => 800.00]);
 
         $this->post(route('employees.bulkUpdate'), [
             'apply_to' => 'selected',
             'employee_ids' => [$employee->id],
             'operation_type' => 'adjust_compensation',
-            'compensation_field' => 'hourly_rate',
+            'compensation_field' => 'daily_salary',
             'adjustment_type' => 'percentage',
             'adjustment_value' => 10, // +10%
         ])
             ->assertRedirect(route('employees.index'))
             ->assertSessionHas('success');
 
-        $this->assertDatabaseHas('employees', ['id' => $employee->id, 'hourly_rate' => 110.00]);
+        $this->assertDatabaseHas('employees', ['id' => $employee->id, 'daily_salary' => 880.00]);
     }
 
     public function test_admin_bulk_filtered_mode_applies_to_matching_only(): void

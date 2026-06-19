@@ -81,6 +81,12 @@ const markPaid = () => {
         router.post(route('payroll.markPaid', props.period.id));
     }
 };
+
+const closeCash = () => {
+    if (confirm('¿Cerrar y preparar el efectivo? Se calculara el desglose de billetes y el acumulado por empleado.')) {
+        router.post(route('payroll.closeCash', props.period.id));
+    }
+};
 </script>
 
 <template>
@@ -144,6 +150,20 @@ const markPaid = () => {
                     >
                         Marcar como Pagada
                     </button>
+                    <button
+                        v-if="can?.payCash && period.status === 'approved'"
+                        @click="closeCash"
+                        class="px-4 py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700"
+                    >
+                        {{ period.cash_closed_at ? 'Recalcular efectivo' : 'Cerrar y preparar efectivo' }}
+                    </button>
+                    <Link
+                        v-if="can?.payCash && period.cash_closed_at"
+                        :href="route('payroll.cash', period.id)"
+                        class="px-4 py-2 bg-pink-100 text-pink-700 rounded-lg hover:bg-pink-200"
+                    >
+                        Ir a pago en efectivo
+                    </Link>
 
                     <!-- Export CONTPAQi Dropdown -->
                     <div class="relative" v-if="can?.export && entries.length > 0">

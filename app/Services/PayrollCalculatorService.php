@@ -8,7 +8,6 @@ use App\Models\CompensationType;
 use App\Models\Employee;
 use App\Models\Holiday;
 use App\Models\Incident;
-use App\Models\IncidentType;
 use App\Models\PayrollEntry;
 use App\Models\PayrollPeriod;
 use App\Models\SystemSetting;
@@ -120,17 +119,18 @@ class PayrollCalculatorService
             ->with('compensationType')
             ->get();
 
+        // Días justificados por incidencias aprobadas (DECISIONES §8): un día
+        // absent/late cubierto por vacación, incapacidad, permiso o falta
+        // justificada NO rompe los bonos de asistencia ni cuenta como falta —
+        // no se penaliza el séptimo día. Se calcula ANTES de las métricas de
+        // asistencia para poder distinguir las faltas injustificadas.
+        $justifiedDates = $this->justifiedDates($incidents, $startDate, $endDate);
+
         // Calculate attendance metrics
-        $metrics = $this->calculateAttendanceMetrics($attendance, $employee, $holidayDates, $approvedAuthorizations);
+        $metrics = $this->calculateAttendanceMetrics($attendance, $employee, $holidayDates, $approvedAuthorizations, $justifiedDates);
 
         // Calculate incident days
         $incidentMetrics = $this->calculateIncidentMetrics($incidents, $startDate, $endDate, $employee, $holidayDates);
-
-        // Días justificados por incidencias aprobadas (DECISIONES §8): un día
-        // absent/late cubierto por vacación, incapacidad, permiso o falta
-        // justificada NO rompe los bonos de asistencia; solo lo sin justificar
-        // penaliza.
-        $justifiedDates = $this->justifiedDates($incidents, $startDate, $endDate);
 
         // ----------------------------------------------------------------
         // Period payment scope.
@@ -143,11 +143,12 @@ class PayrollCalculatorService
         $payExtras = $period->paysExtras();
 
         // Get rates
+        // hourly_rate ya NO es el insumo del sueldo: se conserva derivado del
+        // sueldo diario solo como compatibilidad para el cálculo legacy de
+        // extras (empleados sin conceptos). El pago base se calcula por DÍA.
         $hourlyRate = $employee->hourly_rate;
-        // Sueldo diario por la JORNADA REAL del empleado (DECISIONES §11,
-        // auditoría #87): daily_salary explícito si existe; si no,
-        // hourly_rate × daily_work_hours del horario efectivo (fallback 8).
-        // Un empleado de 6h ya no cobra vacación/prima/incapacidad como de 8.
+        // Sueldo diario: fuente de verdad del pago base (Art. 90 LFT). Usa
+        // daily_salary explícito; si faltara, el accessor lo deriva del horario.
         $dailySalary = $employee->daily_salary_computed;
 
         // Legacy fallback rates (used when employee has no comp types)
@@ -157,18 +158,59 @@ class PayrollCalculatorService
         // Use CompensationType-driven calculation if employee has comp types assigned
         $useCompTypes = $this->resolver->hasCompensationTypes($employee);
 
-        // ---- BASE (weekly): regular salary and absence/late deductions ----
-        $regularPay = $metrics['regular_hours'] * $hourlyRate;
+        // Conjunto de payment_periods que paga este periodo: semanal→'weekly',
+        // mensual→'monthly', quincenal→ambos. Un concepto solo paga si su
+        // payment_period está en el set; el default 'monthly' lo mantiene donde
+        // se paga hoy (en los periodos que pagan extras).
+        $allowedPaymentPeriods = [];
+        if ($payBase) {
+            $allowedPaymentPeriods[] = CompensationType::PAYMENT_PERIOD_WEEKLY;
+        }
+        if ($payExtras) {
+            $allowedPaymentPeriods[] = CompensationType::PAYMENT_PERIOD_MONTHLY;
+        }
 
-        // Deducciones — regla "solo no pagar el día" (DECISIONES §5 revisada):
-        // como el sueldo base se paga por horas trabajadas, un día ausente o
-        // un permiso sin goce ya vale $0 por sí mismo; descontarlo además
-        // sería castigar doble. La ÚNICA deducción monetaria es la falta por
-        // retardos (FRT): esos días SÍ se trabajaron y pagaron, así que la
-        // deducción es el único mecanismo de la sanción. Solo en periodos base.
+        // La ruta de conceptos corre en la pasada de extras (igual que hoy) y,
+        // además, en un periodo BASE (semanal) SOLO si existe algún concepto
+        // marcado 'weekly'. Sin conceptos semanales (config por defecto) un
+        // periodo semanal se comporta exactamente como hoy: no corre la ruta.
+        $runCompTypes = $useCompTypes && (
+            $payExtras
+            || (in_array(CompensationType::PAYMENT_PERIOD_WEEKLY, $allowedPaymentPeriods, true)
+                && CompensationType::active()
+                    ->where('payment_period', CompensationType::PAYMENT_PERIOD_WEEKLY)
+                    ->exists())
+        );
+
+        // ---- BASE (weekly): sueldo diario × días pagados del periodo ----
+        // El sueldo se paga por DÍA, no por hora (Art. 90 LFT), y la semana se
+        // cubre sobre 7 días: 6 laborables + el séptimo día de descanso pagado
+        // (Art. 69). Se restan del base los días pagados aparte en el periodo
+        // mensual (vacaciones, incapacidad) y los no pagados (permiso sin goce),
+        // para no duplicar ni regalar pago.
+        $weekDays = $payBase ? $this->paidCalendarDays($employee, $startDate, $endDate) : 0;
+        $daysPaidElsewhere = $payBase
+            ? ($incidentMetrics['vacation_days']
+                + $incidentMetrics['sick_leave_days']
+                + $incidentMetrics['permission_unpaid_days'])
+            : 0;
+        $basePaidDays = max(0, $weekDays - $daysPaidElsewhere);
+        $regularPay = round($basePaidDays * $dailySalary, 2);
+
+        // Deducción por falta (Art. 72 LFT): cada falta injustificada y cada
+        // falta por retardos (FRT) descuenta el día COMPLETO + la parte
+        // proporcional del séptimo día = sueldo_diario × 7 ÷ días_laborables
+        // del horario del empleado. Semana de 6 días → SD × 7/6 (el día más
+        // 1/6 del domingo). Semana de 5 días → SD × 7/5.
+        $workingDaysPerWeek = $this->workingDaysPerWeek($employee);
+        $restDayFactor = $workingDaysPerWeek > 0 ? 7 / $workingDaysPerWeek : 7 / 6;
         $lateAbsencesGenerated = $payBase ? $incidentMetrics['late_absence_days'] : 0;
-        $totalAbsences = $lateAbsencesGenerated;
-        $deductions = $payBase ? $totalAbsences * $dailySalary : 0.0;
+        $absenceDeductionDays = $payBase
+            ? ($metrics['days_absent_unjustified'] + $lateAbsencesGenerated)
+            : 0;
+        $deductions = $payBase
+            ? round($absenceDeductionDays * $dailySalary * $restDayFactor, 2)
+            : 0.0;
 
         // ---- EXTRAS (monthly): overtime, velada, holiday, weekend, special
         // concepts, vacations and bonuses. Computed only when the period pays
@@ -196,11 +238,77 @@ class PayrollCalculatorService
         $monthlyBonus = 0.0;
         $compensationConcepts = [];
 
-        if ($payExtras) {
+        // Night-shift metrics feed both the comp-types velada input and the
+        // legacy dinner/night bonus. Se calculan cuando se pagan extras o cuando
+        // la ruta de conceptos corre en un periodo base con conceptos semanales.
+        if ($payExtras || $runCompTypes) {
             // FASE 3.3: Night shifts and dinner allowances — pagados solo por
             // noche realmente trabajada (velada en checadas) y autorizada.
             $nightShiftMetrics = $this->calculateNightShiftMetrics($employee, $startDate, $endDate, $attendance);
+        }
 
+        $authorizedOvertimeHours = ($payExtras || $runCompTypes)
+            ? $veladaMetrics['overtime_authorized_hours']
+            : 0.0;
+
+        // Conceptos (overtime/velada/festivo/finde/especiales) pagan donde su
+        // payment_period coincide con el periodo — puede ser un periodo base
+        // (semanal), no solo la pasada de extras. El filtro por
+        // $allowedPaymentPeriods deja pasar exactamente los conceptos que tocan.
+        if ($runCompTypes) {
+            // Almacén PT (u otro depto con weekend_unit_hours) paga el fin de
+            // semana por unidades de N horas trabajadas, no por día. NULL =
+            // pago normal por fila/día.
+            $weekendUnitHours = $employee->department?->weekend_unit_hours;
+
+            $compensationPayments = $this->resolver->calculateAllCompensation(
+                $employee,
+                [
+                    'overtime_hours' => $authorizedOvertimeHours,
+                    'velada_hours' => $veladaMetrics['velada_authorized_hours'],
+                    // Noches de velada pagables (1 por noche trabajada y
+                    // autorizada): base del pago por monto fijo por velada.
+                    'velada_days' => $nightShiftMetrics['night_shift_days'],
+                    'holiday_hours' => $metrics['holiday_hours'],
+                    'weekend_hours' => $metrics['weekend_hours'],
+                ],
+                $hourlyRate,
+                $dailySalary,
+                $approvedAuthorizations,
+                $holidayDates,
+                $weekendUnitHours,
+                $allowedPaymentPeriods,
+            );
+
+            $compensationConcepts = $compensationPayments['concepts'];
+
+            // Route each concept to its stored pay bucket. Overtime/velada
+            // match by code; holiday/weekend/special match by the comp
+            // type's authorization_type / attendance_pull_rule.
+            foreach ($compensationConcepts as $concept) {
+                $code = $concept['code'] ?? '';
+                $authType = $concept['authorization_type'] ?? null;
+                $pullRule = $concept['attendance_pull_rule'] ?? null;
+
+                if (in_array($code, ['HE', 'HED', 'HET'], true)) {
+                    $overtimePay += $concept['amount'];
+                } elseif ($code === 'VEL' || $authType === Authorization::TYPE_NIGHT_SHIFT) {
+                    $veladaPay += $concept['amount'];
+                } elseif ($authType === Authorization::TYPE_HOLIDAY_WORKED) {
+                    $holidayPay += $concept['amount'];
+                } elseif ($pullRule === CompensationType::PULL_RULE_WEEKEND) {
+                    $weekendPay += $concept['amount'];
+                } else {
+                    // Cena, comida, dominical and any other special concept.
+                    $otherCompensationPay += $concept['amount'];
+                }
+            }
+        }
+
+        // Vacaciones, prima, incapacidad y bonos son intrínsecamente mensuales:
+        // solo en la pasada de extras. El fallback legado (sin conceptos) también
+        // es mensual, así que un periodo semanal nunca cobra extras legados.
+        if ($payExtras) {
             $vacationPay = $incidentMetrics['vacation_days'] * $dailySalary;
 
             // Prima vacacional (DECISIONES §3): se paga con cada día de
@@ -216,56 +324,7 @@ class PayrollCalculatorService
             $weeklyBonus = $this->calculateWeeklyBonus($employee, $period, $attendance, $justifiedDates);
             $monthlyBonus = $this->calculateMonthlyBonus($employee, $period, $attendance, $justifiedDates);
 
-            $authorizedOvertimeHours = $veladaMetrics['overtime_authorized_hours'];
-
-            if ($useCompTypes) {
-                // Almacén PT (u otro depto con weekend_unit_hours) paga el fin de
-                // semana por unidades de N horas trabajadas, no por día. NULL =
-                // pago normal por fila/día.
-                $weekendUnitHours = $employee->department?->weekend_unit_hours;
-
-                $compensationPayments = $this->resolver->calculateAllCompensation(
-                    $employee,
-                    [
-                        'overtime_hours' => $authorizedOvertimeHours,
-                        'velada_hours' => $veladaMetrics['velada_authorized_hours'],
-                        // Noches de velada pagables (1 por noche trabajada y
-                        // autorizada): base del pago por monto fijo por velada.
-                        'velada_days' => $nightShiftMetrics['night_shift_days'],
-                        'holiday_hours' => $metrics['holiday_hours'],
-                        'weekend_hours' => $metrics['weekend_hours'],
-                    ],
-                    $hourlyRate,
-                    $dailySalary,
-                    $approvedAuthorizations,
-                    $holidayDates,
-                    $weekendUnitHours,
-                );
-
-                $compensationConcepts = $compensationPayments['concepts'];
-
-                // Route each concept to its stored pay bucket. Overtime/velada
-                // match by code; holiday/weekend/special match by the comp
-                // type's authorization_type / attendance_pull_rule.
-                foreach ($compensationConcepts as $concept) {
-                    $code = $concept['code'] ?? '';
-                    $authType = $concept['authorization_type'] ?? null;
-                    $pullRule = $concept['attendance_pull_rule'] ?? null;
-
-                    if (in_array($code, ['HE', 'HED', 'HET'], true)) {
-                        $overtimePay += $concept['amount'];
-                    } elseif ($code === 'VEL' || $authType === Authorization::TYPE_NIGHT_SHIFT) {
-                        $veladaPay += $concept['amount'];
-                    } elseif ($authType === Authorization::TYPE_HOLIDAY_WORKED) {
-                        $holidayPay += $concept['amount'];
-                    } elseif ($pullRule === CompensationType::PULL_RULE_WEEKEND) {
-                        $weekendPay += $concept['amount'];
-                    } else {
-                        // Cena, comida, dominical and any other special concept.
-                        $otherCompensationPay += $concept['amount'];
-                    }
-                }
-            } else {
+            if (! $useCompTypes) {
                 // Legacy fallback: hardcoded multipliers
                 $overtimePay = $authorizedOvertimeHours * $hourlyRate * $overtimeMultiplier;
                 $veladaPay = $veladaMetrics['velada_authorized_hours'] * $hourlyRate * $veladaMultiplier;
@@ -293,6 +352,20 @@ class PayrollCalculatorService
             + $totalBonuses;
         $netPay = $grossPay - $deductions;
 
+        // ---- Reparto efectivo / banco ----
+        // Si el empleado YA está inscrito al IMSS, su sueldo base neto va por
+        // banco/CONTPAQi y solo los extras salen en efectivo. Si no, todo el
+        // neto se paga en efectivo. La fórmula es única para los tres tipos de
+        // periodo: en mensual regular_pay y deductions son 0, así que bank=0 y
+        // cash=net_pay. NO altera regular_pay/gross_pay/net_pay.
+        if ($employee->is_imss_enrolled) {
+            $bankAmount = max(0.0, round($basePay - $deductions, 2));
+            $cashAmount = round($netPay - $bankAmount, 2);
+        } else {
+            $cashAmount = round($netPay, 2);
+            $bankAmount = 0.0;
+        }
+
         // Build calculation breakdown for transparency
         $breakdown = [
             'attendance' => [
@@ -312,10 +385,12 @@ class PayrollCalculatorService
                 'sick_leave_days' => $incidentMetrics['sick_leave_days'],
                 'sick_leave_paid_days' => $incidentMetrics['sick_leave_paid_days'],
                 'permission_days' => $incidentMetrics['permission_days'],
+                'permission_unpaid_days' => $incidentMetrics['permission_unpaid_days'],
                 'absence_days' => $incidentMetrics['absence_days'],
-                // "Solo no pagar el día": ausencias y permisos sin goce ya
-                // valen $0 vía horas; la única deducción monetaria es la FRT.
-                'unpaid_days' => $incidentMetrics['late_absence_days'],
+                // Faltas que descuentan SD × 7/D: injustificadas (asistencia) +
+                // faltas por retardos (FRT). Los días pagados aparte o no
+                // pagados se restan del base, no se descuentan con castigo.
+                'absence_deduction_days' => $absenceDeductionDays,
             ],
             'late_accumulation' => [
                 'late_absences_generated' => $lateAbsencesGenerated,
@@ -346,9 +421,21 @@ class PayrollCalculatorService
             ],
             'rates' => [
                 'hourly' => $hourlyRate,
+                'daily_salary' => $dailySalary,
+                'working_days_per_week' => $workingDaysPerWeek,
+                'rest_day_factor' => round($restDayFactor, 4),
                 'overtime_multiplier' => $useCompTypes ? null : $overtimeMultiplier,
                 'holiday_multiplier' => $useCompTypes ? null : $holidayMultiplier,
                 'uses_compensation_types' => $useCompTypes,
+            ],
+            'base' => [
+                // Días calendario pagados del periodo (séptimo día incluido).
+                'week_days' => $weekDays,
+                // Días restados del base por pagarse aparte o no pagarse.
+                'days_paid_elsewhere' => $daysPaidElsewhere,
+                'base_paid_days' => $basePaidDays,
+                // Faltas que descuentan SD × 7/D (injustificadas + FRT).
+                'absence_deduction_days' => $absenceDeductionDays,
             ],
             'compensation_concepts' => $compensationConcepts,
             'scope' => [
@@ -380,6 +467,7 @@ class PayrollCalculatorService
             ],
             [
                 'hourly_rate' => $hourlyRate,
+                'daily_salary' => $dailySalary,
                 'overtime_multiplier' => $overtimeMultiplier,
                 'holiday_multiplier' => $holidayMultiplier,
                 'regular_hours' => $payBase ? $metrics['regular_hours'] : 0,
@@ -418,6 +506,8 @@ class PayrollCalculatorService
                 'deductions' => $deductions,
                 'gross_pay' => $grossPay,
                 'net_pay' => $netPay,
+                'cash_amount' => $cashAmount,
+                'bank_amount' => $bankAmount,
                 'calculation_breakdown' => $breakdown,
             ]
         );
@@ -447,6 +537,52 @@ class PayrollCalculatorService
         }
 
         return $dates;
+    }
+
+    /**
+     * Días calendario del periodo que se le pagan al empleado (séptimo día
+     * incluido), acotados a su periodo de empleo para prorratear altas/bajas a
+     * media semana. Una semana normal Lun–Dom devuelve 7.
+     */
+    private function paidCalendarDays(Employee $employee, Carbon $startDate, Carbon $endDate): int
+    {
+        $from = $startDate->copy()->startOfDay();
+        $to = $endDate->copy()->startOfDay();
+
+        if ($employee->hire_date) {
+            $hire = Carbon::parse($employee->hire_date)->startOfDay();
+            if ($hire->gt($from)) {
+                $from = $hire;
+            }
+        }
+
+        if ($employee->termination_date) {
+            $term = Carbon::parse($employee->termination_date)->startOfDay();
+            if ($term->lt($to)) {
+                $to = $term;
+            }
+        }
+
+        if ($to->lt($from)) {
+            return 0;
+        }
+
+        return (int) $from->diffInDays($to) + 1;
+    }
+
+    /**
+     * Días laborables por semana del horario efectivo del empleado. Es el
+     * divisor del séptimo día (Art. 72 LFT): la falta descuenta SD × 7 ÷ D.
+     * Por defecto 6 (semana comercial estándar) cuando el horario no define
+     * días laborables.
+     */
+    private function workingDaysPerWeek(Employee $employee): int
+    {
+        $schedule = $employee->getEffectiveSchedule();
+        $workingDays = $schedule->working_days ?? null;
+        $count = is_array($workingDays) ? count($workingDays) : 0;
+
+        return $count > 0 ? min(7, $count) : 6;
     }
 
     /**
@@ -610,6 +746,7 @@ class PayrollCalculatorService
         Employee $employee,
         array $holidayDates,
         Collection $approvedAuthorizations,
+        array $justifiedDates = [],
     ): array {
         $regularHours = 0;
         $overtimeHours = 0;
@@ -619,6 +756,7 @@ class PayrollCalculatorService
         $unauthorizedWeekendHours = 0;
         $daysWorked = 0;
         $daysAbsent = 0;
+        $daysAbsentUnjustified = 0;
         $daysLate = 0;
         $punctualDays = 0;
 
@@ -645,6 +783,13 @@ class PayrollCalculatorService
                     continue;
                 }
                 $daysAbsent++;
+
+                // Una falta solo descuenta (séptimo día incluido) cuando NO está
+                // justificada por una incidencia aprobada (vacación, permiso con
+                // goce, incapacidad, falta justificada).
+                if (! isset($justifiedDates[$workDateStr])) {
+                    $daysAbsentUnjustified++;
+                }
 
                 continue;
             }
@@ -708,6 +853,7 @@ class PayrollCalculatorService
             'unauthorized_weekend_hours' => round($unauthorizedWeekendHours, 2),
             'days_worked' => $daysWorked,
             'days_absent' => $daysAbsent,
+            'days_absent_unjustified' => $daysAbsentUnjustified,
             'days_late' => $daysLate,
             'punctual_days' => $punctualDays,
         ];
@@ -727,6 +873,8 @@ class PayrollCalculatorService
         $sickLeaveDays = 0;
         $sickLeavePaidDays = 0;
         $permissionDays = 0;
+        $permissionPaidDays = 0;
+        $permissionUnpaidDays = 0;
         $absenceDays = 0;
         $lateAbsenceDays = 0;
 
@@ -774,6 +922,14 @@ class PayrollCalculatorService
                     break;
                 case 'permission':
                     $permissionDays += $days;
+                    // Permiso con goce: lo paga el sueldo base (no se resta).
+                    // Permiso sin goce: día no pagado, se resta del base plano
+                    // (sin castigo del séptimo día).
+                    if ($isPaid) {
+                        $permissionPaidDays += $days;
+                    } else {
+                        $permissionUnpaidDays += $days;
+                    }
                     break;
                 case 'absence':
                     $absenceDays += $days;
@@ -786,6 +942,8 @@ class PayrollCalculatorService
             'sick_leave_days' => $sickLeaveDays,
             'sick_leave_paid_days' => $sickLeavePaidDays,
             'permission_days' => $permissionDays,
+            'permission_paid_days' => $permissionPaidDays,
+            'permission_unpaid_days' => $permissionUnpaidDays,
             'absence_days' => $absenceDays,
             'late_absence_days' => $lateAbsenceDays,
         ];

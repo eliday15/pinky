@@ -6,8 +6,11 @@ use App\Models\AttendanceRecord;
 use App\Models\Authorization;
 use App\Models\CompensationType;
 use App\Models\Employee;
+use App\Models\Incident;
+use App\Models\IncidentType;
 use App\Models\PayrollEntry;
 use App\Models\PayrollPeriod;
+use App\Models\Schedule;
 use App\Models\User;
 use App\Services\PayrollCalculatorService;
 use Tests\FeatureTestCase;
@@ -69,12 +72,129 @@ class PayrollSplitTest extends FeatureTestCase
 
         $entry = $this->calculator()->calculateEmployeePayroll($period, $employee);
 
-        $this->assertEqualsWithDelta(800.00, (float) $entry->regular_pay, 0.01, 'base = 8h * 100');
+        // Sueldo diario 800 (= hora 100 × jornada 8) × 7 días de la semana
+        // (séptimo día incluido). Sin faltas no hay deducción.
+        $this->assertEqualsWithDelta(5600.00, (float) $entry->regular_pay, 0.01, 'base = sueldo diario 800 × 7');
         $this->assertEqualsWithDelta(0.00, (float) $entry->overtime_pay, 0.01, 'no overtime on weekly');
         $this->assertEqualsWithDelta(0.00, (float) $entry->bonuses, 0.01, 'no bonuses on weekly');
         $this->assertEqualsWithDelta(0.00, (float) $entry->vacation_pay, 0.01, 'no vacation on weekly');
-        $this->assertEqualsWithDelta(800.00, (float) $entry->gross_pay, 0.01);
-        $this->assertEqualsWithDelta(800.00, (float) $entry->net_pay, 0.01);
+        $this->assertEqualsWithDelta(5600.00, (float) $entry->gross_pay, 0.01);
+        $this->assertEqualsWithDelta(5600.00, (float) $entry->net_pay, 0.01);
+    }
+
+    /**
+     * Ejemplo canónico del negocio (Art. 72 LFT): sueldo diario $200, horario
+     * de 6 días (Lun–Sáb). La semana vale 200 × 7 = $1,400; una falta descuenta
+     * el día + 1/6 del domingo (200 × 7/6 = $233.33), dejando $1,166.67.
+     */
+    public function test_six_day_schedule_one_absence_matches_legal_example(): void
+    {
+        $schedule = Schedule::factory()->create([
+            'daily_work_hours' => 8,
+            'working_days' => ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'],
+        ]);
+
+        $employee = Employee::factory()->create([
+            'status' => 'active',
+            'schedule_id' => $schedule->id,
+            'daily_salary' => 200.00,
+        ]);
+
+        // Una falta injustificada el miércoles (día laborable, sin incidencia).
+        AttendanceRecord::factory()->for($employee)->create([
+            'work_date' => '2026-06-03', // Wednesday
+            'status' => 'absent',
+            'worked_hours' => 0,
+        ]);
+
+        $period = PayrollPeriod::factory()->weekly()->create([
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-07',
+        ]);
+
+        $entry = $this->calculator()->calculateEmployeePayroll($period, $employee);
+
+        $this->assertEqualsWithDelta(1400.00, (float) $entry->regular_pay, 0.01, 'base = 200 × 7');
+        $this->assertEqualsWithDelta(233.33, (float) $entry->deductions, 0.01, '1 falta × 200 × 7/6');
+        $this->assertEqualsWithDelta(1166.67, (float) $entry->net_pay, 0.01, 'semana con 1 falta');
+    }
+
+    /**
+     * Las horas extra se pagan por MONTO FIJO por hora del concepto asignado
+     * (no como porcentaje de la tarifa por hora). 2 h autorizadas × $150 = $300.
+     */
+    public function test_overtime_pays_fixed_amount_per_hour_via_comp_type(): void
+    {
+        $employee = Employee::factory()->create([
+            'status' => 'active',
+            'daily_salary' => 800.00,
+        ]);
+
+        $he = CompensationType::factory()->create([
+            'code' => 'HE',
+            'authorization_type' => 'overtime',
+            'application_mode' => 'per_hour',
+            'calculation_type' => 'fixed',
+            'fixed_amount' => 150.00,
+            'priority' => 10,
+            'is_active' => true,
+        ]);
+        $employee->compensationTypes()->attach($he->id, ['is_active' => true]);
+
+        AttendanceRecord::factory()->for($employee)->create([
+            'work_date' => '2026-06-03',
+            'status' => 'present',
+            'worked_hours' => 8.00,
+            'overtime_hours' => 2.00,
+            'overtime_authorized_hours' => 2.00,
+        ]);
+
+        $period = PayrollPeriod::factory()->monthly()->create([
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-30',
+        ]);
+
+        $entry = $this->calculator()->calculateEmployeePayroll($period, $employee);
+
+        $this->assertEqualsWithDelta(300.00, (float) $entry->overtime_pay, 0.01, '2h × $150 monto fijo');
+    }
+
+    /**
+     * Vacación no se paga doble: el periodo semanal RESTA los días de vacación
+     * del base (se pagan en el mensual), conservando el séptimo día.
+     */
+    public function test_vacation_is_subtracted_from_weekly_base_to_avoid_double_pay(): void
+    {
+        $employee = Employee::factory()->create([
+            'status' => 'active',
+            'daily_salary' => 200.00,
+        ]);
+
+        $vacType = IncidentType::factory()->create([
+            'code' => 'VAC',
+            'category' => 'vacation',
+            'is_paid' => true,
+        ]);
+        Incident::factory()->approved()->create([
+            'employee_id' => $employee->id,
+            'incident_type_id' => $vacType->id,
+            'start_date' => '2026-06-02', // martes
+            'end_date' => '2026-06-03',   // miércoles (2 días hábiles L-V)
+            'days_count' => 2,
+        ]);
+
+        $weekly = PayrollPeriod::factory()->weekly()->create([
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-07',
+        ]);
+
+        $entry = $this->calculator()->calculateEmployeePayroll($weekly, $employee);
+
+        // Base = 200 × (7 − 2 vacaciones) = 1000; las vacaciones las paga el
+        // periodo mensual, no el semanal. Sin faltas: sin deducción.
+        $this->assertEqualsWithDelta(1000.00, (float) $entry->regular_pay, 0.01, 'base = 200 × (7 − 2 vac)');
+        $this->assertEqualsWithDelta(0.00, (float) $entry->deductions, 0.01);
+        $this->assertEqualsWithDelta(0.00, (float) $entry->vacation_pay, 0.01, 'la vacación se paga en el mensual, no aquí');
     }
 
     public function test_monthly_period_pays_extras_without_base(): void
@@ -345,10 +465,12 @@ class PayrollSplitTest extends FeatureTestCase
         $this->assertNotContains('P002_HORAS_EXTRA', $weeklyHeadings);
         $this->assertNotContains('P007_OTROS', $weeklyHeadings);
 
-        // Auditoría #55: la columna de ausencias declara que NO concilia con
-        // DEDUCCIONES ("solo no pagar el día"); la que concilia es la de FRT.
-        $this->assertContains('DIAS_AUSENCIA_SIN_DESCUENTO', $weeklyHeadings);
-        $this->assertNotContains('DIAS_AUSENCIA', $weeklyHeadings);
+        // El sueldo se paga por día: se exporta el sueldo diario y los días
+        // pagados; las faltas (injustificadas + FRT) SÍ descuentan y concilian
+        // con DEDUCCIONES vía DIAS_FALTA_DESCONTADOS.
+        $this->assertContains('SUELDO_DIARIO', $weeklyHeadings);
+        $this->assertContains('DIAS_PAGADOS', $weeklyHeadings);
+        $this->assertContains('DIAS_FALTA_DESCONTADOS', $weeklyHeadings);
         $this->assertContains('DIAS_FALTA_RETARDOS', $weeklyHeadings);
 
         // Monthly exports the extras (incl. OTROS = cena/comida/dominical), not the base.

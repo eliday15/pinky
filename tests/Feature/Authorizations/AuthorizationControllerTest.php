@@ -3,13 +3,12 @@
 namespace Tests\Feature\Authorizations;
 
 use App\Models\AttendanceAnomaly;
-use App\Models\Authorization;
 use App\Models\AttendanceRecord;
+use App\Models\Authorization;
 use App\Models\CompensationType;
 use App\Models\Department;
 use App\Models\Employee;
 use App\Models\PayrollPeriod;
-use App\Models\Position;
 use App\Models\Schedule;
 use App\Models\User;
 use App\Services\CompanionConceptService;
@@ -40,13 +39,13 @@ class AuthorizationControllerTest extends FeatureTestCase
     private function privilegedWithTwoFactor(string $role = 'admin', array $attrs = []): array
     {
         $user = $this->createUser($role, $attrs, withTwoFactor: false);
-        $secret = (new Google2FA())->generateSecretKey();
+        $secret = (new Google2FA)->generateSecretKey();
         $user->twoFactorDevices()->create([
             'name' => 'TestDevice',
             'secret' => Crypt::encryptString($secret),
             'confirmed_at' => now(),
         ]);
-        $code = (new Google2FA())->getCurrentOtp($secret);
+        $code = (new Google2FA)->getCurrentOtp($secret);
 
         return [$user, $code];
     }
@@ -293,6 +292,45 @@ class AuthorizationControllerTest extends FeatureTestCase
     public function test_create_redirects_guest_to_login(): void
     {
         $this->get(route('authorizations.create'))->assertRedirect(route('login'));
+    }
+
+    public function test_create_offers_overtime_to_all_departments_except_weekend_units(): void
+    {
+        $this->actingAsAdmin();
+
+        // Tiempo extra (HE): debe poder autorizarse en cualquier depto salvo el
+        // que cuenta el fin de semana por unidades (Almacén PT). Ninguno de los
+        // dos empleados está inscrito en el concepto (pivot vacío): la regla la
+        // decide el departamento, no la inscripción.
+        $overtime = CompensationType::factory()->create([
+            'name' => 'Hora Extra',
+            'code' => 'HE',
+            'authorization_type' => Authorization::TYPE_OVERTIME,
+            'application_mode' => CompensationType::APPLICATION_PER_HOUR,
+            'is_active' => true,
+        ]);
+
+        $normalDept = Department::factory()->create(['weekend_unit_hours' => null]);
+        $almacenPt = Department::factory()->create([
+            'name' => 'Almacén PT',
+            'code' => 'ALMACENPT',
+            'weekend_unit_hours' => 6,
+        ]);
+
+        $normalEmp = Employee::factory()->create(['department_id' => $normalDept->id, 'status' => 'active']);
+        $almacenEmp = Employee::factory()->create(['department_id' => $almacenPt->id, 'status' => 'active']);
+
+        $this->get(route('authorizations.create'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('employees', function ($employees) use ($overtime, $normalEmp, $almacenEmp) {
+                    $byId = collect($employees)->keyBy('id');
+                    $normalIds = collect($byId[$normalEmp->id]['active_compensation_type_ids']);
+                    $almacenIds = collect($byId[$almacenEmp->id]['active_compensation_type_ids']);
+
+                    return $normalIds->contains($overtime->id)
+                        && ! $almacenIds->contains($overtime->id);
+                }));
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -2161,6 +2199,125 @@ class AuthorizationControllerTest extends FeatureTestCase
             ->assertJsonPath('suggestions.0.start_time', '22:00')
             ->assertJsonPath('suggestions.0.end_time', '02:00')
             ->assertJsonPath('suggestions.0.hours', '4.00');
+    }
+
+    /**
+     * Velada is also pullable as a per_day concept: selecting the VEL comp type
+     * (attendance_pull_rule = velada) routes suggestBulk through the per-day pull
+     * branch, which still reads the real night block from punches — one row per
+     * detected velada night.
+     */
+    public function test_suggest_bulk_velada_pull_rule_returns_velada_rows(): void
+    {
+        $this->actingAsAdmin();
+        $velType = CompensationType::factory()->create([
+            'name' => 'Velada',
+            'application_mode' => 'per_day',
+            'calculation_type' => 'fixed',
+            'authorization_type' => Authorization::TYPE_NIGHT_SHIFT,
+            'attendance_pull_rule' => CompensationType::PULL_RULE_VELADA,
+        ]);
+        $emp = Employee::factory()->create();
+        AttendanceRecord::factory()->create([
+            'employee_id' => $emp->id,
+            'work_date' => '2026-06-08',
+            'check_in' => '08:00:00',
+            'check_out' => '02:00:00',
+            'velada_hours' => 0,
+            'raw_punches' => [
+                ['time' => '08:00:00', 'type' => 'in'],
+                ['time' => '17:00:00', 'type' => 'punch'],
+                ['time' => '22:00:00', 'type' => 'punch'],
+                ['time' => '02:00:00', 'type' => 'out'],
+            ],
+        ]);
+
+        $this->getJson(route('authorizations.suggestBulk', [
+            'employee_ids' => [$emp->id],
+            'start_date' => '2026-06-08',
+            'end_date' => '2026-06-08',
+            'type' => Authorization::TYPE_NIGHT_SHIFT,
+            'compensation_type_id' => $velType->id,
+        ]))
+            ->assertOk()
+            ->assertJsonPath('suggestions.0.kind', 'velada')
+            ->assertJsonPath('suggestions.0.start_time', '22:00')
+            ->assertJsonPath('suggestions.0.end_time', '02:00');
+    }
+
+    /**
+     * End-to-end: a velada pulled from checadas (per_day VEL concept) and created
+     * by an admin via storeBulk is approved on create and auto-captures the
+     * companion Cena (regla de Luis: una velada incluye una cena), provided the
+     * employee is enrolled in the Cena concept.
+     */
+    public function test_velada_pulled_from_checadas_creates_velada_and_captures_cena(): void
+    {
+        $admin = $this->actingAsAdmin();
+
+        $velType = CompensationType::factory()->create([
+            'name' => 'Velada',
+            'code' => 'VEL',
+            'application_mode' => 'per_day',
+            'calculation_type' => 'fixed',
+            'authorization_type' => Authorization::TYPE_NIGHT_SHIFT,
+            'attendance_pull_rule' => CompensationType::PULL_RULE_VELADA,
+        ]);
+        $cena = CompensationType::factory()->create([
+            'name' => 'Cena',
+            'application_mode' => 'per_day',
+            'authorization_type' => 'special',
+            'attendance_pull_rule' => CompensationType::PULL_RULE_MEAL,
+        ]);
+        $emp = Employee::factory()->create();
+        $emp->compensationTypes()->attach([
+            $velType->id => ['is_active' => true],
+            $cena->id => ['is_active' => true],
+        ]);
+        AttendanceRecord::factory()->create([
+            'employee_id' => $emp->id,
+            'work_date' => '2026-06-08',
+            'check_in' => '08:00:00',
+            'check_out' => '02:00:00',
+            'velada_hours' => 4,
+            'raw_punches' => [
+                ['time' => '08:00:00', 'type' => 'in'],
+                ['time' => '22:00:00', 'type' => 'punch'],
+                ['time' => '02:00:00', 'type' => 'out'],
+            ],
+        ]);
+
+        $this->from(route('authorizations.createBulk'))
+            ->post(route('authorizations.storeBulk'), [
+                'type' => Authorization::TYPE_NIGHT_SHIFT,
+                'compensation_type_id' => $velType->id,
+                'reason' => 'Velada jalada desde checadas',
+                'employee_ids' => [$emp->id],
+                'entries' => [[
+                    'employee_id' => $emp->id,
+                    'date' => '2026-06-08',
+                    'start_time' => '22:00',
+                    'end_time' => '02:00',
+                    'hours' => '4.00',
+                ]],
+            ])
+            ->assertRedirect(route('authorizations.index'));
+
+        // The velada itself: night_shift, approved on create by the admin.
+        $velada = Authorization::where('employee_id', $emp->id)
+            ->where('compensation_type_id', $velType->id)
+            ->whereDate('date', '2026-06-08')
+            ->first();
+        $this->assertNotNull($velada);
+        $this->assertEquals(Authorization::TYPE_NIGHT_SHIFT, $velada->type);
+        $this->assertEquals(Authorization::STATUS_APPROVED, $velada->status);
+
+        // The companion Cena: generated from the velada and approved.
+        $this->assertDatabaseHas('authorizations', [
+            'generated_from_authorization_id' => $velada->id,
+            'compensation_type_id' => $cena->id,
+            'status' => Authorization::STATUS_APPROVED,
+        ]);
     }
 
     /**

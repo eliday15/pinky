@@ -59,9 +59,9 @@ class PayrollShadowRecalcTest extends FeatureTestCase
     }
 
     /**
-     * Entry "pagada con las reglas viejas": neto 500 donde la sombra (8h ×
-     * $100, semana base) produce 800. Todos los demás conceptos en 0 para que
-     * el diff sea determinista.
+     * Entry "pagada con las reglas viejas": neto 500 donde la sombra (sueldo
+     * diario 800 × 7 días, semana base) produce 5600. Todos los demás
+     * conceptos en 0 para que el diff sea determinista.
      */
     private function staleEntry(PayrollPeriod $period, Employee $employee): PayrollEntry
     {
@@ -90,16 +90,16 @@ class PayrollShadowRecalcTest extends FeatureTestCase
 
         $diff = $this->shadow()->diffPeriod($period);
 
-        // El diff detecta la diferencia 500 → 800.
+        // El diff detecta la diferencia 500 → 5600.
         $this->assertCount(1, $diff['rows']);
         $row = $diff['rows'][0];
         $this->assertSame($employee->id, $row['employee_id']);
         $this->assertEqualsWithDelta(500.00, $row['old_net'], 0.01);
-        $this->assertEqualsWithDelta(800.00, $row['new_net'], 0.01);
-        $this->assertEqualsWithDelta(300.00, $row['net_delta'], 0.01);
+        $this->assertEqualsWithDelta(5600.00, $row['new_net'], 0.01);
+        $this->assertEqualsWithDelta(5100.00, $row['net_delta'], 0.01);
         $this->assertArrayHasKey('regular_pay', $row['fields']);
         $this->assertArrayHasKey('net_pay', $row['fields']);
-        $this->assertEqualsWithDelta(300.00, $diff['totals']['delta_net'], 0.01);
+        $this->assertEqualsWithDelta(5100.00, $diff['totals']['delta_net'], 0.01);
 
         // NADA persistió: ni la entry recalculada, ni incidencias FRT de
         // paso, ni el status del periodo.

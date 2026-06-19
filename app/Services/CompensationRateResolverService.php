@@ -230,6 +230,7 @@ class CompensationRateResolverService
         ?Collection $authorizations = null,
         array $holidayDates = [],
         ?int $weekendUnitHours = null,
+        ?array $allowedPaymentPeriods = null,
     ): array {
         $concepts = [];
         $total = 0;
@@ -261,6 +262,9 @@ class CompensationRateResolverService
         foreach ($explicitOvertime as $auth) {
             $compType = $auth->compensationType;
             if (! $compType) {
+                continue;
+            }
+            if (! $this->paymentPeriodAllowed($compType, $allowedPaymentPeriods)) {
                 continue;
             }
             // Cap the auth at the actually-worked overtime so we don't pay for hours
@@ -296,6 +300,9 @@ class CompensationRateResolverService
         if ($remainingOvertime > 0) {
             $tiers = $this->resolveOvertimeTiers($employee, $remainingOvertime);
             foreach ($tiers as $tier) {
+                if (! $this->paymentPeriodAllowed($tier['comp_type'], $allowedPaymentPeriods)) {
+                    continue;
+                }
                 $rate = $this->resolveRate($employee, $tier['comp_type']);
                 $amount = $tier['comp_type']->calculateCompensation(
                     $hourlyRate,
@@ -329,6 +336,10 @@ class CompensationRateResolverService
 
         $veladaType = $explicitVelada->first()?->compensationType
             ?? $this->findApplicableType($employee, 'night_shift');
+
+        if ($veladaType && ! $this->paymentPeriodAllowed($veladaType, $allowedPaymentPeriods)) {
+            $veladaType = null;
+        }
 
         if ($veladaType && ($veladaDays > 0 || $veladaHours > 0)) {
             $rate = $this->resolveRate($employee, $veladaType);
@@ -376,6 +387,7 @@ class CompensationRateResolverService
             // Cuando el depto cuenta el fin de semana por unidades de horas
             // trabajadas, NO se paga por fila/día aquí: se paga abajo por unidades.
             $weekendUnitHours !== null,
+            $allowedPaymentPeriods,
         );
         foreach ($generic['concepts'] as $concept) {
             $concepts[] = $concept;
@@ -394,6 +406,7 @@ class CompensationRateResolverService
                 $dailySalary,
                 (float) $metrics['weekend_hours'],
                 $weekendUnitHours,
+                $allowedPaymentPeriods,
             );
             if ($weekendConcept) {
                 $concepts[] = $weekendConcept;
@@ -423,6 +436,7 @@ class CompensationRateResolverService
         float $dailySalary,
         float $weekendHours,
         int $weekendUnitHours,
+        ?array $allowedPaymentPeriods = null,
     ): ?array {
         if ($weekendUnitHours <= 0) {
             return null;
@@ -435,8 +449,13 @@ class CompensationRateResolverService
         if (! $compType) {
             return null;
         }
+        if (! $this->paymentPeriodAllowed($compType, $allowedPaymentPeriods)) {
+            return null;
+        }
 
-        $units = round($weekendHours / $weekendUnitHours, 2);
+        // Fin de semana a números cerrados (WhatsApp 2026-06-19): las unidades
+        // se redondean al entero más cercano (1.5 → 2, 1.4 → 1), nunca fracciones.
+        $units = round($weekendHours / $weekendUnitHours);
         if ($units <= 0) {
             return null;
         }
@@ -504,6 +523,7 @@ class CompensationRateResolverService
         array $consumedAuthIds,
         array $holidayDates = [],
         bool $skipWeekendPullRule = false,
+        ?array $allowedPaymentPeriods = null,
     ): array {
         $concepts = [];
         $total = 0.0;
@@ -513,6 +533,10 @@ class CompensationRateResolverService
             // Only pay authorizations that carry a compensation type — mirrors
             // the report, which ignores authorizations without a comp type.
             if (! $auth->compensation_type_id) {
+                continue;
+            }
+            if ($auth->compensationType
+                && ! $this->paymentPeriodAllowed($auth->compensationType, $allowedPaymentPeriods)) {
                 continue;
             }
             // Cuando el depto paga el fin de semana por unidades de horas
@@ -610,5 +634,24 @@ class CompensationRateResolverService
         return $employee->compensationTypes
             ->where('pivot.is_active', true)
             ->isNotEmpty();
+    }
+
+    /**
+     * Whether a compensation type may pay in the current period, given the set
+     * of payment periods that period pays.
+     *
+     * A null set means "no filtering" (legacy/report callers): every concept is
+     * allowed. Otherwise the concept's payment_period (default 'monthly') must
+     * be in the allowed set.
+     */
+    private function paymentPeriodAllowed(CompensationType $compType, ?array $allowedPaymentPeriods): bool
+    {
+        if ($allowedPaymentPeriods === null) {
+            return true;
+        }
+
+        $period = $compType->payment_period ?? CompensationType::PAYMENT_PERIOD_MONTHLY;
+
+        return in_array($period, $allowedPaymentPeriods, true);
     }
 }

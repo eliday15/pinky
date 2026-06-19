@@ -12,13 +12,15 @@ use App\Services\PayrollCalculatorService;
 use Tests\FeatureTestCase;
 
 /**
- * Fase D (DECISIONES_NEGOCIO_2026-06-04.md §3, §4, §5 revisada, §6):
+ * Fase D + sueldo diario (Art. 72/90 LFT):
  *
- * - "Solo no pagar el día": faltas e incidencias sin goce ya valen $0 vía
- *   horas trabajadas; NO generan deducción adicional (adiós doble castigo).
- *   La única deducción monetaria es la FRT (cubierta en MonthlyLateAbsenceTest).
+ * - El sueldo se paga por DÍA: la semana vale sueldo_diario × 7 (séptimo día
+ *   incluido). Las faltas injustificadas y la FRT descuentan el día + la parte
+ *   proporcional del séptimo (SD × 7/D). Los días pagados aparte (vacación,
+ *   incapacidad) o no pagados sin castigo (permiso sin goce) se restan del base.
  * - Prima vacacional: se paga con cada vacación como concepto separado.
- * - Incapacidades: con goce se pagan, sin goce ni pagan ni descuentan.
+ * - Incapacidades: con goce se pagan (mensual) y se restan del base; sin goce
+ *   se restan del base sin castigo del séptimo día.
  * - count_mode por tipo: vacaciones en días hábiles, incapacidades en
  *   calendario — el mismo conteo en captura, saldo y nómina.
  */
@@ -62,11 +64,12 @@ class FaseDPayrollConceptsTest extends FeatureTestCase
         ]);
     }
 
-    public function test_absence_incident_no_longer_deducts_money(): void
+    public function test_unjustified_absence_deducts_day_plus_seventh(): void
     {
         $employee = $this->employee();
 
-        // Semana con 4 días trabajados y falta (FIN) el miércoles.
+        // Semana con 4 días trabajados y falta injustificada (FIN, sin goce) el
+        // miércoles. Horario L-V (5 días), sueldo diario 800.
         foreach (['2026-06-01', '2026-06-02', '2026-06-04', '2026-06-05'] as $date) {
             AttendanceRecord::factory()->for($employee)->create([
                 'work_date' => $date,
@@ -92,13 +95,16 @@ class FaseDPayrollConceptsTest extends FeatureTestCase
 
         $entry = $this->calculator()->calculateEmployeePayroll($weekly, $employee);
 
-        $this->assertEqualsWithDelta(3200.00, (float) $entry->regular_pay, 0.01, 'el día ausente no se paga (4 × 800)');
-        $this->assertEqualsWithDelta(0.00, (float) $entry->deductions, 0.01, 'sin deducción adicional: el castigo es no pagar el día');
-        $this->assertEqualsWithDelta(3200.00, (float) $entry->net_pay, 0.01);
+        // El sueldo se paga por día: la semana (7 días) vale 800 × 7 = 5600, y
+        // la falta injustificada descuenta el día + 1/5 del descanso (séptimo
+        // día proporcional, L-V): 800 × 7/5 = 1120. Neto = 5600 − 1120 = 4480.
+        $this->assertEqualsWithDelta(5600.00, (float) $entry->regular_pay, 0.01, 'base = sueldo diario 800 × 7');
+        $this->assertEqualsWithDelta(1120.00, (float) $entry->deductions, 0.01, '1 falta × 800 × 7/5 (séptimo día)');
+        $this->assertEqualsWithDelta(4480.00, (float) $entry->net_pay, 0.01);
         $this->assertSame(1, (int) $entry->days_absent, 'la falta sigue siendo visible');
     }
 
-    public function test_unpaid_permission_no_longer_deducts_money(): void
+    public function test_unpaid_permission_is_not_paid_but_not_penalized(): void
     {
         $employee = $this->employee();
 
@@ -118,8 +124,11 @@ class FaseDPayrollConceptsTest extends FeatureTestCase
 
         $entry = $this->calculator()->calculateEmployeePayroll($weekly, $employee);
 
-        $this->assertEqualsWithDelta(800.00, (float) $entry->regular_pay, 0.01);
-        $this->assertEqualsWithDelta(0.00, (float) $entry->deductions, 0.01, 'permiso sin goce: el día no se paga, no se descuenta encima');
+        // Permiso sin goce: el día NO se paga (se resta del base a monto plano),
+        // pero NO castiga el séptimo día (no es falta). Base = 800 × (7 − 1) =
+        // 4800; sin deducción.
+        $this->assertEqualsWithDelta(4800.00, (float) $entry->regular_pay, 0.01, 'base = 800 × (7 − 1 permiso sin goce)');
+        $this->assertEqualsWithDelta(0.00, (float) $entry->deductions, 0.01, 'permiso sin goce: el día no se paga, sin castigo del séptimo día');
     }
 
     public function test_vacation_premium_is_paid_as_separate_concept(): void

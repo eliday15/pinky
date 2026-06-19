@@ -163,8 +163,8 @@ const breakdown = props.entry.calculation_breakdown || {};
             <h3 class="text-lg font-semibold text-gray-800 mb-4">Tasas Aplicadas</h3>
             <div class="grid grid-cols-3 gap-4 text-sm">
                 <div class="bg-gray-50 rounded-lg p-4 text-center">
-                    <p class="text-2xl font-bold text-gray-800">{{ formatCurrency(entry.hourly_rate) }}</p>
-                    <p class="text-gray-500">Tarifa por hora</p>
+                    <p class="text-2xl font-bold text-gray-800">{{ formatCurrency(entry.daily_salary) }}</p>
+                    <p class="text-gray-500">Sueldo diario</p>
                 </div>
                 <template v-if="!breakdown.rates?.uses_compensation_types">
                     <div class="bg-gray-50 rounded-lg p-4 text-center">
@@ -214,7 +214,7 @@ const breakdown = props.entry.calculation_breakdown || {};
                     <div>
                         <span class="text-gray-600">Pago regular</span>
                         <span class="text-xs text-gray-400 ml-2">
-                            ({{ entry.regular_hours }}h x {{ formatCurrency(entry.hourly_rate) }})
+                            ({{ breakdown.base?.base_paid_days ?? 0 }} dias x {{ formatCurrency(entry.daily_salary) }})
                         </span>
                     </div>
                     <span class="font-medium">{{ formatCurrency(entry.regular_pay) }}</span>

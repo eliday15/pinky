@@ -125,4 +125,39 @@ class WeekendUnitsTest extends FeatureTestCase
         // 12 h ÷ 6 = 2 unidades × $200 = $400.
         $this->assertEqualsWithDelta(400.0, (float) $entry->weekend_pay, 0.01);
     }
+
+    public function test_weekend_units_round_to_nearest_whole_number(): void
+    {
+        // Fin de semana a números cerrados (WhatsApp 2026-06-19): 9 h ÷ 6 = 1.5,
+        // que redondea a 2 unidades (no fracciones), tanto en reporte como en
+        // nómina.
+        $dept = Department::factory()->create([
+            'name' => 'Almacén PT',
+            'code' => 'ALMACENPT',
+            'weekend_unit_hours' => 6,
+        ]);
+        $employee = Employee::factory()->create(['department_id' => $dept->id, 'status' => 'active']);
+
+        $fin = $this->weekendCompType(200.0);
+        $employee->compensationTypes()->attach($fin->id, ['is_active' => true]);
+
+        $this->seedWeekendWork($employee, $fin, 9.0); // 9 h trabajadas en sábado
+
+        // Reporte: 9 ÷ 6 = 1.5 → 2 unidades cerradas.
+        $report = app(WeeklyOvertimeReportService::class)
+            ->buildReport($dept, Carbon::parse('2026-03-09'));
+        $this->assertEqualsWithDelta(2.0, $report['totals']['weekend_units'], 0.01);
+        $this->assertEqualsWithDelta(2.0, $report['rows'][0]['totals']['weekend_units'], 0.01);
+
+        // Nómina: 2 unidades × $200 = $400 (no 1.5 × $200 = $300).
+        $period = PayrollPeriod::factory()->monthly()->create([
+            'start_date' => '2026-03-01',
+            'end_date' => '2026-03-31',
+            'payment_date' => '2026-04-03',
+        ]);
+        $entry = app(PayrollCalculatorService::class)
+            ->calculateEmployeePayroll($period, $employee->fresh());
+
+        $this->assertEqualsWithDelta(400.0, (float) $entry->weekend_pay, 0.01);
+    }
 }

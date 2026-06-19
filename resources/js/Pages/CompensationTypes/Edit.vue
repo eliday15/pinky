@@ -38,6 +38,7 @@ const form = useForm({
     authorization_type: props.compensationType.authorization_type || '',
     attendance_pull_rule: props.compensationType.attendance_pull_rule || null,
     priority: props.compensationType.priority ?? 0,
+    payment_period: props.compensationType.payment_period || 'monthly',
     employee_ids: initialEmployeeIds,
     employee_percentages: initialEmployeePercentages,
     employee_fixed_amounts: initialEmployeeFixedAmounts,
@@ -222,6 +223,35 @@ const submit = () => {
                             </p>
                         </div>
 
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">
+                                ¿Cuando se paga? *
+                            </label>
+                            <div class="flex space-x-4">
+                                <label class="flex items-center">
+                                    <input
+                                        v-model="form.payment_period"
+                                        type="radio"
+                                        value="weekly"
+                                        class="text-pink-600 focus:ring-pink-500"
+                                    />
+                                    <span class="ml-2 text-sm text-gray-700">Semanal (con el sueldo base)</span>
+                                </label>
+                                <label class="flex items-center">
+                                    <input
+                                        v-model="form.payment_period"
+                                        type="radio"
+                                        value="monthly"
+                                        class="text-pink-600 focus:ring-pink-500"
+                                    />
+                                    <span class="ml-2 text-sm text-gray-700">Mensual (con los extras)</span>
+                                </label>
+                            </div>
+                            <p v-if="form.errors.payment_period" class="mt-1 text-sm text-red-600">
+                                {{ form.errors.payment_period }}
+                            </p>
+                        </div>
+
                         <div v-if="form.calculation_type === 'percentage'">
                             <label class="block text-sm font-medium text-gray-700 mb-1">
                                 Porcentaje del Salario (%) *
@@ -329,9 +359,10 @@ const submit = () => {
                                 <option value="meal">Cena (12h, velada o fin de semana)</option>
                                 <option value="weekend">Fin de semana (trabajo sab/dom fuera de horario)</option>
                                 <option value="comida">Comida (solo trabajo en fin de semana)</option>
+                                <option value="velada">Velada (noche detectada en checadas)</option>
                             </select>
                             <p class="mt-1 text-sm text-gray-500">
-                                Al jalar desde checadas se generan entradas automaticas por cada dia que califique segun la regla elegida. "Cena": jornada minima, cruzo medianoche o fin de semana. "Fin de semana": trabajo en sabado/domingo fuera de su horario. "Comida": lunch solo por trabajar fin de semana. No se auto-aprueban.
+                                Al jalar desde checadas se generan entradas automaticas por cada dia que califique segun la regla elegida. "Cena": jornada minima, cruzo medianoche o fin de semana. "Fin de semana": trabajo en sabado/domingo fuera de su horario. "Comida": lunch solo por trabajar fin de semana. "Velada": noche detectada en las marcas (reingreso nocturno o que cruza medianoche). No se auto-aprueban.
                             </p>
                             <p v-if="form.errors.attendance_pull_rule" class="mt-1 text-sm text-red-600">
                                 {{ form.errors.attendance_pull_rule }}

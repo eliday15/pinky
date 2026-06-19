@@ -74,6 +74,7 @@ class RolesPermissionsSeeder extends Seeder
             'payroll.create',
             'payroll.calculate',
             'payroll.approve',
+            'payroll.pay_cash',
             'payroll.export',
 
             // Reportes

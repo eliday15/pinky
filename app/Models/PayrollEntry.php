@@ -12,7 +12,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 class PayrollEntry extends Model
 {
-    use HasFactory, Auditable;
+    use Auditable, HasFactory;
 
     /**
      * The module name for audit logging.
@@ -28,6 +28,7 @@ class PayrollEntry extends Model
         'payroll_period_id',
         'employee_id',
         'hourly_rate',
+        'daily_salary',
         'overtime_multiplier',
         'holiday_multiplier',
         'regular_hours',
@@ -66,11 +67,14 @@ class PayrollEntry extends Model
         'deductions',
         'gross_pay',
         'net_pay',
+        'cash_amount',
+        'bank_amount',
         'calculation_breakdown',
     ];
 
     protected $casts = [
         'hourly_rate' => 'decimal:2',
+        'daily_salary' => 'decimal:2',
         'overtime_multiplier' => 'decimal:2',
         'holiday_multiplier' => 'decimal:2',
         'regular_hours' => 'decimal:2',
@@ -95,6 +99,8 @@ class PayrollEntry extends Model
         'deductions' => 'decimal:2',
         'gross_pay' => 'decimal:2',
         'net_pay' => 'decimal:2',
+        'cash_amount' => 'decimal:2',
+        'bank_amount' => 'decimal:2',
         'velada_hours' => 'decimal:2',
         'velada_authorized_hours' => 'decimal:2',
         'velada_multiplier' => 'decimal:2',

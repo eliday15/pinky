@@ -235,6 +235,59 @@ class CompensationTypeControllerTest extends FeatureTestCase
         ]);
     }
 
+    public function test_payment_period_defaults_to_monthly_and_can_be_set_weekly(): void
+    {
+        $this->actingAsAdmin();
+
+        // Sin payment_period: cae en el default 'monthly'.
+        $this->post(route('compensation-types.store'), [
+            'name' => 'Default Mensual',
+            'code' => 'PP-DEF',
+            'calculation_type' => 'fixed',
+            'fixed_amount' => 10.00,
+            'application_mode' => 'one_time',
+            'priority' => 0,
+        ])->assertRedirect(route('compensation-types.index'));
+
+        $this->assertDatabaseHas('compensation_types', [
+            'code' => 'PP-DEF',
+            'payment_period' => 'monthly',
+        ]);
+
+        // Explícito 'weekly' se persiste.
+        $this->post(route('compensation-types.store'), [
+            'name' => 'Semanal',
+            'code' => 'PP-WK',
+            'calculation_type' => 'fixed',
+            'fixed_amount' => 10.00,
+            'application_mode' => 'one_time',
+            'priority' => 0,
+            'payment_period' => 'weekly',
+        ])->assertRedirect(route('compensation-types.index'));
+
+        $this->assertDatabaseHas('compensation_types', [
+            'code' => 'PP-WK',
+            'payment_period' => 'weekly',
+        ]);
+    }
+
+    public function test_store_rejects_invalid_payment_period(): void
+    {
+        $this->actingAsAdmin();
+
+        $this->from(route('compensation-types.create'))
+            ->post(route('compensation-types.store'), [
+                'name' => 'Mal',
+                'code' => 'PP-BAD',
+                'calculation_type' => 'fixed',
+                'fixed_amount' => 10.00,
+                'application_mode' => 'one_time',
+                'priority' => 0,
+                'payment_period' => 'daily',
+            ])
+            ->assertSessionHasErrors(['payment_period']);
+    }
+
     public function test_store_syncs_positions_departments_and_employees_with_pivots(): void
     {
         $this->actingAsAdmin();

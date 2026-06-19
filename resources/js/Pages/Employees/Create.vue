@@ -48,6 +48,9 @@ const form = useForm({
     is_trial_period: false,
     trial_period_end_date: '',
     imss_number: '',
+    is_imss_enrolled: false,
+    cash_pin: '',
+    cash_pin_confirmation: '',
     daily_salary: '',
     monthly_bonus_type: 'none',
     monthly_bonus_amount: 0,
@@ -788,10 +791,28 @@ watch(() => form.hire_date, onHireDateChange);
                             <label class="block text-sm font-medium text-gray-700 mb-1">Numero IMSS</label>
                             <input v-model="form.imss_number" type="text" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" placeholder="Numero de seguridad social" />
                         </div>
-                        <div v-if="canEditAll">
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Salario Diario Integrado</label>
-                            <input v-model="form.daily_salary" type="number" step="0.01" min="0" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" placeholder="Opcional - se calcula de tarifa/hr si no se indica" />
-                            <p class="mt-1 text-sm text-gray-500">Si no se indica, se calcula como tarifa por hora x horas de jornada</p>
+                        <div v-if="canEditAll" class="flex items-start pt-6">
+                            <label class="flex items-center">
+                                <input v-model="form.is_imss_enrolled" type="checkbox" class="rounded border-gray-300 text-pink-600 focus:ring-pink-500" />
+                                <span class="ml-2 text-sm text-gray-700">Ya esta inscrito en el IMSS</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Contraseña de cobro en efectivo (solo admin) -->
+                    <div v-if="canEditAll" class="mt-6 border-t border-gray-200 pt-6">
+                        <h4 class="text-sm font-semibold text-gray-800 mb-1">Contraseña de cobro</h4>
+                        <p class="text-xs text-gray-500 mb-4">PIN personal que el empleado usa para cobrar su efectivo. Opcional al dar de alta.</p>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Contraseña de cobro</label>
+                                <input v-model="form.cash_pin" type="password" autocomplete="new-password" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.cash_pin }" placeholder="Minimo 4 caracteres" />
+                                <p v-if="form.errors.cash_pin" class="mt-1 text-sm text-red-600">{{ form.errors.cash_pin }}</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Confirmar contraseña de cobro</label>
+                                <input v-model="form.cash_pin_confirmation" type="password" autocomplete="new-password" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" />
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1057,18 +1078,19 @@ watch(() => form.hire_date, onHireDateChange);
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">
-                                Tarifa por Hora (MXN) *
-                                <span v-if="autoFilledFields.hourly_rate" class="text-blue-500 text-xs">(Auto)</span>
+                                Sueldo Diario (MXN) *
                             </label>
                             <input
-                                v-model="form.hourly_rate"
+                                v-model="form.daily_salary"
                                 type="number"
                                 step="0.01"
+                                min="0"
                                 class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                                :class="{ 'border-red-500': form.errors.hourly_rate }"
+                                :class="{ 'border-red-500': form.errors.daily_salary }"
                             />
-                            <p v-if="form.errors.hourly_rate" class="mt-1 text-sm text-red-600">
-                                {{ form.errors.hourly_rate }}
+                            <p class="mt-1 text-sm text-gray-500">La semana se paga sobre 7 dias (sueldo diario x 7). Las horas extra y otros conceptos se pagan por el monto de la compensacion.</p>
+                            <p v-if="form.errors.daily_salary" class="mt-1 text-sm text-red-600">
+                                {{ form.errors.daily_salary }}
                             </p>
                         </div>
                     </div>

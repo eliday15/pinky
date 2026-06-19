@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\Hash;
 
 /**
  * Employee model representing a company worker.
@@ -75,6 +76,8 @@ class Employee extends Model
         'is_trial_period',
         'trial_period_end_date',
         'imss_number',
+        'is_imss_enrolled',
+        'cash_pin',
         'daily_salary',
         'monthly_bonus_type',
         'monthly_bonus_amount',
@@ -97,8 +100,51 @@ class Employee extends Model
         'vacation_premium_percentage' => 'decimal:2',
         'is_minimum_wage' => 'boolean',
         'is_trial_period' => 'boolean',
+        'is_imss_enrolled' => 'boolean',
         'schedule_overrides' => 'array',
     ];
+
+    /**
+     * Attributes hidden from array/JSON serialization.
+     */
+    protected $hidden = [
+        'cash_pin',
+    ];
+
+    /**
+     * Hash the cash PIN on assignment. An empty value is ignored so the form
+     * can leave the field blank to keep the current PIN unchanged.
+     */
+    public function setCashPinAttribute(?string $value): void
+    {
+        if ($value === null || $value === '') {
+            return;
+        }
+
+        $this->attributes['cash_pin'] = Hash::make($value);
+    }
+
+    /**
+     * Whether this employee has a cash collection PIN set.
+     */
+    public function hasCashPin(): bool
+    {
+        return ! empty($this->attributes['cash_pin'] ?? null);
+    }
+
+    /**
+     * Verify a plaintext cash PIN against the stored hash.
+     */
+    public function verifyCashPin(string $pin): bool
+    {
+        $hash = $this->attributes['cash_pin'] ?? null;
+
+        if (empty($hash)) {
+            return false;
+        }
+
+        return Hash::check($pin, $hash);
+    }
 
     /**
      * Get the user account for this employee.

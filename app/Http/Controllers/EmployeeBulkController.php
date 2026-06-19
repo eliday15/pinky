@@ -70,7 +70,7 @@ class EmployeeBulkController extends Controller
         $employees = $query->orderBy('full_name')->get();
         $compensationTypes = CompensationType::active()->orderBy('code')->get();
 
-        $filename = 'empleados_' . now()->format('Y-m-d_Hi') . '.xlsx';
+        $filename = 'empleados_'.now()->format('Y-m-d_Hi').'.xlsx';
 
         return Excel::download(
             new EmployeeBulkExport($employees, $compensationTypes),
@@ -115,7 +115,7 @@ class EmployeeBulkController extends Controller
             'file.max' => 'El archivo no debe superar 10MB.',
         ]);
 
-        $import = new EmployeeBulkImport();
+        $import = new EmployeeBulkImport;
         Excel::import($import, $request->file('file'));
 
         // Store preview in session for the confirm step
@@ -179,6 +179,16 @@ class EmployeeBulkController extends Controller
 
                         $modelUpdates[$field] = $value;
                     }
+                }
+
+                // Si se actualizó el sueldo diario, re-derivar la tarifa por
+                // hora (columna NOT NULL + cálculo legacy de extras sin
+                // conceptos): hourly = sueldo_diario ÷ horas de jornada.
+                if (array_key_exists('daily_salary', $modelUpdates)) {
+                    $jornada = (float) ($employee->getEffectiveSchedule()?->daily_work_hours ?? 8);
+                    $jornada = $jornada > 0 ? $jornada : 8;
+                    $daily = (float) $modelUpdates['daily_salary'];
+                    $modelUpdates['hourly_rate'] = $daily > 0 ? round($daily / $jornada, 2) : 0.0;
                 }
 
                 // Apply model updates

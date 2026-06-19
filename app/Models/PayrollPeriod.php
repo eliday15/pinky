@@ -20,6 +20,7 @@ class PayrollPeriod extends Model
         'status',
         'requires_recalculation',
         'recalculation_flagged_at',
+        'cash_closed_at',
         'created_by',
         'approved_by',
     ];
@@ -30,6 +31,7 @@ class PayrollPeriod extends Model
         'payment_date' => 'date:Y-m-d',
         'requires_recalculation' => 'boolean',
         'recalculation_flagged_at' => 'datetime',
+        'cash_closed_at' => 'datetime',
     ];
 
     /**
@@ -54,6 +56,14 @@ class PayrollPeriod extends Model
     public function entries(): HasMany
     {
         return $this->hasMany(PayrollEntry::class);
+    }
+
+    /**
+     * Get all cash payouts (efectivo a entregar) for this period.
+     */
+    public function cashPayouts(): HasMany
+    {
+        return $this->hasMany(CashPayout::class);
     }
 
     /**
@@ -107,5 +117,14 @@ class PayrollPeriod extends Model
     public function paysExtras(): bool
     {
         return in_array($this->type, ['monthly', 'biweekly'], true);
+    }
+
+    /**
+     * Whether the cash for this period has been closed/prepared (denominations
+     * computed and cash_payouts created).
+     */
+    public function isCashClosed(): bool
+    {
+        return $this->cash_closed_at !== null;
     }
 }

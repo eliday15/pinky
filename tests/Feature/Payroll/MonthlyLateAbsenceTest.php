@@ -214,7 +214,8 @@ class MonthlyLateAbsenceTest extends FeatureTestCase
         // El cálculo mismo garantiza la generación (autocurable, sin cron).
         $entry = $this->calculator()->calculateEmployeePayroll($firstPeriod, $employee);
 
-        $this->assertEqualsWithDelta(1600.00, (float) $entry->deductions, 0.01, '2 faltas × 800 de sueldo diario');
+        // 2 faltas × 800 × 7/5 (séptimo día proporcional, horario L-V = 5 días).
+        $this->assertEqualsWithDelta(2240.00, (float) $entry->deductions, 0.01, '2 faltas × 800 × 7/5');
         $this->assertSame(2, (int) $entry->late_absences_generated);
         $this->assertSame(2, (int) $entry->days_absent);
 
@@ -243,7 +244,7 @@ class MonthlyLateAbsenceTest extends FeatureTestCase
         $this->calculator()->calculateEmployeePayroll($period, $employee);
         $entry = $this->calculator()->calculateEmployeePayroll($period, $employee); // recálculo
 
-        $this->assertEqualsWithDelta(1600.00, (float) $entry->deductions, 0.01, 'recalcular no duplica el descuento');
+        $this->assertEqualsWithDelta(2240.00, (float) $entry->deductions, 0.01, 'recalcular no duplica el descuento');
         $this->assertSame(1, Incident::where('employee_id', $employee->id)->where('late_month', '2026-06')->count());
     }
 
@@ -272,7 +273,7 @@ class MonthlyLateAbsenceTest extends FeatureTestCase
 
         $weeklyEntry = $this->calculator()->calculateEmployeePayroll($weekly, $employee);
 
-        $this->assertEqualsWithDelta(1600.00, (float) $weeklyEntry->deductions, 0.01, 'el periodo base sigue cobrando la falta');
+        $this->assertEqualsWithDelta(2240.00, (float) $weeklyEntry->deductions, 0.01, 'el periodo base sigue cobrando la falta');
     }
 
     public function test_legacy_weekly_accumulation_is_ignored(): void
@@ -296,7 +297,7 @@ class MonthlyLateAbsenceTest extends FeatureTestCase
 
         $entry = $this->calculator()->calculateEmployeePayroll($period, $employee);
 
-        $this->assertEqualsWithDelta(1600.00, (float) $entry->deductions, 0.01, 'solo la FRT mensual descuenta, el contador legado no suma');
+        $this->assertEqualsWithDelta(2240.00, (float) $entry->deductions, 0.01, 'solo la FRT mensual descuenta, el contador legado no suma');
         $this->assertFalse((bool) $legacy->fresh()->absence_generated, 'la nómina ya no escribe el flag legado');
     }
 
@@ -325,7 +326,8 @@ class MonthlyLateAbsenceTest extends FeatureTestCase
 
         $entry = $this->calculator()->calculateEmployeePayroll($period, $employee);
 
-        $this->assertEqualsWithDelta(800.00, (float) $entry->deductions, 0.01);
+        // 1 falta × 800 × 7/5 (horario L-V).
+        $this->assertEqualsWithDelta(1120.00, (float) $entry->deductions, 0.01);
         $this->assertSame(1, (int) $entry->late_absences_generated);
     }
 

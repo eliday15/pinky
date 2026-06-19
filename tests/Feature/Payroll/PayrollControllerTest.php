@@ -320,7 +320,8 @@ class PayrollControllerTest extends FeatureTestCase
                     ->where('viewComplete', true)
                     ->where('calculate', true)
                     ->where('approve', true)
-                    ->where('export', true)));
+                    ->where('export', true)
+                    ->where('payCash', true)));
     }
 
     public function test_show_orders_entries_by_net_pay_desc(): void

@@ -109,7 +109,7 @@ class EmployeeController extends Controller
                 'position_id' => $request->input('position_id') ?: optional(Position::active()->first())->id,
                 'schedule_id' => $request->input('schedule_id') ?: optional(Schedule::active()->first())->id,
                 'hire_date' => $request->input('hire_date') ?: now()->toDateString(),
-                'hourly_rate' => $request->input('hourly_rate') ?? 0,
+                'daily_salary' => $request->input('daily_salary') ?? 0,
             ]);
         }
 
@@ -149,12 +149,17 @@ class EmployeeController extends Controller
             'schedule_overrides.day_schedules.*.break_minutes' => ['nullable', 'integer', 'min:0', 'max:480'],
             'schedule_overrides.day_schedules.*.daily_work_hours' => ['nullable', 'numeric', 'min:0', 'max:24'],
             'supervisor_id' => ['nullable', 'exists:employees,id'],
-            'hourly_rate' => ['required', 'numeric', 'min:0'],
+            // hourly_rate ya NO es insumo: se deriva del sueldo diario. Se
+            // acepta opcional por compatibilidad pero el campo principal es
+            // daily_salary.
+            'hourly_rate' => ['nullable', 'numeric', 'min:0'],
             'is_minimum_wage' => ['boolean'],
             'is_trial_period' => ['boolean'],
             'trial_period_end_date' => ['nullable', 'date', 'after_or_equal:hire_date'],
             'imss_number' => ['nullable', 'string', 'max:50'],
-            'daily_salary' => ['nullable', 'numeric', 'min:0'],
+            'is_imss_enrolled' => ['boolean'],
+            'cash_pin' => ['nullable', 'string', 'min:4', 'confirmed'],
+            'daily_salary' => ['required', 'numeric', 'min:0'],
             'monthly_bonus_type' => ['nullable', 'string', Rule::in(['none', 'fixed', 'variable'])],
             'monthly_bonus_amount' => ['nullable', 'numeric', 'min:0'],
             'vacation_days_entitled' => ['nullable', 'integer', 'min:0'],
@@ -197,7 +202,13 @@ class EmployeeController extends Controller
         }
         unset($validated['confirm_zkteco_reassign']);
 
-        $validated['full_name'] = $validated['first_name'] . ' ' . $validated['last_name'];
+        // El PIN de cobro y la marca de inscripción al IMSS solo los fija el
+        // editor con acceso completo (admin); RRHH (alta personal) no los toca.
+        if (! $canEditAll) {
+            unset($validated['cash_pin'], $validated['is_imss_enrolled']);
+        }
+
+        $validated['full_name'] = $validated['first_name'].' '.$validated['last_name'];
         $validated['vacation_days_entitled'] = $validated['vacation_days_entitled'] ?? 6;
         $validated['vacation_days_used'] = $validated['vacation_days_used'] ?? 0;
         $validated['vacation_days_reserved'] = $validated['vacation_days_reserved'] ?? 0;
@@ -218,6 +229,14 @@ class EmployeeController extends Controller
         $validated['schedule_overrides'] = $this->cleanScheduleOverrides(
             $validated['schedule_overrides'] ?? [],
             $validated['schedule_id']
+        );
+
+        // hourly_rate se deriva del sueldo diario (la columna sigue siendo NOT
+        // NULL y la usa el cálculo legacy de extras sin conceptos).
+        $validated['hourly_rate'] = $this->deriveHourlyRate(
+            (float) ($validated['daily_salary'] ?? 0),
+            $validated['schedule_id'] ?? null,
+            $validated['schedule_overrides'] ?? []
         );
 
         $emergencyContacts = $validated['emergency_contacts'] ?? [];
@@ -436,12 +455,15 @@ class EmployeeController extends Controller
             'supervisor_id' => ['nullable', 'exists:employees,id', Rule::notIn([$employee->id])],
             'subordinate_ids' => ['nullable', 'array'],
             'subordinate_ids.*' => ['integer', 'exists:employees,id', Rule::notIn([$employee->id])],
-            'hourly_rate' => ['required', 'numeric', 'min:0'],
+            // hourly_rate se deriva del sueldo diario (opcional por compat).
+            'hourly_rate' => ['nullable', 'numeric', 'min:0'],
             'is_minimum_wage' => ['boolean'],
             'is_trial_period' => ['boolean'],
             'trial_period_end_date' => ['nullable', 'date', 'after_or_equal:hire_date'],
             'imss_number' => ['nullable', 'string', 'max:50'],
-            'daily_salary' => ['nullable', 'numeric', 'min:0'],
+            'is_imss_enrolled' => ['boolean'],
+            'cash_pin' => ['nullable', 'string', 'min:4', 'confirmed'],
+            'daily_salary' => ['required', 'numeric', 'min:0'],
             'monthly_bonus_type' => ['nullable', 'string', Rule::in(['none', 'fixed', 'variable'])],
             'monthly_bonus_amount' => ['nullable', 'numeric', 'min:0'],
             'vacation_days_entitled' => ['required', 'integer', 'min:0'],
@@ -516,7 +538,7 @@ class EmployeeController extends Controller
         }
         unset($validated['confirm_zkteco_reassign']);
 
-        $validated['full_name'] = $validated['first_name'] . ' ' . $validated['last_name'];
+        $validated['full_name'] = $validated['first_name'].' '.$validated['last_name'];
         $validated['is_minimum_wage'] = $validated['is_minimum_wage'] ?? false;
         $validated['is_trial_period'] = $validated['is_trial_period'] ?? false;
         $validated['monthly_bonus_type'] = $validated['monthly_bonus_type'] ?? 'none';
@@ -538,6 +560,13 @@ class EmployeeController extends Controller
         $validated['schedule_overrides'] = $this->cleanScheduleOverrides(
             $validated['schedule_overrides'] ?? [],
             $validated['schedule_id']
+        );
+
+        // hourly_rate se deriva del sueldo diario (columna NOT NULL + legacy).
+        $validated['hourly_rate'] = $this->deriveHourlyRate(
+            (float) ($validated['daily_salary'] ?? 0),
+            $validated['schedule_id'] ?? null,
+            $validated['schedule_overrides'] ?? []
         );
 
         $positionChanged = $request->position_id != $employee->position_id;
@@ -628,7 +657,7 @@ class EmployeeController extends Controller
             'emergency_contacts.*.address' => ['nullable', 'string', 'max:255'],
         ]);
 
-        $validated['full_name'] = $validated['first_name'] . ' ' . $validated['last_name'];
+        $validated['full_name'] = $validated['first_name'].' '.$validated['last_name'];
 
         if ($request->hasFile('photo')) {
             if ($employee->photo_path) {
@@ -695,7 +724,7 @@ class EmployeeController extends Controller
             'field' => ['required_if:operation_type,set_field', 'string', Rule::in(['department_id', 'position_id', 'schedule_id', 'supervisor_id', 'status', 'is_minimum_wage'])],
             'value' => ['required_if:operation_type,set_field'],
             // For adjust_compensation
-            'compensation_field' => ['required_if:operation_type,adjust_compensation', 'string', Rule::in(['hourly_rate', 'overtime_rate', 'holiday_rate', 'compensation_types'])],
+            'compensation_field' => ['required_if:operation_type,adjust_compensation', 'string', Rule::in(['daily_salary', 'overtime_rate', 'holiday_rate', 'compensation_types'])],
             'adjustment_type' => ['required_if:operation_type,adjust_compensation', 'string', Rule::in(['fixed', 'percentage'])],
             'adjustment_value' => ['required_if:operation_type,adjust_compensation', 'numeric'],
             'compensation_type_ids' => ['nullable', 'array'],
@@ -767,7 +796,7 @@ class EmployeeController extends Controller
                         }
                     }
                 } else {
-                    // Standard field adjustment (hourly_rate, overtime_rate, holiday_rate)
+                    // Standard field adjustment (daily_salary, overtime_rate, holiday_rate)
                     $employees = Employee::whereIn('id', $employeeIds)->get();
                     foreach ($employees as $employee) {
                         $currentValue = (float) $employee->$field;
@@ -778,7 +807,19 @@ class EmployeeController extends Controller
                             $newValue = $currentValue * (1 + $validated['adjustment_value'] / 100);
                         }
 
-                        $employee->update([$field => max(0, round($newValue, 2))]);
+                        $updates = [$field => max(0, round($newValue, 2))];
+
+                        // Al ajustar el sueldo diario, re-derivar la hora (la
+                        // columna sigue NOT NULL y la usa el cálculo legacy).
+                        if ($field === 'daily_salary') {
+                            $updates['hourly_rate'] = $this->deriveHourlyRate(
+                                (float) $updates['daily_salary'],
+                                $employee->schedule_id,
+                                $employee->schedule_overrides ?? []
+                            );
+                        }
+
+                        $employee->update($updates);
                     }
                 }
             }
@@ -791,7 +832,7 @@ class EmployeeController extends Controller
         );
 
         return redirect()->route('employees.index', $redirectParams)
-            ->with('success', $count . ' empleados actualizados exitosamente.');
+            ->with('success', $count.' empleados actualizados exitosamente.');
     }
 
     /**
@@ -862,6 +903,39 @@ class EmployeeController extends Controller
             });
 
         return $query;
+    }
+
+    /**
+     * Derivar la tarifa por hora a partir del sueldo diario y la jornada.
+     *
+     * El sueldo diario es el insumo; hourly_rate se conserva (columna NOT NULL +
+     * cálculo legacy de extras sin conceptos) como sueldo_diario ÷ horas de
+     * jornada. Usa los overrides del horario si traen daily_work_hours, si no la
+     * jornada del horario base, con fallback de 8 horas.
+     *
+     * Args:
+     *     dailySalary: Sueldo diario capturado
+     *     scheduleId: Horario base del empleado
+     *     overrides: Overrides de horario ya limpios
+     *
+     * Returns:
+     *     Tarifa por hora derivada (0 si no hay sueldo diario)
+     */
+    private function deriveHourlyRate(float $dailySalary, ?int $scheduleId, array $overrides): float
+    {
+        if ($dailySalary <= 0) {
+            return 0.0;
+        }
+
+        $hours = (float) ($overrides['daily_work_hours']
+            ?? optional(Schedule::find($scheduleId))->daily_work_hours
+            ?? 8);
+
+        if ($hours <= 0) {
+            $hours = 8;
+        }
+
+        return round($dailySalary / $hours, 2);
     }
 
     /**

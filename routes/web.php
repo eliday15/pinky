@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\AnomalyResolutionController;
 use App\Http\Controllers\AttendanceController;
+use App\Http\Controllers\AttendanceReportController;
 use App\Http\Controllers\AuditLogController;
 use App\Http\Controllers\AuthorizationController;
 use App\Http\Controllers\CompensationTypeController;
@@ -11,11 +12,10 @@ use App\Http\Controllers\EmployeeBulkController;
 use App\Http\Controllers\EmployeeController;
 use App\Http\Controllers\IncidentController;
 use App\Http\Controllers\IncidentTypeController;
+use App\Http\Controllers\OvertimeReportController;
 use App\Http\Controllers\PayrollController;
 use App\Http\Controllers\PositionController;
 use App\Http\Controllers\ProfileController;
-use App\Http\Controllers\AttendanceReportController;
-use App\Http\Controllers\OvertimeReportController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\ReportExportController;
 use App\Http\Controllers\ScheduleController;
@@ -23,14 +23,13 @@ use App\Http\Controllers\SecurityDeviceController;
 use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\VacationTableController;
-use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
-use Inertia\Inertia;
 
 Route::get('/', function () {
     if (auth()->check()) {
         return redirect()->route('dashboard');
     }
+
     return redirect()->route('login');
 });
 
@@ -102,6 +101,10 @@ Route::middleware(['auth', 'password-changed', 'two-factor-setup'])->group(funct
     Route::post('/payroll/{payroll}/calculate', [PayrollController::class, 'calculate'])->name('payroll.calculate');
     Route::post('/payroll/{payroll}/approve', [PayrollController::class, 'approve'])->name('payroll.approve');
     Route::post('/payroll/{payroll}/mark-paid', [PayrollController::class, 'markPaid'])->name('payroll.markPaid');
+    // Pago en efectivo: cierre (billetes), página de cobro y cobro con PIN.
+    Route::post('/payroll/{payroll}/close-cash', [PayrollController::class, 'closeCash'])->name('payroll.closeCash');
+    Route::get('/payroll/{payroll}/cash', [PayrollController::class, 'cash'])->name('payroll.cash');
+    Route::post('/payroll/{payroll}/payouts/{payout}/collect', [PayrollController::class, 'collectCash'])->name('payroll.payouts.collect');
     Route::delete('/payroll/{payroll}', [PayrollController::class, 'destroy'])->name('payroll.destroy');
     Route::get('/payroll/{payroll}/export/contpaqi', [PayrollController::class, 'exportContpaqi'])->name('payroll.export.contpaqi');
     Route::get('/payroll/entry/{entry}', [PayrollController::class, 'entryDetail'])->name('payroll.entry');

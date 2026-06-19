@@ -189,7 +189,7 @@ class AuthorizationController extends Controller
         $employees = $employeesQuery->get(['id', 'full_name', 'employee_number', 'department_id', 'schedule_id', 'schedule_overrides']);
         $this->appendActiveCompensationTypeIds($employees);
         $this->appendScheduleByDay($employees);
-        $employees->each(fn($e) => $e->makeHidden(['schedule_id', 'schedule_overrides']));
+        $employees->each(fn ($e) => $e->makeHidden(['schedule_id', 'schedule_overrides']));
 
         $types = $this->getAuthorizationTypes();
         $prefill = null;
@@ -212,7 +212,7 @@ class AuthorizationController extends Controller
             'types' => $types,
             'prefill' => $prefill,
             'departments' => \App\Models\Department::active()->orderBy('name')->get(['id', 'name']),
-            'holidays' => \App\Models\Holiday::pluck('date')->map(fn($d) => $d->toDateString())->values()->all(),
+            'holidays' => \App\Models\Holiday::pluck('date')->map(fn ($d) => $d->toDateString())->values()->all(),
             // Quien puede aprobar verá "Crear y aprobar": su alta queda aprobada
             // en el mismo paso (approveOnCreate).
             'canApprove' => $user->hasPermissionTo('authorizations.approve'),
@@ -233,7 +233,7 @@ class AuthorizationController extends Controller
             'unauthorized_velada' => Authorization::TYPE_NIGHT_SHIFT,
         ];
 
-        if (!isset($typeMap[$anomaly->anomaly_type])) {
+        if (! isset($typeMap[$anomaly->anomaly_type])) {
             return null;
         }
 
@@ -278,13 +278,14 @@ class AuthorizationController extends Controller
      */
     private function suggestTimeRange(?\App\Models\AttendanceRecord $record, float $hours): array
     {
-        if (!$record || !$record->check_out || $hours <= 0) {
+        if (! $record || ! $record->check_out || $hours <= 0) {
             return [null, null];
         }
 
         try {
             $end = Carbon::parse($record->check_out);
             $start = $end->copy()->subMinutes((int) round($hours * 60));
+
             return [$start->format('H:i'), $end->format('H:i')];
         } catch (\Throwable $e) {
             return [null, null];
@@ -326,7 +327,7 @@ class AuthorizationController extends Controller
             // Pre-calc hours when not given, so the 0-hour check sees the real value.
             $hoursPreview = $validated['hours'] ?? null;
             if (! empty($validated['start_time']) && ! empty($validated['end_time']) && empty($hoursPreview)) {
-                $hoursPreview = (new OvertimeRoundingService())->roundMinutes(
+                $hoursPreview = (new OvertimeRoundingService)->roundMinutes(
                     $this->minutesBetweenTimes($validated['start_time'], $validated['end_time'])
                 );
             }
@@ -413,17 +414,17 @@ class AuthorizationController extends Controller
         $employees = $employeesQuery->get(['id', 'full_name', 'employee_number', 'department_id', 'schedule_id', 'schedule_overrides']);
         $this->appendActiveCompensationTypeIds($employees);
         $this->appendScheduleByDay($employees);
-        $employees->each(fn($e) => $e->makeHidden(['schedule_id', 'schedule_overrides']));
+        $employees->each(fn ($e) => $e->makeHidden(['schedule_id', 'schedule_overrides']));
 
         return Inertia::render('Authorizations/CreateBulk', [
             'employees' => $employees,
             'types' => $this->getAuthorizationTypes(),
             'departments' => \App\Models\Department::active()->get(['id', 'name']),
             'departmentHeads' => Employee::active()
-                ->whereHas('position', fn($q) => $q->whereNotNull('supervisor_position_id'))
+                ->whereHas('position', fn ($q) => $q->whereNotNull('supervisor_position_id'))
                 ->orderBy('full_name')
                 ->get(['id', 'full_name', 'department_id']),
-            'holidays' => \App\Models\Holiday::pluck('date')->map(fn($d) => $d->toDateString())->values()->all(),
+            'holidays' => \App\Models\Holiday::pluck('date')->map(fn ($d) => $d->toDateString())->values()->all(),
             // Quien puede aprobar verá "Crear y aprobar": su alta masiva queda
             // aprobada en el mismo paso (approveOnCreate).
             'canApprove' => $user->hasPermissionTo('authorizations.approve'),
@@ -467,20 +468,29 @@ class AuthorizationController extends Controller
             'hours' => $hoursRules,
         ]);
 
-        $bulkGroupId = 'bulk_' . now()->format('YmdHis') . '_' . Auth::id();
+        $bulkGroupId = 'bulk_'.now()->format('YmdHis').'_'.Auth::id();
         $count = 0;
         $autoApprovedCount = 0;
         $duplicateCount = 0;
 
-        $rounder = new OvertimeRoundingService();
+        $rounder = new OvertimeRoundingService;
 
         // Per-hour types (overtime / velada) can't be authorized inside the
         // employee's scheduled work hours — those hours are their obligation,
         // not extras. Exception: official holidays, where any worked hour
         // qualifies. Collect conflicts up front so we reject the whole batch
         // with row-precise errors before creating anything.
+        //
+        // Pull-from-attendance concepts are exempt: a velada (per_day pull, still
+        // type night_shift) is by definition a night re-entry outside the jornada,
+        // already qualified by the punch detection — never schedule-conflict it.
+        $bulkCompType = ! empty($validated['compensation_type_id'])
+            ? CompensationType::find($validated['compensation_type_id'])
+            : null;
+
         if (! empty($validated['entries'])
             && in_array($validated['type'], [Authorization::TYPE_OVERTIME, Authorization::TYPE_NIGHT_SHIFT], true)
+            && ! ($bulkCompType && $bulkCompType->pullsFromAttendance())
         ) {
             $empCache = Employee::with('schedule')
                 ->whereIn('id', array_unique(array_column($validated['entries'], 'employee_id')))
@@ -489,14 +499,16 @@ class AuthorizationController extends Controller
             $dates = array_unique(array_column($validated['entries'], 'date'));
             $holidaySet = \App\Models\Holiday::whereIn('date', $dates)
                 ->pluck('date')
-                ->map(fn($d) => $d->toDateString())
+                ->map(fn ($d) => $d->toDateString())
                 ->all();
             $holidaySet = array_flip($holidaySet);
 
             $conflicts = [];
             foreach ($validated['entries'] as $i => $entry) {
                 $emp = $empCache->get($entry['employee_id']);
-                if (! $emp) continue;
+                if (! $emp) {
+                    continue;
+                }
                 // Trust an explicitly chosen hours value (the user can override the
                 // escalonado ladder in the UI). Only derive from the time range when
                 // no hours were given, so we still catch 0-hour rows from <30 min ranges.
@@ -510,9 +522,12 @@ class AuthorizationController extends Controller
                 }
                 if ((float) $entryHours <= 0) {
                     $conflicts["entries.{$i}"] = "Fila {$emp->full_name} ({$entry['date']}): el rango es menor a 30 min y se redondea a 0 horas. No se puede autorizar.";
+
                     continue;
                 }
-                if (isset($holidaySet[$entry['date']])) continue;
+                if (isset($holidaySet[$entry['date']])) {
+                    continue;
+                }
                 if ($this->overlapsWorkSchedule($emp, $entry['date'], $entry['start_time'] ?? null, $entry['end_time'] ?? null)) {
                     $conflicts["entries.{$i}"] = "Las horas chocan con el horario de trabajo de {$emp->full_name} el {$entry['date']}. No se autoriza tiempo dentro de su jornada (salvo días festivos).";
                 }
@@ -546,6 +561,7 @@ class AuthorizationController extends Controller
                 // ruido en BD aunque el pago ya esté neutralizado.
                 if ($this->activeDuplicateExists((int) $entry['employee_id'], $entry['date'], $validated['type'], $validated['compensation_type_id'] ?? null)) {
                     $duplicateCount++;
+
                     continue;
                 }
 
@@ -583,6 +599,7 @@ class AuthorizationController extends Controller
                 // Mismo dedup que la rama de entries (DECISIONES §2).
                 if ($this->activeDuplicateExists((int) $employeeId, $validated['date'], $validated['type'], $validated['compensation_type_id'] ?? null)) {
                     $duplicateCount++;
+
                     continue;
                 }
 
@@ -1026,6 +1043,7 @@ class AuthorizationController extends Controller
         foreach ($authorizations as $authorization) {
             if (! $user->can('approve', $authorization) || ! $authorization->isPending()) {
                 $skipped++;
+
                 continue;
             }
 
@@ -1064,6 +1082,7 @@ class AuthorizationController extends Controller
         foreach ($authorizations as $authorization) {
             if (! $user->can('reject', $authorization) || ! $authorization->isPending()) {
                 $skipped++;
+
                 continue;
             }
             $authorization->reject($user, $validated['rejection_reason']);
@@ -1174,7 +1193,8 @@ class AuthorizationController extends Controller
         $isMeal = $compType && $compType->hasMealPullRule();
         $isWeekend = $compType && $compType->hasWeekendPullRule();
         $isComida = $compType && $compType->hasComidaPullRule();
-        $isPull = $isMeal || $isWeekend || $isComida;
+        $isVelada = $compType && $compType->hasVeladaPullRule();
+        $isPull = $isMeal || $isWeekend || $isComida || $isVelada;
 
         if (! $isPull && ! in_array($validated['type'], [Authorization::TYPE_OVERTIME, Authorization::TYPE_NIGHT_SHIFT], true)) {
             return response()->json([
@@ -1222,7 +1242,7 @@ class AuthorizationController extends Controller
                 ->whereBetween('date', [$startDate->toDateString(), $endDate->toDateString()])
                 ->where('status', '!=', Authorization::STATUS_REJECTED)
                 ->get(['employee_id', 'date'])
-                ->mapWithKeys(fn($a) => [$a->employee_id . '|' . Carbon::parse($a->date)->toDateString() => true])
+                ->mapWithKeys(fn ($a) => [$a->employee_id.'|'.Carbon::parse($a->date)->toDateString() => true])
                 ->all();
         }
 
@@ -1231,7 +1251,7 @@ class AuthorizationController extends Controller
             if ($allowed !== null && ! in_array($employee->id, $allowed, true)) {
                 continue;
             }
-            $empRecords = $records->get($employee->id, collect())->keyBy(fn($r) => Carbon::parse($r->work_date)->toDateString());
+            $empRecords = $records->get($employee->id, collect())->keyBy(fn ($r) => Carbon::parse($r->work_date)->toDateString());
 
             $cursor = $startDate->copy();
             while ($cursor->lte($endDate)) {
@@ -1239,12 +1259,16 @@ class AuthorizationController extends Controller
                 $record = $empRecords->get($dateStr);
 
                 if ($isPull) {
-                    if ($record && $record->check_in && ! isset($existingPull[$employee->id . '|' . $dateStr])) {
-                        $seg = $isMeal
-                            ? $this->buildMealSegment($record, $mealThreshold)
-                            : ($isWeekend
-                                ? $this->buildWeekendSegment($record)
-                                : $this->buildComidaSegment($record));
+                    if ($record && $record->check_in && ! isset($existingPull[$employee->id.'|'.$dateStr])) {
+                        if ($isMeal) {
+                            $seg = $this->buildMealSegment($record, $mealThreshold);
+                        } elseif ($isWeekend) {
+                            $seg = $this->buildWeekendSegment($record);
+                        } elseif ($isComida) {
+                            $seg = $this->buildComidaSegment($record);
+                        } else {
+                            $seg = $this->buildVeladaPullSegment($record);
+                        }
                         if ($seg) {
                             $rows[] = [
                                 'employee_id' => $employee->id,
@@ -1293,11 +1317,13 @@ class AuthorizationController extends Controller
             $msg = $type === Authorization::TYPE_NIGHT_SHIFT
                 ? 'Sin horas de velada detectadas.'
                 : 'Sin tiempo extra detectado.';
+
             return ['found' => false, 'message' => $msg];
         }
 
         // Prefer late-exit segment if present, else first available.
         $primary = collect($segments)->firstWhere('kind', 'late') ?? $segments[0];
+
         return ['found' => true] + $primary;
     }
 
@@ -1316,6 +1342,7 @@ class AuthorizationController extends Controller
 
         $dayName = Carbon::parse($date)->format('l');
         $schedule = $employee->getEffectiveScheduleForDay($dayName);
+
         return $this->buildOvertimeSegments($record, $schedule, $date);
     }
 
@@ -1330,8 +1357,8 @@ class AuthorizationController extends Controller
      */
     private function buildOvertimeSegments(AttendanceRecord $record, ?object $schedule, string $date): array
     {
-        $checkIn = Carbon::parse($date . ' ' . $record->check_in);
-        $checkOut = Carbon::parse($date . ' ' . $record->check_out);
+        $checkIn = Carbon::parse($date.' '.$record->check_in);
+        $checkOut = Carbon::parse($date.' '.$record->check_out);
         $scheduledEntry = $schedule->entry_time ?? null;
         $scheduledExit = $schedule->exit_time ?? null;
 
@@ -1345,19 +1372,20 @@ class AuthorizationController extends Controller
                 return [];
             }
             $start = $checkOut->copy()->subMinutes($minutes);
+
             return [[
                 'kind' => 'late',
                 'start_time' => $start->format('H:i'),
                 'end_time' => $checkOut->format('H:i'),
                 'hours' => number_format($rounded, 2, '.', ''),
-                'summary' => "Sin horario: {$rounded}h extra (de " . $start->format('H:i') . ' a ' . $checkOut->format('H:i') . ').',
+                'summary' => "Sin horario: {$rounded}h extra (de ".$start->format('H:i').' a '.$checkOut->format('H:i').').',
             ]];
         }
 
         $segments = [];
 
         if ($scheduledEntry) {
-            $scheduledEntryDt = Carbon::parse($date . ' ' . $scheduledEntry);
+            $scheduledEntryDt = Carbon::parse($date.' '.$scheduledEntry);
             if ($checkIn->lt($scheduledEntryDt)) {
                 // abs() defensively — Carbon 3 diffInMinutes is signed.
                 $earlyMinutes = abs((int) $checkIn->diffInMinutes($scheduledEntryDt));
@@ -1375,7 +1403,7 @@ class AuthorizationController extends Controller
         }
 
         if ($scheduledExit) {
-            $scheduledExitDt = Carbon::parse($date . ' ' . $scheduledExit);
+            $scheduledExitDt = Carbon::parse($date.' '.$scheduledExit);
             if ($checkOut->gt($scheduledExitDt)) {
                 $lateMinutes = abs((int) $scheduledExitDt->diffInMinutes($checkOut));
                 $rounded = $this->roundOvertimeMinutes($lateMinutes);
@@ -1431,8 +1459,27 @@ class AuthorizationController extends Controller
             'start_time' => $start->format('H:i'),
             'end_time' => $checkOut->format('H:i'),
             'hours' => number_format($rounded, 2, '.', ''),
-            'summary' => "Velada: {$rounded}h (de " . $start->format('H:i') . " hasta {$checkOut->format('H:i')}).",
+            'summary' => "Velada: {$rounded}h (de ".$start->format('H:i')." hasta {$checkOut->format('H:i')}).",
         ]];
+    }
+
+    /**
+     * Velada pull segment: a single per-day entry for a day on which a real
+     * velada night block is detected (the night re-entry that lands in the
+     * velada window or crosses midnight). Reuses the same detection as the
+     * per-hour velada path so "Cargar desde checadas" reads the actual entry→exit
+     * block, but the velada is now a per_day concept — it pays per night
+     * (velada_days), not by the hours stored here. The real times/hours are kept
+     * for the record and the punches view; never auto-approved (pulls from
+     * attendance), and approving it auto-captures the companion Cena.
+     *
+     * Returns null when the day has no detectable velada.
+     */
+    private function buildVeladaPullSegment(AttendanceRecord $record): ?array
+    {
+        $segments = $this->buildVeladaSegments($record);
+
+        return $segments[0] ?? null;
     }
 
     /**
@@ -1531,7 +1578,7 @@ class AuthorizationController extends Controller
     /** Delegate the rounding rule to the shared service. */
     private function roundOvertimeMinutes(int $minutes): float
     {
-        return (new OvertimeRoundingService())->roundMinutes($minutes);
+        return (new OvertimeRoundingService)->roundMinutes($minutes);
     }
 
     /**
@@ -1575,7 +1622,7 @@ class AuthorizationController extends Controller
 
         $totalWorked = (float) ($record->worked_hours ?? 0) + (float) ($record->overtime_hours ?? 0);
         if ($threshold > 0 && $totalWorked >= $threshold) {
-            $reasons[] = number_format($totalWorked, 2, '.', '') . 'h trabajadas';
+            $reasons[] = number_format($totalWorked, 2, '.', '').'h trabajadas';
         }
 
         // Midnight crossing: check_in/check_out are TIME-only; anchoring both to
@@ -1602,7 +1649,7 @@ class AuthorizationController extends Controller
             'start_time' => null,
             'end_time' => null,
             'hours' => '1',
-            'summary' => 'Cena: ' . implode(', ', $reasons) . '.',
+            'summary' => 'Cena: '.implode(', ', $reasons).'.',
         ];
     }
 
@@ -1757,6 +1804,7 @@ class AuthorizationController extends Controller
                 // invalidan la nómina (DECISIONES §7).
                 $authorization->approve(Auth::user());
                 $this->applyApprovalEffects($authorization, app(ZktecoSyncService::class));
+
                 return;
             }
         }
@@ -1767,13 +1815,35 @@ class AuthorizationController extends Controller
      *
      * Eager-loads the pivot and sets a `active_compensation_type_ids` attribute
      * so the frontend can filter authorization types per employee.
+     *
+     * Tiempo extra (HE/HED/HET) se ofrece para autorizar en TODOS los
+     * departamentos salvo los que cuentan el fin de semana por unidades
+     * (Almacén PT): esos pagan el fin de semana por unidades de horas, no
+     * tiempo extra. La disponibilidad se concede aunque el empleado no tenga el
+     * concepto asignado en su pivot — la nómina paga la autorización explícita
+     * con la tarifa global del concepto (resolveRate cae a la tarifa global
+     * cuando no hay override de empleado/puesto/depto).
      */
     private function appendActiveCompensationTypeIds(\Illuminate\Database\Eloquent\Collection $employees): void
     {
-        $employees->load(['compensationTypes' => fn($q) => $q->wherePivot('is_active', true)->select('compensation_types.id')]);
+        $employees->load(['compensationTypes' => fn ($q) => $q->wherePivot('is_active', true)->select('compensation_types.id')]);
 
-        $employees->each(function (Employee $emp) {
-            $emp->setAttribute('active_compensation_type_ids', $emp->compensationTypes->pluck('id')->values());
+        $overtimeTypeIds = CompensationType::active()
+            ->forAuthorizationType(Authorization::TYPE_OVERTIME)
+            ->pluck('id');
+
+        // Departamentos que cuentan el fin de semana por unidades (Almacén PT):
+        // se EXCLUYEN del tiempo extra.
+        $weekendUnitDeptIds = Department::whereNotNull('weekend_unit_hours')->pluck('id');
+
+        $employees->each(function (Employee $emp) use ($overtimeTypeIds, $weekendUnitDeptIds) {
+            $ids = $emp->compensationTypes->pluck('id');
+
+            if (! $weekendUnitDeptIds->contains($emp->department_id)) {
+                $ids = $ids->merge($overtimeTypeIds);
+            }
+
+            $emp->setAttribute('active_compensation_type_ids', $ids->unique()->values());
             $emp->unsetRelation('compensationTypes');
         });
     }
@@ -1833,7 +1903,7 @@ class AuthorizationController extends Controller
             return false;
         }
 
-        $toMin = fn(string $hhmm) => (int) substr($hhmm, 0, 2) * 60 + (int) substr($hhmm, 3, 2);
+        $toMin = fn (string $hhmm) => (int) substr($hhmm, 0, 2) * 60 + (int) substr($hhmm, 3, 2);
         $entry = $toMin(substr((string) $schedule->entry_time, 0, 5));
         $exit = $toMin(substr((string) $schedule->exit_time, 0, 5));
         $start = $toMin(substr($startTime, 0, 5));
@@ -1871,7 +1941,7 @@ class AuthorizationController extends Controller
             ? $applicationMode === CompensationType::APPLICATION_PER_HOUR
             : in_array($type, [Authorization::TYPE_OVERTIME, Authorization::TYPE_NIGHT_SHIFT], true);
 
-        return ['nullable', 'numeric', 'min:0', 'max:' . ($isPerHour ? '24' : '999999.99')];
+        return ['nullable', 'numeric', 'min:0', 'max:'.($isPerHour ? '24' : '999999.99')];
     }
 
     /**
@@ -1888,7 +1958,7 @@ class AuthorizationController extends Controller
             ->orderBy('priority')
             ->get(['id', 'name', 'code', 'authorization_type', 'application_mode', 'attendance_pull_rule']);
 
-        $types = $compTypes->map(fn(CompensationType $ct) => [
+        $types = $compTypes->map(fn (CompensationType $ct) => [
             'value' => $ct->authorization_type ?: 'special',
             'label' => $ct->name,
             'compensation_type_id' => $ct->id,
