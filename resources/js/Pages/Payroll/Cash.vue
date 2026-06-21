@@ -1,7 +1,7 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 
 const props = defineProps({
     period: Object,
@@ -19,16 +19,90 @@ const formatCurrency = (amount) => new Intl.NumberFormat('es-MX', {
 
 const formatPieces = (denom) => (denom >= 20 ? `Billete $${denom}` : `Moneda $${denom}`);
 
-// Ordered [{ denom, count }] for a denom=>count map, using the canonical
-// high-to-low denomination list (JSON object key order is not guaranteed).
-const orderedBreakdown = (breakdown) => {
-    const map = breakdown || {};
-    return props.denominations
-        .map((denom) => ({ denom, count: map[denom] ?? map[String(denom)] ?? 0 }))
-        .filter((row) => row.count > 0);
+// --- Denominaciones disponibles (flexible) ---
+// Muchas veces no hay billetes de cierta denominación (p. ej. $1000). El cajero
+// puede desmarcar las que no tenga y el desglose (global + por empleado) se
+// recalcula al vuelo con greedy sobre las denominaciones habilitadas. La
+// elección se recuerda en el navegador (localStorage).
+const STORAGE_KEY = 'cash_enabled_denominations';
+
+const loadEnabled = () => {
+    try {
+        const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
+        if (Array.isArray(saved) && saved.length) {
+            const allowed = new Set(props.denominations.map(Number));
+            const picked = saved.map(Number).filter((d) => allowed.has(d));
+            if (picked.length) return new Set(picked);
+        }
+    } catch (e) { /* ignore */ }
+    return new Set(props.denominations.map(Number));
 };
 
-const globalRows = computed(() => orderedBreakdown(props.globalBreakdown?.denominations));
+const enabledDenoms = ref(loadEnabled());
+
+const isEnabled = (d) => enabledDenoms.value.has(Number(d));
+
+const toggleDenom = (d) => {
+    const n = Number(d);
+    const next = new Set(enabledDenoms.value);
+    next.has(n) ? next.delete(n) : next.add(n);
+    enabledDenoms.value = next;
+};
+
+watch(enabledDenoms, (v) => {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify([...v])); } catch (e) { /* ignore */ }
+});
+
+// Habilitadas, de mayor a menor (orden del greedy).
+const activeDenoms = computed(() =>
+    props.denominations.map(Number).filter((d) => enabledDenoms.value.has(d)).sort((a, b) => b - a)
+);
+
+// Greedy sobre las denominaciones habilitadas. Devuelve el desglose y el
+// remanente no representable (si faltan denominaciones chicas).
+const greedy = (amount) => {
+    let rem = Math.round(Number(amount) || 0);
+    const breakdown = {};
+    for (const d of activeDenoms.value) {
+        if (rem <= 0) break;
+        const c = Math.floor(rem / d);
+        if (c > 0) { breakdown[d] = c; rem -= c * d; }
+    }
+    return { breakdown, leftover: rem };
+};
+
+// Filas ordenadas [{denom,count}] del desglose de un monto.
+const breakdownRows = (amount) => {
+    const { breakdown } = greedy(amount);
+    return activeDenoms.value
+        .map((denom) => ({ denom, count: breakdown[denom] ?? 0 }))
+        .filter((row) => row.count > 0);
+};
+const leftoverOf = (amount) => greedy(amount).leftover;
+
+// Lo pendiente de cobro es lo que hay que retirar del banco.
+const pendingPayouts = computed(() => props.payouts.filter((p) => p.status !== 'paid'));
+
+// Global = suma de los desgloses individuales (cada empleado recibe billetes
+// exactos, no se comparten piezas) sobre lo pendiente.
+const globalCalc = computed(() => {
+    const totals = {};
+    let leftover = 0;
+    for (const p of pendingPayouts.value) {
+        const { breakdown, leftover: lo } = greedy(p.total_due);
+        for (const [d, c] of Object.entries(breakdown)) totals[d] = (totals[d] ?? 0) + c;
+        leftover += lo;
+    }
+    return { totals, leftover };
+});
+
+const globalRows = computed(() =>
+    activeDenoms.value
+        .map((denom) => ({ denom, count: globalCalc.value.totals[denom] ?? 0 }))
+        .filter((row) => row.count > 0)
+);
+const globalPieces = computed(() => globalRows.value.reduce((s, r) => s + r.count, 0));
+const globalAmount = computed(() => globalRows.value.reduce((s, r) => s + r.denom * r.count, 0));
 
 // --- Collection modal ---
 const showCollect = ref(false);
@@ -94,6 +168,26 @@ const submitCollect = () => {
                 <p class="text-xs text-gray-500 mb-4">
                     Desglose minimo de billetes y monedas para lo que aun esta pendiente de cobro.
                 </p>
+
+                <!-- Denominaciones disponibles: desmarca las que no tengas y el desglose se recalcula -->
+                <div class="mb-4">
+                    <p class="text-xs font-medium text-gray-600 mb-2">
+                        Denominaciones disponibles
+                        <span class="font-normal text-gray-400">&mdash; desmarca las que no tengas (ej. $1000)</span>
+                    </p>
+                    <div class="flex flex-wrap gap-2">
+                        <label
+                            v-for="d in denominations"
+                            :key="d"
+                            class="inline-flex items-center px-2.5 py-1 rounded-full border text-xs cursor-pointer select-none transition-colors"
+                            :class="isEnabled(d) ? 'bg-pink-50 border-pink-300 text-pink-700' : 'bg-gray-50 border-gray-200 text-gray-400 line-through'"
+                        >
+                            <input type="checkbox" :checked="isEnabled(d)" @change="toggleDenom(d)" class="sr-only" />
+                            ${{ d }}
+                        </label>
+                    </div>
+                </div>
+
                 <div v-if="globalRows.length" class="overflow-x-auto">
                     <table class="min-w-full text-sm">
                         <thead>
@@ -112,14 +206,18 @@ const submitCollect = () => {
                         </tbody>
                         <tfoot>
                             <tr class="font-semibold text-gray-800">
-                                <td class="py-2 pr-4">Total ({{ globalBreakdown.total_pieces }} piezas)</td>
+                                <td class="py-2 pr-4">Total ({{ globalPieces }} piezas)</td>
                                 <td class="py-2 pr-4"></td>
-                                <td class="py-2 pr-4 text-right">{{ formatCurrency(globalBreakdown.total_amount) }}</td>
+                                <td class="py-2 pr-4 text-right">{{ formatCurrency(globalAmount) }}</td>
                             </tr>
                         </tfoot>
                     </table>
                 </div>
-                <p v-else class="text-sm text-gray-500">No hay efectivo pendiente de retirar.</p>
+                <p v-else-if="!pendingPayouts.length" class="text-sm text-gray-500">No hay efectivo pendiente de retirar.</p>
+
+                <p v-if="globalCalc.leftover > 0" class="mt-3 text-sm text-amber-600">
+                    &#9888; Faltan {{ formatCurrency(globalCalc.leftover) }} que no se pueden formar con las denominaciones elegidas. Habilita una denominacion mas chica (p. ej. $1).
+                </p>
             </div>
 
             <!-- Per-employee table -->
@@ -149,10 +247,11 @@ const submitCollect = () => {
                             <td class="px-4 py-3 text-right font-semibold text-gray-800">{{ formatCurrency(payout.total_due) }}</td>
                             <td class="px-4 py-3">
                                 <span class="text-xs text-gray-500">
-                                    <template v-for="(row, i) in orderedBreakdown(payout.denomination_breakdown)" :key="row.denom">
-                                        <span>{{ row.count }}&times;${{ row.denom }}</span><span v-if="i < orderedBreakdown(payout.denomination_breakdown).length - 1">, </span>
+                                    <template v-for="(row, i) in breakdownRows(payout.total_due)" :key="row.denom">
+                                        <span>{{ row.count }}&times;${{ row.denom }}</span><span v-if="i < breakdownRows(payout.total_due).length - 1">, </span>
                                     </template>
-                                    <span v-if="!orderedBreakdown(payout.denomination_breakdown).length">-</span>
+                                    <span v-if="!breakdownRows(payout.total_due).length && leftoverOf(payout.total_due) <= 0">-</span>
+                                    <span v-if="leftoverOf(payout.total_due) > 0" class="text-amber-600"> (falta {{ formatCurrency(leftoverOf(payout.total_due)) }})</span>
                                 </span>
                             </td>
                             <td class="px-4 py-3 text-center">
