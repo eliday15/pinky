@@ -29,12 +29,15 @@ class CashSplitCalculationTest extends FeatureTestCase
         ]);
     }
 
-    public function test_non_imss_weekly_pays_everything_in_cash(): void
+    public function test_trial_non_imss_weekly_pays_everything_in_cash(): void
     {
+        // En periodo de prueba Y sin IMSS: todo el neto (base + extras) en efectivo.
         $employee = Employee::factory()->create([
             'status' => 'active',
             'daily_salary' => 800.00,
             'is_imss_enrolled' => false,
+            'is_trial_period' => true,
+            'trial_period_end_date' => null,
         ]);
         $this->presentWeek($employee);
 
@@ -46,8 +49,32 @@ class CashSplitCalculationTest extends FeatureTestCase
         $entry = $this->calculator()->calculateEmployeePayroll($period, $employee);
 
         $this->assertEqualsWithDelta(5600.00, (float) $entry->net_pay, 0.01);
-        $this->assertEqualsWithDelta(5600.00, (float) $entry->cash_amount, 0.01, 'todo el neto en efectivo');
+        $this->assertEqualsWithDelta(5600.00, (float) $entry->cash_amount, 0.01, 'en prueba y sin IMSS: todo el neto en efectivo');
         $this->assertEqualsWithDelta(0.00, (float) $entry->bank_amount, 0.01);
+    }
+
+    public function test_non_trial_weekly_sends_base_to_bank(): void
+    {
+        // Empleado de planta (ya NO en prueba): aunque no tenga el flag de IMSS,
+        // su sueldo base se paga por TRANSFERENCIA, no en efectivo.
+        $employee = Employee::factory()->create([
+            'status' => 'active',
+            'daily_salary' => 800.00,
+            'is_imss_enrolled' => false,
+            'is_trial_period' => false,
+        ]);
+        $this->presentWeek($employee);
+
+        $period = PayrollPeriod::factory()->weekly()->create([
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-07',
+        ]);
+
+        $entry = $this->calculator()->calculateEmployeePayroll($period, $employee);
+
+        $this->assertEqualsWithDelta(5600.00, (float) $entry->net_pay, 0.01, 'net_pay no cambia');
+        $this->assertEqualsWithDelta(5600.00, (float) $entry->bank_amount, 0.01, 'base por transferencia');
+        $this->assertEqualsWithDelta(0.00, (float) $entry->cash_amount, 0.01, 'sin extras, sin efectivo');
     }
 
     public function test_imss_enrolled_weekly_sends_base_to_bank_not_cash(): void

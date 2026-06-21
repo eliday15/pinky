@@ -19,6 +19,13 @@ use Illuminate\Support\Collection;
  */
 class PayrollCalculatorService
 {
+    /**
+     * Divisor del séptimo día (Art. 72 LFT): la falta descuenta el día + 1/6
+     * del descanso pagado (SD × 7/6). Es 6 para TODOS — los horarios de 5 días
+     * trabajan jornada de 9.5 h, equivalente a una semana de 6 días.
+     */
+    private const SEVENTH_DAY_DIVISOR = 6;
+
     private CompensationRateResolverService $resolver;
 
     private LateAbsenceService $lateAbsences;
@@ -199,11 +206,13 @@ class PayrollCalculatorService
 
         // Deducción por falta (Art. 72 LFT): cada falta injustificada y cada
         // falta por retardos (FRT) descuenta el día COMPLETO + la parte
-        // proporcional del séptimo día = sueldo_diario × 7 ÷ días_laborables
-        // del horario del empleado. Semana de 6 días → SD × 7/6 (el día más
-        // 1/6 del domingo). Semana de 5 días → SD × 7/5.
-        $workingDaysPerWeek = $this->workingDaysPerWeek($employee);
-        $restDayFactor = $workingDaysPerWeek > 0 ? 7 / $workingDaysPerWeek : 7 / 6;
+        // proporcional del séptimo día = sueldo_diario × 7/6 (el día más 1/6 del
+        // domingo). El divisor es SIEMPRE 6 para todos: aunque un empleado tenga
+        // 5 días en su horario, su jornada extendida (9.5 h) equivale a una
+        // semana de 6 días, así que el factor del séptimo día es idéntico para
+        // todos por política de la empresa.
+        $workingDaysPerWeek = self::SEVENTH_DAY_DIVISOR;
+        $restDayFactor = 7 / self::SEVENTH_DAY_DIVISOR;
         $lateAbsencesGenerated = $payBase ? $incidentMetrics['late_absence_days'] : 0;
         $absenceDeductionDays = $payBase
             ? ($metrics['days_absent_unjustified'] + $lateAbsencesGenerated)
@@ -353,17 +362,20 @@ class PayrollCalculatorService
         $netPay = $grossPay - $deductions;
 
         // ---- Reparto efectivo / banco ----
-        // Si el empleado YA está inscrito al IMSS, su sueldo base neto va por
-        // banco/CONTPAQi y solo los extras salen en efectivo. Si no, todo el
-        // neto se paga en efectivo. La fórmula es única para los tres tipos de
-        // periodo: en mensual regular_pay y deductions son 0, así que bank=0 y
-        // cash=net_pay. NO altera regular_pay/gross_pay/net_pay.
-        if ($employee->is_imss_enrolled) {
-            $bankAmount = max(0.0, round($basePay - $deductions, 2));
-            $cashAmount = round($netPay - $bankAmount, 2);
-        } else {
+        // El sueldo BASE se paga en EFECTIVO solo cuando el empleado sigue en
+        // periodo de prueba Y aún NO está inscrito al IMSS; en cualquier otro
+        // caso el base neto va por TRANSFERENCIA (banco/CONTPAQi). Los EXTRAS
+        // (overtime, velada, festivo, finde, conceptos, bonos) salen SIEMPRE en
+        // efectivo. La fórmula es única para los tres tipos de periodo: en
+        // mensual basePay y deductions son 0, así que bank=0 y cash=net_pay (los
+        // extras). NO altera regular_pay/gross_pay/net_pay.
+        $baseInCash = $employee->isInTrialPeriod() && ! $employee->is_imss_enrolled;
+        if ($baseInCash) {
             $cashAmount = round($netPay, 2);
             $bankAmount = 0.0;
+        } else {
+            $bankAmount = max(0.0, round($basePay - $deductions, 2));
+            $cashAmount = round($netPay - $bankAmount, 2);
         }
 
         // Build calculation breakdown for transparency
@@ -568,21 +580,6 @@ class PayrollCalculatorService
         }
 
         return (int) $from->diffInDays($to) + 1;
-    }
-
-    /**
-     * Días laborables por semana del horario efectivo del empleado. Es el
-     * divisor del séptimo día (Art. 72 LFT): la falta descuenta SD × 7 ÷ D.
-     * Por defecto 6 (semana comercial estándar) cuando el horario no define
-     * días laborables.
-     */
-    private function workingDaysPerWeek(Employee $employee): int
-    {
-        $schedule = $employee->getEffectiveSchedule();
-        $workingDays = $schedule->working_days ?? null;
-        $count = is_array($workingDays) ? count($workingDays) : 0;
-
-        return $count > 0 ? min(7, $count) : 6;
     }
 
     /**

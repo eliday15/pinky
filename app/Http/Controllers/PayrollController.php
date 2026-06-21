@@ -328,22 +328,45 @@ class PayrollController extends Controller
             ]);
 
         // El efectivo a retirar del banco es el desglose mínimo de lo que aún
-        // está pendiente de cobro.
+        // está pendiente de cobro (solo los cobros con monto > 0).
         $pendingAmounts = $payouts
             ->where('status', CashPayout::STATUS_PENDING)
+            ->where('total_due', '>', 0)
             ->pluck('total_due');
+
+        // Transferencias: lo que va por banco/CONTPAQi (sueldo base de quien NO
+        // cobra base en efectivo). Es solo informativo para hacer las
+        // dispersiones; no requiere PIN. Se toma directo de cada asiento.
+        $entries = $payroll->entries()->with('employee:id,full_name,employee_number')->get();
+        $transfers = $entries
+            ->filter(fn (PayrollEntry $e) => (float) $e->bank_amount > 0)
+            ->sortBy(fn (PayrollEntry $e) => $e->employee?->full_name)
+            ->values()
+            ->map(fn (PayrollEntry $e) => [
+                'employee_name' => $e->employee?->full_name,
+                'employee_number' => $e->employee?->employee_number,
+                'amount' => (float) $e->bank_amount,
+            ]);
+
+        $totalTransfer = (float) $entries->sum('bank_amount');
+        $totalCash = (float) $payouts->sum('total_due');
 
         return Inertia::render('Payroll/Cash', [
             'period' => $payroll,
             'payouts' => $payouts,
+            'transfers' => $transfers,
             'globalBreakdown' => $this->denominations->breakdownGlobal($pendingAmounts),
             'denominations' => CashDenominationService::DENOMINATIONS,
             'summary' => [
-                'total_due' => (float) $payouts->sum('total_due'),
+                'total_due' => $totalCash,
                 'total_paid' => (float) $payouts->sum('amount_paid'),
                 'total_pending' => (float) $payouts->where('status', CashPayout::STATUS_PENDING)->sum('total_due'),
-                'pending_count' => $payouts->where('status', CashPayout::STATUS_PENDING)->count(),
+                'pending_count' => $payouts->where('status', CashPayout::STATUS_PENDING)->where('total_due', '>', 0)->count(),
                 'paid_count' => $payouts->where('status', CashPayout::STATUS_PAID)->count(),
+                'total_transfer' => $totalTransfer,
+                'total_cash' => $totalCash,
+                'total_global' => $totalTransfer + $totalCash,
+                'transfer_count' => $transfers->count(),
             ],
             'can' => [
                 'payCash' => $user->hasPermissionTo('payroll.pay_cash'),

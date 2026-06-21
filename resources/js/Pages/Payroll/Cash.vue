@@ -6,6 +6,7 @@ import { ref, computed, watch } from 'vue';
 const props = defineProps({
     period: Object,
     payouts: Array,
+    transfers: { type: Array, default: () => [] },
     globalBreakdown: Object,
     denominations: Array,
     summary: Object,
@@ -80,8 +81,12 @@ const breakdownRows = (amount) => {
 };
 const leftoverOf = (amount) => greedy(amount).leftover;
 
+// Solo los cobros en efectivo con monto > 0 (los $0 de quien cobra base por
+// transferencia y sin extras no se listan ni se cobran con PIN).
+const cashPayouts = computed(() => props.payouts.filter((p) => Number(p.total_due) > 0));
+
 // Lo pendiente de cobro es lo que hay que retirar del banco.
-const pendingPayouts = computed(() => props.payouts.filter((p) => p.status !== 'paid'));
+const pendingPayouts = computed(() => cashPayouts.value.filter((p) => p.status !== 'paid'));
 
 // Global = suma de los desgloses individuales (cada empleado recibe billetes
 // exactos, no se comparten piezas) sobre lo pendiente.
@@ -146,20 +151,58 @@ const submitCollect = () => {
                 <p class="text-gray-500">{{ period.name }}</p>
             </div>
 
-            <!-- Summary cards -->
+            <!-- Resumen global: transferencia + efectivo + total -->
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
                 <div class="bg-white rounded-lg shadow p-4">
-                    <p class="text-sm text-gray-500">Total a pagar</p>
-                    <p class="text-2xl font-bold text-gray-800">{{ formatCurrency(summary.total_due) }}</p>
+                    <p class="text-sm text-gray-500">Transferencia (banco)</p>
+                    <p class="text-2xl font-bold text-blue-600">{{ formatCurrency(summary.total_transfer) }}</p>
+                    <p class="text-xs text-gray-400">{{ summary.transfer_count }} empleado(s)</p>
                 </div>
                 <div class="bg-white rounded-lg shadow p-4">
-                    <p class="text-sm text-gray-500">Cobrado ({{ summary.paid_count }})</p>
-                    <p class="text-2xl font-bold text-green-600">{{ formatCurrency(summary.total_paid) }}</p>
+                    <p class="text-sm text-gray-500">Efectivo</p>
+                    <p class="text-2xl font-bold text-pink-600">{{ formatCurrency(summary.total_cash) }}</p>
+                    <p class="text-xs text-gray-400">
+                        Cobrado {{ formatCurrency(summary.total_paid) }} &middot; Pendiente {{ formatCurrency(summary.total_pending) }}
+                    </p>
                 </div>
                 <div class="bg-white rounded-lg shadow p-4">
-                    <p class="text-sm text-gray-500">Pendiente ({{ summary.pending_count }})</p>
-                    <p class="text-2xl font-bold text-red-600">{{ formatCurrency(summary.total_pending) }}</p>
+                    <p class="text-sm text-gray-500">Total nomina</p>
+                    <p class="text-2xl font-bold text-gray-800">{{ formatCurrency(summary.total_global) }}</p>
                 </div>
+            </div>
+
+            <!-- Transferencias (banco/CONTPAQi) -->
+            <div class="bg-white rounded-lg shadow p-6 mb-6">
+                <h2 class="text-lg font-semibold text-gray-800 mb-1">Transferencias (banco)</h2>
+                <p class="text-xs text-gray-500 mb-4">
+                    Sueldo base que se paga por transferencia / CONTPAQi. No requiere contraseña de cobro.
+                </p>
+                <div v-if="transfers.length" class="overflow-x-auto">
+                    <table class="min-w-full text-sm">
+                        <thead>
+                            <tr class="text-left text-gray-500 border-b">
+                                <th class="py-2 pr-4">Empleado</th>
+                                <th class="py-2 pr-4 text-right">Monto</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="(t, i) in transfers" :key="i" class="border-b last:border-0">
+                                <td class="py-2 pr-4">
+                                    <span class="text-gray-800">{{ t.employee_name }}</span>
+                                    <span class="text-xs text-gray-400 ml-2">{{ t.employee_number }}</span>
+                                </td>
+                                <td class="py-2 pr-4 text-right font-medium">{{ formatCurrency(t.amount) }}</td>
+                            </tr>
+                        </tbody>
+                        <tfoot>
+                            <tr class="font-semibold text-gray-800 border-t">
+                                <td class="py-2 pr-4">Total transferencias</td>
+                                <td class="py-2 pr-4 text-right">{{ formatCurrency(summary.total_transfer) }}</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+                <p v-else class="text-sm text-gray-500">No hay pagos por transferencia en este periodo.</p>
             </div>
 
             <!-- Global denominations -->
@@ -220,8 +263,12 @@ const submitCollect = () => {
                 </p>
             </div>
 
-            <!-- Per-employee table -->
+            <!-- Efectivo por empleado -->
             <div class="bg-white rounded-lg shadow overflow-hidden">
+                <div class="px-4 py-3 border-b border-gray-100">
+                    <h2 class="text-lg font-semibold text-gray-800">Efectivo por empleado</h2>
+                    <p class="text-xs text-gray-500">Cobro con la contraseña del empleado. Solo aparece quien recibe efectivo.</p>
+                </div>
                 <table class="min-w-full text-sm">
                     <thead class="bg-gray-50">
                         <tr class="text-left text-gray-500">
@@ -235,7 +282,7 @@ const submitCollect = () => {
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-100">
-                        <tr v-for="payout in payouts" :key="payout.id">
+                        <tr v-for="payout in cashPayouts" :key="payout.id">
                             <td class="px-4 py-3">
                                 <div class="font-medium text-gray-800">{{ payout.employee_name }}</div>
                                 <div class="text-xs text-gray-400">{{ payout.employee_number }}</div>
@@ -277,9 +324,9 @@ const submitCollect = () => {
                                 </span>
                             </td>
                         </tr>
-                        <tr v-if="!payouts.length">
+                        <tr v-if="!cashPayouts.length">
                             <td colspan="7" class="px-4 py-6 text-center text-gray-400">
-                                No hay cobros preparados para este periodo.
+                                No hay cobros en efectivo para este periodo.
                             </td>
                         </tr>
                     </tbody>
