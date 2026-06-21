@@ -369,7 +369,7 @@ class PayrollCalculatorService
         // efectivo. La fórmula es única para los tres tipos de periodo: en
         // mensual basePay y deductions son 0, así que bank=0 y cash=net_pay (los
         // extras). NO altera regular_pay/gross_pay/net_pay.
-        $baseInCash = $employee->isInTrialPeriod() && ! $employee->is_imss_enrolled;
+        $baseInCash = $employee->paysBaseInCash();
         if ($baseInCash) {
             $cashAmount = round($netPay, 2);
             $bankAmount = 0.0;

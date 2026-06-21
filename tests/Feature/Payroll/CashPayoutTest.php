@@ -22,7 +22,14 @@ class CashPayoutTest extends FeatureTestCase
      */
     private function approvedPeriodWithEntry(float $cashAmount, array $periodAttrs = []): array
     {
-        $employee = Employee::factory()->create(['status' => 'active']);
+        // Trial + sin IMSS => paga base en efectivo, así closeCash re-deriva
+        // cash_amount = net_pay (= $cashAmount) con la regla vigente.
+        $employee = Employee::factory()->create([
+            'status' => 'active',
+            'is_trial_period' => true,
+            'trial_period_end_date' => null,
+            'is_imss_enrolled' => false,
+        ]);
 
         $period = PayrollPeriod::factory()->create(array_merge([
             'type' => 'weekly',
@@ -34,6 +41,9 @@ class CashPayoutTest extends FeatureTestCase
         PayrollEntry::factory()->create([
             'payroll_period_id' => $period->id,
             'employee_id' => $employee->id,
+            'net_pay' => $cashAmount,
+            'regular_pay' => 0,
+            'deductions' => 0,
             'cash_amount' => $cashAmount,
             'bank_amount' => 0,
         ]);
@@ -170,7 +180,10 @@ class CashPayoutTest extends FeatureTestCase
 
     public function test_uncollected_balance_accumulates_to_next_period(): void
     {
-        $employee = Employee::factory()->create(['status' => 'active', 'cash_pin' => '4321']);
+        $employee = Employee::factory()->create([
+            'status' => 'active', 'cash_pin' => '4321',
+            'is_trial_period' => true, 'trial_period_end_date' => null, 'is_imss_enrolled' => false,
+        ]);
         $this->actingAsAdmin();
 
         // P1: $500, never collected.
@@ -180,6 +193,7 @@ class CashPayoutTest extends FeatureTestCase
         ]);
         PayrollEntry::factory()->create([
             'payroll_period_id' => $p1->id, 'employee_id' => $employee->id,
+            'net_pay' => 500, 'regular_pay' => 0, 'deductions' => 0,
             'cash_amount' => 500, 'bank_amount' => 0,
         ]);
         $this->post(route('payroll.closeCash', $p1->id));
@@ -191,6 +205,7 @@ class CashPayoutTest extends FeatureTestCase
         ]);
         PayrollEntry::factory()->create([
             'payroll_period_id' => $p2->id, 'employee_id' => $employee->id,
+            'net_pay' => 700, 'regular_pay' => 0, 'deductions' => 0,
             'cash_amount' => 700, 'bank_amount' => 0,
         ]);
         $this->post(route('payroll.closeCash', $p2->id));
@@ -206,7 +221,10 @@ class CashPayoutTest extends FeatureTestCase
 
     public function test_collecting_rolled_total_settles_prior_pending(): void
     {
-        $employee = Employee::factory()->create(['status' => 'active', 'cash_pin' => '4321']);
+        $employee = Employee::factory()->create([
+            'status' => 'active', 'cash_pin' => '4321',
+            'is_trial_period' => true, 'trial_period_end_date' => null, 'is_imss_enrolled' => false,
+        ]);
         $this->actingAsAdmin();
 
         $p1 = PayrollPeriod::factory()->create([
@@ -215,6 +233,7 @@ class CashPayoutTest extends FeatureTestCase
         ]);
         PayrollEntry::factory()->create([
             'payroll_period_id' => $p1->id, 'employee_id' => $employee->id,
+            'net_pay' => 500, 'regular_pay' => 0, 'deductions' => 0,
             'cash_amount' => 500, 'bank_amount' => 0,
         ]);
         $this->post(route('payroll.closeCash', $p1->id));
@@ -225,6 +244,7 @@ class CashPayoutTest extends FeatureTestCase
         ]);
         PayrollEntry::factory()->create([
             'payroll_period_id' => $p2->id, 'employee_id' => $employee->id,
+            'net_pay' => 700, 'regular_pay' => 0, 'deductions' => 0,
             'cash_amount' => 700, 'bank_amount' => 0,
         ]);
         $this->post(route('payroll.closeCash', $p2->id));

@@ -249,7 +249,7 @@ class PayrollController extends Controller
         }
 
         DB::transaction(function () use ($payroll) {
-            $entries = $payroll->entries()->get();
+            $entries = $payroll->entries()->with('employee')->get();
 
             foreach ($entries as $entry) {
                 $existing = CashPayout::where('payroll_period_id', $payroll->id)
@@ -259,6 +259,23 @@ class PayrollController extends Controller
                 // Nunca recalcular un cobro ya realizado.
                 if ($existing && $existing->status === CashPayout::STATUS_PAID) {
                     continue;
+                }
+
+                // Re-sincroniza el reparto efectivo/transferencia con la regla
+                // vigente y los flags ACTUALES del empleado (periodo de prueba /
+                // IMSS), sin recalcular la nómina: usa el neto ya aprobado y solo
+                // re-parte base→banco vs efectivo. Así "Recalcular efectivo"
+                // aplica cambios de flags sin reabrir la nómina aprobada.
+                if ($entry->employee) {
+                    $netPay = (float) $entry->net_pay;
+                    if ($entry->employee->paysBaseInCash()) {
+                        $cashAmount = round($netPay, 2);
+                        $bankAmount = 0.0;
+                    } else {
+                        $bankAmount = max(0.0, round((float) $entry->regular_pay - (float) $entry->deductions, 2));
+                        $cashAmount = round($netPay - $bankAmount, 2);
+                    }
+                    $entry->update(['cash_amount' => $cashAmount, 'bank_amount' => $bankAmount]);
                 }
 
                 // Acumulado: el cobro previo más reciente aún pendiente ya
