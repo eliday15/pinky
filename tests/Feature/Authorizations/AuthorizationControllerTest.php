@@ -741,6 +741,86 @@ class AuthorizationControllerTest extends FeatureTestCase
         $this->assertStringContainsString('omitidas por duplicado', session('success'));
     }
 
+    /**
+     * Regresión: un mismo día con hora extra TEMPRANO (antes de entrar) y
+     * TARDE (después de salir) son dos bloques legítimos — la nómina los paga
+     * por SUMA de horas. El dedup de hora extra distingue por rango horario,
+     * así que al guardar deben crearse las DOS autorizaciones, no solo una.
+     */
+    public function test_store_bulk_creates_both_early_and_late_overtime_for_same_day(): void
+    {
+        $this->actingAsAdmin();
+        // Horario por defecto 08:00–17:00 (L–V); los bloques van fuera de la
+        // jornada para no chocar y aislar el dedup por rango horario.
+        $emp = Employee::factory()->create();
+
+        $resp = $this->from(route('authorizations.createBulk'))->post(route('authorizations.storeBulk'), [
+            'type' => Authorization::TYPE_OVERTIME,
+            'reason' => 'Horas extra temprano y tarde el mismo día',
+            'entries' => [
+                [
+                    'employee_id' => $emp->id,
+                    'date' => '2026-06-22',
+                    'start_time' => '06:00',
+                    'end_time' => '08:00',
+                    'hours' => 2,
+                ],
+                [
+                    'employee_id' => $emp->id,
+                    'date' => '2026-06-22',
+                    'start_time' => '17:00',
+                    'end_time' => '19:00',
+                    'hours' => 2,
+                ],
+            ],
+        ]);
+
+        $resp->assertRedirect(route('authorizations.index'));
+        $this->assertSame(2, Authorization::count(), 'el bloque temprano y el tardío del mismo día se guardan ambos');
+        $this->assertSame(
+            4.0,
+            (float) Authorization::where('employee_id', $emp->id)->sum('hours'),
+            'la nómina paga hora extra por suma de horas (2 + 2 = 4)'
+        );
+    }
+
+    /**
+     * El dedup de hora extra sigue protegiendo el rango EXACTO: re-correr el
+     * alta sobre el mismo bloque no lo duplica.
+     */
+    public function test_store_bulk_still_skips_identical_overtime_range(): void
+    {
+        $this->actingAsAdmin();
+        $emp = Employee::factory()->create();
+
+        Authorization::factory()->create([
+            'employee_id' => $emp->id,
+            'type' => Authorization::TYPE_OVERTIME,
+            'compensation_type_id' => null,
+            'date' => '2026-06-22',
+            'start_time' => '06:00',
+            'end_time' => '08:00',
+            'hours' => 2,
+            'status' => Authorization::STATUS_APPROVED,
+        ]);
+
+        $resp = $this->from(route('authorizations.createBulk'))->post(route('authorizations.storeBulk'), [
+            'type' => Authorization::TYPE_OVERTIME,
+            'reason' => 'Mismo bloque otra vez',
+            'entries' => [[
+                'employee_id' => $emp->id,
+                'date' => '2026-06-22',
+                'start_time' => '06:00',
+                'end_time' => '08:00',
+                'hours' => 2,
+            ]],
+        ]);
+
+        $resp->assertRedirect(route('authorizations.index'));
+        $this->assertSame(1, Authorization::count(), 'el mismo rango horario no se duplica');
+        $this->assertStringContainsString('omitidas por duplicado', session('success'));
+    }
+
     public function test_create_bulk_renders_with_all_props(): void
     {
         $this->actingAsAdmin();
@@ -1037,6 +1117,60 @@ class AuthorizationControllerTest extends FeatureTestCase
                 ->where('punches.check_in', '09:00:00')
                 ->where('punches.check_out', '18:00:00')
                 ->has('punches.raw', 2));
+    }
+
+    public function test_show_surfaces_weekend_units_for_almacen_pt(): void
+    {
+        // Caso Miriam: Almacén PT, fin de semana de 13 h reales (8 base + 5
+        // extra) → 2 unidades (floor(13/6)), reflejado en la pantalla.
+        $this->actingAsAdmin();
+        $dept = Department::factory()->create([
+            'name' => 'Almacén PT',
+            'code' => 'ALMACENPT',
+            'weekend_unit_hours' => 6,
+        ]);
+        $employee = Employee::factory()->create(['department_id' => $dept->id]);
+        $fin = CompensationType::factory()->fixed(472.0)->create([
+            'name' => 'Fin de Semana',
+            'application_mode' => CompensationType::APPLICATION_PER_DAY,
+            'authorization_type' => Authorization::TYPE_SPECIAL,
+            'attendance_pull_rule' => CompensationType::PULL_RULE_WEEKEND,
+        ]);
+        AttendanceRecord::factory()->create([
+            'employee_id' => $employee->id,
+            'work_date' => '2026-06-21',
+            'check_in' => '08:28:00',
+            'check_out' => '22:02:00',
+            'worked_hours' => 8.0,
+            'overtime_hours' => 5.0,
+            'is_weekend_work' => true,
+        ]);
+        $auth = Authorization::factory()->special()->create([
+            'employee_id' => $employee->id,
+            'requested_by' => User::factory()->create()->id,
+            'compensation_type_id' => $fin->id,
+            'date' => '2026-06-21',
+            'hours' => 1,
+            'status' => Authorization::STATUS_APPROVED,
+        ]);
+
+        $this->get(route('authorizations.show', $auth))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('weekendUnits.units', 2)
+                ->where('weekendUnits.unit_hours', 6)
+                ->where('weekendUnits.label', 'fin(es) de semana'));
+    }
+
+    public function test_show_weekend_units_null_for_normal_department(): void
+    {
+        // Sin weekend_unit_hours el conteo por unidades no aplica → null.
+        $this->actingAsAdmin();
+        $auth = $this->pendingOvertime();
+
+        $this->get(route('authorizations.show', $auth))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page->where('weekendUnits', null));
     }
 
     public function test_show_forbidden_for_rrhh(): void

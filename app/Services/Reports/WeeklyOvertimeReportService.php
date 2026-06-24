@@ -169,6 +169,13 @@ class WeeklyOvertimeReportService
             $comidaCount += $day['comida_marker'];
         }
 
+        // Unidades de fin de semana (horas trabajadas ÷ N), a números cerrados:
+        // floor, sin redondear hacia arriba (WhatsApp 2026-06-24, Dani: 11 h = 1,
+        // 12 h = 2). Coincide con la nómina. Null cuando el depto no usa unidades.
+        $weekendUnits = $weekendUnitHours
+            ? (int) floor($weeklyWeekendWorked / $weekendUnitHours)
+            : null;
+
         return [
             'employee' => [
                 'id' => $employee->id,
@@ -181,17 +188,17 @@ class WeeklyOvertimeReportService
                 'total_hours' => round($weeklyExtra, 2),
                 'weekend_hours' => round($weeklyWeekend, 2),
                 'weekend_worked_hours' => round($weeklyWeekendWorked, 2),
-                // Unidades de fin de semana (horas trabajadas ÷ N), a números
-                // cerrados: redondeo al entero más cercano para que coincida con
-                // la nómina. Null cuando el depto no usa el conteo por unidades.
-                'weekend_units' => $weekendUnitHours
-                    ? round($weeklyWeekendWorked / $weekendUnitHours)
-                    : null,
+                'weekend_units' => $weekendUnits,
                 'detected_hours' => round($weeklyDetected, 2),
                 'pending_hours' => round($weeklyPending, 2),
                 'velada_count' => $veladaCount,
                 'cena_count' => $cenaCount,
-                'comida_count' => $comidaCount,
+                // En deptos por unidades (Almacén PT) la comida va igualada al fin
+                // de semana: una comida por unidad (12 h = 2 comidas). En el resto
+                // sigue siendo 1 por día con comida.
+                'comida_count' => ($weekendUnitHours && $comidaCount > 0)
+                    ? $weekendUnits
+                    : $comidaCount,
             ],
             'observations' => $this->buildObservations($records, $authorizations),
         ];
@@ -282,9 +289,12 @@ class WeeklyOvertimeReportService
             'velada_hours' => round($veladaHours, 2),
             'weekend_hours' => round($weekendHours, 2),
             // Horas realmente trabajadas ese día cuando hay autorización de fin
-            // de semana (FIN): base del conteo por unidades de Almacén PT.
+            // de semana (FIN): base del conteo por unidades de Almacén PT. Incluye
+            // las horas extra: en fin de semana TODA la jornada cuenta para las
+            // unidades (worked_hours topa a la jornada base, overtime_hours es el
+            // excedente) — igual que la nómina (metrics['weekend_hours']).
             'weekend_worked_hours' => $byCode->has(self::WEEKEND_CODE)
-                ? round((float) ($record->worked_hours ?? 0), 2)
+                ? round((float) ($record->worked_hours ?? 0) + (float) ($record->overtime_hours ?? 0), 2)
                 : 0.0,
             'worked_hours' => round((float) ($record->worked_hours ?? 0), 2),
             'detected_overtime_hours' => round($detectedHours, 2),
@@ -349,6 +359,7 @@ class WeeklyOvertimeReportService
         $totalHours = 0.0;
         $weekendHours = 0.0;
         $weekendWorked = 0.0;
+        $weekendUnits = 0;
         $detectedHours = 0.0;
         $pendingHours = 0.0;
         $veladaCount = 0;
@@ -359,6 +370,7 @@ class WeeklyOvertimeReportService
             $totalHours += $row['totals']['total_hours'];
             $weekendHours += $row['totals']['weekend_hours'];
             $weekendWorked += $row['totals']['weekend_worked_hours'] ?? 0;
+            $weekendUnits += (int) ($row['totals']['weekend_units'] ?? 0);
             $detectedHours += $row['totals']['detected_hours'] ?? 0;
             $pendingHours += $row['totals']['pending_hours'] ?? 0;
             $veladaCount += $row['totals']['velada_count'];
@@ -370,11 +382,10 @@ class WeeklyOvertimeReportService
             'total_hours' => round($totalHours, 2),
             'weekend_hours' => round($weekendHours, 2),
             'weekend_worked_hours' => round($weekendWorked, 2),
-            // Unidades a números cerrados (redondeo al entero más cercano),
-            // consistente con la nómina y con cada fila.
-            'weekend_units' => $weekendUnitHours
-                ? round($weekendWorked / $weekendUnitHours)
-                : null,
+            // Suma de las unidades por empleado (cada una ya a floor), no se
+            // recalcula desde el total de horas: floor no es aditivo y mezclaría
+            // empleados. Consistente con la nómina y con cada fila.
+            'weekend_units' => $weekendUnitHours ? $weekendUnits : null,
             'detected_hours' => round($detectedHours, 2),
             'pending_hours' => round($pendingHours, 2),
             'velada_count' => $veladaCount,

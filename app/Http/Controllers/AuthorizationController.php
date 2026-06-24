@@ -364,7 +364,7 @@ class AuthorizationController extends Controller
         // regla que ya aplica el alta masiva (DECISIONES §2). La nómina paga
         // 1 fila aprobada = 1 día, así que dos filas iguales se pagarían dos
         // veces; el control vive aquí, no en la nómina.
-        if ($this->activeDuplicateExists((int) $validated['employee_id'], $validated['date'], $validated['type'], $validated['compensation_type_id'] ?? null)) {
+        if ($this->activeDuplicateExists((int) $validated['employee_id'], $validated['date'], $validated['type'], $validated['compensation_type_id'] ?? null, $validated['start_time'] ?? null, $validated['end_time'] ?? null)) {
             throw \Illuminate\Validation\ValidationException::withMessages([
                 'compensation_type_id' => 'Ya existe una autorización activa de este concepto para ese empleado y ese día.',
             ]);
@@ -559,7 +559,7 @@ class AuthorizationController extends Controller
                 // mismo rango no debe duplicar la autorización viva del mismo
                 // (empleado, fecha, tipo, concepto) — cada fila duplicada era
                 // ruido en BD aunque el pago ya esté neutralizado.
-                if ($this->activeDuplicateExists((int) $entry['employee_id'], $entry['date'], $validated['type'], $validated['compensation_type_id'] ?? null)) {
+                if ($this->activeDuplicateExists((int) $entry['employee_id'], $entry['date'], $validated['type'], $validated['compensation_type_id'] ?? null, $startTime, $endTime)) {
                     $duplicateCount++;
 
                     continue;
@@ -597,7 +597,7 @@ class AuthorizationController extends Controller
 
             foreach ($validated['employee_ids'] as $employeeId) {
                 // Mismo dedup que la rama de entries (DECISIONES §2).
-                if ($this->activeDuplicateExists((int) $employeeId, $validated['date'], $validated['type'], $validated['compensation_type_id'] ?? null)) {
+                if ($this->activeDuplicateExists((int) $employeeId, $validated['date'], $validated['type'], $validated['compensation_type_id'] ?? null, $validated['start_time'] ?? null, $validated['end_time'] ?? null)) {
                     $duplicateCount++;
 
                     continue;
@@ -640,10 +640,18 @@ class AuthorizationController extends Controller
      * ¿Existe ya una autorización VIVA (pendiente/aprobada/pagada) del mismo
      * (empleado, fecha, tipo, concepto)? Las rechazadas no bloquean: re-pedir
      * algo rechazado es legítimo.
+     *
+     * Las HORAS EXTRA son acumulativas: un mismo día puede tener un bloque
+     * temprano (entrada antes del horario) y otro tardío (salida después del
+     * horario), y la nómina las paga por SUMA de horas (getAuthorizedHours()).
+     * Por eso el duplicado de hora extra se distingue además por su rango
+     * horario: dos bloques distintos del mismo día NO son duplicados. El resto
+     * de conceptos paga por fila/día (1 fila = 1 día/unidad), así que siguen
+     * deduplicándose por (empleado, fecha, tipo, concepto) sin mirar la hora.
      */
-    private function activeDuplicateExists(int $employeeId, string $date, string $type, ?int $compensationTypeId): bool
+    private function activeDuplicateExists(int $employeeId, string $date, string $type, ?int $compensationTypeId, ?string $startTime = null, ?string $endTime = null): bool
     {
-        return Authorization::where('employee_id', $employeeId)
+        $query = Authorization::where('employee_id', $employeeId)
             ->whereDate('date', Carbon::parse($date)->toDateString())
             ->where('type', $type)
             ->where('compensation_type_id', $compensationTypeId)
@@ -651,8 +659,35 @@ class AuthorizationController extends Controller
                 Authorization::STATUS_PENDING,
                 Authorization::STATUS_APPROVED,
                 Authorization::STATUS_PAID,
-            ])
-            ->exists();
+            ]);
+
+        if ($type === Authorization::TYPE_OVERTIME) {
+            $start = $this->normalizeTimeForCompare($startTime);
+            $end = $this->normalizeTimeForCompare($endTime);
+
+            // Comparamos contra el accessor casteado (datetime:H:i) para no
+            // depender del formato crudo de la columna TIME (MySQL "06:03:00"
+            // vs SQLite en pruebas).
+            return $query
+                ->get(['start_time', 'end_time'])
+                ->contains(fn (Authorization $auth) => $this->normalizeTimeForCompare($auth->start_time?->format('H:i')) === $start
+                    && $this->normalizeTimeForCompare($auth->end_time?->format('H:i')) === $end);
+        }
+
+        return $query->exists();
+    }
+
+    /**
+     * Normaliza una hora a "HH:MM" para comparar rangos sin ruido de segundos
+     * ni de cadenas vacías ("" se trata como ausente).
+     */
+    private function normalizeTimeForCompare(?string $time): ?string
+    {
+        if ($time === null || $time === '') {
+            return null;
+        }
+
+        return substr($time, 0, 5);
     }
 
     /**
@@ -663,7 +698,7 @@ class AuthorizationController extends Controller
         $this->authorize('view', $authorization);
 
         $user = Auth::user();
-        $authorization->load(['employee.department', 'requestedBy', 'approvedBy', 'attendanceRecord']);
+        $authorization->load(['employee.department', 'requestedBy', 'approvedBy', 'attendanceRecord', 'compensationType']);
 
         // Checadas originales del sistema para el día de la autorización, para
         // que el revisor vea las marcas reales (entrada/salida emparejadas y
@@ -673,8 +708,30 @@ class AuthorizationController extends Controller
             ->whereDate('work_date', $dateString)
             ->first();
 
+        // Conteo por unidades (Almacén PT): cuando el depto cuenta el fin de
+        // semana / comida por unidades de N horas trabajadas, una jornada de
+        // fin de semana de 12 h equivale a 2 unidades. Se deriva de las horas
+        // reales del día (worked + overtime) con floor — exactamente igual que
+        // la nómina y el reporte — para que la pantalla refleje el conteo real.
+        $unitHours = $authorization->employee->department?->weekend_unit_hours;
+        $pullRule = $authorization->compensationType?->attendance_pull_rule;
+        $weekendUnits = null;
+        if ($unitHours && $record && in_array($pullRule, [
+            CompensationType::PULL_RULE_WEEKEND,
+            CompensationType::PULL_RULE_COMIDA,
+        ], true)) {
+            $totalWeekendHours = (float) ($record->worked_hours ?? 0) + (float) ($record->overtime_hours ?? 0);
+            $weekendUnits = (int) floor($totalWeekendHours / $unitHours);
+        }
+
         return Inertia::render('Authorizations/Show', [
             'authorization' => $authorization,
+            'weekendUnits' => $weekendUnits === null ? null : [
+                'units' => $weekendUnits,
+                'unit_hours' => (int) $unitHours,
+                'worked_hours' => round((float) ($record->worked_hours ?? 0) + (float) ($record->overtime_hours ?? 0), 2),
+                'label' => $pullRule === CompensationType::PULL_RULE_COMIDA ? 'comida(s)' : 'fin(es) de semana',
+            ],
             'punches' => [
                 'found' => (bool) $record,
                 'check_in' => $record?->check_in,

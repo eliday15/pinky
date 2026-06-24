@@ -7,6 +7,9 @@ import { formatDate as fmtDate, formatDateTime } from '@/utils/date';
 const props = defineProps({
     authorization: Object,
     punches: Object,
+    // Conteo por unidades (Almacén PT): { units, unit_hours, worked_hours, label }
+    // o null cuando el depto no cuenta por unidades.
+    weekendUnits: { type: Object, default: null },
     can: Object,
 });
 
@@ -167,6 +170,15 @@ const submitReject = () => {
                                     <dt class="text-sm font-medium text-gray-500">Horas</dt>
                                     <dd class="mt-1 text-sm text-gray-900">
                                         {{ authorization.hours }} horas
+                                    </dd>
+                                </div>
+                                <div v-if="weekendUnits">
+                                    <dt class="text-sm font-medium text-gray-500">Unidades (Almacén PT)</dt>
+                                    <dd class="mt-1 text-sm font-semibold text-pink-700">
+                                        {{ weekendUnits.units }} {{ weekendUnits.label }}
+                                    </dd>
+                                    <dd class="mt-0.5 text-xs text-gray-500">
+                                        {{ weekendUnits.worked_hours }} h trabajadas ÷ {{ weekendUnits.unit_hours }} h por unidad (se trunca, no se redondea)
                                     </dd>
                                 </div>
                                 <div>
