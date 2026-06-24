@@ -96,11 +96,11 @@ class FaseDPayrollConceptsTest extends FeatureTestCase
         $entry = $this->calculator()->calculateEmployeePayroll($weekly, $employee);
 
         // El sueldo se paga por día: la semana (7 días) vale 800 × 7 = 5600, y
-        // la falta injustificada descuenta el día + 1/5 del descanso (séptimo
-        // día proporcional, L-V): 800 × 7/5 = 1120. Neto = 5600 − 1120 = 4480.
+        // la falta injustificada descuenta el día + 1/6 del descanso (séptimo
+        // día, divisor fijo 6): 800 × 7/6 = 933.33. Neto = 5600 − 933.33 = 4666.67.
         $this->assertEqualsWithDelta(5600.00, (float) $entry->regular_pay, 0.01, 'base = sueldo diario 800 × 7');
-        $this->assertEqualsWithDelta(1120.00, (float) $entry->deductions, 0.01, '1 falta × 800 × 7/5 (séptimo día)');
-        $this->assertEqualsWithDelta(4480.00, (float) $entry->net_pay, 0.01);
+        $this->assertEqualsWithDelta(933.33, (float) $entry->deductions, 0.01, '1 falta × 800 × 7/6 (séptimo día)');
+        $this->assertEqualsWithDelta(4666.67, (float) $entry->net_pay, 0.01);
         $this->assertSame(1, (int) $entry->days_absent, 'la falta sigue siendo visible');
     }
 
