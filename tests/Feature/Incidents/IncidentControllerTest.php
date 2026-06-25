@@ -326,6 +326,84 @@ class IncidentControllerTest extends FeatureTestCase
         $this->assertSame(3, (int) $employee->vacation_days_used);
     }
 
+    public function test_vacation_counts_saturday_after_three_days_in_week(): void
+    {
+        // Regla de Dani (2026-06-24): caso Humberto. Mié 17 a Mar 23 jun 2026.
+        // Semana 1 (jun 15-21): Mié/Jue/Vie = 3 días → suma el sáb 20 (en rango).
+        // Semana 2 (jun 22-28): Lun/Mar = 2 días → no suma sábado.
+        // Hábiles = 5, + 1 sábado = 6.
+        $this->actingAsAdmin();
+        $type = IncidentType::factory()->create(['requires_approval' => false, 'deducts_vacation' => true]);
+        $employee = $this->makeEmployee(['vacation_days_entitled' => 28, 'vacation_days_used' => 0]);
+
+        $this->post(route('incidents.store'), [
+            'employee_id' => $employee->id,
+            'incident_type_id' => $type->id,
+            'start_date' => '2026-06-17',
+            'end_date' => '2026-06-23',
+        ])->assertRedirect(route('incidents.index'));
+
+        $this->assertSame(6, (int) $employee->fresh()->vacation_days_used);
+    }
+
+    public function test_vacation_does_not_count_saturday_below_threshold_per_week(): void
+    {
+        // Jue 18 a Lun 22: Jue/Vie (semana 1 = 2) + Lun (semana 2 = 1). Ninguna
+        // semana llega a 3 → no se suma sábado, aunque el total hábil sea 3.
+        $this->actingAsAdmin();
+        $type = IncidentType::factory()->create(['requires_approval' => false, 'deducts_vacation' => true]);
+        $employee = $this->makeEmployee(['vacation_days_entitled' => 28, 'vacation_days_used' => 0]);
+
+        $this->post(route('incidents.store'), [
+            'employee_id' => $employee->id,
+            'incident_type_id' => $type->id,
+            'start_date' => '2026-06-18',
+            'end_date' => '2026-06-22',
+        ])->assertRedirect(route('incidents.index'));
+
+        $this->assertSame(3, (int) $employee->fresh()->vacation_days_used);
+    }
+
+    public function test_vacation_does_not_count_saturday_outside_requested_range(): void
+    {
+        // Mié 17 a Vie 19: 3 días en la semana, pero el sábado 20 queda FUERA
+        // del rango solicitado → no se cuenta. Hábiles = 3.
+        $this->actingAsAdmin();
+        $type = IncidentType::factory()->create(['requires_approval' => false, 'deducts_vacation' => true]);
+        $employee = $this->makeEmployee(['vacation_days_entitled' => 28, 'vacation_days_used' => 0]);
+
+        $this->post(route('incidents.store'), [
+            'employee_id' => $employee->id,
+            'incident_type_id' => $type->id,
+            'start_date' => '2026-06-17',
+            'end_date' => '2026-06-19',
+        ])->assertRedirect(route('incidents.index'));
+
+        $this->assertSame(3, (int) $employee->fresh()->vacation_days_used);
+    }
+
+    public function test_non_vacation_incident_does_not_count_saturday(): void
+    {
+        // La regla es solo para vacaciones: un permiso por días hábiles con 3
+        // días en la semana NO suma el sábado.
+        $this->actingAsAdmin();
+        $type = IncidentType::factory()->create(['requires_approval' => false, 'deducts_vacation' => false]);
+        $employee = $this->makeEmployee();
+
+        $this->post(route('incidents.store'), [
+            'employee_id' => $employee->id,
+            'incident_type_id' => $type->id,
+            'start_date' => '2026-06-17',
+            'end_date' => '2026-06-23',
+        ])->assertRedirect(route('incidents.index'));
+
+        // 5 hábiles (Mié/Jue/Vie/Lun/Mar), sin sábado.
+        $this->assertDatabaseHas('incidents', [
+            'employee_id' => $employee->id,
+            'days_count' => 5,
+        ]);
+    }
+
     public function test_store_rejects_insufficient_vacation_balance_on_auto_approve(): void
     {
         $this->actingAsAdmin();

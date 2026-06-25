@@ -212,6 +212,32 @@ class FaseDPayrollConceptsTest extends FeatureTestCase
         $this->assertSame(5, (int) $entry->vacation_days_paid, 'mismo conteo que la captura y el saldo');
     }
 
+    public function test_vacation_counts_saturday_after_three_days_in_payroll(): void
+    {
+        // Regla de Dani (2026-06-24): la nómina cuenta igual que la captura. Una
+        // vacación L-D (jun 1-7) con 5 días hábiles ≥ 3 suma el sábado 6 (en
+        // rango); el domingo no cuenta. 6 días × 800 = 4800.
+        $employee = $this->employee(['vacation_premium_percentage' => 0]);
+
+        $vac = $this->typeWithCode('VAC', [
+            'category' => 'vacation',
+            'is_paid' => true,
+            'deducts_vacation' => true,
+            'count_mode' => IncidentType::COUNT_WORKING_DAYS,
+        ]);
+        $this->approvedIncident($employee, $vac, '2026-06-01', '2026-06-07', 6);
+
+        $monthly = PayrollPeriod::factory()->monthly()->create([
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-30',
+        ]);
+
+        $entry = $this->calculator()->calculateEmployeePayroll($monthly, $employee);
+
+        $this->assertSame(6, (int) $entry->vacation_days_paid, '5 hábiles + 1 sábado por la regla');
+        $this->assertEqualsWithDelta(4800.00, (float) $entry->vacation_pay, 0.01, '6 días × 800');
+    }
+
     public function test_paid_sick_leave_pays_calendar_days(): void
     {
         $employee = $this->employee();

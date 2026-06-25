@@ -95,9 +95,49 @@ const calculateWorkingDays = (startDate, endDate) => {
     return Math.max(1, count); // At least 1 day
 };
 
+/** Monday (YYYY-MM-DD) of the week a date belongs to — key to group by week. */
+const mondayKey = (d) => {
+    const x = new Date(d);
+    const dow = (x.getDay() + 6) % 7; // 0=Mon … 6=Sun
+    x.setDate(x.getDate() - dow);
+    return x.toISOString().slice(0, 10);
+};
+
+/**
+ * Sábados extra por la regla de vacaciones (Dani 2026-06-24): en cada semana
+ * (lun–dom) con 3 o más días de vacaciones, el sábado de esa semana también
+ * cuenta, si cae dentro del rango. Aproximación: asume lun–vie y no contempla
+ * festivos ni horarios con sábado; el backend es el cálculo final.
+ */
+const saturdayVacationBonus = (startDate, endDate) => {
+    const perWeek = {};
+    const weekHasSaturday = {};
+    const current = new Date(startDate);
+    const end = new Date(endDate);
+    while (current <= end) {
+        const dow = current.getDay(); // 0=Sun … 6=Sat
+        const key = mondayKey(current);
+        if (dow !== 0 && dow !== 6) perWeek[key] = (perWeek[key] || 0) + 1;
+        if (dow === 6) weekHasSaturday[key] = true;
+        current.setDate(current.getDate() + 1);
+    }
+    let extra = 0;
+    for (const k in perWeek) {
+        if (perWeek[k] >= 3 && weekHasSaturday[k]) extra++;
+    }
+    return extra;
+};
+
+/** Días sábado sumados por la regla (solo para tipos que descuentan vacaciones). */
+const saturdayBonusDays = computed(() => {
+    if (!selectedIncidentType.value?.deducts_vacation) return 0;
+    if (!form.start_date || !form.end_date) return 0;
+    return saturdayVacationBonus(form.start_date, form.end_date);
+});
+
 const daysCount = computed(() => {
     if (!form.start_date || !form.end_date) return 0;
-    return calculateWorkingDays(form.start_date, form.end_date);
+    return calculateWorkingDays(form.start_date, form.end_date) + saturdayBonusDays.value;
 });
 
 // Calendar days for informational purposes
@@ -328,9 +368,12 @@ const submit = () => {
                             </span>
                         </div>
                         <div v-if="calendarDaysCount !== daysCount" class="text-xs text-gray-500">
-                            ({{ calendarDaysCount }} dias calendario - {{ calendarDaysCount - daysCount }} fines de semana)
+                            ({{ calendarDaysCount }} dias calendario - {{ calendarDaysCount - daysCount }} dias de descanso)
                         </div>
                     </div>
+                    <p v-if="saturdayBonusDays > 0" class="mt-2 text-xs text-pink-700">
+                        Incluye {{ saturdayBonusDays }} {{ saturdayBonusDays === 1 ? 'sabado' : 'sabados' }} por la regla: en una semana con 3 o mas dias de vacaciones, el sabado tambien cuenta.
+                    </p>
                     <p class="mt-2 text-xs text-gray-500">
                         * El calculo final del backend puede variar si hay dias festivos en el rango.
                     </p>

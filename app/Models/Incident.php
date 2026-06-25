@@ -198,7 +198,56 @@ class Incident extends Model
             }
         }
 
+        // Regla de vacaciones (Dani, 2026-06-24): en una semana con 3+ días de
+        // vacaciones, el sábado de esa semana también cuenta. Solo aplica a
+        // vacaciones (descuentan saldo) y solo sobre el solape [from, to].
+        if ($this->incidentType->deducts_vacation) {
+            $days += self::saturdayVacationBonusDays($from, $to, $employee, $holidayDates);
+        }
+
         return $days;
+    }
+
+    /**
+     * Sábados extra que las vacaciones suman por la regla de Dani (2026-06-24):
+     * en cada semana (lun–dom) con 3 o más días de vacaciones, el sábado de esa
+     * semana también se cuenta como vacación — pero solo si ese sábado cae
+     * dentro de [from, to], no es festivo y el empleado no lo trabaja ya (para
+     * no duplicarlo con el conteo de días hábiles).
+     *
+     * @param  list<string>  $holidayDates  fechas 'Y-m-d' festivas del rango
+     */
+    public static function saturdayVacationBonusDays(Carbon $from, Carbon $to, Employee $employee, array $holidayDates = []): int
+    {
+        // Si el sábado ya es día laborable del empleado, su jornada ya lo cuenta
+        // como hábil: la regla no suma nada (evita doble conteo).
+        if ($employee->isEffectiveWorkingDay('Saturday')) {
+            return 0;
+        }
+
+        $perWeek = [];      // lunes de la semana => # de días de vacaciones hábiles
+        $weekHasSaturday = []; // lunes de la semana => el sábado cae en rango y no es festivo
+
+        for ($day = $from->copy(); $day->lte($to); $day->addDay()) {
+            $weekKey = $day->copy()->startOfWeek(Carbon::MONDAY)->toDateString();
+            $isHoliday = in_array($day->toDateString(), $holidayDates, true);
+
+            if (! $isHoliday && $employee->isEffectiveWorkingDay($day->englishDayOfWeek)) {
+                $perWeek[$weekKey] = ($perWeek[$weekKey] ?? 0) + 1;
+            }
+            if ($day->isSaturday() && ! $isHoliday) {
+                $weekHasSaturday[$weekKey] = true;
+            }
+        }
+
+        $extra = 0;
+        foreach ($perWeek as $weekKey => $count) {
+            if ($count >= 3 && ! empty($weekHasSaturday[$weekKey])) {
+                $extra++;
+            }
+        }
+
+        return $extra;
     }
 
     /**

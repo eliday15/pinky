@@ -260,11 +260,26 @@ class IncidentController extends Controller
             return max(1, (int) $startDate->diffInDays($endDate) + 1);
         }
 
-        return $this->calculateWorkingDays(
+        $days = $this->calculateWorkingDays(
             $startDate,
             $endDate,
             $employee->getEffectiveSchedule()?->working_days ?? ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
         );
+
+        // Regla de vacaciones (Dani, 2026-06-24): en una semana con 3+ días de
+        // vacaciones, el sábado de esa semana también cuenta. Mismo cálculo que
+        // la nómina (Incident::saturdayVacationBonusDays) para que captura, saldo
+        // y nómina coincidan.
+        if ($incidentType->deducts_vacation) {
+            $holidayDates = Holiday::whereBetween('date', [$startDate->toDateString(), $endDate->toDateString()])
+                ->pluck('date')
+                ->map(fn ($date) => $date->toDateString())
+                ->all();
+
+            $days += Incident::saturdayVacationBonusDays($startDate, $endDate, $employee, $holidayDates);
+        }
+
+        return $days;
     }
 
     /**
