@@ -45,12 +45,11 @@ class VeladaCalculatorService
             ];
         }
 
-        // Defaults match the seeded/migrated production values (22:00–05:00) and
-        // the AuthorizationController velada detection, so an unset setting (e.g.
-        // a fresh DB) falls back to the same window everywhere instead of the
-        // stale pre-migration 0:00–6:00 split.
-        $veladaStartHour = (int) SystemSetting::get('velada_detection_start_hour', 22);
-        $veladaEndHour = (int) SystemSetting::get('velada_detection_end_hour', 5);
+        // Ventana de velada en minutos del día. Por departamento si está
+        // configurada (p. ej. BIES 15:30–22:30), si no la global (22:00–05:00,
+        // que coincide con la AuthorizationController y el valor migrado/sembrado
+        // para que una BD nueva use la misma ventana en todos lados).
+        [$veladaStartMin, $veladaEndMin] = $this->resolveVeladaWindow($employee);
 
         $dateStr = $record->work_date->toDateString();
         $checkIn = Carbon::parse($dateStr . ' ' . Carbon::parse($record->check_in)->format('H:i:s'));
@@ -90,22 +89,26 @@ class VeladaCalculatorService
             ];
         }
 
-        // Split extra hours into overtime vs velada
-        // Velada window: [veladaStartHour, veladaEndHour)
-        // When start > end (e.g., 22:00-05:00), window crosses midnight
-        if ($veladaStartHour > $veladaEndHour) {
-            // Window crosses midnight: start on work_date, end on work_date+1
-            $veladaStart = Carbon::parse($dateStr)->hour($veladaStartHour)->minute(0)->second(0);
-            $veladaEnd = Carbon::parse($dateStr)->addDay()->hour($veladaEndHour)->minute(0)->second(0);
-        } elseif ($veladaStartHour === $veladaEndHour) {
-            // No velada window configured
+        // Split extra hours into overtime vs velada. Velada window [start, end):
+        if ($veladaStartMin === $veladaEndMin) {
+            // No velada window configured.
             $veladaStart = null;
             $veladaEnd = null;
+        } elseif ($veladaStartMin > $veladaEndMin) {
+            // Crosses midnight (e.g., 22:00–05:00): start on work_date, end +1 día.
+            $veladaStart = Carbon::parse($dateStr)->startOfDay()->addMinutes($veladaStartMin);
+            $veladaEnd = Carbon::parse($dateStr)->startOfDay()->addDay()->addMinutes($veladaEndMin);
         } else {
-            // Window within same day after midnight (e.g., 00:00-06:00)
-            $midnight = $checkIn->copy()->addDay()->startOfDay();
-            $veladaStart = $midnight->copy()->hour($veladaStartHour);
-            $veladaEnd = $midnight->copy()->hour($veladaEndHour);
+            // Ventana del mismo día (BIES 15:30–22:30, o el legado 00:00–06:00).
+            // Se ancla a la fecha del check-in; si toda la ventana termina antes
+            // del check-in (un 00:00–06:00 para un turno que empezó la noche
+            // anterior), pertenece al día siguiente.
+            $veladaStart = Carbon::parse($dateStr)->startOfDay()->addMinutes($veladaStartMin);
+            $veladaEnd = Carbon::parse($dateStr)->startOfDay()->addMinutes($veladaEndMin);
+            if ($veladaEnd->lte($checkIn)) {
+                $veladaStart->addDay();
+                $veladaEnd->addDay();
+            }
         }
 
         $overtimeHours = 0;
@@ -147,6 +150,37 @@ class VeladaCalculatorService
             'overtime_authorized' => round(min($overtimePayable, $overtimeAuthorized), 2),
             'velada_authorized' => round(min($veladaHours, $veladaAuthorized), 2),
         ];
+    }
+
+    /**
+     * Resolve the velada window for an employee, in minutes-of-day [start, end].
+     * Per-department when the department defines velada_start/velada_end
+     * (e.g. BIES 15:30–22:30); otherwise the global setting (default 22:00–05:00).
+     *
+     * @return array{0: int, 1: int}
+     */
+    private function resolveVeladaWindow(Employee $employee): array
+    {
+        $dept = $employee->department;
+        if ($dept && $dept->velada_start && $dept->velada_end) {
+            return [
+                $this->timeToMinutes((string) $dept->velada_start),
+                $this->timeToMinutes((string) $dept->velada_end),
+            ];
+        }
+
+        return [
+            ((int) SystemSetting::get('velada_detection_start_hour', 22)) * 60,
+            ((int) SystemSetting::get('velada_detection_end_hour', 5)) * 60,
+        ];
+    }
+
+    /** Minutes-of-day for a 'HH:MM[:SS]' time string. */
+    private function timeToMinutes(string $time): int
+    {
+        $parsed = Carbon::parse($time);
+
+        return $parsed->hour * 60 + $parsed->minute;
     }
 
     /**

@@ -33,6 +33,8 @@ class Department extends Model
         'default_break_minutes',
         'weekend_unit_hours',
         'cena_min_overtime_hours',
+        'velada_start',
+        'velada_end',
         'supervisor_user_id',
         'is_active',
     ];

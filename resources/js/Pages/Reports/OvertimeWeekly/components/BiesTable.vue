@@ -27,12 +27,12 @@ const dailyCells = computed(() => {
 });
 
 const summaryRows = computed(() => {
-    const weekStart = formatDate(props.report.week_start);
+    // Conceptos del periodo, uno por fila y sin fecha confusa (antes salía
+    // "VELADA 16/06" y la CENA duplicada con la fecha de inicio de semana).
     const builders = [
         { label: 'TOTAL', kind: 'hours', extract: (r) => r.totals.total_hours },
+        { label: 'VELADA', kind: 'count', extract: (r) => r.totals.velada_count },
         { label: 'CENA', kind: 'count', extract: (r) => r.totals.cena_count },
-        { label: `VELADA ${weekStart}`, kind: 'count', extract: (r) => r.totals.velada_count },
-        { label: `CENA ${weekStart}`, kind: 'count', extract: (r) => r.totals.cena_count },
         { label: 'FIN DE SEMANA', kind: 'hours', extract: (r) => r.totals.weekend_hours },
         { label: 'COMIDA', kind: 'count', extract: (r) => r.totals.comida_count },
     ];

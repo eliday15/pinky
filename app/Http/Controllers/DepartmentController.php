@@ -80,6 +80,8 @@ class DepartmentController extends Controller
             'description' => ['nullable', 'string', 'max:500'],
             'default_break_minutes' => ['nullable', 'integer', 'min:0', 'max:480'],
             'cena_min_overtime_hours' => ['nullable', 'numeric', 'min:0', 'max:24'],
+            'velada_start' => ['nullable', 'date_format:H:i', 'required_with:velada_end'],
+            'velada_end' => ['nullable', 'date_format:H:i', 'required_with:velada_start'],
         ]);
 
         Department::create($validated);
@@ -147,6 +149,8 @@ class DepartmentController extends Controller
             'description' => ['nullable', 'string', 'max:500'],
             'default_break_minutes' => ['nullable', 'integer', 'min:0', 'max:480'],
             'cena_min_overtime_hours' => ['nullable', 'numeric', 'min:0', 'max:24'],
+            'velada_start' => ['nullable', 'date_format:H:i', 'required_with:velada_end'],
+            'velada_end' => ['nullable', 'date_format:H:i', 'required_with:velada_start'],
         ]);
 
         $department->update($validated);

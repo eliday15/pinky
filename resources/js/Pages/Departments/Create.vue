@@ -9,6 +9,8 @@ const form = useForm({
     description: '',
     default_break_minutes: null,
     cena_min_overtime_hours: null,
+    velada_start: null,
+    velada_end: null,
 });
 
 const submit = () => {
@@ -113,6 +115,42 @@ const submit = () => {
                             </p>
                             <p v-if="form.errors.cena_min_overtime_hours" class="mt-1 text-sm text-red-600">
                                 {{ form.errors.cena_min_overtime_hours }}
+                            </p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                Velada: inicio
+                            </label>
+                            <input
+                                v-model="form.velada_start"
+                                type="time"
+                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                :class="{ 'border-red-500': form.errors.velada_start }"
+                            />
+                            <p class="mt-1 text-sm text-gray-500">
+                                Franja de velada del depto. Vacio = ventana global (22:00).
+                            </p>
+                            <p v-if="form.errors.velada_start" class="mt-1 text-sm text-red-600">
+                                {{ form.errors.velada_start }}
+                            </p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                Velada: fin
+                            </label>
+                            <input
+                                v-model="form.velada_end"
+                                type="time"
+                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                :class="{ 'border-red-500': form.errors.velada_end }"
+                            />
+                            <p class="mt-1 text-sm text-gray-500">
+                                Llena ambos o ninguno. Ej. BIES: 15:30 a 22:30.
+                            </p>
+                            <p v-if="form.errors.velada_end" class="mt-1 text-sm text-red-600">
+                                {{ form.errors.velada_end }}
                             </p>
                         </div>
 

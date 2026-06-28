@@ -7,6 +7,7 @@ use App\Models\Authorization;
 use App\Models\CompensationType;
 use App\Models\Department;
 use App\Models\Employee;
+use App\Models\Schedule;
 use App\Models\User;
 use App\Services\Reports\WeeklyOvertimeReportService;
 use App\Services\VeladaCalculatorService;
@@ -98,6 +99,74 @@ class OvertimePaymentRoundingTest extends FeatureTestCase
         $split = $this->calculator()->calculate($record, $employee);
 
         $this->assertEqualsWithDelta(1.0, $split['overtime_authorized'], 0.01, '50-59 min → hora completa');
+    }
+
+    public function test_bies_afternoon_velada_window_splits_extra_into_velada(): void
+    {
+        // BIES trabaja 06:00–15:30; su velada va de 15:30 a 22:30 (regla de Dani
+        // 2026-06-28). Las horas extra tras su salida y dentro de esa franja son
+        // velada, no hora extra normal.
+        $bies = Department::factory()->create([
+            'name' => 'Bies',
+            'code' => 'BIES',
+            'velada_start' => '15:30:00',
+            'velada_end' => '22:30:00',
+        ]);
+        $schedule = Schedule::factory()->create([
+            'entry_time' => '06:00',
+            'exit_time' => '15:30',
+            'daily_work_hours' => 8.5,
+            'break_minutes' => 60,
+        ]);
+        $employee = Employee::factory()->create([
+            'status' => 'active',
+            'department_id' => $bies->id,
+            'schedule_id' => $schedule->id,
+        ]);
+        // 06:00–20:00 − 60 break = 13h; jornada 8.5h → 4.5h extra, todas dentro
+        // de 15:30–22:30 → 4.5h velada, 0 hora extra.
+        $record = AttendanceRecord::factory()->for($employee)->create([
+            'work_date' => '2026-06-03',
+            'check_in' => '06:00:00',
+            'check_out' => '20:00:00',
+            'actual_break_minutes' => 60,
+            'status' => 'present',
+        ]);
+
+        $split = $this->calculator()->calculate($record, $employee);
+
+        $this->assertEqualsWithDelta(4.5, $split['velada_hours'], 0.01, 'extra en la franja 15:30–22:30 es velada');
+        $this->assertEqualsWithDelta(0.0, $split['overtime_hours'], 0.01, 'no queda hora extra fuera de la velada');
+    }
+
+    public function test_without_department_window_afternoon_extra_is_overtime(): void
+    {
+        // Mismo turno pero sin ventana de velada del depto: con la ventana global
+        // (22:00–05:00) las horas de la tarde son hora extra, no velada.
+        $dept = Department::factory()->create(['name' => 'Otro', 'code' => 'OTRO']);
+        $schedule = Schedule::factory()->create([
+            'entry_time' => '06:00',
+            'exit_time' => '15:30',
+            'daily_work_hours' => 8.5,
+            'break_minutes' => 60,
+        ]);
+        $employee = Employee::factory()->create([
+            'status' => 'active',
+            'department_id' => $dept->id,
+            'schedule_id' => $schedule->id,
+        ]);
+        $record = AttendanceRecord::factory()->for($employee)->create([
+            'work_date' => '2026-06-03',
+            'check_in' => '06:00:00',
+            'check_out' => '20:00:00',
+            'actual_break_minutes' => 60,
+            'status' => 'present',
+        ]);
+
+        $split = $this->calculator()->calculate($record, $employee);
+
+        $this->assertEqualsWithDelta(0.0, $split['velada_hours'], 0.01, 'sin ventana del depto no hay velada en la tarde');
+        $this->assertGreaterThan(0.0, $split['overtime_hours'], 'la tarde cuenta como hora extra');
     }
 
     public function test_rounded_hours_are_still_capped_by_authorization(): void
