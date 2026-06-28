@@ -12,6 +12,7 @@ const form = useForm({
     code: props.department.code,
     description: props.department.description || '',
     default_break_minutes: props.department.default_break_minutes,
+    cena_min_overtime_hours: props.department.cena_min_overtime_hours,
 });
 
 const submit = () => {
@@ -94,6 +95,28 @@ const submit = () => {
                             </p>
                             <p v-if="form.errors.default_break_minutes" class="mt-1 text-sm text-red-600">
                                 {{ form.errors.default_break_minutes }}
+                            </p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                Cena por horas extra
+                            </label>
+                            <input
+                                v-model="form.cena_min_overtime_hours"
+                                type="number"
+                                step="0.5"
+                                min="0"
+                                max="24"
+                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                :class="{ 'border-red-500': form.errors.cena_min_overtime_hours }"
+                                placeholder="Ej: 2.5"
+                            />
+                            <p class="mt-1 text-sm text-gray-500">
+                                Horas extra a partir de las cuales se ofrece una cena al cargar desde checadas. Vacio = no aplica (solo jornada larga, velada o fin de semana).
+                            </p>
+                            <p v-if="form.errors.cena_min_overtime_hours" class="mt-1 text-sm text-red-600">
+                                {{ form.errors.cena_min_overtime_hours }}
                             </p>
                         </div>
 

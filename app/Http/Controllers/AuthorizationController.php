@@ -1282,7 +1282,7 @@ class AuthorizationController extends Controller
             }
         }
 
-        $employees = Employee::whereIn('id', $validated['employee_ids'])->get()->keyBy('id');
+        $employees = Employee::whereIn('id', $validated['employee_ids'])->with('department')->get()->keyBy('id');
         $records = AttendanceRecord::whereIn('employee_id', $validated['employee_ids'])
             ->whereBetween('work_date', [$startDate->toDateString(), $endDate->toDateString()])
             ->get()
@@ -1318,7 +1318,11 @@ class AuthorizationController extends Controller
                 if ($isPull) {
                     if ($record && $record->check_in && ! isset($existingPull[$employee->id.'|'.$dateStr])) {
                         if ($isMeal) {
-                            $seg = $this->buildMealSegment($record, $mealThreshold);
+                            $seg = $this->buildMealSegment(
+                                $record,
+                                $mealThreshold,
+                                (float) ($employee->department?->cena_min_overtime_hours ?? 0),
+                            );
                         } elseif ($isWeekend) {
                             $seg = $this->buildWeekendSegment($record);
                         } elseif ($isComida) {
@@ -1673,13 +1677,21 @@ class AuthorizationController extends Controller
      * per_day concept and one qualifying day is one dinner. No start/end times —
      * a dinner isn't a time range. These never auto-approve (special type).
      */
-    private function buildMealSegment(AttendanceRecord $record, float $threshold): ?array
+    private function buildMealSegment(AttendanceRecord $record, float $threshold, float $overtimeThreshold = 0.0): ?array
     {
         $reasons = [];
 
         $totalWorked = (float) ($record->worked_hours ?? 0) + (float) ($record->overtime_hours ?? 0);
         if ($threshold > 0 && $totalWorked >= $threshold) {
             $reasons[] = number_format($totalWorked, 2, '.', '').'h trabajadas';
+        }
+
+        // Umbral de tiempo EXTRA por departamento (regla de Dani 2026-06-28,
+        // p. ej. CORTE = 2.5): con suficientes horas extra el día también ofrece
+        // cena, aunque la jornada total no llegue al umbral general.
+        $overtimeHours = (float) ($record->overtime_hours ?? 0);
+        if ($overtimeThreshold > 0 && $overtimeHours >= $overtimeThreshold) {
+            $reasons[] = number_format($overtimeHours, 2, '.', '').'h extra';
         }
 
         // Midnight crossing: check_in/check_out are TIME-only; anchoring both to

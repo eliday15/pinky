@@ -79,6 +79,7 @@ class DepartmentController extends Controller
             'code' => ['required', 'string', 'max:50', 'unique:departments'],
             'description' => ['nullable', 'string', 'max:500'],
             'default_break_minutes' => ['nullable', 'integer', 'min:0', 'max:480'],
+            'cena_min_overtime_hours' => ['nullable', 'numeric', 'min:0', 'max:24'],
         ]);
 
         Department::create($validated);
@@ -145,6 +146,7 @@ class DepartmentController extends Controller
             'code' => ['required', 'string', 'max:50', Rule::unique('departments')->ignore($department->id)],
             'description' => ['nullable', 'string', 'max:500'],
             'default_break_minutes' => ['nullable', 'integer', 'min:0', 'max:480'],
+            'cena_min_overtime_hours' => ['nullable', 'numeric', 'min:0', 'max:24'],
         ]);
 
         $department->update($validated);

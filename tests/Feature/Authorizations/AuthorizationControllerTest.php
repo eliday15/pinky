@@ -2189,6 +2189,79 @@ class AuthorizationControllerTest extends FeatureTestCase
             ->assertJsonStructure(['suggestions', 'eligible_count', 'eligible_employee_count', 'skipped_count']);
     }
 
+    public function test_suggest_bulk_meal_qualifies_on_department_overtime_threshold(): void
+    {
+        // Regla de Dani (2026-06-28): CORTE genera cena con 2.5 h extra, aunque la
+        // jornada total no llegue al umbral de 12 h ni sea velada/fin de semana.
+        $this->actingAsAdmin();
+        $dept = \App\Models\Department::factory()->create([
+            'name' => 'Corte',
+            'code' => 'CORTE',
+            'cena_min_overtime_hours' => 2.5,
+        ]);
+        $cena = CompensationType::factory()->create([
+            'name' => 'Cena',
+            'application_mode' => 'per_day',
+            'authorization_type' => 'special',
+            'attendance_pull_rule' => CompensationType::PULL_RULE_MEAL,
+        ]);
+        $emp = Employee::factory()->create(['department_id' => $dept->id]);
+        AttendanceRecord::factory()->create([
+            'employee_id' => $emp->id,
+            'work_date' => '2026-06-22', // lunes, no fin de semana
+            'check_in' => '08:00:00',
+            'check_out' => '18:30:00',
+            'worked_hours' => 8.0,      // total 10.5h < 12 (no dispara la regla general)
+            'overtime_hours' => 2.5,    // = umbral del depto
+            'is_weekend_work' => false,
+        ]);
+
+        $this->getJson(route('authorizations.suggestBulk', [
+            'employee_ids' => [$emp->id],
+            'start_date' => '2026-06-22',
+            'end_date' => '2026-06-22',
+            'type' => 'special',
+            'compensation_type_id' => $cena->id,
+        ]))
+            ->assertOk()
+            ->assertJsonPath('suggestions.0.kind', 'meal')
+            ->assertJsonCount(1, 'suggestions');
+    }
+
+    public function test_suggest_bulk_meal_skips_overtime_threshold_for_normal_department(): void
+    {
+        // Sin cena_min_overtime_hours en el depto, 2.5 h extra (jornada < 12, no
+        // velada ni fin de semana) NO genera cena.
+        $this->actingAsAdmin();
+        $dept = \App\Models\Department::factory()->create(['cena_min_overtime_hours' => null]);
+        $cena = CompensationType::factory()->create([
+            'name' => 'Cena',
+            'application_mode' => 'per_day',
+            'authorization_type' => 'special',
+            'attendance_pull_rule' => CompensationType::PULL_RULE_MEAL,
+        ]);
+        $emp = Employee::factory()->create(['department_id' => $dept->id]);
+        AttendanceRecord::factory()->create([
+            'employee_id' => $emp->id,
+            'work_date' => '2026-06-22',
+            'check_in' => '08:00:00',
+            'check_out' => '18:30:00',
+            'worked_hours' => 8.0,
+            'overtime_hours' => 2.5,
+            'is_weekend_work' => false,
+        ]);
+
+        $this->getJson(route('authorizations.suggestBulk', [
+            'employee_ids' => [$emp->id],
+            'start_date' => '2026-06-22',
+            'end_date' => '2026-06-22',
+            'type' => 'special',
+            'compensation_type_id' => $cena->id,
+        ]))
+            ->assertOk()
+            ->assertJsonCount(0, 'suggestions');
+    }
+
     public function test_suggest_bulk_rejects_non_pull_type(): void
     {
         $this->actingAsAdmin();

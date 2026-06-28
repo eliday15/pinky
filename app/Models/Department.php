@@ -32,6 +32,7 @@ class Department extends Model
         'description',
         'default_break_minutes',
         'weekend_unit_hours',
+        'cena_min_overtime_hours',
         'supervisor_user_id',
         'is_active',
     ];
@@ -40,6 +41,7 @@ class Department extends Model
         'is_active' => 'boolean',
         'default_break_minutes' => 'integer',
         'weekend_unit_hours' => 'integer',
+        'cena_min_overtime_hours' => 'decimal:2',
     ];
 
     /**
