@@ -145,6 +145,7 @@ class WeeklyOvertimeReportService
         $weeklyExtra = 0.0;
         $weeklyWeekend = 0.0;
         $weeklyWeekendWorked = 0.0;
+        $weekendUnitsAccum = 0;
         $veladaCount = 0;
         $cenaCount = 0;
         $comidaCount = 0;
@@ -167,14 +168,17 @@ class WeeklyOvertimeReportService
             $veladaCount += $day['velada_marker'];
             $cenaCount += $day['cena_marker'];
             $comidaCount += $day['comida_marker'];
+
+            // Unidades de fin de semana POR DÍA autorizado (Almacén): cada día de
+            // fin de semana con autorización FIN cuenta al menos 1, aunque trabaje
+            // < 1 unidad (regla de Dani 2026-06-28: "aunque se presenten 1 hora es
+            // un fin de semana"); 12 h ÷ 6 = 2. Coincide con la nómina.
+            if ($weekendUnitHours && $day['has_weekend_auth']) {
+                $weekendUnitsAccum += max(1, (int) floor($day['weekend_worked_hours'] / $weekendUnitHours));
+            }
         }
 
-        // Unidades de fin de semana (horas trabajadas ÷ N), a números cerrados:
-        // floor, sin redondear hacia arriba (WhatsApp 2026-06-24, Dani: 11 h = 1,
-        // 12 h = 2). Coincide con la nómina. Null cuando el depto no usa unidades.
-        $weekendUnits = $weekendUnitHours
-            ? (int) floor($weeklyWeekendWorked / $weekendUnitHours)
-            : null;
+        $weekendUnits = $weekendUnitHours ? $weekendUnitsAccum : null;
 
         return [
             'employee' => [
@@ -229,6 +233,7 @@ class WeeklyOvertimeReportService
             'velada_hours' => 0.0,
             'weekend_hours' => 0.0,
             'weekend_worked_hours' => 0.0,
+            'has_weekend_auth' => false,
             'worked_hours' => 0.0,
             'detected_overtime_hours' => 0.0,
             'pending_overtime_hours' => 0.0,
@@ -296,6 +301,7 @@ class WeeklyOvertimeReportService
             'weekend_worked_hours' => $byCode->has(self::WEEKEND_CODE)
                 ? round((float) ($record->worked_hours ?? 0) + (float) ($record->overtime_hours ?? 0), 2)
                 : 0.0,
+            'has_weekend_auth' => $byCode->has(self::WEEKEND_CODE),
             'worked_hours' => round((float) ($record->worked_hours ?? 0), 2),
             'detected_overtime_hours' => round($detectedHours, 2),
             'pending_overtime_hours' => round($pendingHours, 2),

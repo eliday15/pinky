@@ -394,17 +394,18 @@ class CompensationRateResolverService
         }
         $total += $generic['total'];
 
-        // Fin de semana por unidades (Almacén PT): el pago se basa en las horas
-        // realmente trabajadas en sáb/dom, no por fila/día. unidades =
-        // horas_fin_de_semana ÷ weekend_unit_hours, y se paga unidades × valor
+        // Fin de semana por unidades (Almacén PT): el # de unidades lo calcula la
+        // nómina por cada día de fin de semana autorizado (al menos 1 por día,
+        // 12 h = 2), pasado en metrics['weekend_units']. Se paga unidades × valor
         // de una unidad del concepto FIN.
-        if ($weekendUnitHours && (float) ($metrics['weekend_hours'] ?? 0) > 0 && $authorizations) {
+        $weekendUnits = (int) ($metrics['weekend_units'] ?? 0);
+        if ($weekendUnitHours && $weekendUnits > 0 && $authorizations) {
             $weekendConcept = $this->weekendUnitsConcept(
                 $employee,
                 $authorizations,
                 $hourlyRate,
                 $dailySalary,
-                (float) $metrics['weekend_hours'],
+                $weekendUnits,
                 $weekendUnitHours,
                 $allowedPaymentPeriods,
             );
@@ -413,15 +414,14 @@ class CompensationRateResolverService
                 $total += $weekendConcept['amount'];
             }
 
-            // Comida por unidades (Almacén PT): se paga UNA comida por cada
-            // unidad de fin de semana (12 h trabajadas = 2 comidas), igualada al
-            // conteo del fin de semana. Misma base de horas y mismas unidades.
+            // Comida por unidades (Almacén PT): UNA comida por cada unidad de fin
+            // de semana (12 h = 2 comidas), igualada al conteo del fin de semana.
             $comidaConcept = $this->comidaUnitsConcept(
                 $employee,
                 $authorizations,
                 $hourlyRate,
                 $dailySalary,
-                (float) $metrics['weekend_hours'],
+                $weekendUnits,
                 $weekendUnitHours,
                 $allowedPaymentPeriods,
             );
@@ -447,7 +447,7 @@ class CompensationRateResolverService
         Collection $authorizations,
         float $hourlyRate,
         float $dailySalary,
-        float $weekendHours,
+        int $units,
         int $weekendUnitHours,
         ?array $allowedPaymentPeriods = null,
     ): ?array {
@@ -460,7 +460,7 @@ class CompensationRateResolverService
             $weekendAuth?->compensationType,
             $hourlyRate,
             $dailySalary,
-            $weekendHours,
+            $units,
             $weekendUnitHours,
             'weekend_units',
             $allowedPaymentPeriods,
@@ -478,7 +478,7 @@ class CompensationRateResolverService
         Collection $authorizations,
         float $hourlyRate,
         float $dailySalary,
-        float $weekendHours,
+        int $units,
         int $weekendUnitHours,
         ?array $allowedPaymentPeriods = null,
     ): ?array {
@@ -491,7 +491,7 @@ class CompensationRateResolverService
             $comidaAuth?->compensationType,
             $hourlyRate,
             $dailySalary,
-            $weekendHours,
+            $units,
             $weekendUnitHours,
             'comida_units',
             $allowedPaymentPeriods,
@@ -511,23 +511,15 @@ class CompensationRateResolverService
         ?CompensationType $compType,
         float $hourlyRate,
         float $dailySalary,
-        float $weekendHours,
+        int $units,
         int $weekendUnitHours,
         string $source,
         ?array $allowedPaymentPeriods = null,
     ): ?array {
-        if ($weekendUnitHours <= 0 || ! $compType) {
+        if ($weekendUnitHours <= 0 || ! $compType || $units <= 0) {
             return null;
         }
         if (! $this->paymentPeriodAllowed($compType, $allowedPaymentPeriods)) {
-            return null;
-        }
-
-        // Números cerrados, SIN redondeo hacia arriba (WhatsApp 2026-06-24,
-        // Dani): floor. 11 h ÷ 6 = 1 unidad, 12 h ÷ 6 = 2. Trabajar menos de una
-        // unidad completa (< 6 h) no genera unidad.
-        $units = (int) floor($weekendHours / $weekendUnitHours);
-        if ($units <= 0) {
             return null;
         }
 
@@ -554,7 +546,7 @@ class CompensationRateResolverService
         return [
             'code' => $compType->code,
             'name' => $compType->name,
-            'hours' => round($weekendHours, 2),
+            'hours' => 0.0,
             'days' => $units,
             'rate' => $rate,
             'amount' => $amount,

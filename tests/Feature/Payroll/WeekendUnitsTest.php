@@ -302,4 +302,99 @@ class WeekendUnitsTest extends FeatureTestCase
         $this->assertEqualsWithDelta(400.0, (float) $entry->weekend_pay, 0.01);
         $this->assertEqualsWithDelta(100.0, (float) $entry->other_compensation_pay, 0.01);
     }
+
+    public function test_short_or_absent_weekend_day_still_counts_one_unit(): void
+    {
+        // Caso Anyelo (Dani 2026-06-28): domingo trabajado 5.84h, marcado
+        // "ausente", con FIN aprobado. floor(5.84/6)=0 pero la regla da mínimo 1.
+        $dept = Department::factory()->create([
+            'name' => 'Almacén PT',
+            'code' => 'ALMACENPT',
+            'weekend_unit_hours' => 6,
+        ]);
+        $employee = Employee::factory()->create(['department_id' => $dept->id, 'status' => 'active']);
+        $fin = $this->weekendCompType(200.0);
+        $employee->compensationTypes()->attach($fin->id, ['is_active' => true]);
+
+        AttendanceRecord::factory()->create([
+            'employee_id' => $employee->id,
+            'work_date' => self::SATURDAY,
+            'check_in' => '07:41:00',
+            'check_out' => '14:01:00',
+            'worked_hours' => 5.84,
+            'overtime_hours' => 0,
+            'status' => 'absent', // como en prod: sábado no programado marcado ausente
+            'is_weekend_work' => true,
+        ]);
+        Authorization::factory()->create([
+            'employee_id' => $employee->id,
+            'date' => self::SATURDAY,
+            'type' => Authorization::TYPE_SPECIAL,
+            'compensation_type_id' => $fin->id,
+            'hours' => 1,
+            'status' => Authorization::STATUS_APPROVED,
+        ]);
+
+        // Reporte: 1 unidad (antes 0 → no se visualizaba).
+        $report = app(WeeklyOvertimeReportService::class)
+            ->buildReport($dept, Carbon::parse('2026-03-09'));
+        $this->assertSame(1, $report['rows'][0]['totals']['weekend_units']);
+
+        // Nómina: 1 × 200 = 200 (antes 0 porque el día estaba "ausente").
+        $period = PayrollPeriod::factory()->monthly()->create([
+            'start_date' => '2026-03-01',
+            'end_date' => '2026-03-31',
+            'payment_date' => '2026-04-03',
+        ]);
+        $entry = app(PayrollCalculatorService::class)
+            ->calculateEmployeePayroll($period, $employee->fresh());
+        $this->assertEqualsWithDelta(200.0, (float) $entry->weekend_pay, 0.01);
+    }
+
+    public function test_two_short_weekend_days_count_two_units(): void
+    {
+        // Sáb + Dom, 4h cada uno, ambos con FIN: 1 + 1 = 2 unidades (por día).
+        $dept = Department::factory()->create([
+            'name' => 'Almacén PT',
+            'code' => 'ALMACENPT',
+            'weekend_unit_hours' => 6,
+        ]);
+        $employee = Employee::factory()->create(['department_id' => $dept->id, 'status' => 'active']);
+        $fin = $this->weekendCompType(200.0);
+        $employee->compensationTypes()->attach($fin->id, ['is_active' => true]);
+
+        foreach (['2026-03-14', '2026-03-15'] as $date) { // sábado y domingo
+            AttendanceRecord::factory()->create([
+                'employee_id' => $employee->id,
+                'work_date' => $date,
+                'check_in' => '08:00:00',
+                'check_out' => '12:00:00',
+                'worked_hours' => 4.0,
+                'overtime_hours' => 0,
+                'status' => 'present',
+                'is_weekend_work' => true,
+            ]);
+            Authorization::factory()->create([
+                'employee_id' => $employee->id,
+                'date' => $date,
+                'type' => Authorization::TYPE_SPECIAL,
+                'compensation_type_id' => $fin->id,
+                'hours' => 1,
+                'status' => Authorization::STATUS_APPROVED,
+            ]);
+        }
+
+        $report = app(WeeklyOvertimeReportService::class)
+            ->buildReport($dept, Carbon::parse('2026-03-09'));
+        $this->assertSame(2, $report['rows'][0]['totals']['weekend_units'], 'cada día de fin de semana cuenta al menos 1');
+
+        $period = PayrollPeriod::factory()->monthly()->create([
+            'start_date' => '2026-03-01',
+            'end_date' => '2026-03-31',
+            'payment_date' => '2026-04-03',
+        ]);
+        $entry = app(PayrollCalculatorService::class)
+            ->calculateEmployeePayroll($period, $employee->fresh());
+        $this->assertEqualsWithDelta(400.0, (float) $entry->weekend_pay, 0.01); // 2 × 200
+    }
 }

@@ -270,6 +270,13 @@ class PayrollCalculatorService
             // pago normal por fila/día.
             $weekendUnitHours = $employee->department?->weekend_unit_hours;
 
+            // Unidades de fin de semana por día autorizado (Almacén): cada día con
+            // autorización FIN cuenta al menos 1 aunque trabaje < 1 unidad (regla
+            // de Dani 2026-06-28); 12 h = 2. Se calcula desde las autorizaciones
+            // (no del status) para que un sábado marcado "ausente" pero trabajado
+            // y autorizado sí pague.
+            $weekendUnits = $this->calculateWeekendUnits($attendance, $approvedAuthorizations, $weekendUnitHours);
+
             $compensationPayments = $this->resolver->calculateAllCompensation(
                 $employee,
                 [
@@ -280,6 +287,7 @@ class PayrollCalculatorService
                     'velada_days' => $nightShiftMetrics['night_shift_days'],
                     'holiday_hours' => $metrics['holiday_hours'],
                     'weekend_hours' => $metrics['weekend_hours'],
+                    'weekend_units' => $weekendUnits,
                 ],
                 $hourlyRate,
                 $dailySalary,
@@ -859,6 +867,38 @@ class PayrollCalculatorService
     /**
      * Calculate incident-related days for the period.
      */
+    /**
+     * Unidades de fin de semana de un depto que cuenta por horas (Almacén PT).
+     * Por cada día con autorización FIN aprobada cuenta AL MENOS 1 (regla de Dani
+     * 2026-06-28: "aunque se presenten 1 hora es un fin de semana"), más 1 por
+     * cada bloque completo de weekend_unit_hours horas trabajadas ese día
+     * (12 h ÷ 6 = 2). Se basa en las autorizaciones, no en el status, para que un
+     * día trabajado y autorizado pero marcado "ausente" también pague.
+     */
+    private function calculateWeekendUnits(Collection $attendance, Collection $approvedAuthorizations, ?int $weekendUnitHours): int
+    {
+        if (! $weekendUnitHours || $weekendUnitHours <= 0) {
+            return 0;
+        }
+
+        $hoursByDate = $attendance->mapWithKeys(fn ($r) => [
+            Carbon::parse($r->work_date)->toDateString() => (float) ($r->worked_hours ?? 0) + (float) ($r->overtime_hours ?? 0),
+        ]);
+
+        $finDates = $approvedAuthorizations
+            ->filter(fn (Authorization $a) => $a->compensationType?->hasWeekendPullRule())
+            ->map(fn (Authorization $a) => Carbon::parse($a->date)->toDateString())
+            ->unique();
+
+        $units = 0;
+        foreach ($finDates as $date) {
+            $hours = (float) $hoursByDate->get($date, 0);
+            $units += max(1, (int) floor($hours / $weekendUnitHours));
+        }
+
+        return $units;
+    }
+
     private function calculateIncidentMetrics(
         Collection $incidents,
         Carbon $startDate,
