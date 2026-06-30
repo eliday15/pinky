@@ -3,7 +3,7 @@ import AppLayout from '@/Layouts/AppLayout.vue';
 import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
 import { computed } from 'vue';
-import { formatDateTime } from '@/utils/date';
+import { formatDateTime, formatTime12h } from '@/utils/date';
 
 const props = defineProps({
     record: Object,
@@ -342,7 +342,7 @@ const overtimeHours = computed(() => {
                             ]">
                                 {{ punch.type === 'in' ? 'Entrada' : 'Salida' }}
                             </span>
-                            <span class="font-mono">{{ punch.time }}</span>
+                            <span class="font-mono">{{ formatTime12h(punch.time) }}</span>
                             <span class="ml-2 text-gray-400 text-xs">({{ punch.method }})</span>
                         </div>
                     </div>

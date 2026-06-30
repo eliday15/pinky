@@ -2,7 +2,7 @@
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head, Link, useForm, usePage } from '@inertiajs/vue3';
 import { ref, computed } from 'vue';
-import { formatDate as fmtDate, formatDateTime } from '@/utils/date';
+import { formatDate as fmtDate, formatDateTime, formatTime12h } from '@/utils/date';
 
 const props = defineProps({
     authorization: Object,
@@ -13,12 +13,8 @@ const props = defineProps({
     can: Object,
 });
 
-/** Format a punch time ('HH:MM:SS', 'HH:MM' or an ISO datetime) as 'HH:MM'. */
-const fmtTime = (t) => {
-    if (!t) return '—';
-    const m = String(t).match(/(\d{2}):(\d{2})/);
-    return m ? `${m[1]}:${m[2]}` : String(t);
-};
+/** Format a punch time as 12-hour es-MX with AM/PM (e.g. '10:04 p. m.'). */
+const fmtTime = (t) => formatTime12h(t);
 
 /** Human label for a raw punch type stored by the ZKTeco sync. */
 const punchTypeLabel = (type) => ({

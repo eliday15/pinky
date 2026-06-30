@@ -3,7 +3,7 @@ import AppLayout from '@/Layouts/AppLayout.vue';
 import ResolveAnomalyModal from '@/Components/Anomalies/ResolveAnomalyModal.vue';
 import { Head, Link } from '@inertiajs/vue3';
 import { ref } from 'vue';
-import { formatDate as fmtDate, formatDateTime as fmtDateTime } from '@/utils/date';
+import { formatDate as fmtDate, formatDateTime as fmtDateTime, formatTime12h } from '@/utils/date';
 import {
     severityBorderColors as severityColors,
     severityLabels,
@@ -38,10 +38,7 @@ const formatDate = (date) => fmtDate(date);
 
 const formatDateTime = (datetime) => fmtDateTime(datetime);
 
-const formatTime = (time) => {
-    if (!time) return '-';
-    return time;
-};
+const formatTime = (time) => formatTime12h(time);
 
 /* ----- Guided resolution modal ----- */
 const showResolveModal = ref(false);

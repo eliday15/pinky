@@ -82,6 +82,33 @@ export function formatDateTime(value, options = {}) {
 }
 
 /**
+ * Format a punch/clock time as a 12-hour time with AM/PM in es-MX
+ * (e.g. "10:04 p. m."). Accepts 'HH:MM', 'HH:MM:SS' or an ISO datetime —
+ * only the hour and minute are used, with no timezone conversion (a punch
+ * time is a wall-clock time, not an instant). Returns '—' for empty input
+ * and echoes the raw value back if it can't be parsed.
+ */
+export function formatTime12h(value) {
+    if (value === null || value === undefined || value === '') {
+        return '—';
+    }
+    const match = String(value).match(/(\d{1,2}):(\d{2})/);
+    if (!match) {
+        return String(value);
+    }
+    const hours = Number(match[1]);
+    const minutes = Number(match[2]);
+    if (!Number.isFinite(hours) || !Number.isFinite(minutes) || hours > 23 || minutes > 59) {
+        return String(value);
+    }
+    return new Date(2000, 0, 1, hours, minutes).toLocaleTimeString('es-MX', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+    });
+}
+
+/**
  * Return today's date as a "YYYY-MM-DD" string in the browser's local
  * timezone. Used to initialize date and datetime-local input fields.
  *
