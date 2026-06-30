@@ -74,14 +74,27 @@ const selectedIncidentType = computed(() => {
 });
 
 /**
+ * Parse a 'YYYY-MM-DD' string as a LOCAL date (midnight local time).
+ * `new Date('YYYY-MM-DD')` parses as UTC; in Mexico City (UTC-6) that renders as
+ * the previous day at 18:00 local, shifting every getDay() back one day and
+ * corrupting the working-day count and the week grouping for the Saturday rule
+ * (a Wednesday leaks into the prior week and falsely pushes it to 3 vacation
+ * days). Building the Date from explicit local components avoids the shift.
+ */
+const parseLocalDate = (s) => {
+    const [y, m, d] = String(s).split('-').map(Number);
+    return new Date(y, m - 1, d);
+};
+
+/**
  * Calculate working days between two dates (excludes weekends).
  * Note: Backend also excludes holidays, but we can't access that data here.
  * This provides a close approximation for the user.
  */
 const calculateWorkingDays = (startDate, endDate) => {
     let count = 0;
-    const current = new Date(startDate);
-    const end = new Date(endDate);
+    const current = parseLocalDate(startDate);
+    const end = parseLocalDate(endDate);
 
     while (current <= end) {
         const dayOfWeek = current.getDay();
@@ -112,8 +125,8 @@ const mondayKey = (d) => {
 const saturdayVacationBonus = (startDate, endDate) => {
     const perWeek = {};
     const weekHasSaturday = {};
-    const current = new Date(startDate);
-    const end = new Date(endDate);
+    const current = parseLocalDate(startDate);
+    const end = parseLocalDate(endDate);
     while (current <= end) {
         const dow = current.getDay(); // 0=Sun … 6=Sat
         const key = mondayKey(current);
@@ -143,8 +156,8 @@ const daysCount = computed(() => {
 // Calendar days for informational purposes
 const calendarDaysCount = computed(() => {
     if (!form.start_date || !form.end_date) return 0;
-    const start = new Date(form.start_date);
-    const end = new Date(form.end_date);
+    const start = parseLocalDate(form.start_date);
+    const end = parseLocalDate(form.end_date);
     const diff = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
     return diff > 0 ? diff : 0;
 });
