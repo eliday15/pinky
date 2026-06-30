@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Traits\Auditable;
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -368,6 +369,30 @@ class Employee extends Model
         }
 
         return $this->schedule?->isWorkingDay($dayName) ?? false;
+    }
+
+    /**
+     * Whether a given calendar date counts as WEEKEND WORK for this employee.
+     *
+     * A Saturday/Sunday is weekend work when it falls OUTSIDE the employee's
+     * normal schedule. EXCEPT for departments paid by weekend units (Almacén PT,
+     * the only one with weekend_unit_hours): there ANY worked Sat/Sun is a fin de
+     * semana regardless of the assigned schedule — "aunque se presenten 1 hora es
+     * un fin de semana" (Dani 2026-06-25). Pay stays driven by the approved FIN
+     * authorization, so this flag only governs whether the day is OFFERED as a
+     * weekend ("Cargar desde checadas") and never double-pays the base.
+     */
+    public function isWeekendWorkDay(Carbon $date): bool
+    {
+        if (! $date->isWeekend()) {
+            return false;
+        }
+
+        if ($this->department?->weekend_unit_hours !== null) {
+            return true;
+        }
+
+        return ! $this->isEffectiveWorkingDay($date->englishDayOfWeek);
     }
 
     /**

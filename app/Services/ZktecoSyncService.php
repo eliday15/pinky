@@ -594,11 +594,10 @@ class ZktecoSyncService
         $attendance->is_night_shift = $isNightShift;
         $attendance->raw_punches = $rawPunches;
         $attendance->is_holiday = Holiday::isHoliday($date);
-        // is_weekend_work flags only Sat/Sun that fall OUTSIDE the employee's
-        // schedule. An employee with a L-S schedule gets regular pay on Saturday.
-        $dateObj = Carbon::parse($date);
-        $attendance->is_weekend_work = $dateObj->isWeekend()
-            && ! $employee->isEffectiveWorkingDay($dateObj->englishDayOfWeek);
+        // is_weekend_work flags Sat/Sun outside the employee's schedule — except
+        // for weekend-unit departments (Almacén PT), where ANY worked Sat/Sun is a
+        // fin de semana regardless of schedule. See Employee::isWeekendWorkDay.
+        $attendance->is_weekend_work = $employee->isWeekendWorkDay(Carbon::parse($date));
 
         $attendance->save();
 
