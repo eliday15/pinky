@@ -135,14 +135,15 @@ class FaseDPayrollConceptsTest extends FeatureTestCase
     {
         $employee = $this->employee(['vacation_premium_percentage' => 25.00]);
 
-        // Vacaciones L-V (5 días hábiles), tipo en modo hábiles (default).
+        // Vacaciones L-V del 1 al 5 jun (5 días hábiles); la semana con 3+ días de
+        // vacaciones también suma el sábado 6 (regla de Dani) → 6 días pagados.
         $vac = $this->typeWithCode('VAC', [
             'category' => 'vacation',
             'is_paid' => true,
             'deducts_vacation' => true,
             'count_mode' => IncidentType::COUNT_WORKING_DAYS,
         ]);
-        $this->approvedIncident($employee, $vac, '2026-06-01', '2026-06-05', 5);
+        $this->approvedIncident($employee, $vac, '2026-06-01', '2026-06-05', 6);
 
         $monthly = PayrollPeriod::factory()->monthly()->create([
             'start_date' => '2026-06-01',
@@ -151,9 +152,9 @@ class FaseDPayrollConceptsTest extends FeatureTestCase
 
         $entry = $this->calculator()->calculateEmployeePayroll($monthly, $employee);
 
-        $this->assertEqualsWithDelta(4000.00, (float) $entry->vacation_pay, 0.01, '5 días hábiles × 800');
-        $this->assertEqualsWithDelta(1000.00, (float) $entry->vacation_premium_pay, 0.01, 'prima 25% sobre la vacación');
-        $this->assertSame(5, (int) $entry->vacation_days_paid);
+        $this->assertEqualsWithDelta(4800.00, (float) $entry->vacation_pay, 0.01, '6 días (5 hábiles + sábado) × 800');
+        $this->assertEqualsWithDelta(1200.00, (float) $entry->vacation_premium_pay, 0.01, 'prima 25% sobre la vacación');
+        $this->assertSame(6, (int) $entry->vacation_days_paid);
         $this->assertGreaterThanOrEqual(5000.00, (float) $entry->gross_pay);
     }
 

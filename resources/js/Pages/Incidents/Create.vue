@@ -117,26 +117,25 @@ const mondayKey = (d) => {
 };
 
 /**
- * Sábados extra por la regla de vacaciones (Dani 2026-06-24): en cada semana
- * (lun–dom) con 3 o más días de vacaciones, el sábado de esa semana también
- * cuenta, si cae dentro del rango. Aproximación: asume lun–vie y no contempla
- * festivos ni horarios con sábado; el backend es el cálculo final.
+ * Sábados extra por la regla de vacaciones (Dani 2026-06-24, aclarada
+ * 2026-07-01): en cada semana (lun–dom) con 3 o más días de vacaciones, el
+ * sábado de esa semana también cuenta, AUNQUE quede fuera del rango solicitado
+ * (p. ej. mié–vie suma también el sábado). Aproximación: asume lun–vie y no
+ * contempla festivos; el backend descuenta el sábado si es festivo.
  */
 const saturdayVacationBonus = (startDate, endDate) => {
     const perWeek = {};
-    const weekHasSaturday = {};
     const current = parseLocalDate(startDate);
     const end = parseLocalDate(endDate);
     while (current <= end) {
         const dow = current.getDay(); // 0=Sun … 6=Sat
         const key = mondayKey(current);
         if (dow !== 0 && dow !== 6) perWeek[key] = (perWeek[key] || 0) + 1;
-        if (dow === 6) weekHasSaturday[key] = true;
         current.setDate(current.getDate() + 1);
     }
     let extra = 0;
     for (const k in perWeek) {
-        if (perWeek[k] >= 3 && weekHasSaturday[k]) extra++;
+        if (perWeek[k] >= 3) extra++;
     }
     return extra;
 };

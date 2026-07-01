@@ -312,7 +312,8 @@ class IncidentControllerTest extends FeatureTestCase
     {
         $this->actingAsAdmin();
         $type = IncidentType::factory()->create(['requires_approval' => false, 'deducts_vacation' => true]);
-        // Mon-Fri schedule: 2026-06-01 (Mon) to 2026-06-03 (Wed) = 3 working days.
+        // Mon-Fri schedule: 2026-06-01 (Mon) a 2026-06-03 (Wed) = 3 hábiles; la
+        // semana con 3 días de vacaciones también suma el sábado 6 (regla de Dani).
         $employee = $this->makeEmployee(['vacation_days_entitled' => 12, 'vacation_days_used' => 0]);
 
         $this->post(route('incidents.store'), [
@@ -323,7 +324,7 @@ class IncidentControllerTest extends FeatureTestCase
         ])->assertRedirect(route('incidents.index'));
 
         $employee->refresh();
-        $this->assertSame(3, (int) $employee->vacation_days_used);
+        $this->assertSame(4, (int) $employee->vacation_days_used);
     }
 
     public function test_vacation_counts_saturday_after_three_days_in_week(): void
@@ -364,10 +365,11 @@ class IncidentControllerTest extends FeatureTestCase
         $this->assertSame(3, (int) $employee->fresh()->vacation_days_used);
     }
 
-    public function test_vacation_does_not_count_saturday_outside_requested_range(): void
+    public function test_vacation_counts_saturday_even_when_outside_requested_range(): void
     {
-        // Mié 17 a Vie 19: 3 días en la semana, pero el sábado 20 queda FUERA
-        // del rango solicitado → no se cuenta. Hábiles = 3.
+        // Regla aclarada por Dani (2026-07-01, caso Alejandro): Mié 17 a Vie 19 =
+        // 3 días en la semana → el sábado 20 SE CUENTA aunque quede FUERA del
+        // rango solicitado. Hábiles 3 + 1 sábado = 4.
         $this->actingAsAdmin();
         $type = IncidentType::factory()->create(['requires_approval' => false, 'deducts_vacation' => true]);
         $employee = $this->makeEmployee(['vacation_days_entitled' => 28, 'vacation_days_used' => 0]);
@@ -379,7 +381,7 @@ class IncidentControllerTest extends FeatureTestCase
             'end_date' => '2026-06-19',
         ])->assertRedirect(route('incidents.index'));
 
-        $this->assertSame(3, (int) $employee->fresh()->vacation_days_used);
+        $this->assertSame(4, (int) $employee->fresh()->vacation_days_used);
     }
 
     public function test_non_vacation_incident_does_not_count_saturday(): void
@@ -705,9 +707,10 @@ class IncidentControllerTest extends FeatureTestCase
             'reason' => null,
         ]);
 
-        // 3 working days (Mon-Wed) deducted from the vacation balance.
+        // 3 hábiles (Mon-Wed) + el sábado 6 (semana con 3 días de vacaciones,
+        // regla de Dani) = 4 días descontados de la bolsa.
         $employee->refresh();
-        $this->assertSame(3, (int) $employee->vacation_days_used);
+        $this->assertSame(4, (int) $employee->vacation_days_used);
     }
 
     public function test_store_bulk_skips_employee_with_insufficient_vacation(): void

@@ -209,10 +209,12 @@ class Incident extends Model
     }
 
     /**
-     * Sábados extra que las vacaciones suman por la regla de Dani (2026-06-24):
-     * en cada semana (lun–dom) con 3 o más días de vacaciones, el sábado de esa
-     * semana también se cuenta como vacación — pero solo si ese sábado cae
-     * dentro de [from, to], no es festivo y el empleado no lo trabaja ya (para
+     * Sábados extra que las vacaciones suman por la regla de Dani (2026-06-24,
+     * aclarada 2026-07-01): en cada semana (lun–dom) con 3 o más días de
+     * vacaciones, el sábado de esa semana también se cuenta como vacación,
+     * INDEPENDIENTEMENTE de qué días sean y aunque el sábado quede FUERA del
+     * rango solicitado (p. ej. vacaciones mié–vie suman también el sábado). No
+     * se cuenta si el sábado es festivo, ni si el empleado ya lo trabaja (para
      * no duplicarlo con el conteo de días hábiles).
      *
      * @param  list<string>  $holidayDates  fechas 'Y-m-d' festivas del rango
@@ -225,8 +227,7 @@ class Incident extends Model
             return 0;
         }
 
-        $perWeek = [];      // lunes de la semana => # de días de vacaciones hábiles
-        $weekHasSaturday = []; // lunes de la semana => el sábado cae en rango y no es festivo
+        $perWeek = []; // lunes de la semana => # de días de vacaciones hábiles
 
         for ($day = $from->copy(); $day->lte($to); $day->addDay()) {
             $weekKey = $day->copy()->startOfWeek(Carbon::MONDAY)->toDateString();
@@ -235,16 +236,21 @@ class Incident extends Model
             if (! $isHoliday && $employee->isEffectiveWorkingDay($day->englishDayOfWeek)) {
                 $perWeek[$weekKey] = ($perWeek[$weekKey] ?? 0) + 1;
             }
-            if ($day->isSaturday() && ! $isHoliday) {
-                $weekHasSaturday[$weekKey] = true;
-            }
         }
 
         $extra = 0;
         foreach ($perWeek as $weekKey => $count) {
-            if ($count >= 3 && ! empty($weekHasSaturday[$weekKey])) {
-                $extra++;
+            if ($count < 3) {
+                continue;
             }
+
+            // El sábado de esa semana (lunes + 5), aunque caiga fuera del rango.
+            $saturday = Carbon::parse($weekKey)->addDays(5)->toDateString();
+            if (in_array($saturday, $holidayDates, true) || Holiday::isHoliday($saturday)) {
+                continue;
+            }
+
+            $extra++;
         }
 
         return $extra;
