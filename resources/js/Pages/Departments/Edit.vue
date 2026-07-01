@@ -13,6 +13,7 @@ const form = useForm({
     description: props.department.description || '',
     default_break_minutes: props.department.default_break_minutes,
     cena_min_overtime_hours: props.department.cena_min_overtime_hours,
+    weekend_overtime_after_hours: props.department.weekend_overtime_after_hours,
     // El input type="time" usa HH:MM; la BD guarda HH:MM:SS.
     velada_start: props.department.velada_start ? String(props.department.velada_start).slice(0, 5) : null,
     velada_end: props.department.velada_end ? String(props.department.velada_end).slice(0, 5) : null,
@@ -120,6 +121,28 @@ const submit = () => {
                             </p>
                             <p v-if="form.errors.cena_min_overtime_hours" class="mt-1 text-sm text-red-600">
                                 {{ form.errors.cena_min_overtime_hours }}
+                            </p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                Tiempo extra en fin de semana
+                            </label>
+                            <input
+                                v-model="form.weekend_overtime_after_hours"
+                                type="number"
+                                step="0.5"
+                                min="0"
+                                max="24"
+                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                :class="{ 'border-red-500': form.errors.weekend_overtime_after_hours }"
+                                placeholder="Ej: 7"
+                            />
+                            <p class="mt-1 text-sm text-gray-500">
+                                En fin de semana, las horas que excedan de este valor se pagan como tiempo extra (adicional al fin de semana). Vacio = no aplica.
+                            </p>
+                            <p v-if="form.errors.weekend_overtime_after_hours" class="mt-1 text-sm text-red-600">
+                                {{ form.errors.weekend_overtime_after_hours }}
                             </p>
                         </div>
 

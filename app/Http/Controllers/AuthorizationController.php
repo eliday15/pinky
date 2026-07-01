@@ -1401,10 +1401,46 @@ class AuthorizationController extends Controller
             return $this->buildVeladaSegments($record);
         }
 
+        // Saldos (fin de semana con umbral): el tiempo extra del fin de semana es
+        // lo que exceda de N horas trabajadas (Opción A, Dani 2026-06-29). Se
+        // sugiere ese excedente para que RRHH lo autorice; el pago
+        // (VeladaCalculatorService, mismo umbral) se topa a lo autorizado, así que
+        // autorizar de más no sobrepaga.
+        $weekendOtThreshold = $employee->department?->weekend_overtime_after_hours;
+        if ($type === Authorization::TYPE_OVERTIME && $record->is_weekend_work && $weekendOtThreshold !== null) {
+            return $this->buildWeekendOvertimeSegments($record, (float) $weekendOtThreshold);
+        }
+
         $dayName = Carbon::parse($date)->format('l');
         $schedule = $employee->getEffectiveScheduleForDay($dayName);
 
         return $this->buildOvertimeSegments($record, $schedule, $date);
+    }
+
+    /**
+     * Overtime segment for a weekend day in a department with a weekend overtime
+     * threshold (Saldos, Opción A): the extra is the worked hours beyond the
+     * threshold (worked_hours + overtime_hours − N), rounded with the company
+     * ladder. Returns one late-style segment, or [] when the excess rounds to 0.
+     */
+    private function buildWeekendOvertimeSegments(AttendanceRecord $record, float $threshold): array
+    {
+        $totalWorked = (float) ($record->worked_hours ?? 0) + (float) ($record->overtime_hours ?? 0);
+        $extra = max(0.0, $totalWorked - $threshold);
+        $rounded = $this->roundOvertimeMinutes((int) round($extra * 60));
+        if ($rounded <= 0) {
+            return [];
+        }
+
+        $end = $record->check_out ? Carbon::parse($record->check_out)->format('H:i') : null;
+
+        return [[
+            'kind' => 'late',
+            'start_time' => null,
+            'end_time' => $end,
+            'hours' => number_format($rounded, 2, '.', ''),
+            'summary' => "Fin de semana: {$rounded}h extra (después de {$threshold}h trabajadas).",
+        ]];
     }
 
     /**

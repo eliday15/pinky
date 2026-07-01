@@ -70,6 +70,17 @@ class VeladaCalculatorService
         }
 
         $dailyHours = $daySchedule->daily_work_hours ?? 8;
+
+        // Saldos (u otro depto con weekend_overtime_after_hours): en FIN DE SEMANA
+        // el tiempo extra empieza tras N horas (7), no tras la jornada normal
+        // (Opción A, Dani 2026-06-29). Solo aplica a días de fin de semana; entre
+        // semana el umbral sigue siendo la jornada del horario. El FIN se paga por
+        // día aparte, así que esto es aditivo (sin doble pago).
+        $weekendOtThreshold = $employee->department?->weekend_overtime_after_hours;
+        if ($record->is_weekend_work && $weekendOtThreshold !== null) {
+            $dailyHours = (float) $weekendOtThreshold;
+        }
+
         $totalWorkedMinutes = abs($checkIn->diffInMinutes($checkOut));
 
         // Subtract break (fallback: schedule -> department -> 60)

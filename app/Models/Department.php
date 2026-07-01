@@ -33,6 +33,7 @@ class Department extends Model
         'default_break_minutes',
         'weekend_unit_hours',
         'cena_min_overtime_hours',
+        'weekend_overtime_after_hours',
         'velada_start',
         'velada_end',
         'supervisor_user_id',
@@ -44,6 +45,7 @@ class Department extends Model
         'default_break_minutes' => 'integer',
         'weekend_unit_hours' => 'integer',
         'cena_min_overtime_hours' => 'decimal:2',
+        'weekend_overtime_after_hours' => 'decimal:2',
     ];
 
     /**
