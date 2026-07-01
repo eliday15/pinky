@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Exports\AttendanceRangeExport;
+use App\Exports\DetailedPunchesExport;
 use App\Jobs\SyncZktecoJob;
 use App\Models\AttendanceRecord;
 use App\Models\Authorization;
@@ -207,6 +208,49 @@ class AttendanceController extends Controller
 
         return Excel::download(
             new AttendanceRangeExport($startDate, $endDate, $departmentId, $scopedEmployeeIds),
+            $filename
+        );
+    }
+
+    /**
+     * Descarga las checadas DETALLADAS (una fila por cada marca del día, en
+     * formato AM/PM) del personal a cargo del usuario. Mismo alcance por
+     * permisos que export(): todo (view_all), equipo (view_team) o propio.
+     */
+    public function exportPunches(Request $request): BinaryFileResponse
+    {
+        $this->authorize('viewAny', AttendanceRecord::class);
+
+        $request->validate([
+            'start_date' => ['required', 'date'],
+            'end_date' => ['required', 'date', 'after_or_equal:start_date'],
+        ]);
+
+        $user = Auth::user();
+        $startDate = $request->start_date;
+        $endDate = $request->end_date;
+        $departmentId = $request->department ? (int) $request->department : null;
+
+        $scopedEmployeeIds = null;
+        if (! $user->hasPermissionTo('attendance.view_all')) {
+            if ($user->hasPermissionTo('attendance.view_team')) {
+                $userEmployee = $user->employee;
+                $scopedEmployeeIds = $userEmployee
+                    ? Employee::active()->whereIn('id', $userEmployee->allSubordinateIds())->pluck('id')
+                    : collect();
+            } elseif ($user->hasPermissionTo('attendance.view_own')) {
+                $scopedEmployeeIds = collect([$user->employee?->id])->filter();
+            } else {
+                $scopedEmployeeIds = collect();
+            }
+        } else {
+            $scopedEmployeeIds = Employee::active()->pluck('id');
+        }
+
+        $filename = "checadas_detalladas_{$startDate}_{$endDate}.xlsx";
+
+        return Excel::download(
+            new DetailedPunchesExport($startDate, $endDate, $departmentId, $scopedEmployeeIds),
             $filename
         );
     }

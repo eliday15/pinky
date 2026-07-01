@@ -69,6 +69,7 @@ Route::middleware(['auth', 'password-changed', 'two-factor-setup'])->group(funct
     Route::get('/attendance', [AttendanceController::class, 'index'])->name('attendance.index');
     Route::get('/attendance/calendar', [AttendanceController::class, 'calendar'])->name('attendance.calendar');
     Route::get('/attendance/export', [AttendanceController::class, 'export'])->name('attendance.export');
+    Route::get('/attendance/export-punches', [AttendanceController::class, 'exportPunches'])->name('attendance.export-punches');
     Route::get('/attendance/sync-logs', [AttendanceController::class, 'syncLogs'])->name('attendance.sync-logs');
     Route::post('/attendance/sync', [AttendanceController::class, 'sync'])->name('attendance.sync');
     Route::get('/attendance/{attendance}/edit', [AttendanceController::class, 'edit'])->name('attendance.edit');
