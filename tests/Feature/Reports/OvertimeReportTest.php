@@ -253,6 +253,7 @@ class OvertimeReportTest extends FeatureTestCase
                     ->has('employee.employee_number')
                     ->has('employee.has_night_shift')
                     ->has('days')
+                    ->has('extra_concepts')
                     ->has('observations')
                     ->has('totals', fn (Assert $t) => $t
                         ->has('total_hours')

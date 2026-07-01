@@ -47,6 +47,12 @@ class WeeklyOvertimeReportService
     private const COMIDA_CODE = 'COM';
 
     /**
+     * Códigos que YA tienen columna/marcador fijo en el reporte. Cualquier otro
+     * concepto aprobado se agrupa en "otros conceptos" para que también se vea.
+     */
+    private const KNOWN_CODES = ['HE', 'HED', 'HET', 'FIN', 'VEL', 'CENA', 'COM'];
+
+    /**
      * Build the report payload for a department and week.
      *
      * Args:
@@ -179,6 +185,7 @@ class WeeklyOvertimeReportService
         }
 
         $weekendUnits = $weekendUnitHours ? $weekendUnitsAccum : null;
+        $extraConcepts = $this->buildExtraConcepts($authorizations);
 
         return [
             'employee' => [
@@ -204,7 +211,8 @@ class WeeklyOvertimeReportService
                     ? $weekendUnits
                     : $comidaCount,
             ],
-            'observations' => $this->buildObservations($records, $authorizations),
+            'extra_concepts' => $extraConcepts,
+            'observations' => $this->buildObservations($records, $authorizations, $extraConcepts),
         ];
     }
 
@@ -324,11 +332,22 @@ class WeeklyOvertimeReportService
     }
 
     /**
-     * Concatenate observations from attendance notes + authorization reasons.
+     * Concatenate observations from attendance notes + authorization reasons +
+     * los "otros conceptos" aprobados (para que TODO concepto aprobado se vea en
+     * el reporte, incluso los que no tienen columna fija — Dani 2026-07-01). Los
+     * conceptos extra van primero para que resalten al imprimir.
+     *
+     * @param  list<array{name: string, count: int, hours: float}>  $extraConcepts
      */
-    private function buildObservations(Collection $records, Collection $authorizations): string
+    private function buildObservations(Collection $records, Collection $authorizations, array $extraConcepts = []): string
     {
         $parts = [];
+
+        foreach ($extraConcepts as $concept) {
+            $parts[] = $concept['count'] > 1
+                ? "{$concept['name']} x{$concept['count']}"
+                : $concept['name'];
+        }
 
         foreach ($records as $record) {
             if (! empty($record->notes)) {
@@ -358,6 +377,41 @@ class WeeklyOvertimeReportService
     }
 
     /**
+     * Otros conceptos aprobados que NO tienen columna fija en el reporte (p. ej.
+     * una compensación nueva creada a mano como "Cena por entrega a Walmart").
+     * Se agrupan por nombre con su conteo y horas, para que TODO concepto
+     * aprobado se vea en el reporte (petición de Dani 2026-07-01), no solo los
+     * que se cargan desde checadas.
+     *
+     * @return list<array{name: string, count: int, hours: float}>
+     */
+    private function buildExtraConcepts(Collection $authorizations): array
+    {
+        $extra = [];
+
+        foreach ($authorizations as $auth) {
+            $type = $auth->compensationType;
+            if (! $type) {
+                continue;
+            }
+
+            if (in_array($this->normalizeCode($type->code), self::KNOWN_CODES, true)) {
+                continue;
+            }
+
+            $name = $type->name ?: ($this->normalizeCode($type->code) ?: 'Concepto');
+            $extra[$name] ??= ['name' => $name, 'count' => 0, 'hours' => 0.0];
+            $extra[$name]['count']++;
+            $extra[$name]['hours'] += (float) $auth->hours;
+        }
+
+        return array_values(array_map(
+            fn (array $e) => ['name' => $e['name'], 'count' => $e['count'], 'hours' => round($e['hours'], 2)],
+            $extra,
+        ));
+    }
+
+    /**
      * Sum totals across all rows.
      */
     private function buildGrandTotals(array $rows, ?int $weekendUnitHours = null): array
@@ -371,8 +425,14 @@ class WeeklyOvertimeReportService
         $veladaCount = 0;
         $cenaCount = 0;
         $comidaCount = 0;
+        $extraConcepts = [];
 
         foreach ($rows as $row) {
+            foreach ($row['extra_concepts'] ?? [] as $ec) {
+                $extraConcepts[$ec['name']] ??= ['name' => $ec['name'], 'count' => 0, 'hours' => 0.0];
+                $extraConcepts[$ec['name']]['count'] += $ec['count'];
+                $extraConcepts[$ec['name']]['hours'] += $ec['hours'];
+            }
             $totalHours += $row['totals']['total_hours'];
             $weekendHours += $row['totals']['weekend_hours'];
             $weekendWorked += $row['totals']['weekend_worked_hours'] ?? 0;
@@ -397,6 +457,10 @@ class WeeklyOvertimeReportService
             'velada_count' => $veladaCount,
             'cena_count' => $cenaCount,
             'comida_count' => $comidaCount,
+            'extra_concepts' => array_values(array_map(
+                fn (array $e) => ['name' => $e['name'], 'count' => $e['count'], 'hours' => round($e['hours'], 2)],
+                $extraConcepts,
+            )),
             'employee_count' => count($rows),
         ];
     }
