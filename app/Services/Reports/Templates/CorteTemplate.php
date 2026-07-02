@@ -28,6 +28,7 @@ class CorteTemplate extends AbstractOvertimeReportTemplate
         $headings[] = 'COMIDA';
         $headings[] = 'VELADA';
         $headings[] = 'CENA';
+        $headings[] = 'OTROS CONCEPTOS';
         $headings[] = 'OBSERVACIONES';
 
         return $headings;
@@ -51,6 +52,7 @@ class CorteTemplate extends AbstractOvertimeReportTemplate
             $line[] = $row['totals']['comida_count'];
             $line[] = $row['totals']['velada_count'];
             $line[] = $row['totals']['cena_count'];
+            $line[] = $this->formatExtraConcepts($row['extra_concepts'] ?? []);
             $line[] = $row['observations'];
 
             $rows[] = $line;

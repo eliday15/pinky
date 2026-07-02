@@ -3,6 +3,7 @@ import { computed } from 'vue';
 import { formatDate, formatHours } from '../format';
 import OvertimeCell from './OvertimeCell.vue';
 import OvertimeLegend from './OvertimeLegend.vue';
+import ExtraConceptsCell from './ExtraConceptsCell.vue';
 import { cellApproved, cellPending } from '../cells';
 
 const props = defineProps({ report: Object });
@@ -31,6 +32,7 @@ const colSums = computed(() => {
                     <th class="border px-3 py-2">COMIDA</th>
                     <th class="border px-3 py-2">VELADA</th>
                     <th class="border px-3 py-2">CENA</th>
+                    <th class="border px-3 py-2 text-left">OTROS CONCEPTOS</th>
                     <th class="border px-3 py-2 text-left">OBSERVACIONES</th>
                 </tr>
             </thead>
@@ -53,6 +55,7 @@ const colSums = computed(() => {
                     <td class="border px-3 py-2 text-center" :class="row.totals.cena_count === 0 ? 'text-gray-300' : ''">
                         {{ row.totals.cena_count }}
                     </td>
+                    <td class="border px-3 py-2 max-w-xs"><ExtraConceptsCell :items="row.extra_concepts" /></td>
                     <td class="border px-3 py-2 text-xs text-gray-600 max-w-xs">{{ row.observations }}</td>
                 </tr>
                 <tr class="bg-gray-50 font-semibold">
@@ -67,6 +70,7 @@ const colSums = computed(() => {
                     <td class="border px-3 py-2 text-center">{{ report.totals.comida_count }}</td>
                     <td class="border px-3 py-2 text-center">{{ report.totals.velada_count }}</td>
                     <td class="border px-3 py-2 text-center">{{ report.totals.cena_count }}</td>
+                    <td class="border px-3 py-2"><ExtraConceptsCell :items="report.totals.extra_concepts" /></td>
                     <td class="border px-3 py-2"></td>
                 </tr>
             </tbody>

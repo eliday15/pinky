@@ -109,4 +109,27 @@
         </tbody>
     </table>
 @endif
+
+@php
+    $extraRows = collect($report['rows'])->filter(fn ($r) => count($r['extra_concepts'] ?? []) > 0)->values();
+@endphp
+@if ($extraRows->isNotEmpty())
+    <h2 style="font-size: 11px; margin-top: 12px;">OTROS CONCEPTOS</h2>
+    <table>
+        <thead>
+            <tr>
+                <th style="width: 30%;">EMPLEADO</th>
+                <th>CONCEPTOS</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach ($extraRows as $row)
+                <tr>
+                    <td>{{ $row['employee']['full_name'] }}</td>
+                    <td class="obs">@include('pdf.overtime-weekly._extra_concepts', ['items' => $row['extra_concepts']])</td>
+                </tr>
+            @endforeach
+        </tbody>
+    </table>
+@endif
 @endsection

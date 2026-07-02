@@ -29,4 +29,17 @@ abstract class AbstractOvertimeReportTemplate implements OvertimeReportTemplate
         // Strip trailing zero in decimals (e.g., 1.50 -> 1.5)
         return rtrim(rtrim(number_format($value, 2, '.', ''), '0'), '.');
     }
+
+    /**
+     * "Otros conceptos" aprobados sin columna fija, como texto para una celda:
+     * "Nombre (conteo); Otro (conteo)".
+     *
+     * @param  list<array{name: string, count: int, hours: float}>  $items
+     */
+    protected function formatExtraConcepts(array $items): string
+    {
+        return collect($items)
+            ->map(fn (array $c) => "{$c['name']} ({$c['count']})")
+            ->implode('; ');
+    }
 }

@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import { formatDate, formatHours } from '../format';
 import OvertimeCell from './OvertimeCell.vue';
+import ExtraConceptsCell from './ExtraConceptsCell.vue';
 import OvertimeLegend from './OvertimeLegend.vue';
 import { cellApproved, cellPending } from '../cells';
 
@@ -28,6 +29,7 @@ const colSums = computed(() => {
                     <th v-for="d in report.dates" :key="d" class="border px-3 py-2">{{ formatDate(d) }}</th>
                     <th class="border px-3 py-2">TOTAL HORAS</th>
                     <th class="border px-3 py-2">FIN DE SEMANA</th>
+                    <th class="border px-3 py-2 text-left">OTROS CONCEPTOS</th>
                     <th class="border px-3 py-2 text-left">OBSERVACIONES</th>
                 </tr>
             </thead>
@@ -41,6 +43,7 @@ const colSums = computed(() => {
                         <OvertimeCell :approved="row.totals.total_hours" :pending="row.totals.pending_hours || 0" :show-zero="false" />
                     </td>
                     <td class="border px-3 py-2 text-right">{{ formatHours(row.totals.weekend_hours) }}</td>
+                    <td class="border px-3 py-2 max-w-xs"><ExtraConceptsCell :items="row.extra_concepts" /></td>
                     <td class="border px-3 py-2 text-xs text-gray-600 max-w-xs">{{ row.observations }}</td>
                 </tr>
                 <tr class="bg-gray-50 font-semibold">
@@ -52,6 +55,7 @@ const colSums = computed(() => {
                         <OvertimeCell :approved="report.totals.total_hours" :pending="report.totals.pending_hours || 0" :show-zero="false" />
                     </td>
                     <td class="border px-3 py-2 text-right">{{ formatHours(report.totals.weekend_hours) }}</td>
+                    <td class="border px-3 py-2"><ExtraConceptsCell :items="report.totals.extra_concepts" /></td>
                     <td class="border px-3 py-2"></td>
                 </tr>
             </tbody>

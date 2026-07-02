@@ -20,6 +20,7 @@
             <th rowspan="2">COMIDA</th>
             <th rowspan="2">VELADA</th>
             <th rowspan="2">CENA</th>
+            <th rowspan="2">OTROS CONCEPTOS</th>
             <th rowspan="2">OBSERVACIONES</th>
         </tr>
         <tr>
@@ -43,6 +44,7 @@
                 <td class="center {{ $row['totals']['comida_count'] === 0 ? 'zero' : '' }}">{{ $row['totals']['comida_count'] }}</td>
                 <td class="center {{ $row['totals']['velada_count'] === 0 ? 'zero' : '' }}">{{ $row['totals']['velada_count'] }}</td>
                 <td class="center {{ $row['totals']['cena_count'] === 0 ? 'zero' : '' }}">{{ $row['totals']['cena_count'] }}</td>
+                <td class="obs">@include('pdf.overtime-weekly._extra_concepts', ['items' => $row['extra_concepts'] ?? []])</td>
                 <td class="obs">{{ $row['observations'] }}</td>
             </tr>
         @endforeach
@@ -64,6 +66,7 @@
             <td class="center">{{ $report['totals']['comida_count'] }}</td>
             <td class="center">{{ $report['totals']['velada_count'] }}</td>
             <td class="center">{{ $report['totals']['cena_count'] }}</td>
+            <td class="obs">@include('pdf.overtime-weekly._extra_concepts', ['items' => $report['totals']['extra_concepts'] ?? []])</td>
             <td></td>
         </tr>
     </tbody>

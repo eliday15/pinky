@@ -23,6 +23,7 @@
             <th>COMIDA</th>
             <th>VELADA</th>
             <th>CENA</th>
+            <th>OTROS CONCEPTOS</th>
             <th>OBSERVACIONES</th>
         </tr>
     </thead>
@@ -39,11 +40,12 @@
                 <td class="center {{ $row['totals']['comida_count'] === 0 ? 'zero' : '' }}">{{ $row['totals']['comida_count'] }}</td>
                 <td class="center {{ $row['totals']['velada_count'] === 0 ? 'zero' : '' }}">{{ $row['totals']['velada_count'] }}</td>
                 <td class="center {{ $row['totals']['cena_count'] === 0 ? 'zero' : '' }}">{{ $row['totals']['cena_count'] }}</td>
+                <td class="obs">@include('pdf.overtime-weekly._extra_concepts', ['items' => $row['extra_concepts'] ?? []])</td>
                 <td class="obs">{{ $row['observations'] }}</td>
             </tr>
         @empty
             <tr>
-                <td colspan="{{ count($report['dates']) + 7 }}" class="center">Sin empleados activos en este departamento.</td>
+                <td colspan="{{ count($report['dates']) + 8 }}" class="center">Sin empleados activos en este departamento.</td>
             </tr>
         @endforelse
 
@@ -64,6 +66,7 @@
                 <td class="center">{{ $report['totals']['comida_count'] }}</td>
                 <td class="center">{{ $report['totals']['velada_count'] }}</td>
                 <td class="center">{{ $report['totals']['cena_count'] }}</td>
+                <td class="obs">@include('pdf.overtime-weekly._extra_concepts', ['items' => $report['totals']['extra_concepts'] ?? []])</td>
                 <td></td>
             </tr>
         @endif

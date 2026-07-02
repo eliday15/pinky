@@ -25,6 +25,7 @@ class CalidadTemplate extends AbstractOvertimeReportTemplate
         }
         $headings[] = 'TOTAL HORAS';
         $headings[] = 'FIN DE SEMANA';
+        $headings[] = 'OTROS CONCEPTOS';
         $headings[] = 'OBSERVACIONES';
 
         return $headings;
@@ -45,6 +46,7 @@ class CalidadTemplate extends AbstractOvertimeReportTemplate
 
             $line[] = $this->formatHours($row['totals']['total_hours']);
             $line[] = $this->formatHours($row['totals']['weekend_hours']);
+            $line[] = $this->formatExtraConcepts($row['extra_concepts'] ?? []);
             $line[] = $row['observations'];
 
             $rows[] = $line;

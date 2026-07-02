@@ -212,7 +212,7 @@ class WeeklyOvertimeReportService
                     : $comidaCount,
             ],
             'extra_concepts' => $extraConcepts,
-            'observations' => $this->buildObservations($records, $authorizations, $extraConcepts),
+            'observations' => $this->buildObservations($records, $authorizations),
         ];
     }
 
@@ -332,22 +332,13 @@ class WeeklyOvertimeReportService
     }
 
     /**
-     * Concatenate observations from attendance notes + authorization reasons +
-     * los "otros conceptos" aprobados (para que TODO concepto aprobado se vea en
-     * el reporte, incluso los que no tienen columna fija — Dani 2026-07-01). Los
-     * conceptos extra van primero para que resalten al imprimir.
-     *
-     * @param  list<array{name: string, count: int, hours: float}>  $extraConcepts
+     * Concatenate observations from attendance notes + authorization reasons.
+     * (Los "otros conceptos" aprobados sin columna fija se muestran en su propia
+     * columna OTROS CONCEPTOS, no aquí — Dani 2026-07-01.)
      */
-    private function buildObservations(Collection $records, Collection $authorizations, array $extraConcepts = []): string
+    private function buildObservations(Collection $records, Collection $authorizations): string
     {
         $parts = [];
-
-        foreach ($extraConcepts as $concept) {
-            $parts[] = $concept['count'] > 1
-                ? "{$concept['name']} x{$concept['count']}"
-                : $concept['name'];
-        }
 
         foreach ($records as $record) {
             if (! empty($record->notes)) {

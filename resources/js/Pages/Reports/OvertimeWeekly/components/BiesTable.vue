@@ -3,6 +3,7 @@ import { computed } from 'vue';
 import { dayLabel, formatDate, formatHours } from '../format';
 import OvertimeCell from './OvertimeCell.vue';
 import OvertimeLegend from './OvertimeLegend.vue';
+import ExtraConceptsCell from './ExtraConceptsCell.vue';
 import { cellApproved, cellPending } from '../cells';
 
 const props = defineProps({ report: Object });
@@ -44,6 +45,7 @@ const summaryRows = computed(() => {
 });
 
 const obsRows = computed(() => props.report.rows.filter((r) => (r.observations || '').trim() !== ''));
+const extraRows = computed(() => props.report.rows.filter((r) => (r.extra_concepts || []).length > 0));
 </script>
 
 <template>
@@ -104,6 +106,24 @@ const obsRows = computed(() => props.report.rows.filter((r) => (r.observations |
                     <tr v-for="row in obsRows" :key="row.employee.id">
                         <td class="border px-3 py-2">{{ row.employee.full_name }}</td>
                         <td class="border px-3 py-2 text-xs text-gray-600">{{ row.observations }}</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div v-if="extraRows.length">
+            <h3 class="text-sm font-semibold text-gray-700 mb-2">OTROS CONCEPTOS</h3>
+            <table class="min-w-full text-sm border-collapse">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="border px-3 py-2 text-left w-1/3">EMPLEADO</th>
+                        <th class="border px-3 py-2 text-left">CONCEPTOS</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr v-for="row in extraRows" :key="row.employee.id">
+                        <td class="border px-3 py-2">{{ row.employee.full_name }}</td>
+                        <td class="border px-3 py-2"><ExtraConceptsCell :items="row.extra_concepts" /></td>
                     </tr>
                 </tbody>
             </table>
