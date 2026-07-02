@@ -473,6 +473,12 @@ class ReportExportTest extends FeatureTestCase
         $body = $this->streamedBody($response);
         $this->assertStringContainsString('Total Faltas', $body); // header column
         $this->assertStringContainsString('Fausto Falta', $body);
+        // El detalle va en UNA columna "Detalle" (como la web), no en columnas
+        // "Observación N" (Luis 2026-06-25); y se incluye el Horario.
+        $this->assertStringContainsString('Horario', $body);
+        $this->assertStringContainsString('Detalle', $body);
+        $this->assertStringNotContainsString('Observación 1', $body);
+        $this->assertStringContainsString('no se presentó', $body);
     }
 
     public function test_asistencia_export_renders_header_without_throwing(): void

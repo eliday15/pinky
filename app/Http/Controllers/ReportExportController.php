@@ -420,18 +420,13 @@ class ReportExportController extends Controller implements HasMiddleware
             ->merge(array_keys($retardoFaltas))
             ->unique();
 
-        // Cada observación (cada fecha) se exporta en su propia columna
-        // ("Observación 1", "Observación 2", …) en lugar de concatenarse con
-        // " | " en una sola celda, para que cada fecha quede en una celda
-        // independiente. Se acumulan las observaciones por fila y, al final, se
-        // rellena cada fila hasta el máximo para que todas tengan las mismas
-        // columnas.
+        // Las observaciones (una por fecha) se acumulan por fila y al final se
+        // juntan en una sola columna "Detalle" apilada (ver más abajo).
         $rows = [];
-        $maxObservaciones = 0;
         foreach ($allEmployeeIds as $employeeId) {
             $empNoShow = $noShowRecords->where('employee_id', $employeeId);
             $empThreshold = $thresholdRecords->where('employee_id', $employeeId);
-            $employee = $empNoShow->first()?->employee ?? $empThreshold->first()?->employee ?? Employee::with('department')->find($employeeId);
+            $employee = $empNoShow->first()?->employee ?? $empThreshold->first()?->employee ?? Employee::with(['department', 'schedule'])->find($employeeId);
             $noShow = $empNoShow->count();
             $threshold = $empThreshold->count();
             $retardo = $retardoFaltas[$employeeId] ?? 0;
@@ -449,13 +444,17 @@ class ReportExportController extends Controller implements HasMiddleware
                 $observaciones[] = $detalle;
             }
 
-            $maxObservaciones = max($maxObservaciones, count($observaciones));
+            $sched = $employee?->getEffectiveSchedule();
+            $horario = $sched && $sched->entry_time
+                ? substr((string) $sched->entry_time, 0, 5).' - '.substr((string) $sched->exit_time, 0, 5)
+                : '-';
 
             $rows[] = [
                 'fixed' => [
                     $employee?->full_name ?? '-',
                     $employee?->employee_number ?? '-',
                     $employee?->department?->name ?? '-',
+                    $horario,
                     $noShow,
                     $threshold,
                     $retardo,
@@ -465,27 +464,19 @@ class ReportExportController extends Controller implements HasMiddleware
             ];
         }
 
-        // Una columna por observación; las filas con menos observaciones se
-        // rellenan con celdas vacías para cuadrar con el encabezado.
-        $observacionHeaders = [];
-        for ($i = 1; $i <= $maxObservaciones; $i++) {
-            $observacionHeaders[] = "Observación {$i}";
-        }
-
+        // El detalle (una línea por día, cronológico) va en UNA sola columna
+        // "Detalle" —como en el reporte web (Luis 2026-06-25)— en vez de
+        // esparcirse en muchas columnas "Observación N", que salían muy
+        // amontonadas en Excel. fputcsv entrecomilla la celda con saltos de
+        // línea, así Excel la muestra apilada igual que la web.
         $data = array_map(
-            fn ($row) => array_merge(
-                $row['fixed'],
-                array_pad($row['observaciones'], $maxObservaciones, '')
-            ),
+            fn ($row) => array_merge($row['fixed'], [implode("\n", $row['observaciones'])]),
             $rows
         );
 
         return $this->exportCsv(
             "reporte_faltas_{$startDate}_{$endDate}.csv",
-            array_merge(
-                ['Empleado', 'No. Empleado', 'Departamento', 'Inasistencias', 'Por Umbral', 'Faltas por Retardos', 'Total Faltas'],
-                $observacionHeaders
-            ),
+            ['Empleado', 'No. Empleado', 'Departamento', 'Horario', 'Inasistencias', 'Por Umbral', 'Faltas por Retardos', 'Total Faltas', 'Detalle'],
             $data
         );
     }
