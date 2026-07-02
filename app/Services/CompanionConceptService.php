@@ -98,8 +98,15 @@ class CompanionConceptService
         }
 
         // Solo si el empleado tiene el concepto asignado y activo (decisión Luis).
+        // EXCEPCIÓN: la cena por tiempo extra la gatea el umbral del departamento
+        // (cena_min_overtime_hours), no la inscripción individual — aplica a todo
+        // el depto (CORTE/TELAS), como pidió Dani.
         $employee = $parent->employee ?? Employee::find($parent->employee_id);
-        if (! $employee || ! $this->employeeHasConcept($employee, $companionType->id)) {
+        if (! $employee) {
+            return null;
+        }
+        $deptGated = $parent->type === Authorization::TYPE_OVERTIME;
+        if (! $deptGated && ! $this->employeeHasConcept($employee, $companionType->id)) {
             return null;
         }
 
@@ -153,6 +160,27 @@ class CompanionConceptService
     {
         if ($parent->type === Authorization::TYPE_NIGHT_SHIFT) {
             return CompensationType::PULL_RULE_MEAL; // Cena
+        }
+
+        // Tiempo extra → Cena automática cuando el departamento tiene umbral de
+        // horas extra (cena_min_overtime_hours; CORTE/TELAS = 2.5) y el total de
+        // tiempo extra APROBADO del día alcanza ese umbral. Así la cena se aprueba
+        // sola al autorizar el tiempo extra, sin capturarla aparte (regla de Dani
+        // 2026-07-01: "es en automático que se apruebe").
+        if ($parent->type === Authorization::TYPE_OVERTIME) {
+            $employee = $parent->employee ?? Employee::find($parent->employee_id);
+            $threshold = $employee?->department?->cena_min_overtime_hours;
+            if ($threshold === null) {
+                return null;
+            }
+
+            $dayOvertime = (float) Authorization::where('employee_id', $parent->employee_id)
+                ->whereDate('date', $this->dateString($parent))
+                ->where('type', Authorization::TYPE_OVERTIME)
+                ->whereIn('status', [Authorization::STATUS_APPROVED, Authorization::STATUS_PAID])
+                ->sum('hours');
+
+            return $dayOvertime >= (float) $threshold ? CompensationType::PULL_RULE_MEAL : null;
         }
 
         $compensationType = $parent->compensation_type_id
