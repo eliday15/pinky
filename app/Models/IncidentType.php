@@ -36,6 +36,7 @@ class IncidentType extends Model
         'requires_document',
         'affects_attendance',
         'has_time_range',
+        'uses_vacation_hours',
         'color',
         'is_active',
         'priority',
@@ -48,6 +49,7 @@ class IncidentType extends Model
         'requires_document' => 'boolean',
         'affects_attendance' => 'boolean',
         'has_time_range' => 'boolean',
+        'uses_vacation_hours' => 'boolean',
         'is_active' => 'boolean',
         'priority' => 'integer',
     ];

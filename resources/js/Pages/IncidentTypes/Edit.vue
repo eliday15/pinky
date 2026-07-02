@@ -23,6 +23,7 @@ const form = useForm({
     requires_document: props.incidentType.requires_document,
     affects_attendance: props.incidentType.affects_attendance,
     has_time_range: props.incidentType.has_time_range,
+    uses_vacation_hours: props.incidentType.uses_vacation_hours,
     color: props.incidentType.color || '#6B7280',
     is_active: props.incidentType.is_active,
     priority: props.incidentType.priority ?? 0,
@@ -269,6 +270,18 @@ const submit = () => {
                             <div>
                                 <span class="text-sm font-medium text-gray-700">Maneja rango de horas</span>
                                 <p class="text-xs text-gray-500">Permite especificar hora de inicio y fin</p>
+                            </div>
+                        </label>
+
+                        <label class="flex items-center space-x-3">
+                            <input
+                                v-model="form.uses_vacation_hours"
+                                type="checkbox"
+                                class="rounded border-gray-300 text-pink-600 focus:ring-pink-500"
+                            />
+                            <div>
+                                <span class="text-sm font-medium text-gray-700">Horas a cuenta de vacaciones</span>
+                                <p class="text-xs text-gray-500">Descuenta las horas del permiso del saldo de vacaciones (1 día = 8 h) y evita la falta mientras haya horas</p>
                             </div>
                         </label>
                     </div>

@@ -220,6 +220,16 @@ class IncidentController extends Controller
                     ])->withInput();
                 }
             }
+            // Horas a cuenta de vacaciones: valida el saldo EN HORAS.
+            if ($incidentType->uses_vacation_hours) {
+                $requested = (float) ($validated['hours'] ?? 0);
+                $availableHours = $employee->vacation_hours_remaining;
+                if ($requested > $availableHours) {
+                    return redirect()->back()->withErrors([
+                        'saldo' => "Saldo insuficiente de horas de vacaciones. Disponibles: {$availableHours} h, solicitadas: {$requested} h.",
+                    ])->withInput();
+                }
+            }
             $validated['status'] = 'approved';
             $validated['approved_by'] = auth()->id();
             $validated['approved_at'] = now();
@@ -238,6 +248,9 @@ class IncidentController extends Controller
         // (the explicit approve() flow handles this when approval is required).
         if ($autoApproved && $incidentType->deducts_vacation) {
             $employee->increment('vacation_days_used', $incident->days_count);
+        }
+        if ($autoApproved && $incidentType->uses_vacation_hours) {
+            $employee->increment('vacation_hours_used', (float) $incident->hours);
         }
 
         // Una incidencia auto-aprobada surte efecto de inmediato sobre la
@@ -540,6 +553,9 @@ class IncidentController extends Controller
         if ($wasApproved && $incidentType?->deducts_vacation) {
             $incident->employee?->decrement('vacation_days_used', $incident->days_count);
         }
+        if ($wasApproved && $incidentType?->uses_vacation_hours) {
+            $incident->employee?->decrement('vacation_hours_used', (float) $incident->hours);
+        }
 
         $incident->delete();
 
@@ -578,12 +594,23 @@ class IncidentController extends Controller
                 ]);
             }
         }
+        if ($incidentType->uses_vacation_hours) {
+            $availableHours = $employee->vacation_hours_remaining;
+            if ((float) $incident->hours > $availableHours) {
+                return redirect()->back()->withErrors([
+                    'saldo' => "Saldo insuficiente de horas de vacaciones. Disponibles: {$availableHours} h, solicitadas: {$incident->hours} h.",
+                ]);
+            }
+        }
 
         $incident->approve(auth()->user());
 
         // If it deducts vacation, update employee vacation days
         if ($incidentType->deducts_vacation) {
             $employee->increment('vacation_days_used', $incident->days_count);
+        }
+        if ($incidentType->uses_vacation_hours) {
+            $employee->increment('vacation_hours_used', (float) $incident->hours);
         }
 
         // La aprobación surte efecto de inmediato sobre la asistencia, igual

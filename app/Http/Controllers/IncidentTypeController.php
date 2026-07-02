@@ -106,6 +106,7 @@ class IncidentTypeController extends Controller
             'requires_document' => ['boolean'],
             'affects_attendance' => ['boolean'],
             'has_time_range' => ['boolean'],
+            'uses_vacation_hours' => ['boolean'],
             'color' => ['required', 'string', 'max:20'],
             'is_active' => ['boolean'],
             'priority' => ['integer', 'min:0'],
@@ -120,7 +121,7 @@ class IncidentTypeController extends Controller
                 'name', 'code', 'description', 'category',
                 'is_paid', 'deducts_vacation', 'requires_approval',
                 'requires_document', 'affects_attendance', 'has_time_range',
-                'color', 'is_active', 'priority',
+                'uses_vacation_hours', 'color', 'is_active', 'priority',
             ])->toArray()
         );
 
@@ -184,6 +185,7 @@ class IncidentTypeController extends Controller
             'requires_document' => ['boolean'],
             'affects_attendance' => ['boolean'],
             'has_time_range' => ['boolean'],
+            'uses_vacation_hours' => ['boolean'],
             'color' => ['required', 'string', 'max:20'],
             'is_active' => ['boolean'],
             'priority' => ['integer', 'min:0'],
@@ -198,7 +200,7 @@ class IncidentTypeController extends Controller
                 'name', 'code', 'description', 'category',
                 'is_paid', 'deducts_vacation', 'requires_approval',
                 'requires_document', 'affects_attendance', 'has_time_range',
-                'color', 'is_active', 'priority',
+                'uses_vacation_hours', 'color', 'is_active', 'priority',
             ])->toArray()
         );
 

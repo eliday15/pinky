@@ -84,6 +84,7 @@ class Employee extends Model
         'monthly_bonus_amount',
         'vacation_days_entitled',
         'vacation_days_used',
+        'vacation_hours_used',
         'vacation_days_reserved',
         'vacation_premium_percentage',
         'status',
@@ -99,6 +100,7 @@ class Employee extends Model
         'daily_salary' => 'decimal:2',
         'monthly_bonus_amount' => 'decimal:2',
         'vacation_premium_percentage' => 'decimal:2',
+        'vacation_hours_used' => 'decimal:2',
         'is_minimum_wage' => 'boolean',
         'is_trial_period' => 'boolean',
         'is_imss_enrolled' => 'boolean',
@@ -461,6 +463,22 @@ class Employee extends Model
     public function getVacationDaysRemainingAttribute(): int
     {
         return max(0, $this->vacation_days_entitled - $this->vacation_days_used - ($this->vacation_days_reserved ?? 0));
+    }
+
+    /** 1 día de vacaciones = 8 horas de crédito (Dani 2026-07-01). */
+    public const VACATION_HOURS_PER_DAY = 8;
+
+    /**
+     * Horas de vacaciones disponibles para los permisos "a cuenta de vacaciones":
+     * los días restantes convertidos a horas (1 día = 8 h) menos las horas ya
+     * consumidas por esos permisos.
+     */
+    public function getVacationHoursRemainingAttribute(): float
+    {
+        return max(
+            0.0,
+            $this->vacation_days_remaining * self::VACATION_HOURS_PER_DAY - (float) ($this->vacation_hours_used ?? 0),
+        );
     }
 
     /**

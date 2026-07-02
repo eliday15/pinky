@@ -769,7 +769,7 @@ class ZktecoSyncService
             ->whereDate('start_date', '<=', $workDate->toDateString())
             ->whereDate('end_date', '>=', $workDate->toDateString())
             ->where('status', 'approved')
-            ->whereHas('incidentType', fn ($q) => $q->where('affects_attendance', true))
+            ->whereHas('incidentType', fn ($q) => $q->where('affects_attendance', true)->orWhere('uses_vacation_hours', true))
             ->with('incidentType')
             ->first();
 
@@ -778,8 +778,13 @@ class ZktecoSyncService
 
         if ($approvedPermission) {
             $permissionHours = (float) ($approvedPermission->hours ?? 0);
-            $hasApprovedExitPermission = $approvedPermission->incidentType->code === 'PSA';
-            $hasApprovedEntryPermission = $approvedPermission->incidentType->code === 'PEN';
+            $permissionType = $approvedPermission->incidentType;
+            // "Horas a cuenta de vacaciones" cubre entrada tarde Y salida temprano
+            // (Dani 2026-07-01): mientras el empleado tenga saldo de horas, no se
+            // marca falta por umbral. PEN/PSA siguen cubriendo solo su lado.
+            $usesVacationHours = (bool) ($permissionType->uses_vacation_hours ?? false);
+            $hasApprovedExitPermission = $usesVacationHours || $permissionType->code === 'PSA';
+            $hasApprovedEntryPermission = $usesVacationHours || $permissionType->code === 'PEN';
         }
 
         $totalPayrollHours = $workedHours + $permissionHours;
