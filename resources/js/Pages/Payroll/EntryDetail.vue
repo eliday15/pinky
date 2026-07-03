@@ -200,6 +200,9 @@ const breakdown = props.entry.calculation_breakdown || {};
                         <span v-if="concept.days > 0" class="text-xs text-gray-400 ml-2">
                             ({{ concept.days }}d)
                         </span>
+                        <span v-if="concept.quantity > 1" class="text-xs text-gray-400 ml-2">
+                            ({{ concept.quantity }} x {{ formatCurrency(concept.rate?.fixed_amount ?? 0) }})
+                        </span>
                     </div>
                     <span class="font-medium text-green-600">{{ formatCurrency(concept.amount) }}</span>
                 </div>

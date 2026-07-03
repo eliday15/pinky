@@ -641,6 +641,17 @@ class CompensationRateResolverService
                 default => [0.0, 0.0],
             };
 
+            // One-time concepts pay their fixed amount times the authorized
+            // quantity (units/bonos, stored in auth->hours), e.g. "600 bonos ×
+            // $1 = $600". The quantity defaults to 1 so a plain lump-sum concept
+            // (or an authorization with no quantity) keeps paying its fixed
+            // amount exactly once, as before.
+            $quantity = 1.0;
+            if ($compType->application_mode === CompensationType::APPLICATION_ONE_TIME
+                && (float) $auth->hours > 0) {
+                $quantity = (float) $auth->hours;
+            }
+
             $amount = $compType->calculateCompensation(
                 $hourlyRate,
                 $dailySalary,
@@ -649,6 +660,10 @@ class CompensationRateResolverService
                 $rate['percentage'],
                 $rate['fixed_amount'],
             );
+
+            if ($quantity !== 1.0) {
+                $amount = round($amount * $quantity, 2);
+            }
 
             if ($amount <= 0) {
                 // Misconfigured comp type (e.g. a fixed amount left at 0).
@@ -668,6 +683,11 @@ class CompensationRateResolverService
                 'name' => $compType->name,
                 'hours' => round($hours, 2),
                 'days' => round($days, 2),
+                // Units/bonos for one-time concepts (e.g. 600); 0 otherwise so
+                // the UI only annotates the quantity when it's meaningful.
+                'quantity' => $compType->application_mode === CompensationType::APPLICATION_ONE_TIME
+                    ? round($quantity, 2)
+                    : 0,
                 'rate' => $rate,
                 'amount' => $amount,
                 'authorization_type' => $compType->authorization_type,
