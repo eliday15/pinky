@@ -116,7 +116,9 @@ class EmployeeController extends Controller
         $validated = $request->validate([
             'employee_number' => ['required', 'string', 'max:50', Rule::unique('employees')->whereNull('deleted_at')],
             'contpaqi_code' => ['nullable', 'string', 'max:50', Rule::unique('employees')->whereNull('deleted_at')],
-            'zkteco_user_id' => ['required', 'integer'],
+            // El ID ZKTeco es obligatorio SALVO para empleados exentos de
+            // asistencia (no checan): esos no tienen checador.
+            'zkteco_user_id' => ['nullable', 'integer', 'required_unless:is_attendance_exempt,true,1'],
             'confirm_zkteco_reassign' => ['nullable', 'boolean'],
             'first_name' => ['required', 'string', 'max:100'],
             'last_name' => ['required', 'string', 'max:100'],
@@ -158,6 +160,7 @@ class EmployeeController extends Controller
             'trial_period_end_date' => ['nullable', 'date', 'after_or_equal:hire_date'],
             'imss_number' => ['nullable', 'string', 'max:50'],
             'is_imss_enrolled' => ['boolean'],
+            'is_attendance_exempt' => ['boolean'],
             'cash_pin' => ['nullable', 'string', 'min:4', 'confirmed'],
             'daily_salary' => ['required', 'numeric', 'min:0'],
             'monthly_bonus_type' => ['nullable', 'string', Rule::in(['none', 'fixed', 'variable'])],
@@ -178,8 +181,13 @@ class EmployeeController extends Controller
             'emergency_contacts.*.address' => ['nullable', 'string', 'max:255'],
         ]);
 
-        // Check ZKTeco ID conflict (include soft-deleted to avoid DB unique constraint violations)
-        $existingEmployee = Employee::withTrashed()->where('zkteco_user_id', $validated['zkteco_user_id'])->first();
+        // Check ZKTeco ID conflict (include soft-deleted to avoid DB unique constraint violations).
+        // Se omite para empleados exentos sin ID ZKTeco: una búsqueda con null
+        // haría whereNull y daría falso conflicto contra el primer empleado sin
+        // checador.
+        $existingEmployee = ! empty($validated['zkteco_user_id'])
+            ? Employee::withTrashed()->where('zkteco_user_id', $validated['zkteco_user_id'])->first()
+            : null;
         if ($existingEmployee) {
             // Soft-deleted employees: silently clear the ZKTeco ID
             if ($existingEmployee->trashed()) {
@@ -205,7 +213,7 @@ class EmployeeController extends Controller
         // El PIN de cobro y la marca de inscripción al IMSS solo los fija el
         // editor con acceso completo (admin); RRHH (alta personal) no los toca.
         if (! $canEditAll) {
-            unset($validated['cash_pin'], $validated['is_imss_enrolled']);
+            unset($validated['cash_pin'], $validated['is_imss_enrolled'], $validated['is_attendance_exempt']);
         }
 
         $validated['full_name'] = $validated['first_name'].' '.$validated['last_name'];
@@ -216,6 +224,7 @@ class EmployeeController extends Controller
         $validated['status'] = $validated['status'] ?? 'active';
         $validated['is_minimum_wage'] = $validated['is_minimum_wage'] ?? false;
         $validated['is_trial_period'] = $validated['is_trial_period'] ?? false;
+        $validated['is_attendance_exempt'] = $validated['is_attendance_exempt'] ?? false;
         $validated['monthly_bonus_type'] = $validated['monthly_bonus_type'] ?? 'none';
         $validated['monthly_bonus_amount'] = $validated['monthly_bonus_amount'] ?? 0;
 
@@ -420,7 +429,9 @@ class EmployeeController extends Controller
         $rules = [
             'employee_number' => ['required', 'string', 'max:50', Rule::unique('employees')->ignore($employee->id)->whereNull('deleted_at')],
             'contpaqi_code' => ['nullable', 'string', 'max:50', Rule::unique('employees')->ignore($employee->id)->whereNull('deleted_at')],
-            'zkteco_user_id' => ['required', 'integer'],
+            // El ID ZKTeco es obligatorio SALVO para empleados exentos de
+            // asistencia (no checan): esos no tienen checador.
+            'zkteco_user_id' => ['nullable', 'integer', 'required_unless:is_attendance_exempt,true,1'],
             'confirm_zkteco_reassign' => ['nullable', 'boolean'],
             'first_name' => ['required', 'string', 'max:100'],
             'last_name' => ['required', 'string', 'max:100'],
@@ -462,6 +473,7 @@ class EmployeeController extends Controller
             'trial_period_end_date' => ['nullable', 'date', 'after_or_equal:hire_date'],
             'imss_number' => ['nullable', 'string', 'max:50'],
             'is_imss_enrolled' => ['boolean'],
+            'is_attendance_exempt' => ['boolean'],
             'cash_pin' => ['nullable', 'string', 'min:4', 'confirmed'],
             'daily_salary' => ['required', 'numeric', 'min:0'],
             'monthly_bonus_type' => ['nullable', 'string', Rule::in(['none', 'fixed', 'variable'])],
@@ -513,11 +525,15 @@ class EmployeeController extends Controller
             ]);
         }
 
-        // Check ZKTeco ID conflict (exclude current employee, include soft-deleted)
-        $existingEmployee = Employee::withTrashed()
-            ->where('zkteco_user_id', $validated['zkteco_user_id'])
-            ->where('id', '!=', $employee->id)
-            ->first();
+        // Check ZKTeco ID conflict (exclude current employee, include soft-deleted).
+        // Se omite cuando no hay ID ZKTeco (empleado exento): evita el falso
+        // conflicto por whereNull.
+        $existingEmployee = ! empty($validated['zkteco_user_id'])
+            ? Employee::withTrashed()
+                ->where('zkteco_user_id', $validated['zkteco_user_id'])
+                ->where('id', '!=', $employee->id)
+                ->first()
+            : null;
         if ($existingEmployee) {
             // Soft-deleted employees: silently clear the ZKTeco ID
             if ($existingEmployee->trashed()) {
@@ -541,6 +557,7 @@ class EmployeeController extends Controller
         $validated['full_name'] = $validated['first_name'].' '.$validated['last_name'];
         $validated['is_minimum_wage'] = $validated['is_minimum_wage'] ?? false;
         $validated['is_trial_period'] = $validated['is_trial_period'] ?? false;
+        $validated['is_attendance_exempt'] = $validated['is_attendance_exempt'] ?? false;
         $validated['monthly_bonus_type'] = $validated['monthly_bonus_type'] ?? 'none';
         $validated['monthly_bonus_amount'] = $validated['monthly_bonus_amount'] ?? 0;
         $validated['vacation_days_reserved'] = $validated['vacation_days_reserved'] ?? 0;

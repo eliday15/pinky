@@ -139,6 +139,23 @@ class PayrollCalculatorService
         // Calculate incident days
         $incidentMetrics = $this->calculateIncidentMetrics($incidents, $startDate, $endDate, $employee, $holidayDates);
 
+        // Faltas injustificadas capturadas por INCIDENCIA (no por checada):
+        // categoría 'absence' con is_paid=false. Descuentan SD×7/6 igual que una
+        // falta de asistencia, deduplicadas por fecha contra las faltas ya
+        // contadas en asistencia y los días trabajados, y excluyendo días
+        // justificados. Es el canal de falta de los empleados sin checador.
+        $incidentAbsenceDeductionDates = $this->incidentAbsenceDeductionDates(
+            $incidents,
+            $startDate,
+            $endDate,
+            $employee,
+            $holidayDates,
+            $justifiedDates,
+            $metrics['days_absent_unjustified_dates'],
+            $metrics['worked_dates'],
+        );
+        $incidentAbsenceDays = count($incidentAbsenceDeductionDates);
+
         // ----------------------------------------------------------------
         // Period payment scope.
         // The nómina is split in two: a WEEKLY period pays the base salary
@@ -214,8 +231,11 @@ class PayrollCalculatorService
         $workingDaysPerWeek = self::SEVENTH_DAY_DIVISOR;
         $restDayFactor = 7 / self::SEVENTH_DAY_DIVISOR;
         $lateAbsencesGenerated = $payBase ? $incidentMetrics['late_absence_days'] : 0;
+        // Faltas injustificadas capturadas por incidencia (mismo castigo SD×7/6),
+        // ya deduplicadas por fecha contra asistencia; solo en periodo base.
+        $incidentAbsenceDeductionDays = $payBase ? $incidentAbsenceDays : 0;
         $absenceDeductionDays = $payBase
-            ? ($metrics['days_absent_unjustified'] + $lateAbsencesGenerated)
+            ? ($metrics['days_absent_unjustified'] + $lateAbsencesGenerated + $incidentAbsenceDeductionDays)
             : 0;
         $deductions = $payBase
             ? round($absenceDeductionDays * $dailySalary * $restDayFactor, 2)
@@ -367,7 +387,10 @@ class PayrollCalculatorService
         $grossPay = $basePay + $overtimePay + $veladaPay + $holidayPay + $weekendPay
             + $otherCompensationPay + $vacationPay + $vacationPremiumPay + $sickLeavePay
             + $totalBonuses;
-        $netPay = $grossPay - $deductions;
+        // La nómina de un empleado nunca es negativa: si la deducción por faltas
+        // supera lo devengado (muchas faltas / jornada con domingo), el neto se
+        // topa en 0 en vez de arrastrar un saldo negativo.
+        $netPay = max(0.0, round($grossPay - $deductions, 2));
 
         // ---- Reparto efectivo / banco ----
         // El sueldo BASE se paga en EFECTIVO solo cuando el empleado sigue en
@@ -408,9 +431,12 @@ class PayrollCalculatorService
                 'permission_unpaid_days' => $incidentMetrics['permission_unpaid_days'],
                 'absence_days' => $incidentMetrics['absence_days'],
                 // Faltas que descuentan SD × 7/D: injustificadas (asistencia) +
-                // faltas por retardos (FRT). Los días pagados aparte o no
-                // pagados se restan del base, no se descuentan con castigo.
+                // faltas por retardos (FRT) + faltas capturadas por incidencia
+                // (empleados sin checador / correcciones manuales). Los días
+                // pagados aparte o no pagados se restan del base, no se
+                // descuentan con castigo.
                 'absence_deduction_days' => $absenceDeductionDays,
+                'absence_incident_deduction_days' => $incidentAbsenceDeductionDays,
             ],
             'late_accumulation' => [
                 'late_absences_generated' => $lateAbsencesGenerated,
@@ -502,7 +528,7 @@ class PayrollCalculatorService
                 'weekend_hours' => $payExtras ? $metrics['weekend_hours'] : 0,
                 'night_shift_hours' => $payExtras ? $nightShiftMetrics['night_shift_hours'] : 0,
                 'days_worked' => $payBase ? $metrics['days_worked'] : 0,
-                'days_absent' => $payBase ? ($metrics['days_absent'] + $lateAbsencesGenerated) : 0,
+                'days_absent' => $payBase ? ($metrics['days_absent'] + $lateAbsencesGenerated + $incidentAbsenceDeductionDays) : 0,
                 'days_late' => $payBase ? $metrics['days_late'] : 0,
                 'punctuality_days' => $payExtras ? $metrics['punctual_days'] : 0,
                 'night_shift_days' => $payExtras ? $nightShiftMetrics['night_shift_days'] : 0,
@@ -764,6 +790,11 @@ class PayrollCalculatorService
         $daysAbsentUnjustified = 0;
         $daysLate = 0;
         $punctualDays = 0;
+        // Sets por fecha 'Y-m-d' para deduplicar la falta capturada por
+        // incidencia contra la falta ya contada por checada, y para que la
+        // "evidencia de trabajo gane" (un día trabajado nunca descuenta).
+        $daysAbsentUnjustifiedDates = [];
+        $workedDates = [];
 
         foreach ($attendance as $record) {
             $workDate = Carbon::parse($record->work_date);
@@ -794,6 +825,7 @@ class PayrollCalculatorService
                 // goce, incapacidad, falta justificada).
                 if (! isset($justifiedDates[$workDateStr])) {
                     $daysAbsentUnjustified++;
+                    $daysAbsentUnjustifiedDates[$workDateStr] = true;
                 }
 
                 continue;
@@ -810,6 +842,7 @@ class PayrollCalculatorService
 
             if (in_array($record->status, ['present', 'late', 'partial'])) {
                 $daysWorked++;
+                $workedDates[$workDateStr] = true;
 
                 $workedHours = (float) $record->worked_hours;
                 $overtime = (float) $record->overtime_hours;
@@ -859,6 +892,8 @@ class PayrollCalculatorService
             'days_worked' => $daysWorked,
             'days_absent' => $daysAbsent,
             'days_absent_unjustified' => $daysAbsentUnjustified,
+            'days_absent_unjustified_dates' => $daysAbsentUnjustifiedDates,
+            'worked_dates' => $workedDates,
             'days_late' => $daysLate,
             'punctual_days' => $punctualDays,
         ];
@@ -944,9 +979,13 @@ class PayrollCalculatorService
                 continue;
             }
 
-            // "Solo no pagar el día" (DECISIONES §5 revisada): ausencias y
-            // permisos sin goce NO generan deducción monetaria — el día ya
-            // vale $0 porque el sueldo base se paga por horas trabajadas.
+            // Conteo por categoría para REPORTE. Permisos sin goce se restan del
+            // base plano (sin castigo del séptimo día). Las faltas injustificadas
+            // ('absence' con is_paid=false) SÍ descuentan SD×7/6, pero ese
+            // descuento se calcula por FECHA en incidentAbsenceDeductionDates()
+            // para deduplicar contra las faltas de asistencia y los días
+            // trabajados; aquí 'absence_days' queda solo como métrica de reporte
+            // (incluye también las faltas justificadas y honra el count_mode).
             switch ($category) {
                 case 'vacation':
                     $vacationDays += $days;
@@ -984,6 +1023,89 @@ class PayrollCalculatorService
             'absence_days' => $absenceDays,
             'late_absence_days' => $lateAbsenceDays,
         ];
+    }
+
+    /**
+     * Fechas 'Y-m-d' de faltas injustificadas capturadas por INCIDENCIA (no por
+     * checada) que descuentan SD×7/6. Es el único canal de falta para empleados
+     * sin checador (is_attendance_exempt) y corrige el bug de que una "Falta
+     * injustificada"/"Suspensión" aprobada no descontaba a NADIE en el modelo de
+     * sueldo diario.
+     *
+     * Filtra ESTRICTAMENTE categoría 'absence' con is_paid=false: excluye FRT
+     * (categoría 'late_accumulation', ya contada en late_absence_days) y "Falta
+     * justificada" (is_paid=true). NO se gatea por is_paid solo, para no
+     * doble-penalizar un permiso sin goce (ese ya se resta del base plano).
+     *
+     * Enumera día por día (nunca por count_mode/overlapDays: una falta jamás
+     * cae en día de descanso) y descarta: festivo, día no laborable del
+     * empleado, día justificado por otra incidencia, día ya contado como falta
+     * en asistencia (dedup) y día con checada trabajada ("la evidencia de
+     * trabajo gana", protege al empleado con checador). Devuelve un set por
+     * fecha ⇒ máximo un descuento por día aunque se solapen incidencias.
+     *
+     * @param  array<string,true>  $justifiedDates
+     * @param  array<string,true>  $attendanceAbsentDates  Fechas ya contadas como falta injustificada por checada.
+     * @param  array<string,true>  $workedDates  Fechas con checada present/late/partial.
+     * @return array<string,true>
+     */
+    private function incidentAbsenceDeductionDates(
+        Collection $incidents,
+        Carbon $startDate,
+        Carbon $endDate,
+        Employee $employee,
+        array $holidayDates,
+        array $justifiedDates,
+        array $attendanceAbsentDates,
+        array $workedDates,
+    ): array {
+        $dates = [];
+
+        foreach ($incidents as $incident) {
+            $type = $incident->incidentType;
+            if (! $type || $type->category !== 'absence' || $type->is_paid) {
+                continue;
+            }
+
+            $from = Carbon::parse($incident->start_date)->startOfDay()->max($startDate->copy()->startOfDay());
+            $to = Carbon::parse($incident->end_date)->startOfDay()->min($endDate->copy()->startOfDay());
+
+            // Acota al empleo (igual que paidCalendarDays) para no descontar
+            // faltas fuera del alta/baja.
+            if ($employee->hire_date) {
+                $from = $from->max(Carbon::parse($employee->hire_date)->startOfDay());
+            }
+            if ($employee->termination_date) {
+                $to = $to->min(Carbon::parse($employee->termination_date)->startOfDay());
+            }
+            if ($from->gt($to)) {
+                continue;
+            }
+
+            for ($day = $from->copy(); $day->lte($to); $day->addDay()) {
+                $dateStr = $day->toDateString();
+
+                if (in_array($dateStr, $holidayDates, true)) {
+                    continue; // festivo nunca es falta
+                }
+                if (! $employee->isEffectiveWorkingDay($day->englishDayOfWeek)) {
+                    continue; // día de descanso del empleado no descuenta
+                }
+                if (isset($justifiedDates[$dateStr])) {
+                    continue; // justificada por otra incidencia (vac/incap/permiso/FJU)
+                }
+                if (isset($attendanceAbsentDates[$dateStr])) {
+                    continue; // ya contada como falta injustificada en asistencia (dedup)
+                }
+                if (isset($workedDates[$dateStr])) {
+                    continue; // trabajó ese día: la evidencia de trabajo gana
+                }
+
+                $dates[$dateStr] = true;
+            }
+        }
+
+        return $dates;
     }
 
     /**

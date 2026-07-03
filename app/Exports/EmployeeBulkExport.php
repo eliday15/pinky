@@ -72,6 +72,7 @@ class EmployeeBulkExport implements FromCollection, WithHeadings, WithMapping, W
             'tipo_bono_mensual',
             'monto_bono_mensual',
             'salario_minimo',
+            'no_checa',
             'dias_vacaciones',
             'prima_vacacional_pct',
         ];
@@ -113,6 +114,7 @@ class EmployeeBulkExport implements FromCollection, WithHeadings, WithMapping, W
             $employee->monthly_bonus_type ?? 'none',
             (float) ($employee->monthly_bonus_amount ?? 0),
             $employee->is_minimum_wage ? 'SI' : 'NO',
+            $employee->is_attendance_exempt ? 'SI' : 'NO',
             (int) ($employee->vacation_days_entitled ?? 0),
             (float) ($employee->vacation_premium_percentage ?? 25),
         ];

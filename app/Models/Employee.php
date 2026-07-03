@@ -78,6 +78,7 @@ class Employee extends Model
         'trial_period_end_date',
         'imss_number',
         'is_imss_enrolled',
+        'is_attendance_exempt',
         'cash_pin',
         'daily_salary',
         'monthly_bonus_type',
@@ -104,6 +105,7 @@ class Employee extends Model
         'is_minimum_wage' => 'boolean',
         'is_trial_period' => 'boolean',
         'is_imss_enrolled' => 'boolean',
+        'is_attendance_exempt' => 'boolean',
         'schedule_overrides' => 'array',
     ];
 
@@ -429,6 +431,25 @@ class Employee extends Model
     public function scopeAboveMinimumWage($query)
     {
         return $query->where('is_minimum_wage', false);
+    }
+
+    /**
+     * Scope for employees exempt from attendance (no checador / no ZKTeco).
+     * Their faltas and authorizations are captured manually; they are still
+     * paid the full daily-salary base.
+     */
+    public function scopeAttendanceExempt($query)
+    {
+        return $query->where('is_attendance_exempt', true);
+    }
+
+    /**
+     * Scope for employees that DO check attendance (biometric / ZKTeco). Used to
+     * exclude attendance-exempt employees from absence auto-generation.
+     */
+    public function scopeRequiresAttendance($query)
+    {
+        return $query->where('is_attendance_exempt', false);
     }
 
     /**

@@ -43,6 +43,7 @@ class EmployeeFactory extends Factory
             'status' => 'active',
             'is_minimum_wage' => false,
             'is_trial_period' => false,
+            'is_attendance_exempt' => false,
             'monthly_bonus_type' => 'none',
             'monthly_bonus_amount' => 0,
             'vacation_days_entitled' => 12,
@@ -71,6 +72,18 @@ class EmployeeFactory extends Factory
         return $this->state(fn (array $attributes) => [
             'is_minimum_wage' => true,
             'hourly_rate' => 29.40,
+        ]);
+    }
+
+    /**
+     * Create an employee exempt from attendance (no checador / no ZKTeco).
+     * Paid full daily-salary base; faltas/authorizations captured manually.
+     */
+    public function attendanceExempt(): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'is_attendance_exempt' => true,
+            'zkteco_user_id' => null,
         ]);
     }
 

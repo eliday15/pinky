@@ -931,7 +931,12 @@ class ZktecoSyncService
             ->pluck('employee_id')
             ->toArray();
 
+        // Los empleados exentos de asistencia (sin checador / ZKTeco) NUNCA
+        // generan falta automática: no marcan, se les paga el sueldo completo y
+        // sus faltas se capturan manualmente por incidencia. Sin este filtro
+        // detectAbsences les crearía una falta cada día laborable en cada sync.
         $employeesWithoutRecords = Employee::active()
+            ->requiresAttendance()
             ->with('schedule')
             ->whereNotIn('id', $employeesWithRecords)
             ->get();

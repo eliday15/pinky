@@ -28,6 +28,7 @@ class EmployeeBulkImport implements ToCollection, WithHeadingRow, SkipsEmptyRows
         'tipo_bono_mensual' => 'monthly_bonus_type',
         'monto_bono_mensual' => 'monthly_bonus_amount',
         'salario_minimo' => 'is_minimum_wage',
+        'no_checa' => 'is_attendance_exempt',
         'dias_vacaciones' => 'vacation_days_entitled',
         'prima_vacacional_pct' => 'vacation_premium_percentage',
     ];
@@ -111,6 +112,11 @@ class EmployeeBulkImport implements ToCollection, WithHeadingRow, SkipsEmptyRows
 
             // Process editable fields (Group C)
             foreach (self::FIELD_MAP as $heading => $field) {
+                // Columna ausente en el archivo (p.ej. una plantilla vieja sin la
+                // columna nueva) → nada que actualizar para ese campo.
+                if (! $row->has($heading)) {
+                    continue;
+                }
                 if (! isset($row[$heading]) && $row[$heading] !== 0 && $row[$heading] !== '0') {
                     continue;
                 }
@@ -126,7 +132,7 @@ class EmployeeBulkImport implements ToCollection, WithHeadingRow, SkipsEmptyRows
                 }
 
                 // Normalize and compare
-                if ($heading === 'salario_minimo') {
+                if (in_array($heading, ['salario_minimo', 'no_checa'], true)) {
                     $newValue = $this->parseBooleanField($newValue);
                     $oldValue = (bool) $oldValue;
                     if ($newValue !== $oldValue) {
@@ -242,7 +248,7 @@ class EmployeeBulkImport implements ToCollection, WithHeadingRow, SkipsEmptyRows
         }
 
         // Boolean fields: must be SI/NO
-        if ($heading === 'salario_minimo') {
+        if (in_array($heading, ['salario_minimo', 'no_checa'], true)) {
             $normalized = strtoupper(trim((string) $value));
             if (! in_array($normalized, ['SI', 'NO', 'SÍ', '1', '0', 'TRUE', 'FALSE'])) {
                 return [

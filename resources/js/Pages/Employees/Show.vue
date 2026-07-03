@@ -100,6 +100,9 @@ const supervisorIsAutoResolved = props.employee.position?.supervisor_position_id
                                 <span v-if="employee.is_trial_period" class="px-3 py-1 text-sm font-medium rounded-full bg-amber-100 text-amber-800">
                                     En Prueba
                                 </span>
+                                <span v-if="employee.is_attendance_exempt" class="px-3 py-1 text-sm font-medium rounded-full bg-sky-100 text-sky-800">
+                                    No checa
+                                </span>
                             </div>
                             <p class="text-gray-500 mt-1">{{ employee.position?.name }} - {{ employee.department?.name }}</p>
                             <div class="mt-4 grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">

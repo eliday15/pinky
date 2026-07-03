@@ -113,6 +113,7 @@ const form = useForm({
     trial_period_end_date: props.employee.trial_period_end_date?.split('T')[0] || '',
     imss_number: props.employee.imss_number || '',
     is_imss_enrolled: props.employee.is_imss_enrolled || false,
+    is_attendance_exempt: props.employee.is_attendance_exempt || false,
     cash_pin: '',
     cash_pin_confirmation: '',
     daily_salary: props.employee.daily_salary || '',
@@ -126,6 +127,14 @@ const form = useForm({
     compensation_type_ids: initialCompensationTypeIds,
     compensation_type_overrides: initialCompensationTypeOverrides,
     two_factor_code: '',
+});
+
+// Un empleado que no checa no tiene ID ZKTeco: al marcar la casilla se limpia
+// el campo para no conservar (ni bloquear) un ID que ya no aplica.
+watch(() => form.is_attendance_exempt, (exempt) => {
+    if (exempt) {
+        form.zkteco_user_id = null;
+    }
 });
 
 const photoPreview = ref(props.employee.photo_path ? `/storage/${props.employee.photo_path}` : null);
@@ -768,8 +777,11 @@ watch(() => form.hire_date, onHireDateChange);
                             <p v-if="form.errors.contpaqi_code" class="mt-1 text-sm text-red-600">{{ form.errors.contpaqi_code }}</p>
                         </div>
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">ID ZKTeco *</label>
-                            <input v-model="form.zkteco_user_id" type="number" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.zkteco_user_id }" />
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                ID ZKTeco <span v-if="!form.is_attendance_exempt">*</span>
+                                <span v-else class="text-gray-400 font-normal">(no aplica: empleado no checa)</span>
+                            </label>
+                            <input v-model="form.zkteco_user_id" type="number" :disabled="form.is_attendance_exempt" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 disabled:bg-gray-100 disabled:text-gray-400" :class="{ 'border-red-500': form.errors.zkteco_user_id }" />
                             <p v-if="form.errors.zkteco_user_id" class="mt-1 text-sm text-red-600">{{ form.errors.zkteco_user_id }}</p>
                         </div>
                         <div>
@@ -963,6 +975,13 @@ watch(() => form.hire_date, onHireDateChange);
                                 <input v-model="form.is_imss_enrolled" type="checkbox" class="rounded border-gray-300 text-pink-600 focus:ring-pink-500" />
                                 <span class="ml-2 text-sm text-gray-700">Ya esta inscrito en el IMSS</span>
                             </label>
+                        </div>
+                        <div v-if="canEditAll" class="md:col-span-2">
+                            <label class="flex items-center">
+                                <input v-model="form.is_attendance_exempt" type="checkbox" class="rounded border-gray-300 text-pink-600 focus:ring-pink-500" />
+                                <span class="ml-2 text-sm font-medium text-gray-700">No checa (sin checador / ZKTeco)</span>
+                            </label>
+                            <p class="mt-1 text-sm text-gray-500">El empleado no marca en el checador y no requiere ID ZKTeco. Cobra su sueldo completo; sus faltas y autorizaciones se capturan manualmente.</p>
                         </div>
                     </div>
 
