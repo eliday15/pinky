@@ -1014,6 +1014,10 @@ class PayrollCalculatorService
         $totalNet = $entries->sum('net_pay');
         $totalDeductions = $entries->sum('deductions');
         $totalOvertime = $entries->sum('overtime_pay');
+        // Reparto del neto: efectivo (extras + base de quien cobra en efectivo)
+        // vs transferencia (base por banco/CONTPAQi de quien está en IMSS).
+        $totalCash = $entries->sum('cash_amount');
+        $totalTransfer = $entries->sum('bank_amount');
         $employeeCount = $entries->count();
 
         $byDepartment = $entries->groupBy('employee.department.name')->map(function ($group) {
@@ -1021,6 +1025,8 @@ class PayrollCalculatorService
                 'count' => $group->count(),
                 'total_gross' => $group->sum('gross_pay'),
                 'total_net' => $group->sum('net_pay'),
+                'total_cash' => $group->sum('cash_amount'),
+                'total_transfer' => $group->sum('bank_amount'),
             ];
         });
 
@@ -1030,6 +1036,8 @@ class PayrollCalculatorService
             'total_net' => $totalNet,
             'total_deductions' => $totalDeductions,
             'total_overtime' => $totalOvertime,
+            'total_cash' => $totalCash,
+            'total_transfer' => $totalTransfer,
             'average_pay' => $employeeCount > 0 ? $totalNet / $employeeCount : 0,
             'by_department' => $byDepartment,
         ];

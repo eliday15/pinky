@@ -314,6 +314,8 @@ class PayrollControllerTest extends FeatureTestCase
                     ->has('total_net')
                     ->has('total_deductions')
                     ->has('total_overtime')
+                    ->has('total_cash')
+                    ->has('total_transfer')
                     ->has('average_pay')
                     ->has('by_department'))
                 ->has('can', fn (Assert $can) => $can

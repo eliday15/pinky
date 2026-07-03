@@ -222,7 +222,7 @@ const closeCash = () => {
         </div>
 
         <!-- Summary Cards -->
-        <div v-if="entries.length > 0" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6" :class="{ 'md:grid-cols-5': can?.viewComplete }">
+        <div v-if="entries.length > 0" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6" :class="{ 'lg:grid-cols-7': can?.viewComplete }">
             <div class="bg-white rounded-lg shadow p-4 text-center">
                 <p class="text-2xl font-bold text-gray-800">{{ summary.employee_count }}</p>
                 <p class="text-sm text-gray-500">Empleados</p>
@@ -238,6 +238,15 @@ const closeCash = () => {
             <div class="bg-white rounded-lg shadow p-4 text-center">
                 <p class="text-2xl font-bold text-green-600">{{ formatCurrency(summary.total_net) }}</p>
                 <p class="text-sm text-gray-500">Total Neto</p>
+            </div>
+            <!-- Reparto del neto: efectivo vs transferencia (banco/CONTPAQi) -->
+            <div class="bg-white rounded-lg shadow p-4 text-center">
+                <p class="text-2xl font-bold text-pink-600">{{ formatCurrency(summary.total_cash) }}</p>
+                <p class="text-sm text-gray-500">Efectivo</p>
+            </div>
+            <div class="bg-white rounded-lg shadow p-4 text-center">
+                <p class="text-2xl font-bold text-indigo-600">{{ formatCurrency(summary.total_transfer) }}</p>
+                <p class="text-sm text-gray-500">Transferencia</p>
             </div>
             <!-- Solo visible para nomina completa -->
             <div v-if="can?.viewComplete" class="bg-white rounded-lg shadow p-4 text-center">
@@ -270,6 +279,8 @@ const closeCash = () => {
                         <th v-if="can?.viewComplete" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Bruto</th>
                         <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Deducciones</th>
                         <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Neto</th>
+                        <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Efectivo</th>
+                        <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Transfer.</th>
                         <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Detalle</th>
                     </tr>
                 </thead>
@@ -319,6 +330,16 @@ const closeCash = () => {
                             {{ formatCurrency(entry.net_pay) }}
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-right text-sm">
+                            <span :class="entry.cash_amount > 0 ? 'text-pink-600 font-medium' : 'text-gray-400'">
+                                {{ entry.cash_amount > 0 ? formatCurrency(entry.cash_amount) : '-' }}
+                            </span>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm">
+                            <span :class="entry.bank_amount > 0 ? 'text-indigo-600 font-medium' : 'text-gray-400'">
+                                {{ entry.bank_amount > 0 ? formatCurrency(entry.bank_amount) : '-' }}
+                            </span>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm">
                             <Link
                                 :href="route('payroll.entry', entry.id)"
                                 class="text-pink-600 hover:text-pink-900"
@@ -328,7 +349,7 @@ const closeCash = () => {
                         </td>
                     </tr>
                     <tr v-if="entries.length === 0">
-                        <td :colspan="can?.viewComplete ? 10 : 8" class="px-6 py-12 text-center text-gray-500">
+                        <td :colspan="can?.viewComplete ? 12 : 10" class="px-6 py-12 text-center text-gray-500">
                             No hay registros de nomina. Presiona "Calcular Nomina" para generar.
                         </td>
                     </tr>
@@ -355,6 +376,12 @@ const closeCash = () => {
                         </p>
                         <p class="text-green-600">
                             Neto: <span class="font-medium">{{ formatCurrency(data.total_net) }}</span>
+                        </p>
+                        <p class="text-pink-600">
+                            Efectivo: <span class="font-medium">{{ formatCurrency(data.total_cash) }}</span>
+                        </p>
+                        <p class="text-indigo-600">
+                            Transferencia: <span class="font-medium">{{ formatCurrency(data.total_transfer) }}</span>
                         </p>
                     </div>
                 </div>
