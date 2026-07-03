@@ -7,6 +7,7 @@ const props = defineProps({
     period: Object,
     payouts: Array,
     transfers: { type: Array, default: () => [] },
+    cashStale: { type: Boolean, default: false },
     globalBreakdown: Object,
     denominations: Array,
     summary: Object,
@@ -159,6 +160,22 @@ const submitCollect = () => {
                 </Link>
                 <h1 class="text-2xl font-bold text-gray-800 mt-2">Pago en efectivo</h1>
                 <p class="text-gray-500">{{ period.name }}</p>
+            </div>
+
+            <!-- La nómina se recalculó después de cerrar el efectivo: los billetes
+                 de abajo están viejos hasta aprobar y volver a cerrar. -->
+            <div v-if="cashStale" class="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-4">
+                <p class="text-sm font-semibold text-amber-800">
+                    &#9888; Los montos de abajo están desactualizados
+                </p>
+                <p class="text-sm text-amber-700 mt-1">
+                    La nómina se recalculó después de preparar el efectivo. Vuelve a la nómina,
+                    <span class="font-medium">apruébala</span> y presiona
+                    <span class="font-medium">&laquo;Cerrar y preparar efectivo&raquo;</span> otra vez para regenerar los billetes con los montos correctos.
+                </p>
+                <Link :href="route('payroll.show', period.id)" class="inline-block mt-2 text-sm font-medium text-amber-800 underline">
+                    Ir a la nómina &rarr;
+                </Link>
             </div>
 
             <!-- Resumen global: transferencia + efectivo + total -->

@@ -306,6 +306,31 @@ class CashPayoutTest extends FeatureTestCase
         $this->assertEqualsWithDelta(650.00, (float) $payout->amount_paid, 0.01, 'no se descobra');
     }
 
+    public function test_cash_page_flags_stale_when_recalc_changed_cash(): void
+    {
+        [$period] = $this->approvedPeriodWithEntry(50);
+        $this->actingAsAdmin();
+        $this->post(route('payroll.closeCash', $period->id));
+
+        // Un recálculo sube el efectivo del asiento después de cerrar el efectivo.
+        $period->entries()->update(['net_pay' => 650, 'cash_amount' => 650]);
+
+        $this->get(route('payroll.cash', $period->id))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page->where('cashStale', true));
+    }
+
+    public function test_cash_page_not_stale_right_after_close(): void
+    {
+        [$period] = $this->approvedPeriodWithEntry(50);
+        $this->actingAsAdmin();
+        $this->post(route('payroll.closeCash', $period->id));
+
+        $this->get(route('payroll.cash', $period->id))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page->where('cashStale', false));
+    }
+
     public function test_collecting_reopened_difference_settles_it(): void
     {
         [$period, $employee] = $this->approvedPeriodWithEntry(50);

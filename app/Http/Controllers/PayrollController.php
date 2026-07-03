@@ -381,10 +381,20 @@ class PayrollController extends Controller
         $totalTransfer = (float) $entries->sum('bank_amount');
         $totalCash = (float) $payouts->sum('total_due');
 
+        // Los cobros (cash_payouts) se congelan al "Cerrar y preparar efectivo".
+        // Si la nómina se recalculó después, quedan viejos: se detecta comparando
+        // el efectivo del periodo ya congelado (period_amount) contra el actual
+        // de los asientos. Si no cuadran, hay que aprobar y re-cerrar el efectivo.
+        $entriesCashRounded = $entries->sum(
+            fn (PayrollEntry $e) => $this->denominations->roundToPeso((float) $e->cash_amount)
+        );
+        $cashStale = abs($entriesCashRounded - (float) $payouts->sum('period_amount')) > 0.5;
+
         return Inertia::render('Payroll/Cash', [
             'period' => $payroll,
             'payouts' => $payouts,
             'transfers' => $transfers,
+            'cashStale' => $cashStale,
             'globalBreakdown' => $this->denominations->breakdownGlobal($pendingAmounts),
             'denominations' => CashDenominationService::DENOMINATIONS,
             'summary' => [
