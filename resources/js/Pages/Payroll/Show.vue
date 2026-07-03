@@ -166,6 +166,13 @@ const closeCash = () => {
                     >
                         Ir a pago en efectivo
                     </Link>
+                    <Link
+                        v-if="can?.payCash && entries.length > 0"
+                        :href="route('payroll.transfers', period.id)"
+                        class="px-4 py-2 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200"
+                    >
+                        Transferencias
+                    </Link>
 
                     <!-- Export CONTPAQi Dropdown -->
                     <div class="relative" v-if="can?.export && entries.length > 0">

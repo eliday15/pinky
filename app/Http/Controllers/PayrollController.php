@@ -398,9 +398,51 @@ class PayrollController extends Controller
             ->filter(fn (float $v) => $v > 0)
             ->values();
 
-        // Transferencias: lo que va por banco/CONTPAQi (sueldo base de quien NO
-        // cobra base en efectivo). Es solo informativo para hacer las
-        // dispersiones; no requiere PIN. Se toma directo de cada asiento.
+        $totalCash = (float) $payouts->sum('total_due');
+
+        // Los cobros (cash_payouts) se congelan al "Cerrar y preparar efectivo".
+        // Si la nómina se recalculó después, quedan viejos: se detecta comparando
+        // el efectivo del periodo ya congelado (period_amount) contra el actual
+        // de los asientos. Si no cuadran, hay que aprobar y re-cerrar el efectivo.
+        // Las transferencias (banco) viven en su propia pantalla (payroll.transfers).
+        $entries = $payroll->entries()->get();
+        $entriesCashRounded = $entries->sum(
+            fn (PayrollEntry $e) => $this->denominations->roundToPeso((float) $e->cash_amount)
+        );
+        $cashStale = abs($entriesCashRounded - (float) $payouts->sum('period_amount')) > 0.5;
+
+        return Inertia::render('Payroll/Cash', [
+            'period' => $payroll,
+            'payouts' => $payouts,
+            'cashStale' => $cashStale,
+            'globalBreakdown' => $this->denominations->breakdownGlobal($pendingAmounts),
+            'denominations' => CashDenominationService::DENOMINATIONS,
+            'summary' => [
+                'total_due' => $totalCash,
+                'total_paid' => (float) $payouts->sum('amount_paid'),
+                'total_pending' => (float) $payouts->where('status', CashPayout::STATUS_PENDING)->sum(fn (array $p) => max(0.0, $p['total_due'] - $p['amount_paid'])),
+                'pending_count' => $payouts->where('status', CashPayout::STATUS_PENDING)->filter(fn (array $p) => ($p['total_due'] - $p['amount_paid']) > 0)->count(),
+                'paid_count' => $payouts->where('status', CashPayout::STATUS_PAID)->count(),
+                'total_cash' => $totalCash,
+            ],
+            'can' => [
+                'payCash' => $user->hasPermissionTo('payroll.pay_cash'),
+            ],
+        ]);
+    }
+
+    /**
+     * Pantalla independiente de transferencias (banco/CONTPAQi): el sueldo base
+     * de quien NO cobra en efectivo (IMSS/banco). Solo informativa para hacer
+     * las dispersiones; no requiere PIN ni forma parte del cobro en efectivo.
+     */
+    public function transfers(PayrollPeriod $payroll): Response
+    {
+        $user = auth()->user();
+        if (! $user->hasPermissionTo('payroll.pay_cash')) {
+            abort(403);
+        }
+
         $entries = $payroll->entries()->with('employee:id,full_name,employee_number')->get();
         $transfers = $entries
             ->filter(fn (PayrollEntry $e) => (float) $e->bank_amount > 0)
@@ -412,38 +454,12 @@ class PayrollController extends Controller
                 'amount' => (float) $e->bank_amount,
             ]);
 
-        $totalTransfer = (float) $entries->sum('bank_amount');
-        $totalCash = (float) $payouts->sum('total_due');
-
-        // Los cobros (cash_payouts) se congelan al "Cerrar y preparar efectivo".
-        // Si la nómina se recalculó después, quedan viejos: se detecta comparando
-        // el efectivo del periodo ya congelado (period_amount) contra el actual
-        // de los asientos. Si no cuadran, hay que aprobar y re-cerrar el efectivo.
-        $entriesCashRounded = $entries->sum(
-            fn (PayrollEntry $e) => $this->denominations->roundToPeso((float) $e->cash_amount)
-        );
-        $cashStale = abs($entriesCashRounded - (float) $payouts->sum('period_amount')) > 0.5;
-
-        return Inertia::render('Payroll/Cash', [
+        return Inertia::render('Payroll/Transfers', [
             'period' => $payroll,
-            'payouts' => $payouts,
             'transfers' => $transfers,
-            'cashStale' => $cashStale,
-            'globalBreakdown' => $this->denominations->breakdownGlobal($pendingAmounts),
-            'denominations' => CashDenominationService::DENOMINATIONS,
             'summary' => [
-                'total_due' => $totalCash,
-                'total_paid' => (float) $payouts->sum('amount_paid'),
-                'total_pending' => (float) $payouts->where('status', CashPayout::STATUS_PENDING)->sum(fn (array $p) => max(0.0, $p['total_due'] - $p['amount_paid'])),
-                'pending_count' => $payouts->where('status', CashPayout::STATUS_PENDING)->filter(fn (array $p) => ($p['total_due'] - $p['amount_paid']) > 0)->count(),
-                'paid_count' => $payouts->where('status', CashPayout::STATUS_PAID)->count(),
-                'total_transfer' => $totalTransfer,
-                'total_cash' => $totalCash,
-                'total_global' => $totalTransfer + $totalCash,
+                'total_transfer' => (float) $entries->sum('bank_amount'),
                 'transfer_count' => $transfers->count(),
-            ],
-            'can' => [
-                'payCash' => $user->hasPermissionTo('payroll.pay_cash'),
             ],
         ]);
     }

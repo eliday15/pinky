@@ -423,4 +423,36 @@ class CashPayoutTest extends FeatureTestCase
         $this->actingAsSupervisor();
         $this->post(route('payroll.confirmDelivery', $period->id))->assertForbidden();
     }
+
+    // ---- transferencias (pantalla independiente) ------------------------
+
+    public function test_transfers_page_renders_with_bank_amounts(): void
+    {
+        // No trial + IMSS => el sueldo base va a banco (bank_amount > 0).
+        $employee = Employee::factory()->create([
+            'status' => 'active', 'is_trial_period' => false, 'is_imss_enrolled' => true,
+        ]);
+        $period = PayrollPeriod::factory()->create(['type' => 'weekly', 'status' => 'approved']);
+        PayrollEntry::factory()->create([
+            'payroll_period_id' => $period->id, 'employee_id' => $employee->id,
+            'net_pay' => 1000, 'regular_pay' => 1000, 'deductions' => 0,
+            'cash_amount' => 0, 'bank_amount' => 1000,
+        ]);
+
+        $this->actingAsAdmin();
+        $this->get(route('payroll.transfers', $period->id))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Payroll/Transfers')
+                ->has('transfers', 1)
+                ->where('summary.total_transfer', 1000)
+                ->where('summary.transfer_count', 1));
+    }
+
+    public function test_transfers_page_forbidden_for_supervisor(): void
+    {
+        $period = PayrollPeriod::factory()->create(['type' => 'weekly', 'status' => 'approved']);
+        $this->actingAsSupervisor();
+        $this->get(route('payroll.transfers', $period->id))->assertForbidden();
+    }
 }
