@@ -221,8 +221,26 @@ const closeCash = () => {
             </ul>
         </div>
 
+        <!-- Reparto del pago: efectivo arriba, transferencia abajo -->
+        <div v-if="entries.length > 0" class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div class="bg-white rounded-lg shadow border-l-4 border-pink-500 p-5 flex items-center justify-between">
+                <div>
+                    <p class="text-sm font-medium text-gray-500">Efectivo</p>
+                    <p class="text-xs text-gray-400">Extras + base de quien cobra en efectivo</p>
+                </div>
+                <p class="text-3xl font-bold text-pink-600">{{ formatCurrency(summary.total_cash) }}</p>
+            </div>
+            <div class="bg-white rounded-lg shadow border-l-4 border-indigo-500 p-5 flex items-center justify-between">
+                <div>
+                    <p class="text-sm font-medium text-gray-500">Transferencia</p>
+                    <p class="text-xs text-gray-400">Sueldo base por banco / CONTPAQi</p>
+                </div>
+                <p class="text-3xl font-bold text-indigo-600">{{ formatCurrency(summary.total_transfer) }}</p>
+            </div>
+        </div>
+
         <!-- Summary Cards -->
-        <div v-if="entries.length > 0" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6" :class="{ 'lg:grid-cols-7': can?.viewComplete }">
+        <div v-if="entries.length > 0" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6" :class="{ 'md:grid-cols-5': can?.viewComplete }">
             <div class="bg-white rounded-lg shadow p-4 text-center">
                 <p class="text-2xl font-bold text-gray-800">{{ summary.employee_count }}</p>
                 <p class="text-sm text-gray-500">Empleados</p>
@@ -238,15 +256,6 @@ const closeCash = () => {
             <div class="bg-white rounded-lg shadow p-4 text-center">
                 <p class="text-2xl font-bold text-green-600">{{ formatCurrency(summary.total_net) }}</p>
                 <p class="text-sm text-gray-500">Total Neto</p>
-            </div>
-            <!-- Reparto del neto: efectivo vs transferencia (banco/CONTPAQi) -->
-            <div class="bg-white rounded-lg shadow p-4 text-center">
-                <p class="text-2xl font-bold text-pink-600">{{ formatCurrency(summary.total_cash) }}</p>
-                <p class="text-sm text-gray-500">Efectivo</p>
-            </div>
-            <div class="bg-white rounded-lg shadow p-4 text-center">
-                <p class="text-2xl font-bold text-indigo-600">{{ formatCurrency(summary.total_transfer) }}</p>
-                <p class="text-sm text-gray-500">Transferencia</p>
             </div>
             <!-- Solo visible para nomina completa -->
             <div v-if="can?.viewComplete" class="bg-white rounded-lg shadow p-4 text-center">

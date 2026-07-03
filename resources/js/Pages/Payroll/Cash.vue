@@ -20,6 +20,11 @@ const formatCurrency = (amount) => new Intl.NumberFormat('es-MX', {
 
 const formatPieces = (denom) => (denom >= 20 ? `Billete $${denom}` : `Moneda $${denom}`);
 
+// El pago en efectivo son 2 pasos: (1) preparar la entrega — definir con qué
+// billetes/monedas se va a entregar el dinero — y (2) cobrar con la contraseña
+// de cada empleado. Arranca en el paso 1.
+const step = ref(1);
+
 // --- Denominaciones disponibles (flexible) ---
 // Muchas veces no hay billetes de cierta denominación (p. ej. $1000). El cajero
 // puede desmarcar las que no tenga y el desglose (global + por empleado) se
@@ -176,6 +181,29 @@ const submitCollect = () => {
                 </div>
             </div>
 
+            <!-- Pasos: (1) preparar la entrega / definir billetes  (2) cobrar -->
+            <div class="flex gap-2 mb-6">
+                <button
+                    type="button"
+                    @click="step = 1"
+                    class="flex-1 px-4 py-3 rounded-lg border text-sm font-medium transition-colors"
+                    :class="step === 1 ? 'bg-pink-600 text-white border-pink-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'"
+                >
+                    Paso 1 &middot; Preparar entrega (billetes)
+                </button>
+                <button
+                    type="button"
+                    @click="step = 2"
+                    class="flex-1 px-4 py-3 rounded-lg border text-sm font-medium transition-colors"
+                    :class="step === 2 ? 'bg-pink-600 text-white border-pink-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'"
+                >
+                    Paso 2 &middot; Cobrar
+                </button>
+            </div>
+
+            <!-- PASO 1: definir cómo se entrega el dinero (transferencias + billetes) -->
+            <div v-show="step === 1">
+
             <!-- Transferencias (banco/CONTPAQi) -->
             <div class="bg-white rounded-lg shadow p-6 mb-6">
                 <h2 class="text-lg font-semibold text-gray-800 mb-1">Transferencias (banco)</h2>
@@ -268,6 +296,21 @@ const submitCollect = () => {
                 </p>
             </div>
 
+            <div class="flex justify-end">
+                <button
+                    type="button"
+                    @click="step = 2"
+                    class="px-5 py-2.5 bg-pink-600 text-white rounded-lg hover:bg-pink-700 text-sm font-medium"
+                >
+                    Continuar a cobrar &rarr;
+                </button>
+            </div>
+            </div>
+            <!-- /PASO 1 -->
+
+            <!-- PASO 2: cobrar con la contraseña de cada empleado -->
+            <div v-show="step === 2">
+
             <!-- Efectivo por empleado -->
             <div class="bg-white rounded-lg shadow overflow-hidden">
                 <div class="px-4 py-3 border-b border-gray-100">
@@ -342,6 +385,8 @@ const submitCollect = () => {
                     </tbody>
                 </table>
             </div>
+            </div>
+            <!-- /PASO 2 -->
         </div>
 
         <!-- Collect modal -->
@@ -354,7 +399,10 @@ const submitCollect = () => {
                         <h3 class="text-lg font-semibold text-gray-900">Cobrar efectivo</h3>
                         <p class="text-sm text-gray-500 mt-1" v-if="activePayout">
                             {{ activePayout.employee_name }} &mdash;
-                            <span class="font-medium text-gray-800">{{ formatCurrency(activePayout.total_due) }}</span>
+                            <span class="font-medium text-gray-800">{{ formatCurrency(collectable(activePayout)) }}</span>
+                            <span v-if="activePayout.amount_paid > 0" class="text-xs text-gray-400">
+                                (ya cobró {{ formatCurrency(activePayout.amount_paid) }})
+                            </span>
                         </p>
                     </div>
 
