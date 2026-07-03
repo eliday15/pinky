@@ -257,4 +257,73 @@ class CashPayoutTest extends FeatureTestCase
         $this->assertSame('paid', $payout1->fresh()->status);
         $this->assertSame('paid', $payout2->fresh()->status);
     }
+
+    // ---- diferencia tras cobro parcial (recálculo al alza) --------------
+
+    public function test_recalc_after_collection_reopens_the_difference(): void
+    {
+        [$period, $employee] = $this->approvedPeriodWithEntry(50);
+        $employee->update(['cash_pin' => '4321']);
+        $this->actingAsAdmin();
+
+        // Cierra y cobra los $50.
+        $this->post(route('payroll.closeCash', $period->id));
+        $payout = CashPayout::where('payroll_period_id', $period->id)->firstOrFail();
+        $this->post(route('payroll.payouts.collect', [$period->id, $payout->id]), ['pin' => '4321']);
+        $this->assertSame('paid', $payout->fresh()->status);
+
+        // Un recálculo sube el efectivo del periodo a $650 (p. ej. un concepto
+        // que antes pagaba $1 ahora paga $600).
+        $period->entries()->update(['net_pay' => 650, 'cash_amount' => 650]);
+
+        // Re-cerrar efectivo reabre solo la diferencia como pendiente.
+        $this->post(route('payroll.closeCash', $period->id));
+
+        $payout->refresh();
+        $this->assertSame('pending', $payout->status);
+        $this->assertEqualsWithDelta(650.00, (float) $payout->total_due, 0.01);
+        $this->assertEqualsWithDelta(50.00, (float) $payout->amount_paid, 0.01, 'conserva lo ya cobrado');
+        $this->assertEqualsWithDelta(600.00, $payout->outstanding(), 0.01, 'solo la diferencia queda por cobrar');
+    }
+
+    public function test_recalc_not_higher_leaves_paid_payout_untouched(): void
+    {
+        [$period, $employee] = $this->approvedPeriodWithEntry(650);
+        $employee->update(['cash_pin' => '4321']);
+        $this->actingAsAdmin();
+
+        $this->post(route('payroll.closeCash', $period->id));
+        $payout = CashPayout::where('payroll_period_id', $period->id)->firstOrFail();
+        $this->post(route('payroll.payouts.collect', [$period->id, $payout->id]), ['pin' => '4321']);
+        $this->assertSame('paid', $payout->fresh()->status);
+
+        // Un recálculo que NO sube el monto no reabre ni descobra.
+        $period->entries()->update(['net_pay' => 600, 'cash_amount' => 600]);
+        $this->post(route('payroll.closeCash', $period->id));
+
+        $payout->refresh();
+        $this->assertSame('paid', $payout->status);
+        $this->assertEqualsWithDelta(650.00, (float) $payout->amount_paid, 0.01, 'no se descobra');
+    }
+
+    public function test_collecting_reopened_difference_settles_it(): void
+    {
+        [$period, $employee] = $this->approvedPeriodWithEntry(50);
+        $employee->update(['cash_pin' => '4321']);
+        $this->actingAsAdmin();
+
+        $this->post(route('payroll.closeCash', $period->id));
+        $payout = CashPayout::where('payroll_period_id', $period->id)->firstOrFail();
+        $this->post(route('payroll.payouts.collect', [$period->id, $payout->id]), ['pin' => '4321']);
+
+        $period->entries()->update(['net_pay' => 650, 'cash_amount' => 650]);
+        $this->post(route('payroll.closeCash', $period->id));
+
+        // Cobrar la diferencia la salda por completo.
+        $this->post(route('payroll.payouts.collect', [$period->id, $payout->id]), ['pin' => '4321']);
+
+        $payout->refresh();
+        $this->assertSame('paid', $payout->status);
+        $this->assertEqualsWithDelta(650.00, (float) $payout->amount_paid, 0.01);
+    }
 }

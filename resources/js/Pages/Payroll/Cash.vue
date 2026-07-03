@@ -81,6 +81,11 @@ const breakdownRows = (amount) => {
 };
 const leftoverOf = (amount) => greedy(amount).leftover;
 
+// Saldo aún por cobrar de un cobro = total a cobrar menos lo ya cobrado. En un
+// cobro normal amount_paid es 0, así que es igual al total; en un pago parcial
+// (el recálculo subió el monto después de cobrar) es solo la diferencia.
+const collectable = (p) => Math.max(0, Number(p.total_due) - Number(p.amount_paid || 0));
+
 // Solo los cobros en efectivo con monto > 0 (los $0 de quien cobra base por
 // transferencia y sin extras no se listan ni se cobran con PIN).
 const cashPayouts = computed(() => props.payouts.filter((p) => Number(p.total_due) > 0));
@@ -89,12 +94,12 @@ const cashPayouts = computed(() => props.payouts.filter((p) => Number(p.total_du
 const pendingPayouts = computed(() => cashPayouts.value.filter((p) => p.status !== 'paid'));
 
 // Global = suma de los desgloses individuales (cada empleado recibe billetes
-// exactos, no se comparten piezas) sobre lo pendiente.
+// exactos, no se comparten piezas) sobre el saldo pendiente.
 const globalCalc = computed(() => {
     const totals = {};
     let leftover = 0;
     for (const p of pendingPayouts.value) {
-        const { breakdown, leftover: lo } = greedy(p.total_due);
+        const { breakdown, leftover: lo } = greedy(collectable(p));
         for (const [d, c] of Object.entries(breakdown)) totals[d] = (totals[d] ?? 0) + c;
         leftover += lo;
     }
@@ -291,14 +296,19 @@ const submitCollect = () => {
                             <td class="px-4 py-3 text-right" :class="payout.opening_balance > 0 ? 'text-amber-600' : 'text-gray-400'">
                                 {{ payout.opening_balance > 0 ? formatCurrency(payout.opening_balance) : '-' }}
                             </td>
-                            <td class="px-4 py-3 text-right font-semibold text-gray-800">{{ formatCurrency(payout.total_due) }}</td>
+                            <td class="px-4 py-3 text-right font-semibold text-gray-800">
+                                {{ formatCurrency(collectable(payout)) }}
+                                <div v-if="payout.amount_paid > 0" class="text-xs font-normal text-gray-400">
+                                    ya cobró {{ formatCurrency(payout.amount_paid) }}
+                                </div>
+                            </td>
                             <td class="px-4 py-3">
                                 <span class="text-xs text-gray-500">
-                                    <template v-for="(row, i) in breakdownRows(payout.total_due)" :key="row.denom">
-                                        <span>{{ row.count }}&times;${{ row.denom }}</span><span v-if="i < breakdownRows(payout.total_due).length - 1">, </span>
+                                    <template v-for="(row, i) in breakdownRows(collectable(payout))" :key="row.denom">
+                                        <span>{{ row.count }}&times;${{ row.denom }}</span><span v-if="i < breakdownRows(collectable(payout)).length - 1">, </span>
                                     </template>
-                                    <span v-if="!breakdownRows(payout.total_due).length && leftoverOf(payout.total_due) <= 0">-</span>
-                                    <span v-if="leftoverOf(payout.total_due) > 0" class="text-amber-600"> (falta {{ formatCurrency(leftoverOf(payout.total_due)) }})</span>
+                                    <span v-if="!breakdownRows(collectable(payout)).length && leftoverOf(collectable(payout)) <= 0">-</span>
+                                    <span v-if="leftoverOf(collectable(payout)) > 0" class="text-amber-600"> (falta {{ formatCurrency(leftoverOf(collectable(payout))) }})</span>
                                 </span>
                             </td>
                             <td class="px-4 py-3 text-center">

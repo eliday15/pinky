@@ -256,11 +256,6 @@ class PayrollController extends Controller
                     ->where('employee_id', $entry->employee_id)
                     ->first();
 
-                // Nunca recalcular un cobro ya realizado.
-                if ($existing && $existing->status === CashPayout::STATUS_PAID) {
-                    continue;
-                }
-
                 // Re-sincroniza el reparto efectivo/transferencia con la regla
                 // vigente y los flags ACTUALES del empleado (periodo de prueba /
                 // IMSS), sin recalcular la nómina: usa el neto ya aprobado y solo
@@ -278,21 +273,38 @@ class PayrollController extends Controller
                     $entry->update(['cash_amount' => $cashAmount, 'bank_amount' => $bankAmount]);
                 }
 
-                // Acumulado: el cobro previo más reciente aún pendiente ya
-                // arrastra (en su total_due) todo lo anterior, así que su saldo
-                // pendiente es el acumulado completo a la fecha.
-                $priorPending = CashPayout::where('employee_id', $entry->employee_id)
-                    ->where('payroll_period_id', '!=', $payroll->id)
-                    ->where('status', CashPayout::STATUS_PENDING)
-                    ->whereHas('payrollPeriod', fn ($q) => $q->where('start_date', '<', $payroll->start_date))
-                    ->with('payrollPeriod')
-                    ->get()
-                    ->sortByDesc(fn (CashPayout $p) => $p->payrollPeriod->start_date)
-                    ->first();
+                // Lo ya cobrado no se descobra. Si un recálculo SUBIÓ el efectivo
+                // después de que el empleado ya cobró una parte, la diferencia
+                // vuelve a quedar pendiente (pago parcial): se conserva
+                // amount_paid y el saldo (outstanding) se recalcula. Si el monto
+                // bajó o quedó igual, el cobro pagado no se toca.
+                $alreadyPaid = $existing ? (float) $existing->amount_paid : 0.0;
 
-                $openingBalance = $priorPending ? $priorPending->outstanding() : 0.0;
+                // Acumulado de periodos previos: solo aplica a cobros que aún no
+                // se han pagado (los pagados ya saldaron su acumulado al cobrar).
+                $openingBalance = 0.0;
+                if (! $existing || $existing->status !== CashPayout::STATUS_PAID) {
+                    $priorPending = CashPayout::where('employee_id', $entry->employee_id)
+                        ->where('payroll_period_id', '!=', $payroll->id)
+                        ->where('status', CashPayout::STATUS_PENDING)
+                        ->whereHas('payrollPeriod', fn ($q) => $q->where('start_date', '<', $payroll->start_date))
+                        ->with('payrollPeriod')
+                        ->get()
+                        ->sortByDesc(fn (CashPayout $p) => $p->payrollPeriod->start_date)
+                        ->first();
+
+                    $openingBalance = $priorPending ? $priorPending->outstanding() : 0.0;
+                }
+
                 $periodAmount = $this->denominations->roundToPeso((float) $entry->cash_amount);
                 $totalDue = $periodAmount + $openingBalance;
+                $outstanding = round($totalDue - $alreadyPaid, 2);
+
+                // Ya pagado y sin diferencia a favor del empleado: se deja tal
+                // cual (nunca genera saldo negativo / "descobro").
+                if ($existing && $existing->status === CashPayout::STATUS_PAID && $outstanding <= 0.005) {
+                    continue;
+                }
 
                 CashPayout::updateOrCreate(
                     ['payroll_period_id' => $payroll->id, 'employee_id' => $entry->employee_id],
@@ -300,9 +312,9 @@ class PayrollController extends Controller
                         'period_amount' => $periodAmount,
                         'opening_balance' => $openingBalance,
                         'total_due' => $totalDue,
-                        'amount_paid' => 0,
-                        'status' => CashPayout::STATUS_PENDING,
-                        'denomination_breakdown' => $this->denominations->breakdown((int) round($totalDue)),
+                        'amount_paid' => $alreadyPaid,
+                        'status' => $outstanding > 0.005 ? CashPayout::STATUS_PENDING : CashPayout::STATUS_PAID,
+                        'denomination_breakdown' => $this->denominations->breakdown((int) round(max($outstanding, 0.0))),
                     ]
                 );
             }
@@ -344,12 +356,13 @@ class PayrollController extends Controller
                 'denomination_breakdown' => $p->denomination_breakdown ?? [],
             ]);
 
-        // El efectivo a retirar del banco es el desglose mínimo de lo que aún
-        // está pendiente de cobro (solo los cobros con monto > 0).
+        // El efectivo a retirar del banco es el desglose mínimo del saldo aún
+        // pendiente (total a cobrar menos lo ya cobrado en pagos parciales).
         $pendingAmounts = $payouts
             ->where('status', CashPayout::STATUS_PENDING)
-            ->where('total_due', '>', 0)
-            ->pluck('total_due');
+            ->map(fn (array $p) => $p['total_due'] - $p['amount_paid'])
+            ->filter(fn (float $v) => $v > 0)
+            ->values();
 
         // Transferencias: lo que va por banco/CONTPAQi (sueldo base de quien NO
         // cobra base en efectivo). Es solo informativo para hacer las
@@ -377,8 +390,8 @@ class PayrollController extends Controller
             'summary' => [
                 'total_due' => $totalCash,
                 'total_paid' => (float) $payouts->sum('amount_paid'),
-                'total_pending' => (float) $payouts->where('status', CashPayout::STATUS_PENDING)->sum('total_due'),
-                'pending_count' => $payouts->where('status', CashPayout::STATUS_PENDING)->where('total_due', '>', 0)->count(),
+                'total_pending' => (float) $payouts->where('status', CashPayout::STATUS_PENDING)->sum(fn (array $p) => max(0.0, $p['total_due'] - $p['amount_paid'])),
+                'pending_count' => $payouts->where('status', CashPayout::STATUS_PENDING)->filter(fn (array $p) => ($p['total_due'] - $p['amount_paid']) > 0)->count(),
                 'paid_count' => $payouts->where('status', CashPayout::STATUS_PAID)->count(),
                 'total_transfer' => $totalTransfer,
                 'total_cash' => $totalCash,
