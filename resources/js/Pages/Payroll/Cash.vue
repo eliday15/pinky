@@ -417,7 +417,10 @@ const submitCollect = () => {
                         <p class="text-xs font-medium text-gray-500 mb-2">Detalle del efectivo</p>
                         <ul class="space-y-1">
                             <li v-for="(it, i) in activePayout.cash_items" :key="i" class="flex justify-between text-sm">
-                                <span class="text-gray-600">{{ it.label }}</span>
+                                <span class="text-gray-600">
+                                    {{ it.label }}
+                                    <span v-if="it.detail" class="text-xs text-gray-400">({{ it.detail }})</span>
+                                </span>
                                 <span :class="it.amount < 0 ? 'text-red-600' : 'text-gray-800'">{{ formatCurrency(it.amount) }}</span>
                             </li>
                         </ul>

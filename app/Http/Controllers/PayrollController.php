@@ -377,27 +377,59 @@ class PayrollController extends Controller
         }
 
         $baseInCash = $entry->employee?->paysBaseInCash() ?? false;
+        $breakdown = $entry->calculation_breakdown ?? [];
         $items = [];
-        $push = function (string $label, float $amount) use (&$items) {
+
+        // Formatea una cantidad sin ceros de más: 600.00→"600", 3.50→"3.5".
+        $num = fn (float $n): string => rtrim(rtrim(number_format($n, 2, '.', ''), '0'), '.');
+
+        // detail = "cuántos hubo" (ej. "600 × $1.00", "5 h", "1 día"), para que
+        // se entienda sin deducirlo del monto.
+        $push = function (string $label, float $amount, string $detail = '') use (&$items) {
             if (abs($amount) > 0.005) {
-                $items[] = ['label' => $label, 'amount' => round($amount, 2)];
+                $items[] = ['label' => $label, 'amount' => round($amount, 2), 'detail' => $detail];
             }
         };
 
         if ($baseInCash) {
-            $push('Sueldo base', (float) $entry->regular_pay);
+            $baseDays = (float) ($breakdown['base']['base_paid_days'] ?? $entry->days_worked);
+            $daily = (float) ($breakdown['rates']['daily_salary'] ?? 0);
+            $push('Sueldo base', (float) $entry->regular_pay,
+                $daily > 0 ? $num($baseDays).' días × $'.number_format($daily, 2) : '');
         }
-        $push('Horas extra', (float) $entry->overtime_pay);
-        $push('Dias festivos', (float) $entry->holiday_pay);
-        $push('Fin de semana', (float) $entry->weekend_pay);
-        $push('Velada', (float) $entry->velada_pay);
+        $push('Horas extra', (float) $entry->overtime_pay,
+            (float) $entry->overtime_hours > 0 ? $num((float) $entry->overtime_hours).' h' : '');
+        $push('Dias festivos', (float) $entry->holiday_pay,
+            (float) $entry->holiday_hours > 0 ? $num((float) $entry->holiday_hours).' h' : '');
+        $push('Fin de semana', (float) $entry->weekend_pay,
+            (float) $entry->weekend_hours > 0 ? $num((float) $entry->weekend_hours).' h' : '');
+        $push('Velada', (float) $entry->velada_pay,
+            (int) $entry->velada_days > 0 ? $num((float) $entry->velada_days).' noche(s)' : '');
 
-        // Conceptos itemizados (Cena, Puntualidad, etc.) — desglosa "Otros conceptos".
-        foreach ($entry->calculation_breakdown['compensation_concepts'] ?? [] as $concept) {
-            $push($concept['name'] ?? $concept['code'] ?? 'Concepto', (float) ($concept['amount'] ?? 0));
+        // Conceptos itemizados (Cena, Puntualidad, etc.) con su cantidad — desglosa
+        // el agrupado "Otros conceptos".
+        foreach ($breakdown['compensation_concepts'] ?? [] as $concept) {
+            $amount = (float) ($concept['amount'] ?? 0);
+            $qty = (float) ($concept['quantity'] ?? 0);
+            $hours = (float) ($concept['hours'] ?? 0);
+            $days = (float) ($concept['days'] ?? 0);
+            $fixed = (float) ($concept['rate']['fixed_amount'] ?? 0);
+
+            $detail = '';
+            if ($qty > 1) {
+                $unit = $fixed > 0 ? $fixed : ($qty != 0.0 ? $amount / $qty : 0.0);
+                $detail = $num($qty).' × $'.number_format($unit, 2);
+            } elseif ($hours > 0) {
+                $detail = $num($hours).' h';
+            } elseif ($days > 0) {
+                $detail = $num($days).' día(s)';
+            }
+
+            $push($concept['name'] ?? $concept['code'] ?? 'Concepto', $amount, $detail);
         }
 
-        $push('Vacaciones', (float) $entry->vacation_pay);
+        $push('Vacaciones', (float) $entry->vacation_pay,
+            (int) $entry->vacation_days_paid > 0 ? $num((float) $entry->vacation_days_paid).' día(s)' : '');
         $push('Prima vacacional', (float) $entry->vacation_premium_pay);
         $push('Incapacidad', (float) $entry->sick_leave_pay);
         $push('Bonos', (float) $entry->bonuses);

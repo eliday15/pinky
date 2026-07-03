@@ -468,13 +468,13 @@ class CashPayoutTest extends FeatureTestCase
         PayrollEntry::factory()->create([
             'payroll_period_id' => $period->id, 'employee_id' => $employee->id,
             'regular_pay' => 2000, 'deductions' => 0,
-            'overtime_pay' => 100, 'other_compensation_pay' => 650,
+            'overtime_pay' => 100, 'overtime_hours' => 5, 'other_compensation_pay' => 650,
             'net_pay' => 2750, 'gross_pay' => 2750,
             'cash_amount' => 750, 'bank_amount' => 2000,
             'calculation_breakdown' => [
                 'compensation_concepts' => [
-                    ['name' => 'Cena por entrega a Walmart', 'code' => 'Cena_Walmart', 'amount' => 50],
-                    ['name' => 'Puntualidad Almacen', 'code' => 'Puntualidad Alm', 'amount' => 600],
+                    ['name' => 'Cena por entrega a Walmart', 'code' => 'Cena_Walmart', 'amount' => 50, 'days' => 1],
+                    ['name' => 'Puntualidad Almacen', 'code' => 'Puntualidad Alm', 'amount' => 600, 'quantity' => 600, 'rate' => ['fixed_amount' => 1]],
                 ],
             ],
         ]);
@@ -483,14 +483,17 @@ class CashPayoutTest extends FeatureTestCase
         $this->post(route('payroll.closeCash', $period->id));
 
         // Efectivo = Horas extra $100 + Cena $50 + Puntualidad $600 (sin base ni
-        // "Otros conceptos" agrupado). Los tres renglones, solo lo que sí tuvo.
+        // "Otros conceptos" agrupado). Los tres renglones, con su cantidad.
         $this->get(route('payroll.cash', $period->id))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Payroll/Cash')
                 ->has('payouts.0.cash_items', 3)
                 ->where('payouts.0.cash_items.0.label', 'Horas extra')
+                ->where('payouts.0.cash_items.0.detail', '5 h')
                 ->where('payouts.0.cash_items.1.label', 'Cena por entrega a Walmart')
-                ->where('payouts.0.cash_items.2.amount', 600));
+                ->where('payouts.0.cash_items.1.detail', '1 día(s)')
+                ->where('payouts.0.cash_items.2.amount', 600)
+                ->where('payouts.0.cash_items.2.detail', '600 × $1.00'));
     }
 }
