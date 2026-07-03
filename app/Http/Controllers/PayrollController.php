@@ -361,6 +361,55 @@ class PayrollController extends Controller
     }
 
     /**
+     * Desglose del efectivo de un empleado, concepto por concepto y solo lo que
+     * tuvo (montos > 0). Reemplaza el agrupado "Otros conceptos": itemiza cada
+     * concepto de compensación (Cena, Puntualidad, etc.) y los extras estándar.
+     *
+     * El efectivo = todo lo devengado menos lo que va por transferencia: para
+     * quien cobra base en efectivo incluye el sueldo base y resta las faltas;
+     * para quien va por banco (IMSS) son solo los extras. Así los renglones
+     * suman el efectivo del periodo (salvo el redondeo al peso del total).
+     */
+    private function cashItemsForEntry(?PayrollEntry $entry): array
+    {
+        if (! $entry) {
+            return [];
+        }
+
+        $baseInCash = $entry->employee?->paysBaseInCash() ?? false;
+        $items = [];
+        $push = function (string $label, float $amount) use (&$items) {
+            if (abs($amount) > 0.005) {
+                $items[] = ['label' => $label, 'amount' => round($amount, 2)];
+            }
+        };
+
+        if ($baseInCash) {
+            $push('Sueldo base', (float) $entry->regular_pay);
+        }
+        $push('Horas extra', (float) $entry->overtime_pay);
+        $push('Dias festivos', (float) $entry->holiday_pay);
+        $push('Fin de semana', (float) $entry->weekend_pay);
+        $push('Velada', (float) $entry->velada_pay);
+
+        // Conceptos itemizados (Cena, Puntualidad, etc.) — desglosa "Otros conceptos".
+        foreach ($entry->calculation_breakdown['compensation_concepts'] ?? [] as $concept) {
+            $push($concept['name'] ?? $concept['code'] ?? 'Concepto', (float) ($concept['amount'] ?? 0));
+        }
+
+        $push('Vacaciones', (float) $entry->vacation_pay);
+        $push('Prima vacacional', (float) $entry->vacation_premium_pay);
+        $push('Incapacidad', (float) $entry->sick_leave_pay);
+        $push('Bonos', (float) $entry->bonuses);
+
+        if ($baseInCash) {
+            $push('Deducciones (faltas)', -(float) $entry->deductions);
+        }
+
+        return $items;
+    }
+
+    /**
      * Página de pago en efectivo: desglose global de billetes y tabla por
      * empleado con su monto, acumulado, total a cobrar y estado.
      */
@@ -370,6 +419,10 @@ class PayrollController extends Controller
         if (! $user->hasPermissionTo('payroll.pay_cash')) {
             abort(403);
         }
+
+        // Asientos por empleado: fuente del desglose concepto-por-concepto del
+        // efectivo en el modal de cobro, y del chequeo de "desactualizado".
+        $entriesByEmployee = $payroll->entries()->with('employee')->get()->keyBy('employee_id');
 
         $payouts = $payroll->cashPayouts()
             ->with('employee:id,full_name,employee_number,cash_pin')
@@ -388,6 +441,7 @@ class PayrollController extends Controller
                 'status' => $p->status,
                 'collected_at' => $p->collected_at,
                 'denomination_breakdown' => $p->denomination_breakdown ?? [],
+                'cash_items' => $this->cashItemsForEntry($entriesByEmployee->get($p->employee_id)),
             ]);
 
         // El efectivo a retirar del banco es el desglose mínimo del saldo aún
@@ -405,8 +459,7 @@ class PayrollController extends Controller
         // el efectivo del periodo ya congelado (period_amount) contra el actual
         // de los asientos. Si no cuadran, hay que aprobar y re-cerrar el efectivo.
         // Las transferencias (banco) viven en su propia pantalla (payroll.transfers).
-        $entries = $payroll->entries()->get();
-        $entriesCashRounded = $entries->sum(
+        $entriesCashRounded = $entriesByEmployee->sum(
             fn (PayrollEntry $e) => $this->denominations->roundToPeso((float) $e->cash_amount)
         );
         $cashStale = abs($entriesCashRounded - (float) $payouts->sum('period_amount')) > 0.5;

@@ -455,4 +455,42 @@ class CashPayoutTest extends FeatureTestCase
         $this->actingAsSupervisor();
         $this->get(route('payroll.transfers', $period->id))->assertForbidden();
     }
+
+    // ---- detalle concepto por concepto en el cobro ---------------------
+
+    public function test_cash_page_payout_includes_concept_by_concept_detail(): void
+    {
+        // IMSS => el efectivo son solo los extras (la base va a banco).
+        $employee = Employee::factory()->create([
+            'status' => 'active', 'is_trial_period' => false, 'is_imss_enrolled' => true,
+        ]);
+        $period = PayrollPeriod::factory()->create(['type' => 'weekly', 'status' => 'approved']);
+        PayrollEntry::factory()->create([
+            'payroll_period_id' => $period->id, 'employee_id' => $employee->id,
+            'regular_pay' => 2000, 'deductions' => 0,
+            'overtime_pay' => 100, 'other_compensation_pay' => 650,
+            'net_pay' => 2750, 'gross_pay' => 2750,
+            'cash_amount' => 750, 'bank_amount' => 2000,
+            'calculation_breakdown' => [
+                'compensation_concepts' => [
+                    ['name' => 'Cena por entrega a Walmart', 'code' => 'Cena_Walmart', 'amount' => 50],
+                    ['name' => 'Puntualidad Almacen', 'code' => 'Puntualidad Alm', 'amount' => 600],
+                ],
+            ],
+        ]);
+
+        $this->actingAsAdmin();
+        $this->post(route('payroll.closeCash', $period->id));
+
+        // Efectivo = Horas extra $100 + Cena $50 + Puntualidad $600 (sin base ni
+        // "Otros conceptos" agrupado). Los tres renglones, solo lo que sí tuvo.
+        $this->get(route('payroll.cash', $period->id))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Payroll/Cash')
+                ->has('payouts.0.cash_items', 3)
+                ->where('payouts.0.cash_items.0.label', 'Horas extra')
+                ->where('payouts.0.cash_items.1.label', 'Cena por entrega a Walmart')
+                ->where('payouts.0.cash_items.2.amount', 600));
+    }
 }
