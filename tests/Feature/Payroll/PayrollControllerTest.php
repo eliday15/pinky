@@ -584,7 +584,8 @@ class PayrollControllerTest extends FeatureTestCase
     public function test_mark_paid_approved_period_sets_status_paid(): void
     {
         $this->bypassTwoFactor();
-        $period = PayrollPeriod::factory()->approved()->create();
+        // Aprobada Y con el efectivo cerrado: solo así se puede pagar.
+        $period = PayrollPeriod::factory()->approved()->create(['cash_closed_at' => now()]);
 
         $this->actingAsAdmin();
 
@@ -595,6 +596,24 @@ class PayrollControllerTest extends FeatureTestCase
         $this->assertDatabaseHas('payroll_periods', [
             'id' => $period->id,
             'status' => 'paid',
+        ]);
+    }
+
+    public function test_mark_paid_blocked_when_cash_not_closed(): void
+    {
+        $this->bypassTwoFactor();
+        $period = PayrollPeriod::factory()->approved()->create(['cash_closed_at' => null]);
+
+        $this->actingAsAdmin();
+
+        $this->from(route('payroll.show', $period))
+            ->post(route('payroll.markPaid', $period), ['two_factor_code' => '123456'])
+            ->assertRedirect(route('payroll.show', $period))
+            ->assertSessionHas('error');
+
+        $this->assertDatabaseHas('payroll_periods', [
+            'id' => $period->id,
+            'status' => 'approved',
         ]);
     }
 

@@ -104,6 +104,7 @@ Route::middleware(['auth', 'password-changed', 'two-factor-setup'])->group(funct
     Route::post('/payroll/{payroll}/mark-paid', [PayrollController::class, 'markPaid'])->name('payroll.markPaid');
     // Pago en efectivo: cierre (billetes), página de cobro y cobro con PIN.
     Route::post('/payroll/{payroll}/close-cash', [PayrollController::class, 'closeCash'])->name('payroll.closeCash');
+    Route::post('/payroll/{payroll}/confirm-delivery', [PayrollController::class, 'confirmCashDelivery'])->name('payroll.confirmDelivery');
     Route::get('/payroll/{payroll}/cash', [PayrollController::class, 'cash'])->name('payroll.cash');
     Route::post('/payroll/{payroll}/payouts/{payout}/collect', [PayrollController::class, 'collectCash'])->name('payroll.payouts.collect');
     Route::delete('/payroll/{payroll}', [PayrollController::class, 'destroy'])->name('payroll.destroy');

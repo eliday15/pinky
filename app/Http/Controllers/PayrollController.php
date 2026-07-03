@@ -223,6 +223,13 @@ class PayrollController extends Controller
                 ->with('error', 'Solo se pueden marcar como pagadas nominas aprobadas.');
         }
 
+        // No se puede pagar una nómina sin haber cerrado/preparado el efectivo:
+        // el pago solo se finaliza cuando está aprobada Y con el efectivo cerrado.
+        if (! $payroll->isCashClosed()) {
+            return redirect()->back()
+                ->with('error', 'Primero cierra y prepara el efectivo antes de marcar la nomina como pagada.');
+        }
+
         $payroll->update(['status' => 'paid']);
 
         return redirect()->route('payroll.show', $payroll)
@@ -319,11 +326,38 @@ class PayrollController extends Controller
                 );
             }
 
-            $payroll->update(['cash_closed_at' => now()]);
+            // Re-preparar el efectivo cambia montos/billetes: hay que volver a
+            // confirmar la entrega (paso 1) antes de poder cobrar (paso 2).
+            $payroll->update([
+                'cash_closed_at' => now(),
+                'cash_delivery_confirmed_at' => null,
+            ]);
         });
 
         return redirect()->route('payroll.cash', $payroll)
             ->with('success', 'Efectivo preparado. Revisa el desglose de billetes.');
+    }
+
+    /**
+     * Confirmar la entrega del efectivo (paso 1): el cajero preparó/retiró los
+     * billetes del desglose. Habilita el cobro (paso 2). Requiere el efectivo ya
+     * cerrado; se reinicia si se vuelve a cerrar/preparar el efectivo.
+     */
+    public function confirmCashDelivery(Request $request, PayrollPeriod $payroll): RedirectResponse
+    {
+        if (! auth()->user()->hasPermissionTo('payroll.pay_cash')) {
+            abort(403);
+        }
+
+        if (! $payroll->isCashClosed()) {
+            return redirect()->back()
+                ->with('error', 'Primero cierra y prepara el efectivo de este periodo.');
+        }
+
+        $payroll->update(['cash_delivery_confirmed_at' => now()]);
+
+        return redirect()->route('payroll.cash', $payroll)
+            ->with('success', 'Entrega del efectivo confirmada. Ya puedes cobrar.');
     }
 
     /**
@@ -433,6 +467,13 @@ class PayrollController extends Controller
         if (! $payroll->isCashClosed()) {
             return redirect()->back()
                 ->with('error', 'Primero cierra y prepara el efectivo de este periodo.');
+        }
+
+        // No se puede cobrar (paso 2) sin haber preparado/confirmado la entrega
+        // del efectivo (paso 1).
+        if (! $payroll->isCashDeliveryConfirmed()) {
+            return redirect()->back()
+                ->with('error', 'Primero confirma la preparación del efectivo (Paso 1) antes de cobrar.');
         }
 
         if ($payout->status === CashPayout::STATUS_PAID) {

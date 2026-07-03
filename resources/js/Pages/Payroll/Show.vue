@@ -146,7 +146,9 @@ const closeCash = () => {
                     <button
                         v-if="can?.approve && period.status === 'approved'"
                         @click="markPaid"
-                        class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
+                        :disabled="!period.cash_closed_at"
+                        :title="period.cash_closed_at ? '' : 'Primero cierra y prepara el efectivo'"
+                        class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                         Marcar como Pagada
                     </button>
@@ -199,6 +201,15 @@ const closeCash = () => {
                     </div>
                 </div>
             </div>
+        </div>
+
+        <!-- Flujo de pago: qué falta para poder pagar la nómina -->
+        <div v-if="can?.payCash && period.status === 'approved' && !period.cash_closed_at" class="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-3">
+            <p class="text-sm text-amber-800">
+                <span class="font-semibold">Falta preparar el efectivo.</span>
+                No puedes marcar la nómina como pagada hasta cerrar el efectivo: presiona
+                <span class="font-medium">&laquo;Cerrar y preparar efectivo&raquo;</span>, prepara la entrega y cobra.
+            </p>
         </div>
 
         <!-- What this period pays -->

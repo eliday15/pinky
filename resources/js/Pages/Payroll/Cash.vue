@@ -23,8 +23,17 @@ const formatPieces = (denom) => (denom >= 20 ? `Billete $${denom}` : `Moneda $${
 
 // El pago en efectivo son 2 pasos: (1) preparar la entrega — definir con qué
 // billetes/monedas se va a entregar el dinero — y (2) cobrar con la contraseña
-// de cada empleado. Arranca en el paso 1.
-const step = ref(1);
+// de cada empleado. No se puede cobrar sin confirmar antes la entrega (paso 1).
+const deliveryConfirmed = computed(() => !!props.period.cash_delivery_confirmed_at);
+const step = ref(deliveryConfirmed.value ? 2 : 1);
+
+const confirmDeliveryForm = useForm({});
+const confirmDelivery = () => {
+    confirmDeliveryForm.post(route('payroll.confirmDelivery', props.period.id), {
+        preserveScroll: true,
+        onSuccess: () => { step.value = 2; },
+    });
+};
 
 // --- Denominaciones disponibles (flexible) ---
 // Muchas veces no hay billetes de cierta denominación (p. ej. $1000). El cajero
@@ -210,11 +219,14 @@ const submitCollect = () => {
                 </button>
                 <button
                     type="button"
+                    :disabled="!deliveryConfirmed"
+                    :title="deliveryConfirmed ? '' : 'Primero confirma la preparación del efectivo (Paso 1)'"
                     @click="step = 2"
-                    class="flex-1 px-4 py-3 rounded-lg border text-sm font-medium transition-colors"
+                    class="flex-1 px-4 py-3 rounded-lg border text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                     :class="step === 2 ? 'bg-pink-600 text-white border-pink-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'"
                 >
                     Paso 2 &middot; Cobrar
+                    <span v-if="!deliveryConfirmed">&#128274;</span>
                 </button>
             </div>
 
@@ -313,8 +325,24 @@ const submitCollect = () => {
                 </p>
             </div>
 
-            <div class="flex justify-end">
+            <div class="flex items-center justify-between gap-3 flex-wrap">
+                <p v-if="!deliveryConfirmed" class="text-sm text-gray-500">
+                    Revisa el desglose de billetes y confirma que preparaste el efectivo para habilitar el cobro.
+                </p>
+                <p v-else class="text-sm font-medium text-green-600">
+                    &#10003; Entrega del efectivo confirmada.
+                </p>
                 <button
+                    v-if="!deliveryConfirmed && can?.payCash"
+                    type="button"
+                    :disabled="confirmDeliveryForm.processing"
+                    @click="confirmDelivery"
+                    class="px-5 py-2.5 bg-pink-600 text-white rounded-lg hover:bg-pink-700 text-sm font-medium disabled:opacity-50"
+                >
+                    Confirmar entrega y continuar &rarr;
+                </button>
+                <button
+                    v-else
                     type="button"
                     @click="step = 2"
                     class="px-5 py-2.5 bg-pink-600 text-white rounded-lg hover:bg-pink-700 text-sm font-medium"
@@ -382,8 +410,8 @@ const submitCollect = () => {
                             <td class="px-4 py-3 text-right">
                                 <button
                                     v-if="can?.payCash && payout.status !== 'paid'"
-                                    :disabled="!payout.has_cash_pin"
-                                    :title="payout.has_cash_pin ? '' : 'El empleado no tiene contraseña de cobro configurada'"
+                                    :disabled="!payout.has_cash_pin || !deliveryConfirmed"
+                                    :title="!deliveryConfirmed ? 'Primero confirma la preparación del efectivo (Paso 1)' : (payout.has_cash_pin ? '' : 'El empleado no tiene contraseña de cobro configurada')"
                                     @click="openCollect(payout)"
                                     class="px-3 py-1.5 bg-pink-600 text-white rounded-lg hover:bg-pink-700 disabled:opacity-40 disabled:cursor-not-allowed"
                                 >

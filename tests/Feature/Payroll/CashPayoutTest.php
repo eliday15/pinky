@@ -51,6 +51,15 @@ class CashPayoutTest extends FeatureTestCase
         return [$period, $employee];
     }
 
+    /**
+     * Confirmar la entrega del efectivo (paso 1) — requisito para cobrar. Debe
+     * llamarse como un usuario con payroll.pay_cash y con el efectivo ya cerrado.
+     */
+    private function confirmDelivery(PayrollPeriod $period): void
+    {
+        $this->post(route('payroll.confirmDelivery', $period->id))->assertRedirect();
+    }
+
     // ---- closeCash ------------------------------------------------------
 
     public function test_close_cash_forbidden_without_permission(): void
@@ -131,6 +140,7 @@ class CashPayoutTest extends FeatureTestCase
 
         $admin = $this->actingAsAdmin();
         $this->post(route('payroll.closeCash', $period->id));
+        $this->confirmDelivery($period);
 
         $payout = CashPayout::where('payroll_period_id', $period->id)->firstOrFail();
 
@@ -152,6 +162,7 @@ class CashPayoutTest extends FeatureTestCase
 
         $this->actingAsAdmin();
         $this->post(route('payroll.closeCash', $period->id));
+        $this->confirmDelivery($period);
         $payout = CashPayout::where('payroll_period_id', $period->id)->firstOrFail();
 
         $this->post(route('payroll.payouts.collect', [$period->id, $payout->id]), ['pin' => '0000'])
@@ -248,6 +259,7 @@ class CashPayoutTest extends FeatureTestCase
             'cash_amount' => 700, 'bank_amount' => 0,
         ]);
         $this->post(route('payroll.closeCash', $p2->id));
+        $this->confirmDelivery($p2);
 
         $payout2 = CashPayout::where('payroll_period_id', $p2->id)->firstOrFail();
         $this->post(route('payroll.payouts.collect', [$p2->id, $payout2->id]), ['pin' => '4321']);
@@ -266,8 +278,9 @@ class CashPayoutTest extends FeatureTestCase
         $employee->update(['cash_pin' => '4321']);
         $this->actingAsAdmin();
 
-        // Cierra y cobra los $50.
+        // Cierra, confirma la entrega y cobra los $50.
         $this->post(route('payroll.closeCash', $period->id));
+        $this->confirmDelivery($period);
         $payout = CashPayout::where('payroll_period_id', $period->id)->firstOrFail();
         $this->post(route('payroll.payouts.collect', [$period->id, $payout->id]), ['pin' => '4321']);
         $this->assertSame('paid', $payout->fresh()->status);
@@ -293,6 +306,7 @@ class CashPayoutTest extends FeatureTestCase
         $this->actingAsAdmin();
 
         $this->post(route('payroll.closeCash', $period->id));
+        $this->confirmDelivery($period);
         $payout = CashPayout::where('payroll_period_id', $period->id)->firstOrFail();
         $this->post(route('payroll.payouts.collect', [$period->id, $payout->id]), ['pin' => '4321']);
         $this->assertSame('paid', $payout->fresh()->status);
@@ -338,11 +352,14 @@ class CashPayoutTest extends FeatureTestCase
         $this->actingAsAdmin();
 
         $this->post(route('payroll.closeCash', $period->id));
+        $this->confirmDelivery($period);
         $payout = CashPayout::where('payroll_period_id', $period->id)->firstOrFail();
         $this->post(route('payroll.payouts.collect', [$period->id, $payout->id]), ['pin' => '4321']);
 
         $period->entries()->update(['net_pay' => 650, 'cash_amount' => 650]);
+        // Re-cerrar reinicia la confirmación de entrega: hay que volver a confirmar.
         $this->post(route('payroll.closeCash', $period->id));
+        $this->confirmDelivery($period);
 
         // Cobrar la diferencia la salda por completo.
         $this->post(route('payroll.payouts.collect', [$period->id, $payout->id]), ['pin' => '4321']);
@@ -350,5 +367,60 @@ class CashPayoutTest extends FeatureTestCase
         $payout->refresh();
         $this->assertSame('paid', $payout->status);
         $this->assertEqualsWithDelta(650.00, (float) $payout->amount_paid, 0.01);
+    }
+
+    // ---- entrega del efectivo (paso 1) requisito para cobrar (paso 2) ----
+
+    public function test_cannot_collect_before_delivery_confirmed(): void
+    {
+        [$period, $employee] = $this->approvedPeriodWithEntry(1000);
+        $employee->update(['cash_pin' => '4321']);
+        $this->actingAsAdmin();
+        $this->post(route('payroll.closeCash', $period->id));
+
+        // Efectivo cerrado pero entrega SIN confirmar: no se puede cobrar.
+        $payout = CashPayout::where('payroll_period_id', $period->id)->firstOrFail();
+        $this->from(route('payroll.cash', $period->id))
+            ->post(route('payroll.payouts.collect', [$period->id, $payout->id]), ['pin' => '4321'])
+            ->assertRedirect(route('payroll.cash', $period->id))
+            ->assertSessionHas('error');
+
+        $this->assertSame('pending', $payout->fresh()->status);
+    }
+
+    public function test_confirm_delivery_requires_cash_closed(): void
+    {
+        [$period] = $this->approvedPeriodWithEntry(1000);
+        $this->actingAsAdmin();
+
+        // El efectivo no se ha cerrado todavía.
+        $this->from(route('payroll.show', $period->id))
+            ->post(route('payroll.confirmDelivery', $period->id))
+            ->assertSessionHas('error');
+
+        $this->assertNull($period->fresh()->cash_delivery_confirmed_at);
+    }
+
+    public function test_reclosing_cash_resets_delivery_confirmation(): void
+    {
+        [$period] = $this->approvedPeriodWithEntry(1000);
+        $this->actingAsAdmin();
+        $this->post(route('payroll.closeCash', $period->id));
+        $this->confirmDelivery($period);
+        $this->assertNotNull($period->fresh()->cash_delivery_confirmed_at);
+
+        // Re-cerrar/re-preparar el efectivo obliga a volver a confirmar la entrega.
+        $this->post(route('payroll.closeCash', $period->id));
+        $this->assertNull($period->fresh()->cash_delivery_confirmed_at);
+    }
+
+    public function test_confirm_delivery_forbidden_without_permission(): void
+    {
+        [$period] = $this->approvedPeriodWithEntry(1000);
+        $this->actingAsAdmin();
+        $this->post(route('payroll.closeCash', $period->id));
+
+        $this->actingAsSupervisor();
+        $this->post(route('payroll.confirmDelivery', $period->id))->assertForbidden();
     }
 }

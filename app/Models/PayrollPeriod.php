@@ -21,6 +21,7 @@ class PayrollPeriod extends Model
         'requires_recalculation',
         'recalculation_flagged_at',
         'cash_closed_at',
+        'cash_delivery_confirmed_at',
         'created_by',
         'approved_by',
     ];
@@ -32,6 +33,7 @@ class PayrollPeriod extends Model
         'requires_recalculation' => 'boolean',
         'recalculation_flagged_at' => 'datetime',
         'cash_closed_at' => 'datetime',
+        'cash_delivery_confirmed_at' => 'datetime',
     ];
 
     /**
@@ -126,5 +128,15 @@ class PayrollPeriod extends Model
     public function isCashClosed(): bool
     {
         return $this->cash_closed_at !== null;
+    }
+
+    /**
+     * Whether the cash delivery has been confirmed (paso 1 "preparar entrega").
+     * Requerido antes de cobrar (paso 2). Se reinicia al re-cerrar el efectivo,
+     * porque los montos/billetes cambian y hay que volver a prepararlo.
+     */
+    public function isCashDeliveryConfirmed(): bool
+    {
+        return $this->cash_delivery_confirmed_at !== null;
     }
 }
