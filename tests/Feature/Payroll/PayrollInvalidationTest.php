@@ -112,9 +112,12 @@ class PayrollInvalidationTest extends FeatureTestCase
     public function test_draft_period_recalculates_automatically_on_incident_approval(): void
     {
         $employee = $this->employee();
+        // El día de vacación ya se paga en el base (semanal); en el mensual el
+        // recálculo se observa vía la prima, así que damos un % > 0.
+        $employee->update(['vacation_premium_percentage' => 25.00]);
         $period = $this->monthlyPeriod();
         $entry = $this->calculator()->calculateEmployeePayroll($period, $employee);
-        $this->assertEqualsWithDelta(0.00, (float) $entry->vacation_pay, 0.01);
+        $this->assertEqualsWithDelta(0.00, (float) $entry->vacation_premium_pay, 0.01);
 
         $incident = $this->pendingVacation($employee);
 
@@ -124,7 +127,8 @@ class PayrollInvalidationTest extends FeatureTestCase
         $this->post(route('incidents.approve', $incident), ['two_factor_code' => $code])
             ->assertRedirect();
 
-        $this->assertEqualsWithDelta(4000.00, (float) $entry->fresh()->vacation_pay, 0.01, 'el draft se recalculó solo: 5 días × 800');
+        // El draft se recalculó solo: la prima aparece (5 días × 800 × 25% = 1000).
+        $this->assertEqualsWithDelta(1000.00, (float) $entry->fresh()->vacation_premium_pay, 0.01, 'el draft se recalculó solo');
         $this->assertSame('draft', $period->fresh()->status);
         $this->assertFalse((bool) $period->fresh()->requires_recalculation);
     }

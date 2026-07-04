@@ -160,10 +160,11 @@ class PayrollSplitTest extends FeatureTestCase
     }
 
     /**
-     * Vacación no se paga doble: el periodo semanal RESTA los días de vacación
-     * del base (se pagan en el mensual), conservando el séptimo día.
+     * Vacación se paga como BASE en el periodo semanal (como Contpaq: días
+     * pagados = 7). NO se resta del base y NO se paga doble en el mensual
+     * (vacation_pay = 0 siempre; solo la prima queda en el mensual).
      */
-    public function test_vacation_is_subtracted_from_weekly_base_to_avoid_double_pay(): void
+    public function test_vacation_is_paid_in_weekly_base_like_contpaq(): void
     {
         $employee = Employee::factory()->create([
             'status' => 'active',
@@ -190,11 +191,12 @@ class PayrollSplitTest extends FeatureTestCase
 
         $entry = $this->calculator()->calculateEmployeePayroll($weekly, $employee);
 
-        // Base = 200 × (7 − 2 vacaciones) = 1000; las vacaciones las paga el
-        // periodo mensual, no el semanal. Sin faltas: sin deducción.
-        $this->assertEqualsWithDelta(1000.00, (float) $entry->regular_pay, 0.01, 'base = 200 × (7 − 2 vac)');
+        // Base = 200 × 7 = 1400: los 2 días de vacación se pagan DENTRO del base
+        // (no se restan), igual que Contpaq. Sin faltas: sin deducción. El día de
+        // vacación NO se paga como concepto aparte (vacation_pay = 0).
+        $this->assertEqualsWithDelta(1400.00, (float) $entry->regular_pay, 0.01, 'base = 200 × 7 (vacación incluida)');
         $this->assertEqualsWithDelta(0.00, (float) $entry->deductions, 0.01);
-        $this->assertEqualsWithDelta(0.00, (float) $entry->vacation_pay, 0.01, 'la vacación se paga en el mensual, no aquí');
+        $this->assertEqualsWithDelta(0.00, (float) $entry->vacation_pay, 0.01, 'el día de vacación va en el base, no como concepto');
     }
 
     public function test_monthly_period_pays_extras_without_base(): void

@@ -152,16 +152,16 @@ class FaseDPayrollConceptsTest extends FeatureTestCase
 
         $entry = $this->calculator()->calculateEmployeePayroll($monthly, $employee);
 
-        $this->assertEqualsWithDelta(4800.00, (float) $entry->vacation_pay, 0.01, '6 días (5 hábiles + sábado) × 800');
-        $this->assertEqualsWithDelta(1200.00, (float) $entry->vacation_premium_pay, 0.01, 'prima 25% sobre la vacación');
-        $this->assertSame(6, (int) $entry->vacation_days_paid);
-        $this->assertGreaterThanOrEqual(5000.00, (float) $entry->gross_pay);
+        // El día de vacación se paga como base en el periodo semanal (como
+        // Contpaq); en el mensual solo queda la prima. 6 días × 800 × 25% = 1200.
+        $this->assertEqualsWithDelta(0.00, (float) $entry->vacation_pay, 0.01, 'el día de vacación va en el base semanal');
+        $this->assertEqualsWithDelta(1200.00, (float) $entry->vacation_premium_pay, 0.01, 'prima 25% sobre 6 días');
     }
 
     /**
      * DECISIONES §11 (auditoría #87): el sueldo diario usa la JORNADA REAL
-     * del horario efectivo, no 8 horas fijas. Un empleado de 6 horas cobra
-     * su vacación (y prima) a 6 × tarifa.
+     * del horario efectivo, no 8 horas fijas. La prima vacacional de un empleado
+     * de 6 horas se calcula sobre 6 × tarifa (el día en sí va en el base).
      */
     public function test_daily_salary_uses_real_schedule_hours(): void
     {
@@ -186,13 +186,14 @@ class FaseDPayrollConceptsTest extends FeatureTestCase
 
         $entry = $this->calculator()->calculateEmployeePayroll($monthly, $employee);
 
-        $this->assertEqualsWithDelta(600.00, (float) $entry->vacation_pay, 0.01, '1 día × (100 × 6h), no × 8h');
-        $this->assertEqualsWithDelta(150.00, (float) $entry->vacation_premium_pay, 0.01, 'prima 25% sobre la jornada real');
+        // SD real = 100 × 6h = 600. Prima = 1 × 600 × 25% = 150.
+        $this->assertEqualsWithDelta(0.00, (float) $entry->vacation_pay, 0.01, 'el día va en el base');
+        $this->assertEqualsWithDelta(150.00, (float) $entry->vacation_premium_pay, 0.01, 'prima 25% sobre jornada real (6h)');
     }
 
     public function test_vacation_pays_working_days_not_calendar(): void
     {
-        $employee = $this->employee(['vacation_premium_percentage' => 0]);
+        $employee = $this->employee();
 
         // Lunes a domingo: 7 días calendario pero solo 5 hábiles (L-V).
         $vac = $this->typeWithCode('VAC', [
@@ -202,23 +203,26 @@ class FaseDPayrollConceptsTest extends FeatureTestCase
         ]);
         $this->approvedIncident($employee, $vac, '2026-06-01', '2026-06-07', 5);
 
-        $monthly = PayrollPeriod::factory()->monthly()->create([
+        $weekly = PayrollPeriod::factory()->weekly()->create([
             'start_date' => '2026-06-01',
-            'end_date' => '2026-06-30',
+            'end_date' => '2026-06-07',
         ]);
 
-        $entry = $this->calculator()->calculateEmployeePayroll($monthly, $employee);
+        $entry = $this->calculator()->calculateEmployeePayroll($weekly, $employee);
 
-        $this->assertEqualsWithDelta(4000.00, (float) $entry->vacation_pay, 0.01, '5 hábiles × 800 — el fin de semana no se paga doble vía nómina');
-        $this->assertSame(5, (int) $entry->vacation_days_paid, 'mismo conteo que la captura y el saldo');
+        // La vacación se paga como base (800 × 7 = 5600); se cuentan 5 días
+        // hábiles (el fin de semana no cuenta), reflejado en vacation_days_paid.
+        $this->assertEqualsWithDelta(5600.00, (float) $entry->regular_pay, 0.01, 'base = 800 × 7 (vacación incluida)');
+        $this->assertEqualsWithDelta(0.00, (float) $entry->vacation_pay, 0.01);
+        $this->assertSame(5, (int) $entry->vacation_days_paid, 'mismo conteo que la captura y el saldo (5 hábiles)');
     }
 
     public function test_vacation_counts_saturday_after_three_days_in_payroll(): void
     {
         // Regla de Dani (2026-06-24): la nómina cuenta igual que la captura. Una
         // vacación L-D (jun 1-7) con 5 días hábiles ≥ 3 suma el sábado 6 (en
-        // rango); el domingo no cuenta. 6 días × 800 = 4800.
-        $employee = $this->employee(['vacation_premium_percentage' => 0]);
+        // rango); el domingo no cuenta. Se paga como base (800 × 7) y cuenta 6.
+        $employee = $this->employee();
 
         $vac = $this->typeWithCode('VAC', [
             'category' => 'vacation',
@@ -228,15 +232,16 @@ class FaseDPayrollConceptsTest extends FeatureTestCase
         ]);
         $this->approvedIncident($employee, $vac, '2026-06-01', '2026-06-07', 6);
 
-        $monthly = PayrollPeriod::factory()->monthly()->create([
+        $weekly = PayrollPeriod::factory()->weekly()->create([
             'start_date' => '2026-06-01',
-            'end_date' => '2026-06-30',
+            'end_date' => '2026-06-07',
         ]);
 
-        $entry = $this->calculator()->calculateEmployeePayroll($monthly, $employee);
+        $entry = $this->calculator()->calculateEmployeePayroll($weekly, $employee);
 
         $this->assertSame(6, (int) $entry->vacation_days_paid, '5 hábiles + 1 sábado por la regla');
-        $this->assertEqualsWithDelta(4800.00, (float) $entry->vacation_pay, 0.01, '6 días × 800');
+        $this->assertEqualsWithDelta(5600.00, (float) $entry->regular_pay, 0.01, 'base = 800 × 7');
+        $this->assertEqualsWithDelta(0.00, (float) $entry->vacation_pay, 0.01);
     }
 
     public function test_paid_sick_leave_pays_calendar_days(): void

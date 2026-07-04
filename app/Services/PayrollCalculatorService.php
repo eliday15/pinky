@@ -209,13 +209,14 @@ class PayrollCalculatorService
         // ---- BASE (weekly): sueldo diario × días pagados del periodo ----
         // El sueldo se paga por DÍA, no por hora (Art. 90 LFT), y la semana se
         // cubre sobre 7 días: 6 laborables + el séptimo día de descanso pagado
-        // (Art. 69). Se restan del base los días pagados aparte en el periodo
-        // mensual (vacaciones, incapacidad) y los no pagados (permiso sin goce),
+        // (Art. 69). Las VACACIONES se pagan como parte del base en el periodo
+        // semanal (igual que Contpaq, que las mete en el recibo de la semana con
+        // días pagados = 7), así que NO se restan del base. Sí se restan la
+        // incapacidad (la cubre el IMSS) y el permiso sin goce (día no pagado),
         // para no duplicar ni regalar pago.
         $weekDays = $payBase ? $this->paidCalendarDays($employee, $startDate, $endDate) : 0;
         $daysPaidElsewhere = $payBase
-            ? ($incidentMetrics['vacation_days']
-                + $incidentMetrics['sick_leave_days']
+            ? ($incidentMetrics['sick_leave_days']
                 + $incidentMetrics['permission_unpaid_days'])
             : 0;
         $basePaidDays = max(0, $weekDays - $daysPaidElsewhere);
@@ -342,15 +343,16 @@ class PayrollCalculatorService
             }
         }
 
-        // Vacaciones, prima, incapacidad y bonos son intrínsecamente mensuales:
-        // solo en la pasada de extras. El fallback legado (sin conceptos) también
-        // es mensual, así que un periodo semanal nunca cobra extras legados.
+        // Incapacidad, prima vacacional y bonos son mensuales (pasada de extras).
+        // El SALARIO del día de vacación ya se pagó como base en el periodo
+        // semanal (como Contpaq), por eso vacation_pay queda en 0 aquí. El
+        // fallback legado (sin conceptos) también es mensual, así que un periodo
+        // semanal nunca cobra extras legados.
         if ($payExtras) {
-            $vacationPay = $incidentMetrics['vacation_days'] * $dailySalary;
-
-            // Prima vacacional (DECISIONES §3): se paga con cada día de
-            // vacación como concepto separado, con el % del empleado.
-            $vacationPremiumPay = $vacationPay * ((float) ($employee->vacation_premium_percentage ?? 0) / 100);
+            // Prima vacacional (DECISIONES §3): se paga con cada día de vacación
+            // con el % del empleado. El día en sí ya va en el base (semanal).
+            $vacationPremiumPay = round($incidentMetrics['vacation_days'] * $dailySalary
+                * ((float) ($employee->vacation_premium_percentage ?? 0) / 100), 2);
 
             // Incapacidades (DECISIONES §4): con goce se pagan; sin goce el
             // día simplemente no se paga (vía horas), sin deducción extra.
@@ -533,7 +535,7 @@ class PayrollCalculatorService
                 'punctuality_days' => $payExtras ? $metrics['punctual_days'] : 0,
                 'night_shift_days' => $payExtras ? $nightShiftMetrics['night_shift_days'] : 0,
                 'late_absences_generated' => $lateAbsencesGenerated,
-                'vacation_days_paid' => $payExtras ? $incidentMetrics['vacation_days'] : 0,
+                'vacation_days_paid' => $payBase ? $incidentMetrics['vacation_days'] : 0,
                 'sick_leave_days' => $payExtras ? $incidentMetrics['sick_leave_days'] : 0,
                 'regular_pay' => $basePay,
                 'overtime_pay' => $overtimePay,
