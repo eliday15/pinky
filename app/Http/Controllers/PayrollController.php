@@ -582,6 +582,20 @@ class PayrollController extends Controller
                 ->with('error', 'Este cobro ya fue registrado.');
         }
 
+        // El efectivo del empleado se cobra por su cobro MÁS RECIENTE, que ya
+        // arrastra el acumulado de las semanas previas. Si existe uno posterior
+        // pendiente, este ya quedó incluido ahí: cobrarlo por separado sería doble
+        // pago. Se bloquea y se cobra desde el periodo más reciente.
+        $rolledIntoLater = CashPayout::where('employee_id', $payout->employee_id)
+            ->where('status', CashPayout::STATUS_PENDING)
+            ->where('id', '!=', $payout->id)
+            ->whereHas('payrollPeriod', fn ($q) => $q->where('start_date', '>', $payroll->start_date))
+            ->exists();
+        if ($rolledIntoLater) {
+            return redirect()->back()
+                ->with('error', 'Este efectivo ya se acumuló a una semana posterior. Cóbralo desde ese periodo (arrastra el total).');
+        }
+
         $request->validate(['pin' => ['required', 'string']]);
 
         $payout->loadMissing('employee');

@@ -230,6 +230,56 @@ class CashPayoutTest extends FeatureTestCase
         $this->assertEqualsWithDelta(1200.00, (float) $payout2->total_due, 0.01);
     }
 
+    public function test_cannot_collect_old_payout_already_rolled_into_later_period(): void
+    {
+        $employee = Employee::factory()->create([
+            'status' => 'active', 'cash_pin' => '4321',
+            'is_trial_period' => true, 'trial_period_end_date' => null, 'is_imss_enrolled' => false,
+        ]);
+        $this->actingAsAdmin();
+
+        // P1: $500, cerrado y entrega confirmada, pero NO cobrado.
+        $p1 = PayrollPeriod::factory()->create([
+            'type' => 'weekly', 'status' => 'approved',
+            'start_date' => '2026-06-01', 'end_date' => '2026-06-07',
+        ]);
+        PayrollEntry::factory()->create([
+            'payroll_period_id' => $p1->id, 'employee_id' => $employee->id,
+            'net_pay' => 500, 'regular_pay' => 0, 'deductions' => 0,
+            'cash_amount' => 500, 'bank_amount' => 0,
+        ]);
+        $this->post(route('payroll.closeCash', $p1->id));
+        $this->confirmDelivery($p1);
+
+        // P2: $700 — su acumulado incluye los $500 de P1.
+        $p2 = PayrollPeriod::factory()->create([
+            'type' => 'weekly', 'status' => 'approved',
+            'start_date' => '2026-06-08', 'end_date' => '2026-06-14',
+        ]);
+        PayrollEntry::factory()->create([
+            'payroll_period_id' => $p2->id, 'employee_id' => $employee->id,
+            'net_pay' => 700, 'regular_pay' => 0, 'deductions' => 0,
+            'cash_amount' => 700, 'bank_amount' => 0,
+        ]);
+        $this->post(route('payroll.closeCash', $p2->id));
+        $this->confirmDelivery($p2);
+
+        // Cobrar el viejo (P1) por separado se bloquea (ya está en P2).
+        $payout1 = CashPayout::where('payroll_period_id', $p1->id)->firstOrFail();
+        $this->from(route('payroll.cash', $p1->id))
+            ->post(route('payroll.payouts.collect', [$p1->id, $payout1->id]), ['pin' => '4321'])
+            ->assertRedirect(route('payroll.cash', $p1->id))
+            ->assertSessionHas('error');
+
+        $this->assertSame('pending', $payout1->fresh()->status);
+
+        // Cobrar el más reciente (P2) sí funciona y salda P1.
+        $payout2 = CashPayout::where('payroll_period_id', $p2->id)->firstOrFail();
+        $this->post(route('payroll.payouts.collect', [$p2->id, $payout2->id]), ['pin' => '4321']);
+        $this->assertSame('paid', $payout1->fresh()->status);
+        $this->assertSame('paid', $payout2->fresh()->status);
+    }
+
     public function test_collecting_rolled_total_settles_prior_pending(): void
     {
         $employee = Employee::factory()->create([
