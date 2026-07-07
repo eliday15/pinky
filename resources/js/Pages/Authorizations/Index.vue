@@ -463,7 +463,14 @@ const typeLabels = {
                             </div>
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                            <template v-if="auth.compensation_type?.application_mode === 'per_hour'">
+                            <template v-if="auth.type === 'night_shift'">
+                                <!-- Velada: se guarda en horas reales (aunque pague
+                                     por noche); se muestra en HORAS, no "dias"
+                                     (Dani 2026-07-07, opcion 1). -->
+                                <span class="font-medium">{{ auth.hours || 0 }}</span>
+                                <span class="text-gray-500 text-xs ml-1">horas</span>
+                            </template>
+                            <template v-else-if="auth.compensation_type?.application_mode === 'per_hour'">
                                 <span class="font-medium">{{ auth.hours || 0 }}</span>
                                 <span class="text-gray-500 text-xs ml-1">horas</span>
                             </template>
