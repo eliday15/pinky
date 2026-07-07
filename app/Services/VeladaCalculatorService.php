@@ -71,14 +71,17 @@ class VeladaCalculatorService
 
         $dailyHours = $daySchedule->daily_work_hours ?? 8;
 
-        // Saldos (u otro depto con weekend_overtime_after_hours): en FIN DE SEMANA
-        // el tiempo extra empieza tras N horas (7), no tras la jornada normal
-        // (Opción A, Dani 2026-06-29). Solo aplica a días de fin de semana; entre
-        // semana el umbral sigue siendo la jornada del horario. El FIN se paga por
-        // día aparte, así que esto es aditivo (sin doble pago).
-        $weekendOtThreshold = $employee->department?->weekend_overtime_after_hours;
+        // FIN DE SEMANA: el tiempo extra empieza tras el umbral del empleado
+        // (Employee::weekendOvertimeThreshold). Saldos = 7 h (Opción A, Dani
+        // 2026-06-29); cualquier otro depto que NO pague por unidades = 0 h, o
+        // sea TODO lo trabajado el fin de semana es extra "sin importar el
+        // horario" (Dani 2026-07-07, caso Carla/Calidad). Almacén PT devuelve
+        // NULL (paga por unidades, no por extra) y aquí no toca el umbral. Solo
+        // aplica a días de fin de semana; entre semana el umbral sigue siendo la
+        // jornada del horario. El extra es aditivo al base (sin doble pago).
+        $weekendOtThreshold = $employee->weekendOvertimeThreshold();
         if ($record->is_weekend_work && $weekendOtThreshold !== null) {
-            $dailyHours = (float) $weekendOtThreshold;
+            $dailyHours = $weekendOtThreshold;
         }
 
         $totalWorkedMinutes = abs($checkIn->diffInMinutes($checkOut));

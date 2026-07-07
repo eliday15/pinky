@@ -1324,7 +1324,14 @@ class AuthorizationController extends Controller
                                 (float) ($employee->department?->cena_min_overtime_hours ?? 0),
                             );
                         } elseif ($isWeekend) {
-                            $seg = $this->buildWeekendSegment($record);
+                            // El "fin de semana" por unidades es EXCLUSIVO de
+                            // Almacén PT (deptos con weekend_unit_hours). En los
+                            // demás el fin de semana se paga como tiempo extra
+                            // (Hora Extra → Cargar desde checadas), así que aquí
+                            // no se ofrece la unidad (Dani 2026-07-07).
+                            $seg = $employee->department?->weekend_unit_hours !== null
+                                ? $this->buildWeekendSegment($record)
+                                : null;
                         } elseif ($isComida) {
                             $seg = $this->buildComidaSegment($record);
                         } else {
@@ -1401,14 +1408,18 @@ class AuthorizationController extends Controller
             return $this->buildVeladaSegments($record);
         }
 
-        // Saldos (fin de semana con umbral): el tiempo extra del fin de semana es
-        // lo que exceda de N horas trabajadas (Opción A, Dani 2026-06-29). Se
-        // sugiere ese excedente para que RRHH lo autorice; el pago
-        // (VeladaCalculatorService, mismo umbral) se topa a lo autorizado, así que
-        // autorizar de más no sobrepaga.
-        $weekendOtThreshold = $employee->department?->weekend_overtime_after_hours;
+        // FIN DE SEMANA con umbral (Employee::weekendOvertimeThreshold): el tiempo
+        // extra del fin de semana es lo que exceda de N horas trabajadas. Saldos =
+        // 7 (Opción A, Dani 2026-06-29); cualquier otro depto que NO pague por
+        // unidades = 0, o sea TODAS las horas del fin de semana son extra "sin
+        // importar el horario" (Dani 2026-07-07, caso Carla/Calidad). Almacén PT
+        // devuelve NULL (paga por unidades) y cae al detector normal. Se sugiere el
+        // excedente para que RRHH lo autorice; el pago (VeladaCalculatorService,
+        // mismo umbral) se topa a lo autorizado, así que autorizar de más no
+        // sobrepaga.
+        $weekendOtThreshold = $employee->weekendOvertimeThreshold();
         if ($type === Authorization::TYPE_OVERTIME && $record->is_weekend_work && $weekendOtThreshold !== null) {
-            return $this->buildWeekendOvertimeSegments($record, (float) $weekendOtThreshold);
+            return $this->buildWeekendOvertimeSegments($record, $weekendOtThreshold);
         }
 
         $dayName = Carbon::parse($date)->format('l');

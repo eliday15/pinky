@@ -400,6 +400,30 @@ class Employee extends Model
     }
 
     /**
+     * Umbral (en horas) tras el cual el trabajo de FIN DE SEMANA se paga como
+     * tiempo extra, para este empleado.
+     *
+     * - Almacén PT (u otro depto con weekend_unit_hours): NULL — el fin de
+     *   semana se paga por UNIDADES, no como tiempo extra (regla exclusiva de
+     *   Almacén PT, Dani 2026-07-07).
+     * - Depto con weekend_overtime_after_hours (p. ej. Saldos = 7): el extra
+     *   empieza tras esas horas (Opción A, Dani 2026-06-29).
+     * - Cualquier otro depto: 0 — TODO lo trabajado en fin de semana (fuera de
+     *   su horario) es tiempo extra "sin importar el horario" (Dani 2026-07-07;
+     *   caso Carla Alvarado, Calidad, 2 h el sábado).
+     *
+     * Devuelve NULL cuando el fin de semana NO se paga por tiempo extra.
+     */
+    public function weekendOvertimeThreshold(): ?float
+    {
+        if ($this->department?->weekend_unit_hours !== null) {
+            return null;
+        }
+
+        return (float) ($this->department?->weekend_overtime_after_hours ?? 0);
+    }
+
+    /**
      * Get the effective late tolerance in minutes for this employee.
      */
     public function getEffectiveLateTolerance(): int

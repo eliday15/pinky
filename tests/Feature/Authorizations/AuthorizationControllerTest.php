@@ -2262,6 +2262,56 @@ class AuthorizationControllerTest extends FeatureTestCase
             ->assertJsonCount(0, 'suggestions');
     }
 
+    public function test_suggest_bulk_weekend_pull_only_for_weekend_unit_department(): void
+    {
+        // Dani 2026-07-07: el "fin de semana" por unidades es EXCLUSIVO de Almacén
+        // PT (weekend_unit_hours). En un depto normal NO se ofrece la unidad — ese
+        // fin de semana se cobra como tiempo extra (Hora Extra). Almacén sí la
+        // ofrece.
+        $this->actingAsAdmin();
+        $fin = CompensationType::factory()->create([
+            'name' => 'Fin de semana',
+            'application_mode' => 'per_day',
+            'authorization_type' => 'special',
+            'attendance_pull_rule' => CompensationType::PULL_RULE_WEEKEND,
+        ]);
+
+        $normalDept = \App\Models\Department::factory()->create(['weekend_unit_hours' => null]);
+        $almacen = \App\Models\Department::factory()->create(['weekend_unit_hours' => 6]);
+        $normalEmp = Employee::factory()->create(['department_id' => $normalDept->id]);
+        $almacenEmp = Employee::factory()->create(['department_id' => $almacen->id]);
+
+        foreach ([$normalEmp, $almacenEmp] as $emp) {
+            AttendanceRecord::factory()->create([
+                'employee_id' => $emp->id,
+                'work_date' => '2026-06-20', // sábado
+                'check_in' => '09:00:00',
+                'check_out' => '11:00:00',
+                'is_weekend_work' => true,
+            ]);
+        }
+
+        // Depto normal → no ofrece la unidad de fin de semana.
+        $this->getJson(route('authorizations.suggestBulk', [
+            'employee_ids' => [$normalEmp->id],
+            'start_date' => '2026-06-20',
+            'end_date' => '2026-06-20',
+            'type' => 'special',
+            'compensation_type_id' => $fin->id,
+        ]))->assertOk()->assertJsonCount(0, 'suggestions');
+
+        // Almacén PT → sí la ofrece.
+        $this->getJson(route('authorizations.suggestBulk', [
+            'employee_ids' => [$almacenEmp->id],
+            'start_date' => '2026-06-20',
+            'end_date' => '2026-06-20',
+            'type' => 'special',
+            'compensation_type_id' => $fin->id,
+        ]))->assertOk()
+            ->assertJsonCount(1, 'suggestions')
+            ->assertJsonPath('suggestions.0.kind', 'weekend');
+    }
+
     public function test_suggest_bulk_rejects_non_pull_type(): void
     {
         $this->actingAsAdmin();
