@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, inject, ref } from 'vue';
 import { formatDate, formatHours } from '../format';
 import OvertimeCell from './OvertimeCell.vue';
 import ExtraConceptsCell from './ExtraConceptsCell.vue';
@@ -7,6 +7,8 @@ import OvertimeLegend from './OvertimeLegend.vue';
 import { cellPending } from '../cells';
 
 const props = defineProps({ report: Object });
+
+const showObservations = inject('showObservations', ref(true));
 
 /** Pending hours are attributed to whichever side (M or V) was active that day,
  *  matching how is_night_shift decides where approved OT lands. */
@@ -45,7 +47,7 @@ const colSums = computed(() => {
                     <th rowspan="2" class="border px-3 py-2">VELADA</th>
                     <th rowspan="2" class="border px-3 py-2">CENA</th>
                     <th rowspan="2" class="border px-3 py-2 text-left">OTROS CONCEPTOS</th>
-                    <th rowspan="2" class="border px-3 py-2 text-left">OBSERVACIONES</th>
+                    <th v-if="showObservations" rowspan="2" class="border px-3 py-2 text-left">OBSERVACIONES</th>
                 </tr>
                 <tr>
                     <template v-for="d in report.dates" :key="d">
@@ -79,7 +81,7 @@ const colSums = computed(() => {
                         {{ row.totals.cena_count }}
                     </td>
                     <td class="border px-3 py-2 max-w-xs"><ExtraConceptsCell :items="row.extra_concepts" /></td>
-                    <td class="border px-3 py-2 text-xs text-gray-600 max-w-xs">{{ row.observations }}</td>
+                    <td v-if="showObservations" class="border px-3 py-2 text-xs text-gray-600 max-w-xs">{{ row.observations }}</td>
                 </tr>
                 <tr class="bg-gray-50 font-semibold">
                     <td class="border px-3 py-2">TOTAL</td>
@@ -99,7 +101,7 @@ const colSums = computed(() => {
                     <td class="border px-3 py-2 text-center">{{ report.totals.velada_count }}</td>
                     <td class="border px-3 py-2 text-center">{{ report.totals.cena_count }}</td>
                     <td class="border px-3 py-2"><ExtraConceptsCell :items="report.totals.extra_concepts" /></td>
-                    <td class="border px-3 py-2"></td>
+                    <td v-if="showObservations" class="border px-3 py-2"></td>
                 </tr>
             </tbody>
         </table>

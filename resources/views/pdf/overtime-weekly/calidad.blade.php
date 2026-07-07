@@ -18,7 +18,7 @@
             <th rowspan="2">TOTAL HORAS</th>
             <th rowspan="2">FIN DE SEMANA</th>
             <th rowspan="2">OTROS CONCEPTOS</th>
-            <th rowspan="2">OBSERVACIONES</th>
+            @if($report['show_observations'] ?? true)<th rowspan="2">OBSERVACIONES</th>@endif
         </tr>
     </thead>
     <tbody>
@@ -32,7 +32,7 @@
                 <td class="num">{{ $fmt($row['totals']['total_hours']) }}</td>
                 <td class="num">{{ $fmt($row['totals']['weekend_hours']) }}</td>
                 <td class="obs">@include('pdf.overtime-weekly._extra_concepts', ['items' => $row['extra_concepts'] ?? []])</td>
-                <td class="obs">{{ $row['observations'] }}</td>
+                @if($report['show_observations'] ?? true)<td class="obs">{{ $row['observations'] }}</td>@endif
             </tr>
         @endforeach
         <tr class="totals">
@@ -49,7 +49,7 @@
             <td class="num">{{ $fmt($report['totals']['total_hours']) }}</td>
             <td class="num">{{ $fmt($report['totals']['weekend_hours']) }}</td>
             <td class="obs">@include('pdf.overtime-weekly._extra_concepts', ['items' => $report['totals']['extra_concepts'] ?? []])</td>
-            <td></td>
+            @if($report['show_observations'] ?? true)<td></td>@endif
         </tr>
     </tbody>
 </table>

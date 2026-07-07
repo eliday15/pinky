@@ -87,6 +87,7 @@
     </tbody>
 </table>
 
+@if($report['show_observations'] ?? true)
 @php
     $obsRows = collect($report['rows'])->filter(fn ($r) => trim($r['observations'] ?? '') !== '')->values();
 @endphp
@@ -108,6 +109,7 @@
             @endforeach
         </tbody>
     </table>
+@endif
 @endif
 
 @php

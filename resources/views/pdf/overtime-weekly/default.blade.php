@@ -24,7 +24,7 @@
             <th>VELADA</th>
             <th>CENA</th>
             <th>OTROS CONCEPTOS</th>
-            <th>OBSERVACIONES</th>
+            @if($report['show_observations'] ?? true)<th>OBSERVACIONES</th>@endif
         </tr>
     </thead>
     <tbody>
@@ -41,7 +41,7 @@
                 <td class="center {{ $row['totals']['velada_count'] === 0 ? 'zero' : '' }}">{{ $row['totals']['velada_count'] }}</td>
                 <td class="center {{ $row['totals']['cena_count'] === 0 ? 'zero' : '' }}">{{ $row['totals']['cena_count'] }}</td>
                 <td class="obs">@include('pdf.overtime-weekly._extra_concepts', ['items' => $row['extra_concepts'] ?? []])</td>
-                <td class="obs">{{ $row['observations'] }}</td>
+                @if($report['show_observations'] ?? true)<td class="obs">{{ $row['observations'] }}</td>@endif
             </tr>
         @empty
             <tr>
@@ -67,7 +67,7 @@
                 <td class="center">{{ $report['totals']['velada_count'] }}</td>
                 <td class="center">{{ $report['totals']['cena_count'] }}</td>
                 <td class="obs">@include('pdf.overtime-weekly._extra_concepts', ['items' => $report['totals']['extra_concepts'] ?? []])</td>
-                <td></td>
+                @if($report['show_observations'] ?? true)<td></td>@endif
             </tr>
         @endif
     </tbody>

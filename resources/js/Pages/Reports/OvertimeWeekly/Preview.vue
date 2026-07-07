@@ -18,6 +18,12 @@ const props = defineProps({
 const showPending = ref(false);
 provide('showPending', showPending);
 
+// Observaciones visibles por defecto; al ocultarlas el reporte impreso ocupa
+// menos hojas (Dani 2026-07-02). El toggle controla la vista y también viaja a
+// la descarga (PDF/Excel) vía show_observations.
+const showObservations = ref(true);
+provide('showObservations', showObservations);
+
 /** Drop rows that have nothing to report so the table stays readable.
  *  "Nothing" = zero approved OT and (if not showing pending) zero pending too. */
 const visibleReport = computed(() => {
@@ -47,6 +53,7 @@ const exportParams = computed(() => ({
     department_id: props.report.department.id,
     week_start: props.report.week_start,
     end_date: props.report.week_end,
+    show_observations: showObservations.value ? 1 : 0,
 }));
 
 const pdfHref = computed(() => route('reports.overtime-weekly.export.pdf', exportParams.value));
@@ -78,6 +85,10 @@ const excelHref = computed(() => route('reports.overtime-weekly.export.excel', e
                 <label class="inline-flex items-center gap-1 px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm text-gray-700 cursor-pointer">
                     <input type="checkbox" v-model="showPending" class="rounded border-gray-300 text-pink-600 focus:ring-pink-500" />
                     Mostrar pendientes por aprobar
+                </label>
+                <label class="inline-flex items-center gap-1 px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm text-gray-700 cursor-pointer">
+                    <input type="checkbox" v-model="showObservations" class="rounded border-gray-300 text-pink-600 focus:ring-pink-500" />
+                    Mostrar observaciones
                 </label>
                 <a
                     :href="pdfHref"

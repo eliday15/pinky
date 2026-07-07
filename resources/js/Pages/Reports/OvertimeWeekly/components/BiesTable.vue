@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, inject, ref } from 'vue';
 import { dayLabel, formatDate, formatHours } from '../format';
 import OvertimeCell from './OvertimeCell.vue';
 import OvertimeLegend from './OvertimeLegend.vue';
@@ -7,6 +7,8 @@ import ExtraConceptsCell from './ExtraConceptsCell.vue';
 import { cellApproved, cellPending } from '../cells';
 
 const props = defineProps({ report: Object });
+
+const showObservations = inject('showObservations', ref(true));
 
 const dailyCells = computed(() => {
     return props.report.dates.map((date) => {
@@ -93,7 +95,7 @@ const extraRows = computed(() => props.report.rows.filter((r) => (r.extra_concep
             </tbody>
         </table>
 
-        <div v-if="obsRows.length">
+        <div v-if="showObservations && obsRows.length">
             <h3 class="text-sm font-semibold text-gray-700 mb-2">OBSERVACIONES</h3>
             <table class="min-w-full text-sm border-collapse">
                 <thead class="bg-gray-50">

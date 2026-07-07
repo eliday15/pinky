@@ -34,7 +34,9 @@ class DisenoTemplate extends AbstractOvertimeReportTemplate
         $headings[] = 'VELADA';
         $headings[] = 'CENA';
         $headings[] = 'OTROS CONCEPTOS';
-        $headings[] = 'OBSERVACIONES';
+        if ($report['show_observations'] ?? true) {
+            $headings[] = 'OBSERVACIONES';
+        }
 
         return $headings;
     }
@@ -58,7 +60,9 @@ class DisenoTemplate extends AbstractOvertimeReportTemplate
             $line[] = $row['totals']['velada_count'];
             $line[] = $row['totals']['cena_count'];
             $line[] = $this->formatExtraConcepts($row['extra_concepts'] ?? []);
-            $line[] = $row['observations'];
+            if ($report['show_observations'] ?? true) {
+                $line[] = $row['observations'];
+            }
 
             $rows[] = $line;
         }

@@ -81,6 +81,7 @@ class OvertimeReportController extends Controller implements HasMiddleware
         [$department, $start, $end] = $this->resolveInputs($request);
 
         $report = $this->reportService->buildReport($department, $start, $end);
+        $report['show_observations'] = $request->boolean('show_observations', true);
         $template = $this->registry->for($department);
 
         $pdf = Pdf::loadView($template->pdfView(), ['report' => $report])
@@ -99,6 +100,7 @@ class OvertimeReportController extends Controller implements HasMiddleware
         [$department, $start, $end] = $this->resolveInputs($request);
 
         $report = $this->reportService->buildReport($department, $start, $end);
+        $report['show_observations'] = $request->boolean('show_observations', true);
         $template = $this->registry->for($department);
 
         $title = sprintf(
