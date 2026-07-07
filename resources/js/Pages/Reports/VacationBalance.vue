@@ -1,13 +1,15 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head, Link, router } from '@inertiajs/vue3';
-import { ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 
 const props = defineProps({
     employees: Array,
     departments: Array,
     selectedDepartment: [Number, String],
     summary: Object,
+    defaultStart: String,
+    defaultEnd: String,
 });
 
 const department = ref(props.selectedDepartment || '');
@@ -15,6 +17,21 @@ const department = ref(props.selectedDepartment || '');
 watch(department, (newDept) => {
     router.get(route('reports.vacationBalance'), { department: newDept || undefined }, { preserveState: true, replace: true });
 });
+
+// Descarga de "vacaciones por periodo": rango libre Desde/Hasta (por defecto el
+// año en curso) + el mismo filtro de departamento (Dani 2026-07-07).
+const rangeStart = ref(props.defaultStart || '');
+const rangeEnd = ref(props.defaultEnd || '');
+
+const vacationsHref = computed(() => route('reports.export.vacations', {
+    start_date: rangeStart.value || undefined,
+    end_date: rangeEnd.value || undefined,
+    department: department.value || undefined,
+}));
+
+const balanceHref = computed(() => route('reports.export.vacationBalance', {
+    department: department.value || undefined,
+}));
 
 const getProgressColor = (percentage) => {
     if (percentage >= 80) return 'bg-red-500';
@@ -40,6 +57,36 @@ const getProgressColor = (percentage) => {
                 <option value="">Todos los departamentos</option>
                 <option v-for="dept in departments" :key="dept.id" :value="dept.id">{{ dept.name }}</option>
             </select>
+        </div>
+
+        <!-- Descargar vacaciones por periodo (rango libre) -->
+        <div class="bg-white rounded-lg shadow p-4 mb-6">
+            <h3 class="text-sm font-semibold text-gray-800 mb-1">Descargar reporte de vacaciones</h3>
+            <p class="text-xs text-gray-500 mb-3">
+                Vacaciones tomadas dentro del rango de fechas (respeta el filtro de departamento).
+            </p>
+            <div class="flex flex-wrap items-end gap-3">
+                <div>
+                    <label class="block text-xs font-medium text-gray-700 mb-1">Desde</label>
+                    <input type="date" v-model="rangeStart" class="rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" />
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-700 mb-1">Hasta</label>
+                    <input type="date" v-model="rangeEnd" class="rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" />
+                </div>
+                <a
+                    :href="vacationsHref"
+                    class="inline-flex items-center px-4 py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700 text-sm"
+                >
+                    Descargar vacaciones del periodo
+                </a>
+                <a
+                    :href="balanceHref"
+                    class="inline-flex items-center px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm"
+                >
+                    Descargar saldos actuales
+                </a>
+            </div>
         </div>
 
         <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">

@@ -148,6 +148,7 @@ Route::middleware(['auth', 'password-changed', 'two-factor-setup'])->group(funct
     Route::get('/reports/export/absences', [ReportExportController::class, 'exportAbsences'])->name('reports.export.absences');
     Route::get('/reports/export/late-arrivals', [ReportExportController::class, 'exportLateArrivals'])->name('reports.export.lateArrivals');
     Route::get('/reports/export/vacation-balance', [ReportExportController::class, 'exportVacationBalance'])->name('reports.export.vacationBalance');
+    Route::get('/reports/export/vacations', [ReportExportController::class, 'exportVacations'])->name('reports.export.vacations');
     Route::get('/reports/export/incidents', [ReportExportController::class, 'exportIncidents'])->name('reports.export.incidents');
     Route::get('/reports/export/overtime', [ReportExportController::class, 'exportOvertime'])->name('reports.export.overtime');
 

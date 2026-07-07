@@ -241,6 +241,48 @@ class ReportExportController extends Controller implements HasMiddleware
     }
 
     /**
+     * Export vacations TAKEN within a date range to CSV.
+     *
+     * Unlike exportVacationBalance (a point-in-time balance), this lists the
+     * vacation incidents that OVERLAP the requested [start, end] range —
+     * "reporte de vacaciones por rango de fechas" (Dani 2026-07-07). A vacation
+     * is any incident whose type deducts the vacation balance. Optional
+     * `department` filter mirrors the balance report.
+     */
+    public function exportVacations(Request $request): StreamedResponse
+    {
+        $startDate = $request->get('start_date', Carbon::now()->startOfYear()->toDateString());
+        $endDate = $request->get('end_date', Carbon::now()->endOfYear()->toDateString());
+        $departmentId = $request->get('department');
+
+        $incidents = Incident::with(['employee.department', 'incidentType'])
+            ->whereIn('employee_id', $this->scopedActiveEmployeeIds())
+            ->whereHas('incidentType', fn ($q) => $q->where('deducts_vacation', true))
+            // Solape con el rango: la vacación toca el periodo si empieza antes
+            // (o el mismo día) del fin y termina después (o el mismo día) del inicio.
+            ->whereDate('start_date', '<=', $endDate)
+            ->whereDate('end_date', '>=', $startDate)
+            ->when($departmentId, fn ($q) => $q->whereHas('employee', fn ($e) => $e->where('department_id', $departmentId)))
+            ->orderBy('start_date')
+            ->get();
+
+        return $this->exportCsv(
+            "reporte_vacaciones_{$startDate}_{$endDate}.csv",
+            ['Empleado', 'No. Empleado', 'Departamento', 'Tipo', 'Inicio', 'Fin', 'Dias', 'Estado'],
+            $incidents->map(fn ($incident) => [
+                $incident->employee?->full_name ?? '-',
+                $incident->employee?->employee_number ?? '-',
+                $incident->employee?->department?->name ?? '-',
+                $incident->incidentType?->name ?? '-',
+                $incident->start_date?->format('Y-m-d'),
+                $incident->end_date?->format('Y-m-d'),
+                $incident->days_count,
+                $this->translateIncidentStatus($incident->status),
+            ])->toArray()
+        );
+    }
+
+    /**
      * Export incidents report to CSV.
      */
     public function exportIncidents(Request $request): StreamedResponse

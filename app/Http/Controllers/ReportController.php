@@ -544,6 +544,10 @@ class ReportController extends Controller implements HasMiddleware
             'departments' => $departments,
             'selectedDepartment' => $departmentId,
             'summary' => $summary,
+            // Rango por defecto para la descarga de "vacaciones por periodo": el
+            // año en curso (Dani 2026-07-07).
+            'defaultStart' => Carbon::now()->startOfYear()->toDateString(),
+            'defaultEnd' => Carbon::now()->endOfYear()->toDateString(),
         ]);
     }
 

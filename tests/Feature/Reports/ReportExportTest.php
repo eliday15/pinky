@@ -259,6 +259,85 @@ class ReportExportTest extends FeatureTestCase
         $this->assertStringContainsString('Saldo', $body); // header column present
     }
 
+    public function test_vacations_period_export_lists_only_vacations_in_range(): void
+    {
+        // Dani 2026-07-07: descarga de vacaciones tomadas dentro de un rango.
+        $this->actingAsAdmin();
+
+        $inRange = $this->weekdayEmployee(['full_name' => 'Vera Enrango', 'employee_number' => 'EMP-VR-1']);
+        $outRange = $this->weekdayEmployee(['full_name' => 'Fuera Derango', 'employee_number' => 'EMP-FR-1']);
+        $permiso = $this->weekdayEmployee(['full_name' => 'Pedro Permiso', 'employee_number' => 'EMP-PP-1']);
+
+        $vacType = IncidentType::factory()->vacation()->create(['name' => 'Vacaciones']);
+        $permType = IncidentType::factory()->create(['name' => 'Permiso', 'category' => 'permission', 'deducts_vacation' => false]);
+
+        // Vacación dentro del rango → sale.
+        Incident::factory()->approved()->create([
+            'employee_id' => $inRange->id,
+            'incident_type_id' => $vacType->id,
+            'start_date' => '2026-03-10',
+            'end_date' => '2026-03-12',
+            'days_count' => 3,
+        ]);
+        // Vacación fuera del rango → NO sale.
+        Incident::factory()->approved()->create([
+            'employee_id' => $outRange->id,
+            'incident_type_id' => $vacType->id,
+            'start_date' => '2026-01-05',
+            'end_date' => '2026-01-07',
+            'days_count' => 3,
+        ]);
+        // Permiso (no descuenta vacaciones) dentro del rango → NO sale.
+        Incident::factory()->approved()->create([
+            'employee_id' => $permiso->id,
+            'incident_type_id' => $permType->id,
+            'start_date' => '2026-03-11',
+            'end_date' => '2026-03-11',
+            'days_count' => 1,
+        ]);
+
+        $response = $this->get(route('reports.export.vacations', [
+            'start_date' => self::MONDAY,
+            'end_date' => self::WEEK_END,
+        ]));
+        $this->assertCsvDownload($response);
+
+        $body = $this->streamedBody($response);
+        $this->assertStringContainsString('Vera Enrango', $body);
+        $this->assertStringNotContainsString('Fuera Derango', $body);
+        $this->assertStringNotContainsString('Pedro Permiso', $body);
+    }
+
+    public function test_vacations_period_export_filters_by_department(): void
+    {
+        $this->actingAsAdmin();
+
+        $deptA = Department::factory()->create(['name' => 'Depto A']);
+        $deptB = Department::factory()->create(['name' => 'Depto B']);
+        $empA = $this->weekdayEmployee(['full_name' => 'Ana DeptoA', 'employee_number' => 'EMP-A-1', 'department_id' => $deptA->id]);
+        $empB = $this->weekdayEmployee(['full_name' => 'Beto DeptoB', 'employee_number' => 'EMP-B-1', 'department_id' => $deptB->id]);
+        $vacType = IncidentType::factory()->vacation()->create(['name' => 'Vacaciones']);
+
+        foreach ([$empA, $empB] as $e) {
+            Incident::factory()->approved()->create([
+                'employee_id' => $e->id,
+                'incident_type_id' => $vacType->id,
+                'start_date' => '2026-03-10',
+                'end_date' => '2026-03-11',
+                'days_count' => 2,
+            ]);
+        }
+
+        $body = $this->streamedBody($this->get(route('reports.export.vacations', [
+            'start_date' => self::MONDAY,
+            'end_date' => self::WEEK_END,
+            'department' => $deptA->id,
+        ])));
+
+        $this->assertStringContainsString('Ana DeptoA', $body);
+        $this->assertStringNotContainsString('Beto DeptoB', $body);
+    }
+
     public function test_overtime_export_includes_only_overtime_records(): void
     {
         $this->actingAsAdmin();
