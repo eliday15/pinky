@@ -384,10 +384,13 @@ class CompensationRateResolverService
             $dailySalary,
             $consumedAuthIds,
             $holidayDates,
-            // Cuando el depto cuenta el fin de semana por unidades de horas
-            // trabajadas, NO se paga por fila/día aquí: se paga abajo por unidades.
-            $weekendUnitHours !== null,
-            $allowedPaymentPeriods,
+            // El FIN se paga SIEMPRE por unidades abajo (Almacén por horas; los
+            // demás 1 por día que alcanza el umbral), nunca por fila/día aquí.
+            skipWeekendPullRule: true,
+            allowedPaymentPeriods: $allowedPaymentPeriods,
+            // La comida por unidades es exclusiva de Almacén PT; en los demás
+            // deptos la comida sigue pagándose por fila/día en el pase genérico.
+            skipComidaPullRule: $weekendUnitHours !== null,
         );
         foreach ($generic['concepts'] as $concept) {
             $concepts[] = $concept;
@@ -398,8 +401,12 @@ class CompensationRateResolverService
         // nómina por cada día de fin de semana autorizado (al menos 1 por día,
         // 12 h = 2), pasado en metrics['weekend_units']. Se paga unidades × valor
         // de una unidad del concepto FIN.
+        // Fin de semana por unidades. Almacén PT: # de unidades por horas
+        // (weekend_units, 12 h = 2). Los demás deptos (Dani 2026-07-07): 1 fin de
+        // semana por día que alcanzó el umbral; se paga con el monto del concepto
+        // FIN del empleado (per_day + fixed) — si no tiene monto, 0.
         $weekendUnits = (int) ($metrics['weekend_units'] ?? 0);
-        if ($weekendUnitHours && $weekendUnits > 0 && $authorizations) {
+        if ($weekendUnits > 0 && $authorizations) {
             $weekendConcept = $this->weekendUnitsConcept(
                 $employee,
                 $authorizations,
@@ -414,20 +421,24 @@ class CompensationRateResolverService
                 $total += $weekendConcept['amount'];
             }
 
-            // Comida por unidades (Almacén PT): UNA comida por cada unidad de fin
-            // de semana (12 h = 2 comidas), igualada al conteo del fin de semana.
-            $comidaConcept = $this->comidaUnitsConcept(
-                $employee,
-                $authorizations,
-                $hourlyRate,
-                $dailySalary,
-                $weekendUnits,
-                $weekendUnitHours,
-                $allowedPaymentPeriods,
-            );
-            if ($comidaConcept) {
-                $concepts[] = $comidaConcept;
-                $total += $comidaConcept['amount'];
+            // Comida por unidades: EXCLUSIVA de Almacén PT (deptos que pagan por
+            // unidades de horas). UNA comida por cada unidad de fin de semana
+            // (12 h = 2 comidas). Los demás deptos no generan comida de fin de
+            // semana.
+            if ($weekendUnitHours) {
+                $comidaConcept = $this->comidaUnitsConcept(
+                    $employee,
+                    $authorizations,
+                    $hourlyRate,
+                    $dailySalary,
+                    $weekendUnits,
+                    $weekendUnitHours,
+                    $allowedPaymentPeriods,
+                );
+                if ($comidaConcept) {
+                    $concepts[] = $comidaConcept;
+                    $total += $comidaConcept['amount'];
+                }
             }
         }
 
@@ -448,7 +459,7 @@ class CompensationRateResolverService
         float $hourlyRate,
         float $dailySalary,
         int $units,
-        int $weekendUnitHours,
+        ?int $weekendUnitHours,
         ?array $allowedPaymentPeriods = null,
     ): ?array {
         $weekendAuth = $authorizations->first(
@@ -512,11 +523,15 @@ class CompensationRateResolverService
         float $hourlyRate,
         float $dailySalary,
         int $units,
-        int $weekendUnitHours,
+        ?int $weekendUnitHours,
         string $source,
         ?array $allowedPaymentPeriods = null,
     ): ?array {
-        if ($weekendUnitHours <= 0 || ! $compType || $units <= 0) {
+        // weekendUnitHours puede ser NULL en deptos que no pagan por unidades de
+        // horas (todos menos Almacén PT): ahí el concepto FIN es per_day y su
+        // valor por unidad NO depende de weekendUnitHours. Solo el modo per_hour
+        // lo necesita (Almacén), y sin él vale 0.
+        if (! $compType || $units <= 0) {
             return null;
         }
         if (! $this->paymentPeriodAllowed($compType, $allowedPaymentPeriods)) {
@@ -528,7 +543,7 @@ class CompensationRateResolverService
         // Valor de UNA unidad según el modo del concepto.
         $perUnit = match ($compType->application_mode) {
             CompensationType::APPLICATION_PER_HOUR => $compType->calculateCompensation(
-                $hourlyRate, $dailySalary, (float) $weekendUnitHours, 0, $rate['percentage'], $rate['fixed_amount'],
+                $hourlyRate, $dailySalary, (float) ($weekendUnitHours ?? 0), 0, $rate['percentage'], $rate['fixed_amount'],
             ),
             CompensationType::APPLICATION_PER_DAY => $compType->calculateCompensation(
                 $hourlyRate, $dailySalary, 0, 1, $rate['percentage'], $rate['fixed_amount'],
@@ -587,6 +602,7 @@ class CompensationRateResolverService
         array $holidayDates = [],
         bool $skipWeekendPullRule = false,
         ?array $allowedPaymentPeriods = null,
+        bool $skipComidaPullRule = false,
     ): array {
         $concepts = [];
         $total = 0.0;
@@ -602,11 +618,14 @@ class CompensationRateResolverService
                 && ! $this->paymentPeriodAllowed($auth->compensationType, $allowedPaymentPeriods)) {
                 continue;
             }
-            // Cuando el depto paga el fin de semana por unidades de horas
-            // trabajadas, el FIN y su comida acompañante se pagan aparte por
-            // unidades (no por fila/día) — aquí se saltan para no duplicar.
-            if ($skipWeekendPullRule
-                && ($auth->compensationType?->hasWeekendPullRule() || $auth->compensationType?->hasComidaPullRule())) {
+            // El FIN se paga aparte por unidades (Almacén por horas; los demás 1
+            // por día que alcanza el umbral) — aquí se salta para no duplicar. La
+            // comida solo se salta cuando también va por unidades (Almacén PT); en
+            // los demás deptos la comida sigue pagándose por fila/día aquí.
+            if ($skipWeekendPullRule && $auth->compensationType?->hasWeekendPullRule()) {
+                continue;
+            }
+            if ($skipComidaPullRule && $auth->compensationType?->hasComidaPullRule()) {
                 continue;
             }
             // Never re-pay something the overtime/velada paths already paid.

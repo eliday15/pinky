@@ -71,19 +71,6 @@ class VeladaCalculatorService
 
         $dailyHours = $daySchedule->daily_work_hours ?? 8;
 
-        // FIN DE SEMANA: el tiempo extra empieza tras el umbral del empleado
-        // (Employee::weekendOvertimeThreshold). Saldos = 7 h (Opción A, Dani
-        // 2026-06-29); cualquier otro depto que NO pague por unidades = 0 h, o
-        // sea TODO lo trabajado el fin de semana es extra "sin importar el
-        // horario" (Dani 2026-07-07, caso Carla/Calidad). Almacén PT devuelve
-        // NULL (paga por unidades, no por extra) y aquí no toca el umbral. Solo
-        // aplica a días de fin de semana; entre semana el umbral sigue siendo la
-        // jornada del horario. El extra es aditivo al base (sin doble pago).
-        $weekendOtThreshold = $employee->weekendOvertimeThreshold();
-        if ($record->is_weekend_work && $weekendOtThreshold !== null) {
-            $dailyHours = $weekendOtThreshold;
-        }
-
         $totalWorkedMinutes = abs($checkIn->diffInMinutes($checkOut));
 
         // Subtract break (fallback: schedule -> department -> 60)
@@ -91,6 +78,19 @@ class VeladaCalculatorService
         $breakMinutes = $record->actual_break_minutes ?: ($totalWorkedMinutes > 300 ? ($daySchedule->break_minutes ?? $departmentBreak ?? 60) : 0);
         $netWorkedMinutes = max(0, $totalWorkedMinutes - $breakMinutes);
         $netWorkedHours = $netWorkedMinutes / 60;
+
+        // FIN DE SEMANA (deptos que NO pagan por unidades fijas). Regla de Dani
+        // 2026-07-07: el "fin de semana" absorbe las primeras T horas (umbral del
+        // empleado, 7 por omisión). Si trabajó >= T, el tiempo extra empieza tras
+        // T (y aparte gana 1 fin de semana); si trabajó < T, no gana fin de semana
+        // y TODO es tiempo extra (umbral 0). Almacén PT devuelve NULL (paga por
+        // unidades) y aquí conserva la jornada del horario. Solo aplica en días de
+        // fin de semana; el tiempo extra es aditivo al fin de semana (sin doble
+        // pago porque el fin de semana no paga base ese día).
+        $weekendOtThreshold = $employee->weekendOvertimeThresholdForHours($netWorkedHours);
+        if ($record->is_weekend_work && $weekendOtThreshold !== null) {
+            $dailyHours = $weekendOtThreshold;
+        }
 
         $extraHours = max(0, $netWorkedHours - $dailyHours);
 

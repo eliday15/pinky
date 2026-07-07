@@ -397,4 +397,94 @@ class WeekendUnitsTest extends FeatureTestCase
             ->calculateEmployeePayroll($period, $employee->fresh());
         $this->assertEqualsWithDelta(400.0, (float) $entry->weekend_pay, 0.01); // 2 × 200
     }
+
+    public function test_normal_department_pays_one_weekend_unit_at_threshold(): void
+    {
+        // Dani 2026-07-07: en deptos que NO pagan por unidades fijas, un día de fin
+        // de semana con >= 7 h trabajadas y FIN aprobado = 1 fin de semana, pagado
+        // con el monto del concepto FIN del empleado.
+        $dept = Department::factory()->create(['name' => 'Calidad', 'code' => 'CAL']); // sin weekend_unit_hours
+        $employee = Employee::factory()->create(['department_id' => $dept->id, 'status' => 'active']);
+
+        $fin = $this->weekendCompType(200.0);
+        $employee->compensationTypes()->attach($fin->id, ['is_active' => true]);
+
+        $this->seedWeekendWork($employee, $fin, 9.0); // 9 h el sábado → 1 fin de semana
+
+        $period = PayrollPeriod::factory()->monthly()->create([
+            'start_date' => '2026-03-01',
+            'end_date' => '2026-03-31',
+            'payment_date' => '2026-04-03',
+        ]);
+        $entry = app(PayrollCalculatorService::class)
+            ->calculateEmployeePayroll($period, $employee->fresh());
+
+        $this->assertEqualsWithDelta(200.0, (float) $entry->weekend_pay, 0.01); // 1 × 200
+    }
+
+    public function test_normal_department_below_threshold_pays_no_weekend_unit(): void
+    {
+        // < 7 h no gana fin de semana aunque exista un FIN aprobado (defensa: la
+        // nómina reconfirma el umbral). Esas horas van como tiempo extra, no aquí.
+        $dept = Department::factory()->create(['name' => 'Calidad', 'code' => 'CAL']);
+        $employee = Employee::factory()->create(['department_id' => $dept->id, 'status' => 'active']);
+
+        $fin = $this->weekendCompType(200.0);
+        $employee->compensationTypes()->attach($fin->id, ['is_active' => true]);
+
+        $this->seedWeekendWork($employee, $fin, 5.0); // 5 h < 7
+
+        $period = PayrollPeriod::factory()->monthly()->create([
+            'start_date' => '2026-03-01',
+            'end_date' => '2026-03-31',
+            'payment_date' => '2026-04-03',
+        ]);
+        $entry = app(PayrollCalculatorService::class)
+            ->calculateEmployeePayroll($period, $employee->fresh());
+
+        $this->assertEqualsWithDelta(0.0, (float) $entry->weekend_pay, 0.01);
+    }
+
+    public function test_normal_department_report_overtime_uses_weekend_threshold(): void
+    {
+        // El reporte muestra el OT del fin de semana con el mismo umbral que la
+        // nómina: 9 h trabajadas − 7 = 2 h (no lo que exceda del horario).
+        $dept = Department::factory()->create(['name' => 'Calidad', 'code' => 'CAL']);
+        $employee = Employee::factory()->create(['department_id' => $dept->id, 'status' => 'active']);
+        $fin = $this->weekendCompType(200.0);
+
+        $this->seedWeekendWork($employee, $fin, 9.0); // 9 h el sábado
+
+        // Autoriza 2 h de tiempo extra ese día (el excedente sobre 7). El reporte
+        // empareja el OT por CÓDIGO del concepto (HE), no por tipo.
+        $he = CompensationType::updateOrCreate(
+            ['code' => 'HE'],
+            [
+                'name' => 'Horas Extra',
+                'calculation_type' => 'percentage',
+                'percentage_value' => 100,
+                'application_mode' => CompensationType::APPLICATION_PER_HOUR,
+                'authorization_type' => Authorization::TYPE_OVERTIME,
+                'is_active' => true,
+            ],
+        );
+        Authorization::factory()->create([
+            'employee_id' => $employee->id,
+            'date' => self::SATURDAY,
+            'type' => Authorization::TYPE_OVERTIME,
+            'compensation_type_id' => $he->id,
+            'hours' => 2,
+            'status' => Authorization::STATUS_APPROVED,
+        ]);
+
+        $report = app(WeeklyOvertimeReportService::class)
+            ->buildReport($dept, Carbon::parse('2026-03-09'));
+        $row = collect($report['rows'])->first(fn ($r) => $r['employee']['id'] === $employee->id);
+
+        // Detectado por umbral = 9 − 7 = 2 h; aprobado = 2 h.
+        $this->assertEqualsWithDelta(2.0, $row['days'][self::SATURDAY]['detected_overtime_hours'], 0.01);
+        $this->assertEqualsWithDelta(2.0, $row['days'][self::SATURDAY]['overtime_hours'], 0.01);
+        // El fin de semana se ve como 1 (la autorización FIN cuenta como una unidad).
+        $this->assertEqualsWithDelta(1.0, $row['totals']['weekend_hours'], 0.01);
+    }
 }

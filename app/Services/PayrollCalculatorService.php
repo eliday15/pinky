@@ -296,7 +296,7 @@ class PayrollCalculatorService
             // de Dani 2026-06-28); 12 h = 2. Se calcula desde las autorizaciones
             // (no del status) para que un sábado marcado "ausente" pero trabajado
             // y autorizado sí pague.
-            $weekendUnits = $this->calculateWeekendUnits($attendance, $approvedAuthorizations, $weekendUnitHours);
+            $weekendUnits = $this->calculateWeekendUnits($attendance, $approvedAuthorizations, $employee);
 
             $compensationPayments = $this->resolver->calculateAllCompensation(
                 $employee,
@@ -912,12 +912,8 @@ class PayrollCalculatorService
      * (12 h ÷ 6 = 2). Se basa en las autorizaciones, no en el status, para que un
      * día trabajado y autorizado pero marcado "ausente" también pague.
      */
-    private function calculateWeekendUnits(Collection $attendance, Collection $approvedAuthorizations, ?int $weekendUnitHours): int
+    private function calculateWeekendUnits(Collection $attendance, Collection $approvedAuthorizations, Employee $employee): int
     {
-        if (! $weekendUnitHours || $weekendUnitHours <= 0) {
-            return 0;
-        }
-
         $hoursByDate = $attendance->mapWithKeys(fn ($r) => [
             Carbon::parse($r->work_date)->toDateString() => (float) ($r->worked_hours ?? 0) + (float) ($r->overtime_hours ?? 0),
         ]);
@@ -927,10 +923,35 @@ class PayrollCalculatorService
             ->map(fn (Authorization $a) => Carbon::parse($a->date)->toDateString())
             ->unique();
 
+        $weekendUnitHours = $employee->department?->weekend_unit_hours;
+
+        // Almacén PT (paga por unidades de horas): por cada día FIN autorizado,
+        // AL MENOS 1 aunque trabaje < 1 unidad (Dani 2026-06-28); 12 h ÷ 6 = 2.
+        if ($weekendUnitHours && $weekendUnitHours > 0) {
+            $units = 0;
+            foreach ($finDates as $date) {
+                $hours = (float) $hoursByDate->get($date, 0);
+                $units += max(1, (int) floor($hours / $weekendUnitHours));
+            }
+
+            return $units;
+        }
+
+        // Los demás deptos (Dani 2026-07-07): 1 fin de semana por cada día FIN
+        // autorizado donde se trabajaron al menos T horas (7 por omisión). Por
+        // debajo de T no hay fin de semana (esas horas van como tiempo extra), y
+        // más de T sigue siendo 1 solo fin de semana (el excedente es tiempo
+        // extra aparte). Se reconfirma el umbral aquí aunque el pull ya lo filtra.
+        $threshold = $employee->weekendUnitThreshold();
+        if ($threshold === null) {
+            return 0;
+        }
+
         $units = 0;
         foreach ($finDates as $date) {
-            $hours = (float) $hoursByDate->get($date, 0);
-            $units += max(1, (int) floor($hours / $weekendUnitHours));
+            if ((float) $hoursByDate->get($date, 0) >= $threshold) {
+                $units++;
+            }
         }
 
         return $units;

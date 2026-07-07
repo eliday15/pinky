@@ -279,6 +279,20 @@ class WeeklyOvertimeReportService
         $schedule = $employee->getEffectiveScheduleForDay($dayName);
         $detectedHours = $this->rounding->detectOvertimeHours($record, $schedule, $date);
 
+        // FIN DE SEMANA en deptos que NO pagan por unidades fijas (Dani
+        // 2026-07-07): el tiempo extra es lo que exceda del umbral T (o TODO si se
+        // trabajó < T), igual que la nómina (VeladaCalculatorService), no lo que
+        // exceda del horario. Así el reporte y el recibo coinciden en el OT del
+        // fin de semana. Almacén PT (paga por unidades) devuelve NULL y conserva
+        // la detección por horario.
+        if ($isWeekendWork) {
+            $totalWeekend = (float) ($record->worked_hours ?? 0) + (float) ($record->overtime_hours ?? 0);
+            $weekendThreshold = $employee->weekendOvertimeThresholdForHours($totalWeekend);
+            if ($weekendThreshold !== null) {
+                $detectedHours = $this->rounding->roundMinutes((int) round(max(0.0, $totalWeekend - $weekendThreshold) * 60));
+            }
+        }
+
         // Tope al timecard (auditoría #20 / DECISIONES derivadas): las horas
         // autorizadas mostradas no pueden exceder lo realmente detectado en
         // checadas — el mismo tope que aplica la nómina al pagar. Si se

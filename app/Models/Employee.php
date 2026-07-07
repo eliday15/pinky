@@ -399,28 +399,60 @@ class Employee extends Model
         return ! $this->isEffectiveWorkingDay($date->englishDayOfWeek);
     }
 
+    /** Horas que, por omisión, valen 1 "fin de semana" en un depto normal. */
+    public const WEEKEND_UNIT_DEFAULT_HOURS = 7;
+
     /**
-     * Umbral (en horas) tras el cual el trabajo de FIN DE SEMANA se paga como
-     * tiempo extra, para este empleado.
+     * Umbral (en horas) del FIN DE SEMANA para deptos que NO pagan por unidades
+     * fijas (todos menos Almacén PT). Regla de Dani 2026-07-07:
      *
-     * - Almacén PT (u otro depto con weekend_unit_hours): NULL — el fin de
-     *   semana se paga por UNIDADES, no como tiempo extra (regla exclusiva de
-     *   Almacén PT, Dani 2026-07-07).
-     * - Depto con weekend_overtime_after_hours (p. ej. Saldos = 7): el extra
-     *   empieza tras esas horas (Opción A, Dani 2026-06-29).
-     * - Cualquier otro depto: 0 — TODO lo trabajado en fin de semana (fuera de
-     *   su horario) es tiempo extra "sin importar el horario" (Dani 2026-07-07;
-     *   caso Carla Alvarado, Calidad, 2 h el sábado).
+     * - Menos de T horas trabajadas en fin de semana: NO cuenta fin de semana,
+     *   todo es tiempo extra.
+     * - Exactamente T: 1 fin de semana (sin tiempo extra).
+     * - Más de T: 1 fin de semana + las horas por encima de T como tiempo extra.
      *
-     * Devuelve NULL cuando el fin de semana NO se paga por tiempo extra.
+     * T = departments.weekend_overtime_after_hours si está configurado (p. ej.
+     * Saldos = 7), o 7 por omisión. Almacén PT (weekend_unit_hours) devuelve
+     * NULL: paga el fin de semana por UNIDADES de horas, no por umbral.
      */
-    public function weekendOvertimeThreshold(): ?float
+    public function weekendUnitThreshold(): ?float
     {
         if ($this->department?->weekend_unit_hours !== null) {
             return null;
         }
 
-        return (float) ($this->department?->weekend_overtime_after_hours ?? 0);
+        return (float) ($this->department?->weekend_overtime_after_hours ?? self::WEEKEND_UNIT_DEFAULT_HOURS);
+    }
+
+    /**
+     * Umbral de tiempo extra del fin de semana para un total de horas trabajadas.
+     *
+     * El "fin de semana" absorbe las primeras T horas: si trabajó T o más, el
+     * tiempo extra empieza tras T (y gana 1 fin de semana); si trabajó menos de
+     * T, no gana fin de semana y TODO es tiempo extra (umbral 0). Almacén PT
+     * (paga por unidades) devuelve NULL — aquí el fin de semana no genera OT.
+     *
+     * @param float $workedHours Total de horas trabajadas ese día de fin de semana.
+     */
+    public function weekendOvertimeThresholdForHours(float $workedHours): ?float
+    {
+        $threshold = $this->weekendUnitThreshold();
+        if ($threshold === null) {
+            return null;
+        }
+
+        return $workedHours >= $threshold ? $threshold : 0.0;
+    }
+
+    /**
+     * ¿Este total de horas de fin de semana gana 1 "fin de semana"? Solo en
+     * deptos que NO pagan por unidades fijas y cuando alcanza el umbral T.
+     */
+    public function qualifiesForWeekendUnit(float $workedHours): bool
+    {
+        $threshold = $this->weekendUnitThreshold();
+
+        return $threshold !== null && $workedHours >= $threshold;
     }
 
     /**

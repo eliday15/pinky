@@ -1324,14 +1324,7 @@ class AuthorizationController extends Controller
                                 (float) ($employee->department?->cena_min_overtime_hours ?? 0),
                             );
                         } elseif ($isWeekend) {
-                            // El "fin de semana" por unidades es EXCLUSIVO de
-                            // Almacén PT (deptos con weekend_unit_hours). En los
-                            // demás el fin de semana se paga como tiempo extra
-                            // (Hora Extra → Cargar desde checadas), así que aquí
-                            // no se ofrece la unidad (Dani 2026-07-07).
-                            $seg = $employee->department?->weekend_unit_hours !== null
-                                ? $this->buildWeekendSegment($record)
-                                : null;
+                            $seg = $this->buildWeekendSegment($record, $employee);
                         } elseif ($isComida) {
                             $seg = $this->buildComidaSegment($record);
                         } else {
@@ -1408,18 +1401,20 @@ class AuthorizationController extends Controller
             return $this->buildVeladaSegments($record);
         }
 
-        // FIN DE SEMANA con umbral (Employee::weekendOvertimeThreshold): el tiempo
-        // extra del fin de semana es lo que exceda de N horas trabajadas. Saldos =
-        // 7 (Opción A, Dani 2026-06-29); cualquier otro depto que NO pague por
-        // unidades = 0, o sea TODAS las horas del fin de semana son extra "sin
-        // importar el horario" (Dani 2026-07-07, caso Carla/Calidad). Almacén PT
-        // devuelve NULL (paga por unidades) y cae al detector normal. Se sugiere el
-        // excedente para que RRHH lo autorice; el pago (VeladaCalculatorService,
-        // mismo umbral) se topa a lo autorizado, así que autorizar de más no
-        // sobrepaga.
-        $weekendOtThreshold = $employee->weekendOvertimeThreshold();
-        if ($type === Authorization::TYPE_OVERTIME && $record->is_weekend_work && $weekendOtThreshold !== null) {
-            return $this->buildWeekendOvertimeSegments($record, $weekendOtThreshold);
+        // FIN DE SEMANA (deptos que NO pagan por unidades fijas). Regla de Dani
+        // 2026-07-07: el "fin de semana" absorbe las primeras T horas (umbral del
+        // empleado, 7 por omisión). Si trabajó >= T, el tiempo extra es lo que
+        // exceda de T (y aparte gana 1 fin de semana, que se jala como "Fin De
+        // Semana"); si trabajó < T, no gana fin de semana y TODO es tiempo extra
+        // (umbral 0). Almacén PT devuelve NULL (paga por unidades) y cae al
+        // detector normal. El pago (VeladaCalculatorService, mismo umbral) se topa
+        // a lo autorizado, así que autorizar de más no sobrepaga.
+        if ($type === Authorization::TYPE_OVERTIME && $record->is_weekend_work) {
+            $totalWorked = (float) ($record->worked_hours ?? 0) + (float) ($record->overtime_hours ?? 0);
+            $weekendOtThreshold = $employee->weekendOvertimeThresholdForHours($totalWorked);
+            if ($weekendOtThreshold !== null) {
+                return $this->buildWeekendOvertimeSegments($record, $weekendOtThreshold);
+            }
         }
 
         $dayName = Carbon::parse($date)->format('l');
@@ -1776,11 +1771,24 @@ class AuthorizationController extends Controller
      * Returns null when the day isn't flagged as weekend work. `hours` is 1
      * because the weekend concept is per_day — one worked weekend day is one
      * entry. These never auto-approve (special type).
+     *
+     * Almacén PT (weekend_unit_hours) ofrece el fin de semana con cualquier hora
+     * trabajada. Los demás departamentos solo lo ofrecen cuando alcanzan el
+     * umbral T (7 h por omisión): por debajo de T no hay fin de semana, se
+     * captura como Hora Extra (Dani 2026-07-07).
      */
-    private function buildWeekendSegment(AttendanceRecord $record): ?array
+    private function buildWeekendSegment(AttendanceRecord $record, Employee $employee): ?array
     {
         if (! $record->is_weekend_work) {
             return null;
+        }
+
+        // Deptos que NO pagan por unidades fijas: exigir el umbral de horas.
+        if ($employee->department?->weekend_unit_hours === null) {
+            $totalWorked = (float) ($record->worked_hours ?? 0) + (float) ($record->overtime_hours ?? 0);
+            if (! $employee->qualifiesForWeekendUnit($totalWorked)) {
+                return null;
+            }
         }
 
         return [

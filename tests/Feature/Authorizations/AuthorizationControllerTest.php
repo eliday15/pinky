@@ -2262,12 +2262,12 @@ class AuthorizationControllerTest extends FeatureTestCase
             ->assertJsonCount(0, 'suggestions');
     }
 
-    public function test_suggest_bulk_weekend_pull_only_for_weekend_unit_department(): void
+    public function test_suggest_bulk_weekend_pull_respects_threshold_for_normal_departments(): void
     {
-        // Dani 2026-07-07: el "fin de semana" por unidades es EXCLUSIVO de Almacén
-        // PT (weekend_unit_hours). En un depto normal NO se ofrece la unidad — ese
-        // fin de semana se cobra como tiempo extra (Hora Extra). Almacén sí la
-        // ofrece.
+        // Dani 2026-07-07: en deptos que NO pagan por unidades fijas, el "fin de
+        // semana" solo se ofrece cuando se trabajaron >= 7 h; por debajo de eso el
+        // fin de semana no aplica (esas horas van como Hora Extra). Almacén PT
+        // (weekend_unit_hours) lo ofrece con cualquier hora trabajada.
         $this->actingAsAdmin();
         $fin = CompensationType::factory()->create([
             'name' => 'Fin de semana',
@@ -2278,36 +2278,44 @@ class AuthorizationControllerTest extends FeatureTestCase
 
         $normalDept = \App\Models\Department::factory()->create(['weekend_unit_hours' => null]);
         $almacen = \App\Models\Department::factory()->create(['weekend_unit_hours' => 6]);
-        $normalEmp = Employee::factory()->create(['department_id' => $normalDept->id]);
-        $almacenEmp = Employee::factory()->create(['department_id' => $almacen->id]);
+        $shortEmp = Employee::factory()->create(['department_id' => $normalDept->id]);   // 2 h
+        $longEmp = Employee::factory()->create(['department_id' => $normalDept->id]);     // 8 h
+        $almacenEmp = Employee::factory()->create(['department_id' => $almacen->id]);     // 2 h
 
-        foreach ([$normalEmp, $almacenEmp] as $emp) {
-            AttendanceRecord::factory()->create([
-                'employee_id' => $emp->id,
-                'work_date' => '2026-06-20', // sábado
-                'check_in' => '09:00:00',
-                'check_out' => '11:00:00',
-                'is_weekend_work' => true,
-            ]);
-        }
+        AttendanceRecord::factory()->create([
+            'employee_id' => $shortEmp->id, 'work_date' => '2026-06-20',
+            'check_in' => '09:00:00', 'check_out' => '11:00:00',
+            'worked_hours' => 2, 'overtime_hours' => 0, 'is_weekend_work' => true,
+        ]);
+        AttendanceRecord::factory()->create([
+            'employee_id' => $longEmp->id, 'work_date' => '2026-06-20',
+            'check_in' => '08:00:00', 'check_out' => '17:00:00',
+            'worked_hours' => 8, 'overtime_hours' => 0, 'is_weekend_work' => true,
+        ]);
+        AttendanceRecord::factory()->create([
+            'employee_id' => $almacenEmp->id, 'work_date' => '2026-06-20',
+            'check_in' => '09:00:00', 'check_out' => '11:00:00',
+            'worked_hours' => 2, 'overtime_hours' => 0, 'is_weekend_work' => true,
+        ]);
 
-        // Depto normal → no ofrece la unidad de fin de semana.
-        $this->getJson(route('authorizations.suggestBulk', [
-            'employee_ids' => [$normalEmp->id],
+        $pull = fn ($emp) => $this->getJson(route('authorizations.suggestBulk', [
+            'employee_ids' => [$emp->id],
             'start_date' => '2026-06-20',
             'end_date' => '2026-06-20',
             'type' => 'special',
             'compensation_type_id' => $fin->id,
-        ]))->assertOk()->assertJsonCount(0, 'suggestions');
+        ]));
 
-        // Almacén PT → sí la ofrece.
-        $this->getJson(route('authorizations.suggestBulk', [
-            'employee_ids' => [$almacenEmp->id],
-            'start_date' => '2026-06-20',
-            'end_date' => '2026-06-20',
-            'type' => 'special',
-            'compensation_type_id' => $fin->id,
-        ]))->assertOk()
+        // Depto normal, < 7 h → no ofrece fin de semana.
+        $pull($shortEmp)->assertOk()->assertJsonCount(0, 'suggestions');
+
+        // Depto normal, >= 7 h → sí ofrece 1 fin de semana.
+        $pull($longEmp)->assertOk()
+            ->assertJsonCount(1, 'suggestions')
+            ->assertJsonPath('suggestions.0.kind', 'weekend');
+
+        // Almacén PT → siempre lo ofrece, sin importar las horas.
+        $pull($almacenEmp)->assertOk()
             ->assertJsonCount(1, 'suggestions')
             ->assertJsonPath('suggestions.0.kind', 'weekend');
     }
