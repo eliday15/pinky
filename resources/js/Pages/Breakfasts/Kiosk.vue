@@ -14,7 +14,8 @@ const props = defineProps({
 });
 
 const step = ref('lookup'); // lookup | eligibility | face | pin | success | error
-const employeeNumber = ref('');
+const searchQuery = ref('');
+const matches = ref(null); // null = sin búsqueda aún, [] = sin resultados
 const employee = ref(null);
 const status = ref(null);
 const lookupError = ref('');
@@ -33,7 +34,8 @@ const reset = () => {
         resetTimer = null;
     }
     step.value = 'lookup';
-    employeeNumber.value = '';
+    searchQuery.value = '';
+    matches.value = null;
     employee.value = null;
     status.value = null;
     lookupError.value = '';
@@ -59,18 +61,36 @@ const firstError = (error, fallback) => {
 };
 
 const lookup = async () => {
-    if (!employeeNumber.value.trim() || loading.value) return;
+    if (searchQuery.value.trim().length < 2 || loading.value) return;
     loading.value = true;
     lookupError.value = '';
     try {
         const { data } = await axios.post(route('breakfasts.lookup'), {
-            employee_number: employeeNumber.value.trim(),
+            query: searchQuery.value.trim(),
+        });
+        matches.value = data.matches;
+    } catch (error) {
+        lookupError.value = firstError(error, 'No se pudo buscar al empleado.');
+    } finally {
+        loading.value = false;
+    }
+};
+
+// El empleado toca su tarjeta entre las coincidencias: se pide su
+// elegibilidad de hoy y se avanza a la confirmación.
+const selectEmployee = async (match) => {
+    if (loading.value) return;
+    loading.value = true;
+    lookupError.value = '';
+    try {
+        const { data } = await axios.post(route('breakfasts.status'), {
+            employee_id: match.id,
         });
         employee.value = data.employee;
         status.value = data.status;
         step.value = 'eligibility';
     } catch (error) {
-        lookupError.value = firstError(error, 'No se pudo buscar al empleado.');
+        lookupError.value = firstError(error, 'No se pudo consultar al empleado.');
     } finally {
         loading.value = false;
     }
@@ -136,26 +156,57 @@ onBeforeUnmount(() => {
                 <p class="text-gray-500 mt-1">Cobra tu desayuno antes de tu hora de entrada</p>
             </div>
 
-            <!-- Paso 1: identificación -->
+            <!-- Paso 1: identificación por nombre -->
             <div v-if="step === 'lookup'" class="bg-white rounded-2xl shadow p-8">
-                <label class="block text-lg font-medium text-gray-700 mb-3 text-center">Número de empleado</label>
+                <label class="block text-lg font-medium text-gray-700 mb-3 text-center">Escribe tu nombre</label>
                 <input
-                    v-model="employeeNumber"
+                    v-model="searchQuery"
                     type="text"
-                    inputmode="numeric"
                     autofocus
-                    class="w-full text-center text-4xl tracking-widest rounded-2xl border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 py-4"
+                    placeholder="Nombre o número de empleado"
+                    class="w-full text-center text-2xl rounded-2xl border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 py-4"
                     @keyup.enter="lookup"
                 />
                 <p v-if="lookupError" class="mt-3 text-center text-red-600">{{ lookupError }}</p>
                 <button
                     type="button"
-                    :disabled="loading || !employeeNumber.trim()"
-                    class="mt-6 w-full py-4 rounded-2xl bg-pink-600 text-white text-xl font-semibold shadow hover:bg-pink-700 disabled:opacity-50"
+                    :disabled="loading || searchQuery.trim().length < 2"
+                    class="mt-4 w-full py-4 rounded-2xl bg-pink-600 text-white text-xl font-semibold shadow hover:bg-pink-700 disabled:opacity-50"
                     @click="lookup"
                 >
-                    {{ loading ? 'Buscando...' : 'Continuar' }}
+                    {{ loading ? 'Buscando...' : 'Buscar' }}
                 </button>
+
+                <!-- Coincidencias: el empleado toca su tarjeta -->
+                <div v-if="matches !== null" class="mt-6">
+                    <p v-if="matches.length === 0" class="text-center text-gray-500 py-4">
+                        No se encontró ningún empleado con ese nombre. Intenta con otro.
+                    </p>
+                    <div v-else class="space-y-3">
+                        <p class="text-center text-sm text-gray-500">Toca tu nombre:</p>
+                        <button
+                            v-for="match in matches"
+                            :key="match.id"
+                            type="button"
+                            :disabled="loading"
+                            class="w-full flex items-center gap-4 p-3 rounded-2xl border border-gray-200 bg-gray-50 hover:bg-pink-50 hover:border-pink-300 text-left disabled:opacity-50"
+                            @click="selectEmployee(match)"
+                        >
+                            <img
+                                v-if="match.photo_url"
+                                :src="match.photo_url"
+                                class="w-14 h-14 rounded-full object-cover ring-2 ring-pink-200 flex-shrink-0"
+                            />
+                            <div v-else class="w-14 h-14 rounded-full bg-gray-200 flex items-center justify-center text-gray-400 text-xl flex-shrink-0">👤</div>
+                            <div>
+                                <p class="text-lg font-semibold text-gray-800">{{ match.full_name }}</p>
+                                <p class="text-sm text-gray-500">
+                                    {{ match.employee_number }}<span v-if="match.department"> · {{ match.department }}</span>
+                                </p>
+                            </div>
+                        </button>
+                    </div>
+                </div>
             </div>
 
             <!-- Paso 1b: elegibilidad -->

@@ -281,7 +281,8 @@ class BreakfastClaimTest extends FeatureTestCase
         $this->actingAsEmployee();
 
         $this->get(route('breakfasts.kiosk'))->assertForbidden();
-        $this->postJson(route('breakfasts.lookup'), ['employee_number' => 'X'])->assertForbidden();
+        $this->postJson(route('breakfasts.lookup'), ['query' => 'Maria'])->assertForbidden();
+        $this->postJson(route('breakfasts.status'), ['employee_id' => 1])->assertForbidden();
         $this->postJson(route('breakfasts.store'), [])->assertForbidden();
     }
 
@@ -292,26 +293,72 @@ class BreakfastClaimTest extends FeatureTestCase
         $this->get(route('breakfasts.index'))->assertForbidden();
     }
 
-    public function test_lookup_returns_employee_and_eligibility(): void
+    public function test_lookup_finds_employees_by_partial_name(): void
+    {
+        $employee = $this->makeEmployee([
+            'first_name' => 'Maria Fernanda',
+            'last_name' => 'Lopez Garcia',
+            'full_name' => 'Maria Fernanda Lopez Garcia',
+        ]);
+        $this->makeEmployee([
+            'first_name' => 'Pedro',
+            'last_name' => 'Ramirez',
+            'full_name' => 'Pedro Ramirez',
+        ]);
+        $this->actingAsRrhh();
+
+        $response = $this->postJson(route('breakfasts.lookup'), ['query' => 'fernanda lo'])
+            ->assertOk();
+
+        $this->assertCount(1, $response->json('matches'));
+        $this->assertSame($employee->id, $response->json('matches.0.id'));
+    }
+
+    public function test_lookup_finds_employee_by_exact_number(): void
+    {
+        $employee = $this->makeEmployee();
+        $this->actingAsRrhh();
+
+        $response = $this->postJson(route('breakfasts.lookup'), ['query' => $employee->employee_number])
+            ->assertOk();
+
+        $this->assertSame($employee->id, $response->json('matches.0.id'));
+    }
+
+    public function test_lookup_excludes_inactive_employees(): void
+    {
+        $this->makeEmployee([
+            'status' => 'inactive',
+            'full_name' => 'Baja Antigua',
+        ]);
+        $this->actingAsRrhh();
+
+        $response = $this->postJson(route('breakfasts.lookup'), ['query' => 'Baja Antigua'])
+            ->assertOk();
+
+        $this->assertCount(0, $response->json('matches'));
+    }
+
+    public function test_lookup_unknown_name_returns_empty_matches(): void
+    {
+        $this->actingAsRrhh();
+
+        $this->postJson(route('breakfasts.lookup'), ['query' => 'Nadie Con Este Nombre'])
+            ->assertOk()
+            ->assertJsonCount(0, 'matches');
+    }
+
+    public function test_status_returns_employee_and_eligibility(): void
     {
         Carbon::setTestNow(Carbon::parse('2026-06-03 08:30:00'));
         $employee = $this->makeEmployee();
         $this->actingAsRrhh();
 
-        $this->postJson(route('breakfasts.lookup'), ['employee_number' => $employee->employee_number])
+        $this->postJson(route('breakfasts.status'), ['employee_id' => $employee->id])
             ->assertOk()
             ->assertJsonPath('employee.id', $employee->id)
             ->assertJsonPath('status.eligible', true)
             ->assertJsonPath('status.window.end', '09:00');
-    }
-
-    public function test_lookup_unknown_employee_returns_validation_error(): void
-    {
-        $this->actingAsRrhh();
-
-        $this->postJson(route('breakfasts.lookup'), ['employee_number' => 'NOPE-404'])
-            ->assertStatus(422)
-            ->assertJsonValidationErrors(['employee_number']);
     }
 
     public function test_store_creates_claim_via_http(): void

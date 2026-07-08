@@ -10,7 +10,6 @@ use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -43,7 +42,11 @@ class BreakfastController extends Controller
     }
 
     /**
-     * Look up an employee by number and report kiosk eligibility.
+     * Search active employees by name (or exact number) for the kiosk.
+     *
+     * Nadie se sabe su número: el empleado teclea su nombre y toca su
+     * tarjeta (con foto) entre las coincidencias. También acepta el número
+     * exacto para quien sí lo conozca.
      */
     public function lookup(Request $request): JsonResponse
     {
@@ -52,29 +55,60 @@ class BreakfastController extends Controller
         }
 
         $validated = $request->validate([
-            'employee_number' => ['required', 'string'],
+            'query' => ['required', 'string', 'min:2', 'max:100'],
         ]);
 
-        $employee = Employee::where('employee_number', $validated['employee_number'])->first();
+        $query = trim($validated['query']);
 
-        if (! $employee) {
-            throw ValidationException::withMessages([
-                'employee_number' => 'No existe un empleado con ese número.',
-            ]);
+        $matches = Employee::active()
+            ->with('department:id,name')
+            ->where(function ($builder) use ($query) {
+                $builder->where('full_name', 'like', "%{$query}%")
+                    ->orWhere('employee_number', $query);
+            })
+            ->orderBy('full_name')
+            ->limit(8)
+            ->get()
+            ->map(fn (Employee $employee) => $this->employeePayload($employee));
+
+        return response()->json(['matches' => $matches]);
+    }
+
+    /**
+     * Report kiosk eligibility for a selected employee.
+     */
+    public function status(Request $request): JsonResponse
+    {
+        if (! auth()->user()->hasPermissionTo('breakfasts.register')) {
+            abort(403);
         }
 
-        $status = $this->service->statusFor($employee, Carbon::now());
+        $validated = $request->validate([
+            'employee_id' => ['required', 'integer', 'exists:employees,id'],
+        ]);
+
+        $employee = Employee::findOrFail($validated['employee_id']);
 
         return response()->json([
-            'employee' => [
-                'id' => $employee->id,
-                'full_name' => $employee->full_name,
-                'employee_number' => $employee->employee_number,
-                'photo_url' => $employee->photo_path ? Storage::url($employee->photo_path) : null,
-                'department' => $employee->department?->name,
-            ],
-            'status' => $status,
+            'employee' => $this->employeePayload($employee),
+            'status' => $this->service->statusFor($employee, Carbon::now()),
         ]);
+    }
+
+    /**
+     * Public-safe employee payload for the kiosk screens.
+     *
+     * @return array<string, mixed>
+     */
+    private function employeePayload(Employee $employee): array
+    {
+        return [
+            'id' => $employee->id,
+            'full_name' => $employee->full_name,
+            'employee_number' => $employee->employee_number,
+            'photo_url' => $employee->photo_path ? Storage::url($employee->photo_path) : null,
+            'department' => $employee->department?->name,
+        ];
     }
 
     /**

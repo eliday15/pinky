@@ -116,6 +116,7 @@ Route::middleware(['auth', 'password-changed', 'two-factor-setup'])->group(funct
     // Desayunos: kiosco de cobro (NIP + rostro) y consulta de desayunos entregados.
     Route::get('/desayunos/kiosco', [BreakfastController::class, 'kiosk'])->name('breakfasts.kiosk');
     Route::post('/desayunos/kiosco/lookup', [BreakfastController::class, 'lookup'])->name('breakfasts.lookup');
+    Route::post('/desayunos/kiosco/status', [BreakfastController::class, 'status'])->name('breakfasts.status');
     Route::get('/desayunos', [BreakfastController::class, 'index'])->name('breakfasts.index');
     Route::post('/desayunos', [BreakfastController::class, 'store'])->name('breakfasts.store');
 
