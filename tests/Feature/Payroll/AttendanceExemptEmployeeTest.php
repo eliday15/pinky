@@ -41,6 +41,10 @@ class AttendanceExemptEmployeeTest extends FeatureTestCase
             'status' => 'active',
             'daily_salary' => 800.00,
             'hourly_rate' => 100.00,
+            // Alta fija muy anterior al periodo: el factory sortea hire_date
+            // hasta "-1 mes" de HOY y si cae dentro de la semana del test
+            // recorta los días pagados (flake real del 2026-07-08).
+            'hire_date' => '2025-01-01',
         ], $attrs));
     }
 

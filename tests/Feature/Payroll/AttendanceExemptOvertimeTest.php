@@ -45,6 +45,9 @@ class AttendanceExemptOvertimeTest extends FeatureTestCase
             'daily_salary' => 800.00,
             'hourly_rate' => 100.00,
             'department_id' => ($department ?? Department::factory()->create())->id,
+            // Alta fija anterior al periodo (el hire_date aleatorio del
+            // factory puede caer dentro de la semana y recortar el base).
+            'hire_date' => '2025-01-01',
         ]);
     }
 
