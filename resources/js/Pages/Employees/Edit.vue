@@ -295,21 +295,24 @@ const selectedWorkingDays = computed(() => {
     return weekDays.filter(d => scheduleFields.value.working_days.includes(d.value));
 });
 
+/** Fill per-day rows from saved overrides, falling back to the base schedule. */
+const fillDaySchedules = () => {
+    const s = selectedSchedule.value;
+    scheduleFields.value.working_days.forEach(day => {
+        const baseDayOverride = s?.day_schedules?.[day] || {};
+        const existing = daySchedules.value[day] || {};
+        daySchedules.value[day] = {
+            entry_time: existing.entry_time || baseDayOverride.entry_time || scheduleFields.value.entry_time || '',
+            exit_time: existing.exit_time || baseDayOverride.exit_time || scheduleFields.value.exit_time || '',
+            break_minutes: existing.break_minutes ?? baseDayOverride.break_minutes ?? scheduleFields.value.break_minutes ?? '',
+            daily_work_hours: existing.daily_work_hours ?? baseDayOverride.daily_work_hours ?? scheduleFields.value.daily_work_hours ?? '',
+        };
+    });
+};
+if (perDayMode.value) fillDaySchedules();
+
 watch(perDayMode, (val) => {
-    if (val) {
-        const s = selectedSchedule.value;
-        scheduleFields.value.working_days.forEach(day => {
-            if (!daySchedules.value[day]) {
-                const baseDayOverride = s?.day_schedules?.[day] || {};
-                daySchedules.value[day] = {
-                    entry_time: baseDayOverride.entry_time || scheduleFields.value.entry_time || '',
-                    exit_time: baseDayOverride.exit_time || scheduleFields.value.exit_time || '',
-                    break_minutes: baseDayOverride.break_minutes ?? scheduleFields.value.break_minutes ?? '',
-                    daily_work_hours: baseDayOverride.daily_work_hours ?? scheduleFields.value.daily_work_hours ?? '',
-                };
-            }
-        });
-    }
+    if (val) fillDaySchedules();
     syncOverrides();
 });
 

@@ -1004,6 +1004,44 @@ class EmployeeController extends Controller
             }
         }
 
+        // Per-day overrides (Horario por dia): keep only the fields that
+        // differ from that day's effective base (schedule day_schedules or
+        // flat times); the UI submits every working day even when unchanged.
+        if (! empty($overrides['day_schedules']) && is_array($overrides['day_schedules'])) {
+            $cleanedDays = [];
+            foreach ($overrides['day_schedules'] as $day => $values) {
+                if (! is_array($values)) {
+                    continue;
+                }
+                $dayBase = $schedule->getScheduleForDay($day);
+                $cleanedDay = [];
+                foreach (['entry_time', 'exit_time'] as $field) {
+                    $value = $values[$field] ?? null;
+                    if ($value === null || $value === '') {
+                        continue;
+                    }
+                    if (substr($value, 0, 5) !== substr($dayBase->{$field} ?? '', 0, 5)) {
+                        $cleanedDay[$field] = substr($value, 0, 5);
+                    }
+                }
+                foreach (['break_minutes', 'daily_work_hours'] as $field) {
+                    $value = $values[$field] ?? null;
+                    if ($value === null || $value === '') {
+                        continue;
+                    }
+                    if ((float) $value !== (float) $dayBase->{$field}) {
+                        $cleanedDay[$field] = $value;
+                    }
+                }
+                if (! empty($cleanedDay)) {
+                    $cleanedDays[$day] = $cleanedDay;
+                }
+            }
+            if (! empty($cleanedDays)) {
+                $cleaned['day_schedules'] = $cleanedDays;
+            }
+        }
+
         return empty($cleaned) ? null : $cleaned;
     }
 }

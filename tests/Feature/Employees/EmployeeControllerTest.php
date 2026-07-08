@@ -432,6 +432,58 @@ class EmployeeControllerTest extends FeatureTestCase
         ]);
     }
 
+    public function test_update_persists_per_day_schedule_overrides(): void
+    {
+        $this->actingAsAdmin();
+        $employee = Employee::factory()->create();
+
+        // Factory base schedule: 08:00-17:00, break 60, 8h, Mon-Fri.
+        // Friday differs (leaves at 15:00); Monday matches the base exactly.
+        $payload = array_merge($this->updatePayloadFrom($employee), [
+            'schedule_overrides' => [
+                'day_schedules' => [
+                    'monday' => ['entry_time' => '08:00', 'exit_time' => '17:00', 'break_minutes' => 60, 'daily_work_hours' => 8],
+                    'friday' => ['entry_time' => '08:00', 'exit_time' => '15:00', 'break_minutes' => 60, 'daily_work_hours' => 6],
+                ],
+            ],
+        ]);
+
+        $this->put(route('employees.update', $employee), $payload)
+            ->assertRedirect(route('employees.index'))
+            ->assertSessionHas('success');
+
+        $overrides = $employee->fresh()->schedule_overrides;
+        $this->assertSame(
+            ['friday' => ['exit_time' => '15:00', 'daily_work_hours' => 6]],
+            $overrides['day_schedules'] ?? null,
+            'Per-day overrides must persist only the fields that differ from the base schedule.'
+        );
+
+        // Payroll/attendance resolution honors the persisted per-day override.
+        $friday = $employee->fresh()->getEffectiveScheduleForDay('friday');
+        $this->assertSame('15:00', substr($friday->exit_time, 0, 5));
+        $this->assertSame(6.0, $friday->daily_work_hours);
+    }
+
+    public function test_update_clears_per_day_overrides_identical_to_base(): void
+    {
+        $this->actingAsAdmin();
+        $employee = Employee::factory()->create();
+
+        $payload = array_merge($this->updatePayloadFrom($employee), [
+            'schedule_overrides' => [
+                'day_schedules' => [
+                    'monday' => ['entry_time' => '08:00', 'exit_time' => '17:00', 'break_minutes' => 60, 'daily_work_hours' => 8],
+                ],
+            ],
+        ]);
+
+        $this->put(route('employees.update', $employee), $payload)
+            ->assertRedirect(route('employees.index'));
+
+        $this->assertNull($employee->fresh()->schedule_overrides);
+    }
+
     public function test_rrhh_update_only_changes_personal_fields(): void
     {
         $this->actingAsRrhh();
