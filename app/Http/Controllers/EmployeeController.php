@@ -113,6 +113,8 @@ class EmployeeController extends Controller
             ]);
         }
 
+        $this->filterEmptyEmergencyContacts($request);
+
         $validated = $request->validate([
             'employee_number' => ['required', 'string', 'max:50', Rule::unique('employees')->whereNull('deleted_at')],
             'contpaqi_code' => ['nullable', 'string', 'max:50', Rule::unique('employees')->whereNull('deleted_at')],
@@ -162,6 +164,7 @@ class EmployeeController extends Controller
             'is_imss_enrolled' => ['boolean'],
             'is_attendance_exempt' => ['boolean'],
             'cash_pin' => ['nullable', 'string', 'min:4', 'confirmed'],
+            'breakfast_pin' => ['nullable', 'string', 'min:4', 'confirmed'],
             'daily_salary' => ['required', 'numeric', 'min:0'],
             'monthly_bonus_type' => ['nullable', 'string', Rule::in(['none', 'fixed', 'variable'])],
             'monthly_bonus_amount' => ['nullable', 'numeric', 'min:0'],
@@ -213,7 +216,7 @@ class EmployeeController extends Controller
         // El PIN de cobro y la marca de inscripción al IMSS solo los fija el
         // editor con acceso completo (admin); RRHH (alta personal) no los toca.
         if (! $canEditAll) {
-            unset($validated['cash_pin'], $validated['is_imss_enrolled'], $validated['is_attendance_exempt']);
+            unset($validated['cash_pin'], $validated['breakfast_pin'], $validated['is_imss_enrolled'], $validated['is_attendance_exempt']);
         }
 
         $validated['full_name'] = $validated['first_name'].' '.$validated['last_name'];
@@ -475,6 +478,7 @@ class EmployeeController extends Controller
             'is_imss_enrolled' => ['boolean'],
             'is_attendance_exempt' => ['boolean'],
             'cash_pin' => ['nullable', 'string', 'min:4', 'confirmed'],
+            'breakfast_pin' => ['nullable', 'string', 'min:4', 'confirmed'],
             'daily_salary' => ['required', 'numeric', 'min:0'],
             'monthly_bonus_type' => ['nullable', 'string', Rule::in(['none', 'fixed', 'variable'])],
             'monthly_bonus_amount' => ['nullable', 'numeric', 'min:0'],
@@ -493,6 +497,8 @@ class EmployeeController extends Controller
             'emergency_contacts.*.relationship' => ['required_with:emergency_contacts', 'nullable', 'string', 'max:50'],
             'emergency_contacts.*.address' => ['nullable', 'string', 'max:255'],
         ];
+
+        $this->filterEmptyEmergencyContacts($request);
 
         $validated = $request->validate($rules);
 
@@ -652,6 +658,8 @@ class EmployeeController extends Controller
      */
     private function updatePersonalOnly(Request $request, Employee $employee): RedirectResponse
     {
+        $this->filterEmptyEmergencyContacts($request);
+
         $validated = $request->validate([
             'first_name' => ['required', 'string', 'max:100'],
             'last_name' => ['required', 'string', 'max:100'],
@@ -960,6 +968,27 @@ class EmployeeController extends Controller
      *
      * Returns null if no overrides remain, otherwise the cleaned array.
      */
+    /**
+     * Drop fully-empty emergency contact rows before validation.
+     *
+     * The form always submits a blank capture row; without this filter,
+     * required_with makes name/phone/relationship mandatory and the whole
+     * save fails for employees with no emergency contact.
+     */
+    private function filterEmptyEmergencyContacts(Request $request): void
+    {
+        if (! $request->has('emergency_contacts')) {
+            return;
+        }
+
+        $request->merge([
+            'emergency_contacts' => array_values(array_filter(
+                (array) $request->input('emergency_contacts', []),
+                fn ($c) => is_array($c) && array_filter($c, fn ($v) => $v !== null && $v !== '')
+            )),
+        ]);
+    }
+
     private function cleanScheduleOverrides(array $overrides, int $scheduleId): ?array
     {
         if (empty($overrides)) {

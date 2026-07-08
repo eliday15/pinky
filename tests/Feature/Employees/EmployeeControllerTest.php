@@ -465,6 +465,33 @@ class EmployeeControllerTest extends FeatureTestCase
         $this->assertSame(6.0, $friday->daily_work_hours);
     }
 
+    public function test_update_ignores_blank_emergency_contact_row(): void
+    {
+        $this->actingAsAdmin();
+        $employee = Employee::factory()->create();
+
+        // The form always submits the blank capture row; it must not make
+        // name/phone/relationship required nor block the whole save.
+        $payload = array_merge($this->updatePayloadFrom($employee), [
+            'emergency_contacts' => [
+                ['name' => '', 'phone' => '', 'email' => '', 'relationship' => '', 'address' => ''],
+            ],
+            'schedule_overrides' => [
+                'day_schedules' => [
+                    'friday' => ['entry_time' => '08:00', 'exit_time' => '15:00', 'break_minutes' => 60, 'daily_work_hours' => 6],
+                ],
+            ],
+        ]);
+
+        $this->put(route('employees.update', $employee), $payload)
+            ->assertSessionDoesntHaveErrors()
+            ->assertRedirect(route('employees.index'));
+
+        $fresh = $employee->fresh();
+        $this->assertCount(0, $fresh->emergencyContacts);
+        $this->assertSame('15:00', $fresh->schedule_overrides['day_schedules']['friday']['exit_time'] ?? null);
+    }
+
     public function test_update_clears_per_day_overrides_identical_to_base(): void
     {
         $this->actingAsAdmin();
