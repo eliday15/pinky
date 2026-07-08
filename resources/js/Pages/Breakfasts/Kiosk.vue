@@ -1,7 +1,7 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head } from '@inertiajs/vue3';
-import { ref, onBeforeUnmount } from 'vue';
+import { ref, watch, onBeforeUnmount } from 'vue';
 import FaceScan from './components/FaceScan.vue';
 import PinPad from './components/PinPad.vue';
 
@@ -16,6 +16,7 @@ const props = defineProps({
 const step = ref('lookup'); // lookup | eligibility | face | pin | success | error
 const searchQuery = ref('');
 const matches = ref(null); // null = sin búsqueda aún, [] = sin resultados
+const searching = ref(false);
 const employee = ref(null);
 const status = ref(null);
 const lookupError = ref('');
@@ -60,21 +61,38 @@ const firstError = (error, fallback) => {
     return error?.response?.data?.message || fallback;
 };
 
+// Autocomplete: busca solo mientras se escribe (debounce) y descarta
+// respuestas fuera de orden para que un tecleo rápido no pinte resultados
+// viejos encima de los nuevos.
+let searchTimer = null;
+let searchSeq = 0;
+
 const lookup = async () => {
-    if (searchQuery.value.trim().length < 2 || loading.value) return;
-    loading.value = true;
+    const query = searchQuery.value.trim();
+    if (query.length < 2) return;
+    const seq = ++searchSeq;
+    searching.value = true;
     lookupError.value = '';
     try {
-        const { data } = await axios.post(route('breakfasts.lookup'), {
-            query: searchQuery.value.trim(),
-        });
-        matches.value = data.matches;
+        const { data } = await axios.post(route('breakfasts.lookup'), { query });
+        if (seq === searchSeq) matches.value = data.matches;
     } catch (error) {
-        lookupError.value = firstError(error, 'No se pudo buscar al empleado.');
+        if (seq === searchSeq) lookupError.value = firstError(error, 'No se pudo buscar al empleado.');
     } finally {
-        loading.value = false;
+        if (seq === searchSeq) searching.value = false;
     }
 };
+
+watch(searchQuery, (value) => {
+    if (searchTimer) clearTimeout(searchTimer);
+    if (value.trim().length < 2) {
+        matches.value = null;
+        searching.value = false;
+        searchSeq += 1; // invalida respuestas en vuelo
+        return;
+    }
+    searchTimer = setTimeout(lookup, 300);
+});
 
 // El empleado toca su tarjeta entre las coincidencias: se pide su
 // elegibilidad de hoy y se avanza a la confirmación.
@@ -143,6 +161,7 @@ const submitPin = async () => {
 
 onBeforeUnmount(() => {
     if (resetTimer) clearTimeout(resetTimer);
+    if (searchTimer) clearTimeout(searchTimer);
 });
 </script>
 
@@ -163,22 +182,18 @@ onBeforeUnmount(() => {
                     v-model="searchQuery"
                     type="text"
                     autofocus
+                    autocomplete="off"
                     placeholder="Nombre o número de empleado"
                     class="w-full text-center text-2xl rounded-2xl border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 py-4"
-                    @keyup.enter="lookup"
                 />
                 <p v-if="lookupError" class="mt-3 text-center text-red-600">{{ lookupError }}</p>
-                <button
-                    type="button"
-                    :disabled="loading || searchQuery.trim().length < 2"
-                    class="mt-4 w-full py-4 rounded-2xl bg-pink-600 text-white text-xl font-semibold shadow hover:bg-pink-700 disabled:opacity-50"
-                    @click="lookup"
-                >
-                    {{ loading ? 'Buscando...' : 'Buscar' }}
-                </button>
+                <p v-if="searchQuery.trim().length < 2" class="mt-3 text-center text-sm text-gray-400">
+                    Escribe al menos 2 letras y aparecerán los nombres
+                </p>
 
-                <!-- Coincidencias: el empleado toca su tarjeta -->
-                <div v-if="matches !== null" class="mt-6">
+                <!-- Coincidencias en vivo: el empleado toca su tarjeta -->
+                <div v-if="searching && matches === null" class="mt-6 text-center text-gray-400">Buscando...</div>
+                <div v-else-if="matches !== null" class="mt-6" :class="{ 'opacity-60': searching }">
                     <p v-if="matches.length === 0" class="text-center text-gray-500 py-4">
                         No se encontró ningún empleado con ese nombre. Intenta con otro.
                     </p>
