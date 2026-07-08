@@ -112,6 +112,8 @@ const scheduleFields = ref({
     working_days: [],
 });
 
+/** Whether a schedule defines its own per-day times (e.g. short Friday). */
+const scheduleHasPerDay = (s) => !!(s?.day_schedules && Object.keys(s.day_schedules).length);
 const perDayMode = ref(false);
 const daySchedules = ref({});
 
@@ -128,8 +130,9 @@ watch(() => form.schedule_id, () => {
             working_days: s.working_days ? [...s.working_days] : [],
         };
         form.schedule_overrides = {};
-        perDayMode.value = false;
         daySchedules.value = {};
+        perDayMode.value = scheduleHasPerDay(s);
+        if (perDayMode.value) fillDaySchedules();
     }
 });
 
@@ -172,22 +175,24 @@ const selectedWorkingDays = computed(() => {
     return weekDays.filter(d => scheduleFields.value.working_days.includes(d.value));
 });
 
+/** Fill per-day rows from the schedule's day times, falling back to flat values. */
+const fillDaySchedules = () => {
+    const s = selectedSchedule.value;
+    scheduleFields.value.working_days.forEach(day => {
+        const baseDayOverride = s?.day_schedules?.[day] || {};
+        const existing = daySchedules.value[day] || {};
+        daySchedules.value[day] = {
+            entry_time: existing.entry_time || baseDayOverride.entry_time || scheduleFields.value.entry_time || '',
+            exit_time: existing.exit_time || baseDayOverride.exit_time || scheduleFields.value.exit_time || '',
+            break_minutes: existing.break_minutes ?? baseDayOverride.break_minutes ?? scheduleFields.value.break_minutes ?? '',
+            daily_work_hours: existing.daily_work_hours ?? baseDayOverride.daily_work_hours ?? scheduleFields.value.daily_work_hours ?? '',
+        };
+    });
+};
+
 /** Initialize per-day overrides from base values. */
 watch(perDayMode, (val) => {
-    if (val) {
-        const s = selectedSchedule.value;
-        scheduleFields.value.working_days.forEach(day => {
-            if (!daySchedules.value[day]) {
-                const baseDayOverride = s?.day_schedules?.[day] || {};
-                daySchedules.value[day] = {
-                    entry_time: baseDayOverride.entry_time || scheduleFields.value.entry_time || '',
-                    exit_time: baseDayOverride.exit_time || scheduleFields.value.exit_time || '',
-                    break_minutes: baseDayOverride.break_minutes ?? scheduleFields.value.break_minutes ?? '',
-                    daily_work_hours: baseDayOverride.daily_work_hours ?? scheduleFields.value.daily_work_hours ?? '',
-                };
-            }
-        });
-    }
+    if (val) fillDaySchedules();
     syncOverrides();
 });
 

@@ -220,7 +220,9 @@ const scheduleFields = ref({
 });
 
 const existingOverrides = form.schedule_overrides || {};
-const perDayMode = ref(!!existingOverrides.day_schedules);
+/** Whether a schedule defines its own per-day times (e.g. short Friday). */
+const scheduleHasPerDay = (s) => !!(s?.day_schedules && Object.keys(s.day_schedules).length);
+const perDayMode = ref(!!existingOverrides.day_schedules || scheduleHasPerDay(props.schedules.find(s => s.id === props.employee.schedule_id)));
 const daySchedules = ref(existingOverrides.day_schedules ? { ...existingOverrides.day_schedules } : {});
 
 /** Initialize schedule fields from current schedule + overrides. */
@@ -251,8 +253,9 @@ watch(() => form.schedule_id, () => {
             working_days: s.working_days ? [...s.working_days] : [],
         };
         form.schedule_overrides = {};
-        perDayMode.value = false;
         daySchedules.value = {};
+        perDayMode.value = scheduleHasPerDay(s);
+        if (perDayMode.value) fillDaySchedules();
     }
 });
 

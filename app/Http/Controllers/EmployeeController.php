@@ -84,7 +84,7 @@ class EmployeeController extends Controller
                     'anchorEmployee.compensationTypes',
                 ])
                 ->get(),
-            'schedules' => Schedule::active()->get(['id', 'name', 'code', 'entry_time', 'exit_time', 'break_minutes', 'daily_work_hours', 'late_tolerance_minutes', 'is_flexible', 'working_days']),
+            'schedules' => Schedule::active()->get(['id', 'name', 'code', 'entry_time', 'exit_time', 'break_minutes', 'daily_work_hours', 'late_tolerance_minutes', 'is_flexible', 'working_days', 'day_schedules']),
             'employees' => Employee::active()->get(['id', 'full_name', 'position_id']),
             'compensationTypes' => CompensationType::active()->get(),
             'vacationTable' => VacationTable::orderBy('years_of_service')->get(),
@@ -378,7 +378,7 @@ class EmployeeController extends Controller
                     'department:id,name',
                 ])
                 ->get(),
-            'schedules' => Schedule::active()->get(['id', 'name', 'code', 'entry_time', 'exit_time', 'break_minutes', 'daily_work_hours', 'late_tolerance_minutes', 'is_flexible', 'working_days']),
+            'schedules' => Schedule::active()->get(['id', 'name', 'code', 'entry_time', 'exit_time', 'break_minutes', 'daily_work_hours', 'late_tolerance_minutes', 'is_flexible', 'working_days', 'day_schedules']),
             'employees' => Employee::active()->where('id', '!=', $employee->id)->get(['id', 'full_name', 'position_id']),
             'compensationTypes' => CompensationType::active()->get(),
             'vacationTable' => VacationTable::orderBy('years_of_service')->get(),
