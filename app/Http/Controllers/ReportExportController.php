@@ -322,29 +322,55 @@ class ReportExportController extends Controller implements HasMiddleware
 
         // Detectadas vs autorizadas: la columna "a pagar" es la que usa la
         // nómina (overtime_authorized_hours) — el CSV concilia con el recibo.
+        $activeEmployeeIds = $this->scopedActiveEmployeeIds();
+
         $records = AttendanceRecord::with(['employee.department'])
-            ->whereIn('employee_id', $this->scopedActiveEmployeeIds())
+            ->whereIn('employee_id', $activeEmployeeIds)
             ->whereBetween('work_date', [$startDate, $endDate])
             ->where(function ($q) {
                 $q->where('overtime_hours', '>', 0)
                     ->orWhere('overtime_authorized_hours', '>', 0);
             })
-            ->orderBy('work_date')
-            ->orderBy('employee_id')
             ->get();
+
+        $rows = $records->map(fn ($record) => [
+            Carbon::parse($record->work_date)->toDateString(),
+            $record->employee?->full_name ?? '-',
+            $record->employee?->employee_number ?? '-',
+            $record->employee?->department?->name ?? '-',
+            $record->worked_hours ?? 0,
+            $record->overtime_hours ?? 0,
+            $record->overtime_authorized_hours ?? 0,
+        ]);
+
+        // Empleados que no checan (is_attendance_exempt): su TE aprobado no
+        // vive en attendance_records — una fila por autorización, con 0
+        // trabajadas/detectadas porque no existe checada que las respalde. Si
+        // un exento llegara a tener checada ese día, gana la fila de checada
+        // (no se duplica la fecha).
+        $recordKeys = $records
+            ->map(fn ($r) => $r->employee_id.'|'.Carbon::parse($r->work_date)->toDateString())
+            ->flip();
+
+        $exemptRows = $this->exemptOvertimeAuthorizations($activeEmployeeIds, $startDate, $endDate)
+            ->reject(fn ($auth) => isset($recordKeys[$auth->employee_id.'|'.Carbon::parse($auth->date)->toDateString()]))
+            ->map(fn ($auth) => [
+                Carbon::parse($auth->date)->toDateString(),
+                $auth->employee?->full_name ?? '-',
+                $auth->employee?->employee_number ?? '-',
+                $auth->employee?->department?->name ?? '-',
+                0,
+                0,
+                (float) $auth->hours,
+            ]);
 
         return $this->exportCsv(
             "reporte_horas_extra_{$startDate}_{$endDate}.csv",
             ['Fecha', 'Empleado', 'No. Empleado', 'Departamento', 'Horas Trabajadas', 'Horas Extra Detectadas', 'Horas Extra Autorizadas (a pagar)'],
-            $records->map(fn ($record) => [
-                $record->work_date,
-                $record->employee?->full_name ?? '-',
-                $record->employee?->employee_number ?? '-',
-                $record->employee?->department?->name ?? '-',
-                $record->worked_hours ?? 0,
-                $record->overtime_hours ?? 0,
-                $record->overtime_authorized_hours ?? 0,
-            ])->toArray()
+            $rows->concat($exemptRows)
+                ->sortBy([[0, 'asc'], [1, 'asc']])
+                ->values()
+                ->toArray()
         );
     }
 

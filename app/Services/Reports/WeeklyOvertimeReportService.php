@@ -255,6 +255,13 @@ class WeeklyOvertimeReportService
         ];
 
         if (! $record || ! $record->check_in || ! $record->check_out) {
+            // Empleados que no checan (is_attendance_exempt): no hay checada
+            // que respalde el día, así que sus autorizaciones aprobadas se
+            // muestran tal cual, sin tope al timecard — igual que la nómina.
+            if ($employee->is_attendance_exempt) {
+                return $this->buildExemptDay($blank, $dayAuthorizations);
+            }
+
             return $blank;
         }
 
@@ -335,6 +342,37 @@ class WeeklyOvertimeReportService
             'cena_marker' => $cenaMarker,
             'comida_marker' => $comidaMarker,
         ];
+    }
+
+    /**
+     * Celda del día para un empleado exento de asistencia (no checa): las
+     * autorizaciones aprobadas se muestran a valor nominal — no hay checada
+     * que las tope — y lo detectado/pendiente queda en 0 porque no existe
+     * timecard contra el cual medir.
+     */
+    private function buildExemptDay(array $blank, Collection $dayAuthorizations): array
+    {
+        if ($dayAuthorizations->isEmpty()) {
+            return $blank;
+        }
+
+        $byCode = $dayAuthorizations->groupBy(fn (Authorization $a) => $this->normalizeCode($a->compensationType?->code));
+
+        $overtimeHours = 0.0;
+        foreach (self::OVERTIME_CODES as $code) {
+            $overtimeHours += (float) $byCode->get($code, collect())->sum('hours');
+        }
+
+        return array_merge($blank, [
+            'overtime_hours' => round($overtimeHours, 2),
+            'velada_hours' => round((float) $byCode->get(self::VELADA_CODE, collect())->sum('hours'), 2),
+            'weekend_hours' => round((float) $byCode->get(self::WEEKEND_CODE, collect())->sum('hours'), 2),
+            'has_weekend_auth' => $byCode->has(self::WEEKEND_CODE),
+            'm_hours' => round($overtimeHours, 2),
+            'velada_marker' => $byCode->has(self::VELADA_CODE) ? 1 : 0,
+            'cena_marker' => $byCode->has(self::CENA_CODE) ? 1 : 0,
+            'comida_marker' => $byCode->has(self::COMIDA_CODE) ? 1 : 0,
+        ]);
     }
 
     /**

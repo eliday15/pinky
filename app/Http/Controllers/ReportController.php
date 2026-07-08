@@ -346,11 +346,44 @@ class ReportController extends Controller implements HasMiddleware
             ];
         })->sortByDesc('total_overtime')->values();
 
+        // Empleados que no checan (is_attendance_exempt): su TE aprobado no
+        // vive en attendance_records (no hay checadas), así que se agrega
+        // directo desde las autorizaciones — mismo criterio que la nómina.
+        // Detectadas queda en 0 porque no existe timecard contra el cual medir.
+        // Si un exento llegara a tener checadas con TE, gana la fila de
+        // checadas (no se cuenta doble).
+        $recordEmployeeIds = $records->pluck('employee_id')->unique();
+        $exemptAuths = $this->exemptOvertimeAuthorizations($activeEmployeeIds, $startDate->toDateString(), $endDate->toDateString())
+            ->reject(fn ($auth) => $recordEmployeeIds->contains($auth->employee_id))
+            ->values();
+
+        $exemptRows = $exemptAuths->groupBy('employee_id')->map(function ($group) use ($resolver) {
+            $employee = $group->first()->employee;
+            $authorizedHours = round($group->sum('hours'), 2);
+
+            $perHour = 0.0;
+            $overtimeType = $employee ? $resolver->findApplicableType($employee, 'overtime') : null;
+            if ($employee && $overtimeType) {
+                $rate = $resolver->resolveRate($employee, $overtimeType);
+                $perHour = (float) ($rate['fixed_amount'] ?? 0);
+            }
+
+            return [
+                'employee' => $employee,
+                'days_with_overtime' => $group->pluck('date')->map(fn ($d) => Carbon::parse($d)->toDateString())->unique()->count(),
+                'total_overtime' => 0.0,
+                'total_authorized' => $authorizedHours,
+                'estimated_cost' => round($authorizedHours * $perHour, 2),
+            ];
+        })->values();
+
+        $byEmployee = $byEmployee->concat($exemptRows)->values();
+
         $summary = [
             'total_employees' => $byEmployee->count(),
             'total_overtime_hours' => round($records->sum('overtime_hours'), 2),
-            'total_authorized_hours' => round($records->sum('overtime_authorized_hours'), 2),
-            'total_days_with_overtime' => $records->count(),
+            'total_authorized_hours' => round($records->sum('overtime_authorized_hours') + $exemptAuths->sum('hours'), 2),
+            'total_days_with_overtime' => $records->count() + $exemptRows->sum('days_with_overtime'),
         ];
 
         return Inertia::render('Reports/Overtime', [

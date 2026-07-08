@@ -246,6 +246,23 @@ class PayrollCalculatorService
         // concepts, vacations and bonuses. Computed only when the period pays
         // extras so a weekly period never charges them. ----
         $veladaMetrics = $this->calculateVeladaMetrics($attendance);
+
+        // Empleados que no checan (is_attendance_exempt): no existen checadas
+        // que respalden ni topen el tiempo extra, así que las horas AUTORIZADAS
+        // aprobadas son la fuente de verdad. Sin esto su TE aprobado pagaba
+        // siempre 0, porque overtime_authorized_hours vive en attendance_records
+        // y estos empleados nunca tienen filas ahí. Se excluye el FIN (weekend
+        // pull rule), que paga por unidades en su propio camino.
+        if ($employee->is_attendance_exempt) {
+            $veladaMetrics['overtime_authorized_hours'] = round(
+                (float) $approvedAuthorizations
+                    ->filter(fn (Authorization $a) => $a->type === Authorization::TYPE_OVERTIME
+                        && ! ($a->compensationType?->hasWeekendPullRule()))
+                    ->sum('hours'),
+                2,
+            );
+        }
+
         $veladaMultiplier = (float) SystemSetting::get('velada_rate_multiplier', 2.0);
 
         $nightShiftMetrics = [
