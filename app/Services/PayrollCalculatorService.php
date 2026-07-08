@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\AttendanceRecord;
 use App\Models\Authorization;
+use App\Models\BreakfastClaim;
 use App\Models\CompensationType;
 use App\Models\Employee;
 use App\Models\Holiday;
@@ -396,6 +397,37 @@ class PayrollCalculatorService
         // (DECISIONES_NEGOCIO_2026-06-04.md §2).
         $dinnerAllowance = $useCompTypes ? 0.0 : $nightShiftMetrics['dinner_allowance'];
         $nightShiftBonusPay = $useCompTypes ? 0.0 : $nightShiftMetrics['night_shift_bonus'];
+
+        // ---- Desayunos (vendedor) ----
+        // El total de desayunos entregados en el kiosco durante el periodo se
+        // paga al empleado VENDEDOR configurado, en el periodo que paga BASE
+        // (semanal). Se suma desde los snapshots de breakfast_claims — cada
+        // claim congeló su precio — así que el recálculo es idempotente y un
+        // cambio de precio a mitad de semana no altera lo ya cobrado. Corre
+        // fuera de la ruta de conceptos: el vendedor puede no tener conceptos
+        // ni sueldo diario y aun así cobrar sus desayunos.
+        $breakfastCount = 0;
+        $breakfastPay = 0.0;
+        $breakfastVendorId = (int) SystemSetting::get('breakfast_vendor_employee_id', 0);
+        if ($payBase && $breakfastVendorId > 0 && $employee->id === $breakfastVendorId) {
+            $breakfastClaims = BreakfastClaim::whereBetween('claim_date', [$startDateStr, $endDateStr])->get();
+            $breakfastCount = $breakfastClaims->count();
+            $breakfastPay = round((float) $breakfastClaims->sum('unit_cost'), 2);
+
+            if ($breakfastPay > 0) {
+                $otherCompensationPay += $breakfastPay;
+                $compensationConcepts[] = [
+                    'code' => 'DES',
+                    'name' => 'Desayunos',
+                    'hours' => 0,
+                    'days' => 0,
+                    'quantity' => $breakfastCount,
+                    'rate' => ['percentage' => null, 'fixed_amount' => 0.0],
+                    'amount' => $breakfastPay,
+                    'source' => 'breakfast_claims',
+                ];
+            }
+        }
 
         // Calculate total bonuses (0 on a weekly period)
         $totalBonuses = $punctualityBonus + $weeklyBonus + $monthlyBonus

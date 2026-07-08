@@ -25,6 +25,7 @@
     "dependencies": {
         "@headlessui/vue": "^1.7.23",
         "@inertiajs/vue3": "^2.3.4",
+        "@vladmandic/face-api": "^1.7.15",
         "chart.js": "^4.5.1",
         "dayjs": "^1.11.19",
         "lodash": "^4.17.21",

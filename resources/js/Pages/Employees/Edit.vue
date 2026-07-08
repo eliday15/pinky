@@ -116,6 +116,8 @@ const form = useForm({
     is_attendance_exempt: props.employee.is_attendance_exempt || false,
     cash_pin: '',
     cash_pin_confirmation: '',
+    breakfast_pin: '',
+    breakfast_pin_confirmation: '',
     daily_salary: props.employee.daily_salary || '',
     monthly_bonus_type: props.employee.monthly_bonus_type || 'none',
     monthly_bonus_amount: props.employee.monthly_bonus_amount || 0,
@@ -1004,6 +1006,23 @@ watch(() => form.hire_date, onHireDateChange);
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Confirmar contraseña de cobro</label>
                                 <input v-model="form.cash_pin_confirmation" type="password" autocomplete="new-password" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" />
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- NIP de desayunos (solo admin) -->
+                    <div v-if="canEditAll" class="mt-6 border-t border-gray-200 pt-6">
+                        <h4 class="text-sm font-semibold text-gray-800 mb-1">NIP de desayunos</h4>
+                        <p class="text-xs text-gray-500 mb-4">NIP personal que el empleado teclea en el kiosco para cobrar su desayuno. Dejalo en blanco para no cambiarlo.</p>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Nuevo NIP de desayunos</label>
+                                <input v-model="form.breakfast_pin" type="password" autocomplete="new-password" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.breakfast_pin }" placeholder="Minimo 4 caracteres" />
+                                <p v-if="form.errors.breakfast_pin" class="mt-1 text-sm text-red-600">{{ form.errors.breakfast_pin }}</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Confirmar NIP de desayunos</label>
+                                <input v-model="form.breakfast_pin_confirmation" type="password" autocomplete="new-password" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" />
                             </div>
                         </div>
                     </div>

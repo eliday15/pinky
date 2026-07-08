@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Employee;
 use App\Models\SystemSetting;
 use App\Services\TwoFactorService;
 use Illuminate\Http\RedirectResponse;
@@ -33,9 +34,15 @@ class SettingsController extends Controller
             'groups' => [
                 ['key' => 'attendance', 'label' => 'Asistencia'],
                 ['key' => 'payroll', 'label' => 'Nomina'],
+                ['key' => 'breakfast', 'label' => 'Desayunos'],
                 ['key' => 'general', 'label' => 'General'],
                 ['key' => 'seguridad', 'label' => 'Seguridad'],
             ],
+            // Para el selector del empleado VENDEDOR de desayunos
+            // (breakfast_vendor_employee_id) en la pestaña Desayunos.
+            'employees' => Employee::active()
+                ->orderBy('full_name')
+                ->get(['id', 'full_name', 'employee_number']),
             'can' => [
                 'edit' => $user->hasPermissionTo('settings.edit'),
             ],

@@ -5,6 +5,7 @@ use App\Http\Controllers\AttendanceController;
 use App\Http\Controllers\AttendanceReportController;
 use App\Http\Controllers\AuditLogController;
 use App\Http\Controllers\AuthorizationController;
+use App\Http\Controllers\BreakfastController;
 use App\Http\Controllers\CompensationTypeController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DepartmentController;
@@ -111,6 +112,12 @@ Route::middleware(['auth', 'password-changed', 'two-factor-setup'])->group(funct
     Route::delete('/payroll/{payroll}', [PayrollController::class, 'destroy'])->name('payroll.destroy');
     Route::get('/payroll/{payroll}/export/contpaqi', [PayrollController::class, 'exportContpaqi'])->name('payroll.export.contpaqi');
     Route::get('/payroll/entry/{entry}', [PayrollController::class, 'entryDetail'])->name('payroll.entry');
+
+    // Desayunos: kiosco de cobro (NIP + rostro) y consulta de desayunos entregados.
+    Route::get('/desayunos/kiosco', [BreakfastController::class, 'kiosk'])->name('breakfasts.kiosk');
+    Route::post('/desayunos/kiosco/lookup', [BreakfastController::class, 'lookup'])->name('breakfasts.lookup');
+    Route::get('/desayunos', [BreakfastController::class, 'index'])->name('breakfasts.index');
+    Route::post('/desayunos', [BreakfastController::class, 'store'])->name('breakfasts.store');
 
     // Reports
     Route::get('/reports', [ReportController::class, 'index'])->name('reports.index');

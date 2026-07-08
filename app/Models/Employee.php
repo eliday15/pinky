@@ -80,6 +80,7 @@ class Employee extends Model
         'is_imss_enrolled',
         'is_attendance_exempt',
         'cash_pin',
+        'breakfast_pin',
         'daily_salary',
         'monthly_bonus_type',
         'monthly_bonus_amount',
@@ -114,6 +115,7 @@ class Employee extends Model
      */
     protected $hidden = [
         'cash_pin',
+        'breakfast_pin',
     ];
 
     /**
@@ -143,6 +145,41 @@ class Employee extends Model
     public function verifyCashPin(string $pin): bool
     {
         $hash = $this->attributes['cash_pin'] ?? null;
+
+        if (empty($hash)) {
+            return false;
+        }
+
+        return Hash::check($pin, $hash);
+    }
+
+    /**
+     * Hash the breakfast PIN on assignment. An empty value is ignored so the
+     * form can leave the field blank to keep the current PIN unchanged.
+     */
+    public function setBreakfastPinAttribute(?string $value): void
+    {
+        if ($value === null || $value === '') {
+            return;
+        }
+
+        $this->attributes['breakfast_pin'] = Hash::make($value);
+    }
+
+    /**
+     * Whether this employee has a breakfast kiosk PIN set.
+     */
+    public function hasBreakfastPin(): bool
+    {
+        return ! empty($this->attributes['breakfast_pin'] ?? null);
+    }
+
+    /**
+     * Verify a plaintext breakfast PIN against the stored hash.
+     */
+    public function verifyBreakfastPin(string $pin): bool
+    {
+        $hash = $this->attributes['breakfast_pin'] ?? null;
 
         if (empty($hash)) {
             return false;
@@ -289,6 +326,11 @@ class Employee extends Model
     /**
      * Get compensation types assigned to this employee.
      */
+    public function breakfastClaims(): HasMany
+    {
+        return $this->hasMany(BreakfastClaim::class);
+    }
+
     public function compensationTypes(): BelongsToMany
     {
         return $this->belongsToMany(CompensationType::class, 'employee_compensation_type')
@@ -442,7 +484,7 @@ class Employee extends Model
      * T, no gana fin de semana y TODO es tiempo extra (umbral 0). Almacén PT
      * (paga por unidades) devuelve NULL — aquí el fin de semana no genera OT.
      *
-     * @param float $workedHours Total de horas trabajadas ese día de fin de semana.
+     * @param  float  $workedHours  Total de horas trabajadas ese día de fin de semana.
      */
     public function weekendOvertimeThresholdForHours(float $workedHours): ?float
     {

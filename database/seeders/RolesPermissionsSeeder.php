@@ -82,6 +82,10 @@ class RolesPermissionsSeeder extends Seeder
             'reports.view_team',
             'reports.view_own',
 
+            // Desayunos
+            'breakfasts.register',
+            'breakfasts.view',
+
             // Configuración
             'settings.view',
             'settings.edit',
@@ -121,6 +125,9 @@ class RolesPermissionsSeeder extends Seeder
             'employees.edit_personal',
             // Asistencia - solo lectura
             'attendance.view_all',
+            // Desayunos - kiosco y consulta
+            'breakfasts.register',
+            'breakfasts.view',
         ]);
 
         // Create Supervisor role - Read-only employee access, attendance view, can create incidents/authorizations

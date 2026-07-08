@@ -1,6 +1,7 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
 import FormErrorBanner from '@/Components/FormErrorBanner.vue';
+import SearchableSelect from '@/Components/SearchableSelect.vue';
 import SecuritySettings from './Partials/SecuritySettings.vue';
 import { Head, useForm } from '@inertiajs/vue3';
 import { ref, computed } from 'vue';
@@ -10,6 +11,7 @@ const props = defineProps({
     groups: Array,
     can: Object,
     security: Object,
+    employees: { type: Array, default: () => [] },
 });
 
 const activeGroup = ref('attendance');
@@ -73,8 +75,23 @@ const updateValue = (index, setting, event) => {
 const groupLabels = {
     attendance: 'Asistencia',
     payroll: 'Nomina',
+    breakfast: 'Desayunos',
     general: 'General',
     seguridad: 'Seguridad',
+};
+
+// El vendedor de desayunos se elige de la lista de empleados activos, no
+// tecleando un id. El valor guardado sigue siendo el id como string ('0' =
+// sin vendedor, el modulo no paga a nadie).
+const isVendorSetting = (setting) => setting.key === 'breakfast_vendor_employee_id';
+
+const vendorValue = (index) => {
+    const value = Number(form.settings[index]?.value || 0);
+    return value > 0 ? value : null;
+};
+
+const updateVendor = (index, value) => {
+    form.settings[index].value = String(value ?? 0);
 };
 </script>
 
@@ -157,6 +174,21 @@ const groupLabels = {
                                                         {{ form.settings[index]?.value === 'true' ? 'Si' : 'No' }}
                                                     </span>
                                                 </label>
+                                                <p v-if="form.errors['settings.' + index + '.value']" class="mt-1 text-sm text-red-600">{{ form.errors['settings.' + index + '.value'] }}</p>
+                                            </template>
+
+                                            <!-- Empleado vendedor de desayunos -->
+                                            <template v-else-if="isVendorSetting(setting)">
+                                                <SearchableSelect
+                                                    :model-value="vendorValue(index)"
+                                                    :options="employees"
+                                                    value-key="id"
+                                                    label-key="full_name"
+                                                    secondary-key="employee_number"
+                                                    placeholder="Sin vendedor"
+                                                    :disabled="!can.edit"
+                                                    @update:model-value="updateVendor(index, $event)"
+                                                />
                                                 <p v-if="form.errors['settings.' + index + '.value']" class="mt-1 text-sm text-red-600">{{ form.errors['settings.' + index + '.value'] }}</p>
                                             </template>
 
