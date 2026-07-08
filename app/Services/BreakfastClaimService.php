@@ -16,8 +16,9 @@ use Illuminate\Validation\ValidationException;
  *
  * Un empleado puede cobrar su desayuno únicamente dentro de la ventana
  * configurable ANTES de su hora de entrada de ese día (a la hora de entrada en
- * punto ya no se entrega), máximo uno por día, validando su NIP de desayunos y
- * la verificación facial. El costo vigente se congela en cada cobro; la nómina
+ * punto ya no se entrega), máximo uno por día, validando su contraseña de
+ * cobro (la MISMA del cobro de nómina en efectivo, cash_pin) y la
+ * verificación facial. El costo vigente se congela en cada cobro; la nómina
  * semanal del vendedor suma esos snapshots.
  */
 class BreakfastClaimService
@@ -84,8 +85,8 @@ class BreakfastClaimService
             return $fail('El empleado no tiene foto registrada. Acude a RRHH para tomarla.');
         }
 
-        if (! $employee->hasBreakfastPin()) {
-            return $fail('El empleado no tiene NIP de desayunos. Acude a RRHH para configurarlo.');
+        if (! $employee->hasCashPin()) {
+            return $fail('El empleado no tiene contraseña de cobro. Acude a RRHH para configurarla.');
         }
 
         if ($window === null) {
@@ -130,8 +131,8 @@ class BreakfastClaimService
             throw ValidationException::withMessages(['claim' => $status['reason']]);
         }
 
-        if (! $employee->verifyBreakfastPin($pin)) {
-            throw ValidationException::withMessages(['pin' => 'NIP de desayunos incorrecto.']);
+        if (! $employee->verifyCashPin($pin)) {
+            throw ValidationException::withMessages(['pin' => 'Contraseña de cobro incorrecta.']);
         }
 
         $maxDistance = (float) SystemSetting::get('breakfast_face_max_distance', 0.5);

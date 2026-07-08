@@ -996,8 +996,23 @@ class PayrollCalculatorService
             return 0;
         }
 
+        // Fechas con timecard MEDIBLE (entrada y salida): solo ahí se pueden
+        // comparar horas contra el umbral. Un día FIN autorizado sin checada
+        // completa (empleado exento, salida no marcada, día sincronizado como
+        // ausente) cuenta 1: la autorización aprobada es la evidencia cuando
+        // no hay horas que medir.
+        $measuredDates = $attendance
+            ->filter(fn ($r) => $r->check_in && $r->check_out)
+            ->map(fn ($r) => Carbon::parse($r->work_date)->toDateString())
+            ->all();
+
         $units = 0;
         foreach ($finDates as $date) {
+            if (! in_array($date, $measuredDates, true)) {
+                $units++;
+
+                continue;
+            }
             if ((float) $hoursByDate->get($date, 0) >= $threshold) {
                 $units++;
             }

@@ -273,7 +273,7 @@ onBeforeUnmount(() => {
             <!-- Paso 3: NIP -->
             <div v-else-if="step === 'pin'" class="bg-gray-50 rounded-2xl shadow p-8">
                 <h2 class="text-xl font-semibold text-gray-800 text-center mb-2">Rostro verificado ✓</h2>
-                <p class="text-gray-500 text-center mb-6">Teclea tu NIP de desayunos</p>
+                <p class="text-gray-500 text-center mb-6">Teclea tu contraseña de cobro (la misma de tu nómina)</p>
                 <PinPad v-model="pin" :disabled="loading" @submit="submitPin" />
                 <p v-if="pinError" class="mt-4 text-center text-red-600 text-lg">{{ pinError }}</p>
                 <button type="button" class="mt-6 w-full py-3 rounded-2xl bg-gray-100 text-gray-600 font-medium hover:bg-gray-200" @click="reset">

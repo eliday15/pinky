@@ -59,7 +59,7 @@ class BreakfastClaimTest extends FeatureTestCase
             'status' => 'active',
             'schedule_id' => $schedule->id,
             'photo_path' => 'employees/photos/test.jpg',
-            'breakfast_pin' => '1234',
+            'cash_pin' => '1234',
         ], $attributes));
     }
 
@@ -211,9 +211,9 @@ class BreakfastClaimTest extends FeatureTestCase
 
     public function test_employee_without_pin_is_rejected(): void
     {
-        $employee = $this->makeEmployee(['breakfast_pin' => null]);
+        $employee = $this->makeEmployee(['cash_pin' => null]);
 
-        $this->assertClaimFails($employee, '2026-06-03 08:30:00', 'NIP de desayunos');
+        $this->assertClaimFails($employee, '2026-06-03 08:30:00', 'contraseña de cobro');
     }
 
     public function test_inactive_employee_is_rejected(): void
@@ -257,19 +257,16 @@ class BreakfastClaimTest extends FeatureTestCase
         $this->assertEqualsWithDelta(42.50, (float) $claim->fresh()->unit_cost, 0.001);
     }
 
-    public function test_breakfast_pin_is_hashed_and_hidden(): void
+    public function test_claim_uses_the_payroll_cash_pin(): void
     {
+        // La contraseña del kiosco es la MISMA de cobro de nómina (cash_pin):
+        // verificarla para el desayuno equivale a verificarla para el efectivo.
         $employee = $this->makeEmployee();
 
-        $this->assertTrue($employee->hasBreakfastPin());
-        $this->assertTrue($employee->verifyBreakfastPin('1234'));
-        $this->assertFalse($employee->verifyBreakfastPin('0000'));
-        $this->assertNotSame('1234', $employee->getAttributes()['breakfast_pin']);
-        $this->assertArrayNotHasKey('breakfast_pin', $employee->toArray());
+        $this->assertTrue($employee->verifyCashPin('1234'));
 
-        // Update sin tocar el NIP no lo borra.
-        $employee->update(['breakfast_pin' => '', 'first_name' => 'Nuevo']);
-        $this->assertTrue($employee->fresh()->verifyBreakfastPin('1234'));
+        $claim = $this->claimAt($employee, '2026-06-03 08:30:00');
+        $this->assertNotNull($claim->id);
     }
 
     // ------------------------------------------------------------------

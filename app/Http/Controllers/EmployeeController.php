@@ -164,7 +164,6 @@ class EmployeeController extends Controller
             'is_imss_enrolled' => ['boolean'],
             'is_attendance_exempt' => ['boolean'],
             'cash_pin' => ['nullable', 'string', 'min:4', 'confirmed'],
-            'breakfast_pin' => ['nullable', 'string', 'min:4', 'confirmed'],
             'daily_salary' => ['required', 'numeric', 'min:0'],
             'monthly_bonus_type' => ['nullable', 'string', Rule::in(['none', 'fixed', 'variable'])],
             'monthly_bonus_amount' => ['nullable', 'numeric', 'min:0'],
@@ -216,7 +215,7 @@ class EmployeeController extends Controller
         // El PIN de cobro y la marca de inscripción al IMSS solo los fija el
         // editor con acceso completo (admin); RRHH (alta personal) no los toca.
         if (! $canEditAll) {
-            unset($validated['cash_pin'], $validated['breakfast_pin'], $validated['is_imss_enrolled'], $validated['is_attendance_exempt']);
+            unset($validated['cash_pin'], $validated['is_imss_enrolled'], $validated['is_attendance_exempt']);
         }
 
         $validated['full_name'] = $validated['first_name'].' '.$validated['last_name'];
@@ -478,7 +477,6 @@ class EmployeeController extends Controller
             'is_imss_enrolled' => ['boolean'],
             'is_attendance_exempt' => ['boolean'],
             'cash_pin' => ['nullable', 'string', 'min:4', 'confirmed'],
-            'breakfast_pin' => ['nullable', 'string', 'min:4', 'confirmed'],
             'daily_salary' => ['required', 'numeric', 'min:0'],
             'monthly_bonus_type' => ['nullable', 'string', Rule::in(['none', 'fixed', 'variable'])],
             'monthly_bonus_amount' => ['nullable', 'numeric', 'min:0'],
