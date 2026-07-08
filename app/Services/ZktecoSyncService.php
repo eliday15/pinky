@@ -635,9 +635,12 @@ class ZktecoSyncService
         }
 
         $dayName = strtolower(Carbon::parse($attendance->work_date)->format('l'));
-        $isWorkingDay = $employee->isEffectiveWorkingDay($dayName);
+        // Día obligatorio = laborable de su horario y NO fin de semana. Sábado y
+        // domingo dejaron de ser obligatorios (Dani 2026-07-08): no presentarse
+        // un fin de semana ya no es falta.
+        $isObligatoryDay = $employee->isObligatoryWorkDay(Carbon::parse($attendance->work_date));
 
-        if (! $attendance->check_in && $isWorkingDay && ! $attendance->is_holiday) {
+        if (! $attendance->check_in && $isObligatoryDay && ! $attendance->is_holiday) {
             if (! $preserveStatus) {
                 $attendance->update(['status' => 'absent']);
             }
@@ -791,8 +794,12 @@ class ZktecoSyncService
 
         // Determine status
         $status = 'present';
+        // Sábado, domingo y días festivos NO son obligatorios (Dani 2026-07-08):
+        // haber trabajado un fin de semana/festivo nunca genera retardo ni falta
+        // (ni por llegar tarde ni por salir temprano). Se conserva 'present'.
+        $isNonObligatoryDay = Carbon::parse($attendance->work_date)->isWeekend() || $attendance->is_holiday;
         $maxLateBeforeAbsence = (int) SystemSetting::get('max_late_minutes_before_absence', 60);
-        if ($lateMinutes > 0 && ! $hasApprovedEntryPermission) {
+        if ($lateMinutes > 0 && ! $hasApprovedEntryPermission && ! $isNonObligatoryDay) {
             if ($lateMinutes >= $maxLateBeforeAbsence) {
                 $status = 'absent';
                 $qualifiesForPunctualityBonus = false;
@@ -823,7 +830,7 @@ class ZktecoSyncService
         // reporte pero no para el sync).
         $earlyDepartureThreshold = (int) SystemSetting::get('early_departure_absence_threshold', 30);
         $earlyDepartureIsAbsence = (bool) SystemSetting::get('early_departure_is_absence', true);
-        if ($earlyDepartureIsAbsence && $earlyDepartureMinutes >= $earlyDepartureThreshold && ! $hasApprovedExitPermission) {
+        if ($earlyDepartureIsAbsence && $earlyDepartureMinutes >= $earlyDepartureThreshold && ! $hasApprovedExitPermission && ! $isNonObligatoryDay) {
             $status = 'absent';
             $qualifiesForPunctualityBonus = false;
         }
@@ -841,8 +848,11 @@ class ZktecoSyncService
             'velada_authorized_hours' => $veladaSplit['velada_authorized'] ?? 0,
             'permission_hours' => round($permissionHours, 2),
             'total_payroll_hours' => round($totalPayrollHours, 2),
-            'late_minutes' => $lateMinutes,
-            'early_departure_minutes' => $earlyDepartureMinutes,
+            // En días NO obligatorios (fin de semana / festivo) no hay retardo ni
+            // salida temprana: se guardan en 0 para que los reportes de retardos y
+            // salidas tempranas no muestren anomalías de esos días (Dani 2026-07-08).
+            'late_minutes' => $isNonObligatoryDay ? 0 : $lateMinutes,
+            'early_departure_minutes' => $isNonObligatoryDay ? 0 : $earlyDepartureMinutes,
             'lunch_deviation_minutes' => $lunchDeviationMinutes,
             'qualifies_for_punctuality_bonus' => $qualifiesForPunctualityBonus,
             'qualifies_for_night_shift_bonus' => $qualifiesForNightShiftBonus,
@@ -946,11 +956,12 @@ class ZktecoSyncService
                 continue;
             }
 
-            $dayName = strtolower($yesterday->format('l'));
-            $isWorkingDay = $employee->isEffectiveWorkingDay($dayName);
+            // Sábado y domingo no son obligatorios (Dani 2026-07-08): no se crea
+            // una falta fantasma por no checar un fin de semana.
+            $isObligatoryDay = $employee->isObligatoryWorkDay($yesterday);
             $isHoliday = Holiday::isHoliday($yesterday);
 
-            if ($isWorkingDay && ! $isHoliday) {
+            if ($isObligatoryDay && ! $isHoliday) {
                 AttendanceRecord::create([
                     'employee_id' => $employee->id,
                     'work_date' => $yesterday->toDateString(),

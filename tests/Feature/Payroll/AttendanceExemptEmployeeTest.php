@@ -219,10 +219,13 @@ class AttendanceExemptEmployeeTest extends FeatureTestCase
         $this->assertSame(1, (int) $entry->days_absent);
     }
 
-    public function test_net_pay_is_never_negative_with_many_absences(): void
+    public function test_weekend_absence_incidents_do_not_count(): void
     {
-        // Empleado con horario de 7 días; FIN toda la semana => la deducción
-        // (7 × 800 × 7/6 = 6533.33) excede la base (5600). El neto se topa en 0.
+        // Dani 2026-07-08: sábado y domingo NO son obligatorios en ningún depto.
+        // Aunque el horario incluya los 7 días y la incidencia FIN cubra toda la
+        // semana (L-D), SOLO cuentan como falta los 5 días laborables (L-V):
+        // 5 × 800 × 7/6 = 4666.67 de deducción; base 5600 → neto 933.33 (el neto
+        // nunca es negativo). Antes las 7 faltas topaban el neto en 0.
         $employee = $this->employee(
             ['is_attendance_exempt' => true, 'zkteco_user_id' => null],
             ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'],
@@ -234,6 +237,7 @@ class AttendanceExemptEmployeeTest extends FeatureTestCase
 
         $this->assertGreaterThanOrEqual(0.0, (float) $entry->net_pay, 'el neto nunca es negativo');
         $this->assertGreaterThanOrEqual(0.0, (float) $entry->cash_amount, 'el efectivo nunca es negativo');
-        $this->assertEqualsWithDelta(0.00, (float) $entry->net_pay, 0.01);
+        $this->assertSame(5, (int) $entry->days_absent, 'sábado y domingo no cuentan como falta');
+        $this->assertEqualsWithDelta(933.33, (float) $entry->net_pay, 0.01);
     }
 }

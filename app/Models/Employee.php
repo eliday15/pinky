@@ -378,25 +378,35 @@ class Employee extends Model
     /**
      * Whether a given calendar date counts as WEEKEND WORK for this employee.
      *
-     * A Saturday/Sunday is weekend work when it falls OUTSIDE the employee's
-     * normal schedule. EXCEPT for departments paid by weekend units (Almacén PT,
-     * the only one with weekend_unit_hours): there ANY worked Sat/Sun is a fin de
-     * semana regardless of the assigned schedule — "aunque se presenten 1 hora es
-     * un fin de semana" (Dani 2026-06-25). Pay stays driven by the approved FIN
-     * authorization, so this flag only governs whether the day is OFFERED as a
-     * weekend ("Cargar desde checadas") and never double-pays the base.
+     * Desde 2026-07-07 (Dani): en TODOS los departamentos, cualquier sábado o
+     * domingo trabajado cuenta como fin de semana, SIN importar el horario — el
+     * sábado y el domingo dejaron de ser días obligatorios. Antes solo Almacén PT
+     * (weekend_unit_hours) contaba cualquier Sat/Sun; el resto solo si el día
+     * caía fuera del horario. El pago sigue guiado por la autorización FIN
+     * aprobada, así que esta bandera solo decide si el día se OFRECE como fin de
+     * semana ("Cargar desde checadas") y nunca duplica el base.
      */
     public function isWeekendWorkDay(Carbon $date): bool
     {
-        if (! $date->isWeekend()) {
+        return $date->isWeekend();
+    }
+
+    /**
+     * ¿Este día es OBLIGATORIO para el empleado (puede generar falta)?
+     *
+     * Un día es obligatorio cuando es día laborable de su horario y NO es sábado
+     * ni domingo. Sábado y domingo dejaron de ser obligatorios en todos los
+     * departamentos (Dani 2026-07-08): faltar o salir temprano un fin de semana
+     * ya no es falta. Los días festivos se excluyen aparte en cada punto (vía
+     * `is_holiday` / Holiday::isHoliday), porque su fuente varía por contexto.
+     */
+    public function isObligatoryWorkDay(Carbon $date): bool
+    {
+        if ($date->isWeekend()) {
             return false;
         }
 
-        if ($this->department?->weekend_unit_hours !== null) {
-            return true;
-        }
-
-        return ! $this->isEffectiveWorkingDay($date->englishDayOfWeek);
+        return $this->isEffectiveWorkingDay($date->englishDayOfWeek);
     }
 
     /** Horas que, por omisión, valen 1 "fin de semana" en un depto normal. */

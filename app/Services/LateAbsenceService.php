@@ -91,7 +91,9 @@ class LateAbsenceService
                     return false;
                 }
 
-                return $employee->isEffectiveWorkingDay($date->englishDayOfWeek);
+                // Sábado y domingo no son obligatorios (Dani 2026-07-08): un
+                // retardo de fin de semana no cuenta para el FRT mensual.
+                return $employee->isObligatoryWorkDay($date);
             })
             ->count();
     }

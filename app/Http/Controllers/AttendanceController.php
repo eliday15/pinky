@@ -310,9 +310,10 @@ class AttendanceController extends Controller
                     'date' => $dateStr,
                     'day' => $currentDate->day,
                     'dayName' => $currentDate->locale('es')->dayName,
-                    // Highlight only days outside THIS employee's schedule.
-                    'isWeekend' => $currentDate->isWeekend()
-                        && ! $employee->isEffectiveWorkingDay($currentDate->englishDayOfWeek),
+                    // Sábado y domingo son fin de semana en todos los deptos
+                    // (Dani 2026-07-08): se resaltan siempre, ya no dependen del
+                    // horario del empleado.
+                    'isWeekend' => $currentDate->isWeekend(),
                     'record' => $record ? [
                         'id' => $record->id,
                         'check_in' => $record->check_in,

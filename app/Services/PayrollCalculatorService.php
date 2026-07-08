@@ -831,10 +831,10 @@ class PayrollCalculatorService
                 if ($isHoliday) {
                     continue;
                 }
-                // Non-working days for this employee (e.g. Saturday for a
-                // Mon-Fri schedule) never count as ausencia regardless of how
-                // the row was originally classified.
-                if (! $employee->isEffectiveWorkingDay($workDate->englishDayOfWeek)) {
+                // Los días NO obligatorios nunca cuentan como ausencia: los que no
+                // son laborables del horario y, desde 2026-07-08 (Dani), TODO
+                // sábado y domingo en cualquier depto (dejaron de ser obligatorios).
+                if (! $employee->isObligatoryWorkDay($workDate)) {
                     continue;
                 }
                 $daysAbsent++;
@@ -1128,8 +1128,8 @@ class PayrollCalculatorService
                 if (in_array($dateStr, $holidayDates, true)) {
                     continue; // festivo nunca es falta
                 }
-                if (! $employee->isEffectiveWorkingDay($day->englishDayOfWeek)) {
-                    continue; // día de descanso del empleado no descuenta
+                if (! $employee->isObligatoryWorkDay($day)) {
+                    continue; // descanso del empleado o fin de semana (no obligatorio) no descuenta
                 }
                 if (isset($justifiedDates[$dateStr])) {
                     continue; // justificada por otra incidencia (vac/incap/permiso/FJU)
