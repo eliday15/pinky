@@ -32,8 +32,12 @@ class HolidayFactory extends Factory
         ];
 
         return [
-            // 'date' is UNIQUE; use a fresh date per record to avoid collisions.
-            'date' => fake()->unique()->dateTimeBetween('-1 year', '+1 year')->format('Y-m-d'),
+            // 'date' is UNIQUE. unique()->dateTimeBetween() only guarantees
+            // distinct DateTimes — two times on the SAME day collide after
+            // format('Y-m-d'). A unique day offset guarantees distinct days.
+            'date' => now()->subYear()->startOfDay()
+                ->addDays(fake()->unique()->numberBetween(0, 730))
+                ->format('Y-m-d'),
             'name' => fake()->randomElement($names),
             'is_mandatory' => true,
             'pay_multiplier' => 2.00,

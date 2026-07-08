@@ -870,11 +870,81 @@ class AuthorizationController extends Controller
             ? (float) $validated['hours']
             : null;
 
+        // Tope al aprobar (Luis 2026-07-08): el tiempo extra aprobado no puede
+        // exceder lo que respaldan las checadas del día, para que la
+        // aprobación, la hoja y la nómina siempre cuadren.
+        $capMessage = '';
+        $cap = $this->payableOvertimeCap($authorization);
+        if ($cap !== null) {
+            if ($cap <= 0) {
+                return redirect()->back()->with('error', 'Las checadas de ese día no respaldan tiempo extra; corrige la asistencia o rechaza la solicitud.');
+            }
+            $requested = $overrideHours ?? (float) $authorization->hours;
+            if ($requested > $cap) {
+                $overrideHours = $cap;
+                $capMessage = ' Horas ajustadas a '.number_format($cap, 2).' h (tope de checadas).';
+            }
+        }
+
         $authorization->approve($user, $overrideHours);
 
         $this->applyApprovalEffects($authorization, $syncService);
 
-        return redirect()->back()->with('success', 'Autorizacion aprobada.');
+        return redirect()->back()->with('success', 'Autorizacion aprobada.'.$capMessage);
+    }
+
+    /**
+     * Máximo de horas extra PAGABLES que respaldan las checadas del día de
+     * una autorización de tiempo extra. Devuelve null cuando el tope NO
+     * aplica: no es tiempo extra por hora, el empleado no checa (exento: su
+     * aprobación es la evidencia) o el día no tiene checada completa (ahí la
+     * nómina no paga TE de todos modos y la checada puede corregirse
+     * después). Mismo cálculo que la nómina y el reporte: en fin de semana
+     * con umbral es el excedente de las T horas; en día normal, lo detectado
+     * contra horario con la escalera de redondeo.
+     */
+    private function payableOvertimeCap(Authorization $authorization): ?float
+    {
+        if ($authorization->type !== Authorization::TYPE_OVERTIME) {
+            return null;
+        }
+
+        // Solo conceptos por hora (HE/HED/HET o sin concepto): un concepto
+        // per_day/one_time no se mide contra horas del timecard.
+        $mode = $authorization->compensationType?->application_mode;
+        if ($mode !== null && $mode !== CompensationType::APPLICATION_PER_HOUR) {
+            return null;
+        }
+
+        $employee = $authorization->employee;
+        if (! $employee || $employee->is_attendance_exempt) {
+            return null;
+        }
+
+        $date = Carbon::parse($authorization->date)->toDateString();
+        $record = AttendanceRecord::where('employee_id', $employee->id)
+            ->whereDate('work_date', $date)
+            ->first();
+
+        if (! $record || ! $record->check_in || ! $record->check_out) {
+            return null;
+        }
+
+        $rounding = app(OvertimeRoundingService::class);
+
+        // Fin de semana con umbral (regla de las 7 h): el TE pagable es lo
+        // que excede del umbral, igual que la nómina y el reporte.
+        if ($record->is_weekend_work) {
+            $total = (float) ($record->worked_hours ?? 0) + (float) ($record->overtime_hours ?? 0);
+            $threshold = $employee->weekendOvertimeThresholdForHours($total);
+            if ($threshold !== null) {
+                return $rounding->roundMinutes((int) round(max(0.0, $total - $threshold) * 60));
+            }
+        }
+
+        $schedule = $employee->getEffectiveScheduleForDay(Carbon::parse($date)->format('l'));
+
+        return $rounding->detectOvertimeHours($record, $schedule, $date);
     }
 
     /**
@@ -1094,6 +1164,7 @@ class AuthorizationController extends Controller
 
         $approved = 0;
         $skipped = 0;
+        $capped = 0;
         $user = Auth::user();
         $authorizations = Authorization::whereIn('id', $validated['ids'])->get();
 
@@ -1104,16 +1175,37 @@ class AuthorizationController extends Controller
                 continue;
             }
 
-            $authorization->approve($user);
+            // Mismo tope de checadas que la aprobación individual: sin TE
+            // respaldado se omite; con menos del solicitado se ajusta.
+            $overrideHours = null;
+            $cap = $this->payableOvertimeCap($authorization);
+            if ($cap !== null) {
+                if ($cap <= 0) {
+                    $skipped++;
+
+                    continue;
+                }
+                if ((float) $authorization->hours > $cap) {
+                    $overrideHours = $cap;
+                    $capped++;
+                }
+            }
+
+            $authorization->approve($user, $overrideHours);
 
             $this->applyApprovalEffects($authorization, $syncService);
 
             $approved++;
         }
 
-        $msg = $skipped > 0
-            ? "Se aprobaron {$approved} autorizaciones ({$skipped} omitidas)."
-            : "Se aprobaron {$approved} autorizaciones.";
+        $msg = "Se aprobaron {$approved} autorizaciones";
+        if ($skipped > 0) {
+            $msg .= " ({$skipped} omitidas)";
+        }
+        if ($capped > 0) {
+            $msg .= "; {$capped} ajustadas al tope de checadas";
+        }
+        $msg .= '.';
 
         return redirect()->back()->with('success', $msg);
     }
