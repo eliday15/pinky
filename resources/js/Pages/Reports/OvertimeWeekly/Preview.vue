@@ -25,14 +25,17 @@ const showObservations = ref(true);
 provide('showObservations', showObservations);
 
 /** Drop rows that have nothing to report so the table stays readable.
- *  "Nothing" = zero approved OT and (if not showing pending) zero pending too. */
+ *  "Nothing" = zero approved OT/finde/velada/cena/comida, ningún "otro
+ *  concepto" (p. ej. un bono o cantidad fija semanal — antes esas filas
+ *  desaparecían de la hoja) y (si no se muestran pendientes) cero pendientes. */
 const visibleReport = computed(() => {
     const r = props.report;
     if (!r) return r;
     const rows = r.rows.filter(row => {
         const approved = (row.totals?.total_hours || 0) + (row.totals?.weekend_hours || 0)
             + (row.totals?.velada_count || 0) + (row.totals?.cena_count || 0)
-            + (row.totals?.comida_count || 0);
+            + (row.totals?.comida_count || 0)
+            + (row.extra_concepts?.length || 0);
         const pending = showPending.value ? (row.totals?.pending_hours || 0) : 0;
         return approved > 0 || pending > 0;
     });

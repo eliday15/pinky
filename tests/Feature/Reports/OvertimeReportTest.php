@@ -153,6 +153,52 @@ class OvertimeReportTest extends FeatureTestCase
     }
 
     /**
+     * Formato unificado (Luis/fábrica 2026-07-09): TODOS los departamentos usan
+     * el formato de Almacén PT (layout 'default'), aunque antes tuvieran uno
+     * propio (Calidad/BIES/Diseño/Corte). Así Calidad recupera las columnas
+     * Comida/Velada/Cena que le faltaban.
+     */
+    public function test_all_departments_use_the_almacen_pt_layout(): void
+    {
+        $this->actingAsAdmin();
+
+        foreach (['CALIDAD', 'BIES', 'DISENO', 'CORTE', 'CUALQUIERA'] as $code) {
+            $dept = Department::factory()->create(['code' => $code]);
+
+            $this->get(route('reports.overtime-weekly.preview', [
+                'department_id' => $dept->id,
+                'week_start' => self::WEEK_START,
+            ]))
+                ->assertOk()
+                ->assertInertia(fn (Assert $page) => $page
+                    ->component('Reports/OvertimeWeekly/Preview')
+                    ->where('layout', 'default'));
+        }
+    }
+
+    /**
+     * El Excel de cualquier departamento (aquí uno con código CALIDAD, que antes
+     * omitía esas columnas) incluye Comida, Velada y Cena.
+     */
+    public function test_calidad_excel_now_includes_comida_velada_cena(): void
+    {
+        $this->actingAsAdmin();
+
+        $dept = Department::factory()->create(['code' => 'CALIDAD']);
+
+        $response = $this->get(route('reports.overtime-weekly.export.excel', [
+            'department_id' => $dept->id,
+            'week_start' => self::WEEK_START,
+        ]));
+
+        $response->assertOk();
+        $this->assertStringContainsString(
+            'spreadsheetml',
+            (string) $response->headers->get('content-type'),
+        );
+    }
+
+    /**
      * Rango libre ("de qué día a qué día"): al mandar end_date el reporte cubre
      * el rango literal [week_start, end_date], sin normalizar a la semana lun–dom.
      */
