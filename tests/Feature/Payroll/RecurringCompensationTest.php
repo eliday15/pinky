@@ -139,6 +139,27 @@ class RecurringCompensationTest extends FeatureTestCase
         $this->assertEqualsWithDelta(0.00, (float) $entry->other_compensation_pay, 0.01, 'sin recurrente ni autorización no paga');
     }
 
+    public function test_recurring_concept_is_paid_in_cash(): void
+    {
+        // Requisito de Luis (2026-07-09): "se paga en efectivo ese recurrente".
+        // El recurrente es un EXTRA y los extras SIEMPRE salen en efectivo; el
+        // sueldo base va al banco para un empleado con IMSS ya fuera de prueba.
+        $employee = Employee::factory()->create([
+            'status' => 'active',
+            'daily_salary' => 800.00,
+            'hourly_rate' => 100.00,
+            'hire_date' => '2025-01-01',
+            'is_imss_enrolled' => true,
+        ]);
+        $type = $this->recurringType(150.00, CompensationType::PAYMENT_PERIOD_WEEKLY);
+        $employee->compensationTypes()->attach($type->id, ['is_active' => true]);
+
+        $entry = $this->calculator()->calculateEmployeePayroll($this->weekly(), $employee);
+
+        $this->assertEqualsWithDelta(150.00, (float) $entry->cash_amount, 0.01, 'el recurrente sale en efectivo');
+        $this->assertEqualsWithDelta(5600.00, (float) $entry->bank_amount, 0.01, 'el sueldo base va al banco (no el recurrente)');
+    }
+
     public function test_recurring_weekly_concept_shows_in_te_report_otros_conceptos(): void
     {
         $department = Department::factory()->create(['name' => 'Producción', 'code' => 'PROD']);
