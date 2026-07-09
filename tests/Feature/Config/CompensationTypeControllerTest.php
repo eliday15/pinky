@@ -235,6 +235,42 @@ class CompensationTypeControllerTest extends FeatureTestCase
         ]);
     }
 
+    public function test_admin_can_store_recurring_concept_with_luis_payload(): void
+    {
+        // Payload EXACTO del caso de Luis (2026-07-09, "Descuento Infonavit"):
+        // monto fijo $1, monto único, semanal, sin autorización/pull, campos
+        // vacíos convertidos a null como los manda el form.
+        $this->actingAsAdmin();
+
+        $this->post(route('compensation-types.store'), [
+            'name' => 'Descuento Infonavit',
+            'code' => 'di',
+            'description' => null,
+            'calculation_type' => 'fixed',
+            'percentage_value' => null,
+            'fixed_amount' => '1',
+            'is_active' => true,
+            'application_mode' => 'one_time',
+            'authorization_type' => null,
+            'attendance_pull_rule' => null,
+            'priority' => 0,
+            'payment_period' => 'weekly',
+            'is_recurring' => true,
+            'employee_ids' => [],
+            'employee_percentages' => [],
+            'employee_fixed_amounts' => [],
+        ])
+            ->assertRedirect(route('compensation-types.index'))
+            ->assertSessionHas('success');
+
+        $this->assertDatabaseHas('compensation_types', [
+            'code' => 'di',
+            'name' => 'Descuento Infonavit',
+            'is_recurring' => true,
+            'payment_period' => 'weekly',
+        ]);
+    }
+
     public function test_payment_period_defaults_to_monthly_and_can_be_set_weekly(): void
     {
         $this->actingAsAdmin();
