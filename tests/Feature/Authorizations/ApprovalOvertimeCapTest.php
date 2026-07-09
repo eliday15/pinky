@@ -150,7 +150,8 @@ class ApprovalOvertimeCapTest extends FeatureTestCase
 
     public function test_approve_weekend_clamps_to_threshold_excess(): void
     {
-        // Sábado con 8.42 h totales y umbral 7 → excedente 1.42 → escalera 1.0.
+        // Sábado 09:07–18:02 = 8 h 55 CORRIDAS (sin descontar comida, Dani
+        // 2026-07-08) − 7 de umbral = 1 h 55 → escalera → 2.0 h de tope.
         [$approver, $code] = $this->approver();
         $employee = $this->employee();
 
@@ -164,11 +165,11 @@ class ApprovalOvertimeCapTest extends FeatureTestCase
             'overtime_hours' => 0.42,
         ]);
 
-        $auth = $this->pendingOvertime($employee, self::SATURDAY, 2.0);
+        $auth = $this->pendingOvertime($employee, self::SATURDAY, 3.0);
 
         $this->actingAs($approver)->post(route('authorizations.approve', $auth), ['two_factor_code' => $code])->assertRedirect();
 
-        $this->assertEqualsWithDelta(1.0, (float) $auth->fresh()->hours, 0.01, 'solo el excedente de las 7 h del finde');
+        $this->assertEqualsWithDelta(2.0, (float) $auth->fresh()->hours, 0.01, 'solo el excedente corrido de las 7 h del finde');
     }
 
     public function test_exempt_employee_is_not_capped(): void

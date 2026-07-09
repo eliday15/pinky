@@ -154,4 +154,26 @@ class AttendanceRecord extends Model
     {
         return $this->overtime_hours > 0;
     }
+
+    /**
+     * Horas CORRIDAS de entrada a salida (sin descontar comida), cruzando
+     * medianoche si aplica. Null cuando la checada está incompleta. Es la
+     * base de la regla de fin de semana (Dani 2026-07-08: "las 7 horas se
+     * cuentan corridas, incluyendo el tiempo de comida").
+     */
+    public function grossSpanHours(): ?float
+    {
+        if (! $this->check_in || ! $this->check_out) {
+            return null;
+        }
+
+        $date = \Carbon\Carbon::parse($this->work_date)->toDateString();
+        $in = \Carbon\Carbon::parse($date.' '.\Carbon\Carbon::parse($this->check_in)->format('H:i:s'));
+        $out = \Carbon\Carbon::parse($date.' '.\Carbon\Carbon::parse($this->check_out)->format('H:i:s'));
+        if ($out->lt($in)) {
+            $out->addDay();
+        }
+
+        return round(abs($in->diffInMinutes($out)) / 60, 4);
+    }
 }

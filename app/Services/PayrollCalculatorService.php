@@ -248,18 +248,26 @@ class PayrollCalculatorService
         // extras so a weekly period never charges them. ----
         $veladaMetrics = $this->calculateVeladaMetrics($attendance);
 
-        // Empleados que no checan (is_attendance_exempt): no existen checadas
-        // que respalden ni topen el tiempo extra, así que las horas AUTORIZADAS
-        // aprobadas son la fuente de verdad. Sin esto su TE aprobado pagaba
-        // siempre 0, porque overtime_authorized_hours vive en attendance_records
-        // y estos empleados nunca tienen filas ahí. Se excluye el FIN (weekend
-        // pull rule), que paga por unidades en su propio camino.
-        if ($employee->is_attendance_exempt) {
+        // Días SIN checada completa: el tiempo extra APROBADO vale por su
+        // autorización (Dani 2026-07-08, caso Julissa: TE aprobado con la
+        // salida no marcada). Cubre también a los exentos de asistencia (no
+        // tienen checadas en absoluto). Los días con checada completa ya
+        // aportan su overtime_authorized_hours topado al timecard vía
+        // attendance_records; aquí solo se suman las fechas sin timecard
+        // medible. Se excluye el FIN (weekend pull rule), que paga por
+        // unidades en su propio camino.
+        $measuredOtDates = $attendance
+            ->filter(fn ($r) => $r->check_in && $r->check_out)
+            ->map(fn ($r) => Carbon::parse($r->work_date)->toDateString())
+            ->all();
+        $unbackedOvertimeHours = (float) $approvedAuthorizations
+            ->filter(fn (Authorization $a) => $a->type === Authorization::TYPE_OVERTIME
+                && ! ($a->compensationType?->hasWeekendPullRule())
+                && ! in_array(Carbon::parse($a->date)->toDateString(), $measuredOtDates, true))
+            ->sum('hours');
+        if ($unbackedOvertimeHours > 0) {
             $veladaMetrics['overtime_authorized_hours'] = round(
-                (float) $approvedAuthorizations
-                    ->filter(fn (Authorization $a) => $a->type === Authorization::TYPE_OVERTIME
-                        && ! ($a->compensationType?->hasWeekendPullRule()))
-                    ->sum('hours'),
+                $veladaMetrics['overtime_authorized_hours'] + $unbackedOvertimeHours,
                 2,
             );
         }
@@ -996,24 +1004,24 @@ class PayrollCalculatorService
             return 0;
         }
 
-        // Fechas con timecard MEDIBLE (entrada y salida): solo ahí se pueden
-        // comparar horas contra el umbral. Un día FIN autorizado sin checada
-        // completa (empleado exento, salida no marcada, día sincronizado como
-        // ausente) cuenta 1: la autorización aprobada es la evidencia cuando
-        // no hay horas que medir.
-        $measuredDates = $attendance
-            ->filter(fn ($r) => $r->check_in && $r->check_out)
-            ->map(fn ($r) => Carbon::parse($r->work_date)->toDateString())
-            ->all();
+        // El umbral se compara contra las horas CORRIDAS de entrada a salida,
+        // sin descontar comida (Dani 2026-07-08). Un día FIN autorizado sin
+        // checada completa (empleado exento, salida no marcada, día
+        // sincronizado como ausente) cuenta 1: la autorización aprobada es la
+        // evidencia cuando no hay horas que medir.
+        $grossByDate = $attendance->mapWithKeys(fn ($r) => [
+            Carbon::parse($r->work_date)->toDateString() => $r->grossSpanHours(),
+        ]);
 
         $units = 0;
         foreach ($finDates as $date) {
-            if (! in_array($date, $measuredDates, true)) {
+            $gross = $grossByDate->get($date);
+            if ($gross === null) {
                 $units++;
 
                 continue;
             }
-            if ((float) $hoursByDate->get($date, 0) >= $threshold) {
+            if ((float) $gross >= $threshold) {
                 $units++;
             }
         }

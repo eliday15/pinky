@@ -246,19 +246,14 @@ class UnbackedDayAuthorizedConceptsTest extends FeatureTestCase
         $this->assertSame(1, $report['rows'][0]['totals']['comida_count']);
     }
 
-    public function test_weekly_report_keeps_overtime_capped_for_punching_employee(): void
+    public function test_weekly_report_shows_approved_overtime_on_unbacked_day(): void
     {
-        // Las horas extra POR HORA de quien checa siguen topadas al timecard:
-        // un día con entrada sin salida no las muestra (auditoría #20).
+        // Caso Julissa (Dani 2026-07-08): TE aprobado con la salida no
+        // marcada — el día no tiene checada completa, así que la autorización
+        // es la evidencia y las horas aprobadas SÍ se muestran.
         $department = $this->thresholdDepartment();
         $employee = $this->employeeIn($department);
-
-        $he = CompensationType::factory()->fixed(50.00)->create([
-            'code' => 'HE',
-            'application_mode' => CompensationType::APPLICATION_PER_HOUR,
-            'authorization_type' => Authorization::TYPE_OVERTIME,
-        ]);
-        $employee->compensationTypes()->attach($he->id, ['is_active' => true]);
+        $he = $this->heTypeFor($employee);
 
         Authorization::create([
             'employee_id' => $employee->id,
@@ -284,6 +279,92 @@ class UnbackedDayAuthorizedConceptsTest extends FeatureTestCase
 
         $day = $report['rows'][0]['days']['2026-06-03'];
 
-        $this->assertEqualsWithDelta(0.0, $day['overtime_hours'], 0.01, 'sin salida no hay TE que respaldar para quien checa');
+        $this->assertEqualsWithDelta(1.0, $day['overtime_hours'], 0.01, 'sin checada completa manda la autorización aprobada');
+    }
+
+    public function test_approved_overtime_pays_on_unbacked_day(): void
+    {
+        // Caso Julissa en NÓMINA: TE aprobado con la salida no marcada paga
+        // por su autorización (1 h × $50 del concepto HE).
+        $employee = $this->employeeIn($this->thresholdDepartment());
+        $he = $this->heTypeFor($employee);
+
+        Authorization::create([
+            'employee_id' => $employee->id,
+            'requested_by' => User::factory()->create()->id,
+            'type' => Authorization::TYPE_OVERTIME,
+            'compensation_type_id' => $he->id,
+            'date' => '2026-06-03',
+            'hours' => 1.0,
+            'reason' => 'TE sin salida marcada',
+            'status' => Authorization::STATUS_APPROVED,
+        ]);
+
+        AttendanceRecord::factory()->for($employee)->create([
+            'work_date' => '2026-06-03',
+            'check_in' => '07:07:00',
+            'check_out' => null,
+            'status' => 'present',
+            'worked_hours' => 0,
+        ]);
+
+        $entry = $this->calculator()->calculateEmployeePayroll($this->monthly(), $employee);
+
+        $this->assertEqualsWithDelta(1.0, (float) $entry->overtime_authorized_hours, 0.01);
+        $this->assertEqualsWithDelta(50.00, (float) $entry->overtime_pay, 0.01);
+    }
+
+    public function test_weekly_report_weekend_overtime_uses_gross_hours(): void
+    {
+        // Caso Eva Adriana: sábado 09:07–18:02 = 8 h 55 CORRIDAS (la comida
+        // no se descuenta) − 7 = 1 h 55 → escalera (≥50 min sube) → 2.0 h.
+        $department = $this->thresholdDepartment();
+        $employee = $this->employeeIn($department);
+        $he = $this->heTypeFor($employee);
+        $fin = $this->finTypeFor($employee);
+
+        Authorization::create([
+            'employee_id' => $employee->id,
+            'requested_by' => User::factory()->create()->id,
+            'type' => Authorization::TYPE_OVERTIME,
+            'compensation_type_id' => $he->id,
+            'date' => self::SATURDAY,
+            'hours' => 2.0,
+            'reason' => 'TE de sábado',
+            'status' => Authorization::STATUS_APPROVED,
+        ]);
+        $this->approvedConcept($employee, $fin, self::SATURDAY);
+
+        AttendanceRecord::factory()->for($employee)->create([
+            'work_date' => self::SATURDAY,
+            'check_in' => '09:07:00',
+            'check_out' => '18:02:00',
+            'status' => 'present',
+            'is_weekend_work' => true,
+            'worked_hours' => 8,
+            'overtime_hours' => 0.42,
+        ]);
+
+        $report = app(WeeklyOvertimeReportService::class)
+            ->buildReport($department, Carbon::parse('2026-06-01'));
+
+        $day = $report['rows'][0]['days'][self::SATURDAY];
+
+        $this->assertEqualsWithDelta(2.0, $day['detected_overtime_hours'], 0.01, '8h55 corridas − 7 = 1h55 → 2.0 por escalera');
+        $this->assertEqualsWithDelta(2.0, $day['overtime_hours'], 0.01);
+        $this->assertTrue($day['has_weekend_auth'], 'y además gana su fin de semana');
+    }
+
+    /** Concepto HE por hora a monto fijo, asignado al empleado. */
+    private function heTypeFor(Employee $employee, float $amount = 50.00): CompensationType
+    {
+        return $this->typeFor($employee, 'HE', [
+            'calculation_type' => 'fixed',
+            'percentage_value' => null,
+            'fixed_amount' => $amount,
+            'is_active' => true,
+            'application_mode' => CompensationType::APPLICATION_PER_HOUR,
+            'authorization_type' => Authorization::TYPE_OVERTIME,
+        ]);
     }
 }

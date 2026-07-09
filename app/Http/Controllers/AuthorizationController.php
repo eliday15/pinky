@@ -933,9 +933,11 @@ class AuthorizationController extends Controller
         $rounding = app(OvertimeRoundingService::class);
 
         // Fin de semana con umbral (regla de las 7 h): el TE pagable es lo
-        // que excede del umbral, igual que la nómina y el reporte.
+        // que excede del umbral, igual que la nómina y el reporte. Las horas
+        // se cuentan CORRIDAS, sin descontar comida (Dani 2026-07-08).
         if ($record->is_weekend_work) {
-            $total = (float) ($record->worked_hours ?? 0) + (float) ($record->overtime_hours ?? 0);
+            $total = $record->grossSpanHours()
+                ?? (float) ($record->worked_hours ?? 0) + (float) ($record->overtime_hours ?? 0);
             $threshold = $employee->weekendOvertimeThresholdForHours($total);
             if ($threshold !== null) {
                 return $rounding->roundMinutes((int) round(max(0.0, $total - $threshold) * 60));
@@ -1502,7 +1504,9 @@ class AuthorizationController extends Controller
         // detector normal. El pago (VeladaCalculatorService, mismo umbral) se topa
         // a lo autorizado, así que autorizar de más no sobrepaga.
         if ($type === Authorization::TYPE_OVERTIME && $record->is_weekend_work) {
-            $totalWorked = (float) ($record->worked_hours ?? 0) + (float) ($record->overtime_hours ?? 0);
+            // Horas CORRIDAS, sin descontar comida (Dani 2026-07-08).
+            $totalWorked = $record->grossSpanHours()
+                ?? (float) ($record->worked_hours ?? 0) + (float) ($record->overtime_hours ?? 0);
             $weekendOtThreshold = $employee->weekendOvertimeThresholdForHours($totalWorked);
             if ($weekendOtThreshold !== null) {
                 return $this->buildWeekendOvertimeSegments($record, $weekendOtThreshold);
@@ -1523,7 +1527,10 @@ class AuthorizationController extends Controller
      */
     private function buildWeekendOvertimeSegments(AttendanceRecord $record, float $threshold): array
     {
-        $totalWorked = (float) ($record->worked_hours ?? 0) + (float) ($record->overtime_hours ?? 0);
+        // Horas CORRIDAS de entrada a salida, sin descontar comida (Dani
+        // 2026-07-08): mismas horas que usan la nómina y el reporte.
+        $totalWorked = $record->grossSpanHours()
+            ?? (float) ($record->worked_hours ?? 0) + (float) ($record->overtime_hours ?? 0);
         $extra = max(0.0, $totalWorked - $threshold);
         $rounded = $this->roundOvertimeMinutes((int) round($extra * 60));
         if ($rounded <= 0) {
@@ -1875,9 +1882,11 @@ class AuthorizationController extends Controller
             return null;
         }
 
-        // Deptos que NO pagan por unidades fijas: exigir el umbral de horas.
+        // Deptos que NO pagan por unidades fijas: exigir el umbral de horas,
+        // medido en horas CORRIDAS sin descontar comida (Dani 2026-07-08).
         if ($employee->department?->weekend_unit_hours === null) {
-            $totalWorked = (float) ($record->worked_hours ?? 0) + (float) ($record->overtime_hours ?? 0);
+            $totalWorked = $record->grossSpanHours()
+                ?? (float) ($record->worked_hours ?? 0) + (float) ($record->overtime_hours ?? 0);
             if (! $employee->qualifiesForWeekendUnit($totalWorked)) {
                 return null;
             }

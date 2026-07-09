@@ -73,13 +73,13 @@ class WeekendUnitsTest extends FeatureTestCase
      * de fin de semana contables son worked_hours + overtime_hours (toda la
      * jornada del fin de semana cuenta para las unidades).
      */
-    private function seedWeekendWork(Employee $employee, CompensationType $fin, float $workedHours = 12.0, float $overtimeHours = 0.0): void
+    private function seedWeekendWork(Employee $employee, CompensationType $fin, float $workedHours = 12.0, float $overtimeHours = 0.0, string $checkOut = '20:00:00'): void
     {
         AttendanceRecord::factory()->create([
             'employee_id' => $employee->id,
             'work_date' => self::SATURDAY,
             'check_in' => '08:00:00',
-            'check_out' => '20:00:00',
+            'check_out' => $checkOut,
             'worked_hours' => $workedHours,
             'overtime_hours' => $overtimeHours,
             'status' => 'present',
@@ -424,15 +424,16 @@ class WeekendUnitsTest extends FeatureTestCase
 
     public function test_normal_department_below_threshold_pays_no_weekend_unit(): void
     {
-        // < 7 h no gana fin de semana aunque exista un FIN aprobado (defensa: la
-        // nómina reconfirma el umbral). Esas horas van como tiempo extra, no aquí.
+        // < 7 h CORRIDAS (08:00–13:00, Dani 2026-07-08) no gana fin de semana
+        // aunque exista un FIN aprobado (defensa: la nómina reconfirma el
+        // umbral). Esas horas van como tiempo extra, no aquí.
         $dept = Department::factory()->create(['name' => 'Calidad', 'code' => 'CAL']);
         $employee = Employee::factory()->create(['department_id' => $dept->id, 'status' => 'active']);
 
         $fin = $this->weekendCompType(200.0);
         $employee->compensationTypes()->attach($fin->id, ['is_active' => true]);
 
-        $this->seedWeekendWork($employee, $fin, 5.0); // 5 h < 7
+        $this->seedWeekendWork($employee, $fin, 5.0, checkOut: '13:00:00'); // 5 h corridas < 7
 
         $period = PayrollPeriod::factory()->monthly()->create([
             'start_date' => '2026-03-01',
@@ -448,12 +449,13 @@ class WeekendUnitsTest extends FeatureTestCase
     public function test_normal_department_report_overtime_uses_weekend_threshold(): void
     {
         // El reporte muestra el OT del fin de semana con el mismo umbral que la
-        // nómina: 9 h trabajadas − 7 = 2 h (no lo que exceda del horario).
+        // nómina: 9 h CORRIDAS (08:00–17:00) − 7 = 2 h (no lo que exceda del
+        // horario, y sin descontar comida — Dani 2026-07-08).
         $dept = Department::factory()->create(['name' => 'Calidad', 'code' => 'CAL']);
         $employee = Employee::factory()->create(['department_id' => $dept->id, 'status' => 'active']);
         $fin = $this->weekendCompType(200.0);
 
-        $this->seedWeekendWork($employee, $fin, 9.0); // 9 h el sábado
+        $this->seedWeekendWork($employee, $fin, 9.0, checkOut: '17:00:00'); // 9 h corridas el sábado
 
         // Autoriza 2 h de tiempo extra ese día (el excedente sobre 7). El reporte
         // empareja el OT por CÓDIGO del concepto (HE), no por tipo.

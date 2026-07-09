@@ -76,36 +76,37 @@ class WeekendOvertimeThresholdTest extends FeatureTestCase
 
     public function test_weekend_over_threshold_pays_only_the_excess_as_overtime(): void
     {
-        // 10 h trabajadas (08:00–19:00 − 1 h) en fin de semana, umbral 7 →
-        // 10 − 7 = 3 h de tiempo extra (y aparte 1 fin de semana).
+        // 11 h CORRIDAS (08:00–19:00, la comida no se descuenta — Dani
+        // 2026-07-08) en fin de semana, umbral 7 → 11 − 7 = 4 h de tiempo
+        // extra (y aparte 1 fin de semana).
         $e = $this->employeeIn(null); // normal → umbral por omisión 7
         $rec = $this->record($e, self::SATURDAY, true);
         $this->approveOvertime($e, self::SATURDAY);
 
         $split = app(VeladaCalculatorService::class)->calculate($rec->fresh(), $e->fresh());
 
-        $this->assertEqualsWithDelta(3.0, (float) $split['overtime_authorized'], 0.01);
+        $this->assertEqualsWithDelta(4.0, (float) $split['overtime_authorized'], 0.01);
     }
 
     public function test_weekend_below_threshold_is_all_overtime(): void
     {
-        // 5 h netas (08:00–14:00 − 1 h de comida) en fin de semana, umbral 7 → no
-        // gana fin de semana, las 5 h son tiempo extra.
+        // 6 h CORRIDAS (08:00–14:00) en fin de semana, umbral 7 → no gana fin
+        // de semana, las 6 h corridas son tiempo extra.
         $e = $this->employeeIn(null);
         $rec = $this->record($e, self::SATURDAY, true, checkOut: '14:00:00', worked: 5, overtime: 0);
         $this->approveOvertime($e, self::SATURDAY);
 
         $split = app(VeladaCalculatorService::class)->calculate($rec->fresh(), $e->fresh());
 
-        $this->assertEqualsWithDelta(5.0, (float) $split['overtime_authorized'], 0.01);
+        $this->assertEqualsWithDelta(6.0, (float) $split['overtime_authorized'], 0.01);
     }
 
     public function test_weekend_exactly_at_threshold_pays_no_overtime(): void
     {
-        // 7 h trabajadas (08:00–16:00 − 1 h) en fin de semana, umbral 7 → 1 fin de
+        // 7 h CORRIDAS (08:00–15:00) en fin de semana, umbral 7 → 1 fin de
         // semana, 0 tiempo extra.
         $e = $this->employeeIn(null);
-        $rec = $this->record($e, self::SATURDAY, true, checkOut: '16:00:00', worked: 7, overtime: 0);
+        $rec = $this->record($e, self::SATURDAY, true, checkOut: '15:00:00', worked: 6, overtime: 0);
         $this->approveOvertime($e, self::SATURDAY);
 
         $split = app(VeladaCalculatorService::class)->calculate($rec->fresh(), $e->fresh());
@@ -115,14 +116,14 @@ class WeekendOvertimeThresholdTest extends FeatureTestCase
 
     public function test_saldos_custom_threshold_is_respected(): void
     {
-        // weekend_overtime_after_hours = 5 → 10 h − 5 = 5 h de tiempo extra.
+        // weekend_overtime_after_hours = 5 → 11 h corridas − 5 = 6 h de TE.
         $e = $this->employeeIn(5);
         $rec = $this->record($e, self::SATURDAY, true);
         $this->approveOvertime($e, self::SATURDAY);
 
         $split = app(VeladaCalculatorService::class)->calculate($rec->fresh(), $e->fresh());
 
-        $this->assertEqualsWithDelta(5.0, (float) $split['overtime_authorized'], 0.01);
+        $this->assertEqualsWithDelta(6.0, (float) $split['overtime_authorized'], 0.01);
     }
 
     public function test_almacen_weekend_is_not_paid_as_overtime(): void
@@ -170,7 +171,7 @@ class WeekendOvertimeThresholdTest extends FeatureTestCase
     public function test_pull_over_threshold_suggests_only_the_excess(): void
     {
         // "Cargar desde checadas" (Hora Extra) para un depto normal en fin de
-        // semana sugiere el excedente sobre 7 h (10 − 7 = 3 h).
+        // semana sugiere el excedente CORRIDO sobre 7 h (11 − 7 = 4 h).
         $this->actingAsAdmin();
         $e = $this->employeeIn(null);
         $this->record($e, self::SATURDAY, true);
@@ -182,7 +183,7 @@ class WeekendOvertimeThresholdTest extends FeatureTestCase
             'type' => Authorization::TYPE_OVERTIME,
         ]))
             ->assertOk()
-            ->assertJsonPath('suggestions.0.hours', '3.00')
+            ->assertJsonPath('suggestions.0.hours', '4.00')
             ->assertJsonPath('eligible_count', 1);
     }
 

@@ -256,13 +256,14 @@ class WeeklyOvertimeReportService
 
         if (! $record || ! $record->check_in || ! $record->check_out) {
             // Día sin timecard medible (sin fila o con checada incompleta —
-            // p. ej. entrada sin salida): los conceptos POR DÍA aprobados
-            // (FIN, Comida, Cena, Velada) se muestran desde la autorización,
-            // que es la evidencia cuando no hay horas que medir — igual que
-            // la nómina. Las horas extra (por hora) solo se muestran sin
-            // respaldo de checadas para empleados exentos (no checan); para
-            // los demás sigue el tope al timecard (auditoría #20).
-            return $this->buildUnbackedDay($blank, $dayAuthorizations, $employee->is_attendance_exempt);
+            // p. ej. entrada sin salida): TODO lo aprobado se muestra desde la
+            // autorización, que es la evidencia cuando no hay horas que medir
+            // — igual que la nómina. Aplica a los conceptos por día (FIN,
+            // Comida, Cena, Velada) y también a las horas extra (Dani
+            // 2026-07-08, caso Julissa: TE aprobado con salida no marcada).
+            // El tope al timecard (auditoría #20) solo rige cuando SÍ hay
+            // checada completa que medir.
+            return $this->buildUnbackedDay($blank, $dayAuthorizations);
         }
 
         $byCode = $dayAuthorizations->groupBy(fn (Authorization $a) => $this->normalizeCode($a->compensationType?->code));
@@ -291,9 +292,11 @@ class WeeklyOvertimeReportService
         // trabajó < T), igual que la nómina (VeladaCalculatorService), no lo que
         // exceda del horario. Así el reporte y el recibo coinciden en el OT del
         // fin de semana. Almacén PT (paga por unidades) devuelve NULL y conserva
-        // la detección por horario.
+        // la detección por horario. Las horas se cuentan CORRIDAS, sin descontar
+        // la comida (Dani 2026-07-08, caso Eva Adriana).
         if ($isWeekendWork) {
-            $totalWeekend = (float) ($record->worked_hours ?? 0) + (float) ($record->overtime_hours ?? 0);
+            $totalWeekend = $record->grossSpanHours()
+                ?? (float) ($record->worked_hours ?? 0) + (float) ($record->overtime_hours ?? 0);
             $weekendThreshold = $employee->weekendOvertimeThresholdForHours($totalWeekend);
             if ($weekendThreshold !== null) {
                 $detectedHours = $this->rounding->roundMinutes((int) round(max(0.0, $totalWeekend - $weekendThreshold) * 60));
@@ -346,14 +349,13 @@ class WeeklyOvertimeReportService
 
     /**
      * Celda de un día SIN timecard medible (sin fila de asistencia o con
-     * checada incompleta). Los conceptos por día aprobados (FIN, Comida,
-     * Cena, Velada) se muestran desde la autorización: son unidades binarias
-     * que el supervisor aprobó explícitamente y no hay horas que medir. Las
-     * horas extra (por hora) solo se incluyen para empleados exentos de
-     * asistencia ($includeOvertime); para quien checa siguen topadas al
-     * timecard, así que un día sin salida no las muestra.
+     * checada incompleta, p. ej. entrada sin salida). Todo lo aprobado se
+     * muestra a valor de su autorización: los conceptos por día (FIN, Comida,
+     * Cena, Velada) y también las horas extra (Dani 2026-07-08, caso
+     * Julissa). Sin checada completa no hay nada detectado ni pendiente, y
+     * el tope al timecard solo rige cuando sí hay checada que medir.
      */
-    private function buildUnbackedDay(array $blank, Collection $dayAuthorizations, bool $includeOvertime): array
+    private function buildUnbackedDay(array $blank, Collection $dayAuthorizations): array
     {
         if ($dayAuthorizations->isEmpty()) {
             return $blank;
@@ -361,26 +363,21 @@ class WeeklyOvertimeReportService
 
         $byCode = $dayAuthorizations->groupBy(fn (Authorization $a) => $this->normalizeCode($a->compensationType?->code));
 
-        $day = array_merge($blank, [
+        $overtimeHours = 0.0;
+        foreach (self::OVERTIME_CODES as $code) {
+            $overtimeHours += (float) $byCode->get($code, collect())->sum('hours');
+        }
+
+        return array_merge($blank, [
+            'overtime_hours' => round($overtimeHours, 2),
+            'm_hours' => round($overtimeHours, 2),
+            'velada_hours' => round((float) $byCode->get(self::VELADA_CODE, collect())->sum('hours'), 2),
             'weekend_hours' => round((float) $byCode->get(self::WEEKEND_CODE, collect())->sum('hours'), 2),
             'has_weekend_auth' => $byCode->has(self::WEEKEND_CODE),
             'velada_marker' => $byCode->has(self::VELADA_CODE) ? 1 : 0,
             'cena_marker' => $byCode->has(self::CENA_CODE) ? 1 : 0,
             'comida_marker' => $byCode->has(self::COMIDA_CODE) ? 1 : 0,
         ]);
-
-        if ($includeOvertime) {
-            $overtimeHours = 0.0;
-            foreach (self::OVERTIME_CODES as $code) {
-                $overtimeHours += (float) $byCode->get($code, collect())->sum('hours');
-            }
-
-            $day['overtime_hours'] = round($overtimeHours, 2);
-            $day['m_hours'] = round($overtimeHours, 2);
-            $day['velada_hours'] = round((float) $byCode->get(self::VELADA_CODE, collect())->sum('hours'), 2);
-        }
-
-        return $day;
     }
 
     /**

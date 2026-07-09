@@ -87,12 +87,19 @@ class VeladaCalculatorService
         // unidades) y aquí conserva la jornada del horario. Solo aplica en días de
         // fin de semana; el tiempo extra es aditivo al fin de semana (sin doble
         // pago porque el fin de semana no paga base ese día).
-        $weekendOtThreshold = $employee->weekendOvertimeThresholdForHours($netWorkedHours);
+        //
+        // Las horas del fin de semana se cuentan CORRIDAS, de entrada a salida
+        // SIN descontar la comida (Dani 2026-07-08, caso Eva Adriana:
+        // 09:07–18:02 = 8 h 55 − 7 = 1 h 55 → 2 h por la escalera).
+        $extraBase = $netWorkedHours;
+        $grossWorkedHours = $totalWorkedMinutes / 60;
+        $weekendOtThreshold = $employee->weekendOvertimeThresholdForHours($grossWorkedHours);
         if ($record->is_weekend_work && $weekendOtThreshold !== null) {
             $dailyHours = $weekendOtThreshold;
+            $extraBase = $grossWorkedHours;
         }
 
-        $extraHours = max(0, $netWorkedHours - $dailyHours);
+        $extraHours = max(0, $extraBase - $dailyHours);
 
         if ($extraHours <= 0) {
             return [
