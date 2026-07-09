@@ -34,14 +34,25 @@ const today = () => {
         .slice(0, 10);
 };
 
-// Semanal es el flujo principal: arranca preseleccionado con los últimos
-// 7 días (de hoy a 7 días atrás) y el pago propuesto al día siguiente.
+// Lunes de la semana que contiene la fecha dada. El sueldo base semanal SIEMPRE
+// corre de lunes a domingo (semanas contiguas), para que la regla de "semana
+// completa" no se rompa entre periodos.
+const mondayOf = (dateStr) => {
+    const d = new Date(`${dateStr}T00:00:00Z`);
+    const dow = d.getUTCDay(); // 0=Dom, 1=Lun, ... 6=Sáb
+    const diff = dow === 0 ? -6 : 1 - dow; // retrocede al lunes
+    d.setUTCDate(d.getUTCDate() + diff);
+    return d.toISOString().slice(0, 10);
+};
+
+// Semanal es el flujo principal: arranca en el lunes de la semana actual y
+// cubre lunes→domingo; el pago se propone al día siguiente (lunes siguiente).
 const form = useForm({
     name: '',
     type: 'weekly',
-    start_date: addDaysToDate(today(), -6),
-    end_date: today(),
-    payment_date: addDaysToDate(today(), 1),
+    start_date: mondayOf(today()),
+    end_date: addDaysToDate(mondayOf(today()), 6),
+    payment_date: addDaysToDate(mondayOf(today()), 7),
 });
 
 const periodDays = computed(() => {
@@ -51,11 +62,16 @@ const periodDays = computed(() => {
     return Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
 });
 
-// Semanal tiene duración fija (7 días): al cambiar la fecha de inicio, la
-// fecha fin se calcula sola (inicio + 6). Si después se edita el fin a mano,
-// se respeta mientras no cambien el inicio o el tipo.
+// Semanal SIEMPRE lunes→domingo: el inicio se ajusta al lunes de su semana y el
+// fin se calcula solo (lunes + 6 = domingo). Ajustar el inicio re-dispara el
+// watch, que en la segunda pasada ya no cambia nada (idempotente).
 watch([() => form.start_date, () => form.type], () => {
     if (form.type === 'weekly' && form.start_date) {
+        const monday = mondayOf(form.start_date);
+        if (monday !== form.start_date) {
+            form.start_date = monday;
+            return;
+        }
         form.end_date = addDaysToDate(form.start_date, 6);
     }
 });
@@ -193,6 +209,7 @@ const submit = () => {
                     </svg>
                     <span class="text-sm text-gray-600">
                         Este periodo abarca <span class="font-medium text-gray-900">{{ periodDays }} dias</span>
+                        <span v-if="form.type === 'weekly'" class="text-gray-500"> — el sueldo base corre de <span class="font-medium">lunes a domingo</span></span>
                     </span>
                 </div>
 
