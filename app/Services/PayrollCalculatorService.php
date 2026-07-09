@@ -444,6 +444,13 @@ class PayrollCalculatorService
         // conceptos, en el periodo cuyo payment_period coincide
         // ($allowedPaymentPeriods): así un concepto semanal cae en la nómina
         // semanal y uno mensual en la mensual, una sola vez por periodo.
+        //
+        // Un concepto con monto NEGATIVO es una DEDUCCIÓN (Infonavit, préstamo,
+        // etc.): en vez de sumar, se acumula en $conceptDeductions y se descuenta
+        // del EFECTIVO más abajo, topada al efectivo disponible ("de su sueldo en
+        // efectivo se tiene que poder descontar siempre y cuando no rebase el
+        // importe" — Luis 2026-07-09). No toca la transferencia (base).
+        $conceptDeductions = 0.0;
         if ($useCompTypes && $allowedPaymentPeriods !== []) {
             $recurringConcepts = $this->resolver->calculateRecurringConcepts(
                 $employee,
@@ -452,7 +459,11 @@ class PayrollCalculatorService
                 $allowedPaymentPeriods,
             );
             foreach ($recurringConcepts as $concept) {
-                $otherCompensationPay += $concept['amount'];
+                if ($concept['amount'] < 0) {
+                    $conceptDeductions += abs($concept['amount']);
+                } else {
+                    $otherCompensationPay += $concept['amount'];
+                }
                 $compensationConcepts[] = $concept;
             }
         }
@@ -486,6 +497,17 @@ class PayrollCalculatorService
         } else {
             $bankAmount = max(0.0, round($basePay - $deductions, 2));
             $cashAmount = round($netPay - $bankAmount, 2);
+        }
+
+        // Deducciones de concepto (Infonavit, préstamos): salen del EFECTIVO y se
+        // topan al efectivo disponible, nunca lo dejan negativo ("siempre y
+        // cuando no rebase el importe" — Luis 2026-07-09). No tocan la
+        // transferencia. Lo que no alcance a descontarse este periodo (excede el
+        // efectivo) simplemente no se aplica; el neto refleja solo lo aplicado.
+        $appliedConceptDeduction = round(min($conceptDeductions, max(0.0, $cashAmount)), 2);
+        if ($appliedConceptDeduction > 0) {
+            $cashAmount = round($cashAmount - $appliedConceptDeduction, 2);
+            $netPay = round($netPay - $appliedConceptDeduction, 2);
         }
 
         // Build calculation breakdown for transparency
@@ -579,7 +601,13 @@ class PayrollCalculatorService
                 'vacation_premium_pay' => $vacationPremiumPay,
                 'sick_leave_pay' => $sickLeavePay,
                 'gross_pay' => $grossPay,
-                'deductions' => $deductions,
+                // 'deductions' es el total (faltas + deducciones de concepto ya
+                // aplicadas del efectivo). El split se expone aparte para el
+                // recibo: 'absence_deductions' (faltas) y 'concept_deductions'
+                // (Infonavit, préstamos).
+                'deductions' => round($deductions + $appliedConceptDeduction, 2),
+                'absence_deductions' => $deductions,
+                'concept_deductions' => $appliedConceptDeduction,
                 'net_pay' => $netPay,
             ],
         ];
@@ -628,7 +656,7 @@ class PayrollCalculatorService
                 'weekly_bonus' => $weeklyBonus,
                 'monthly_bonus' => $monthlyBonus,
                 'bonuses' => $totalBonuses,
-                'deductions' => $deductions,
+                'deductions' => round($deductions + $appliedConceptDeduction, 2),
                 'gross_pay' => $grossPay,
                 'net_pay' => $netPay,
                 'cash_amount' => $cashAmount,

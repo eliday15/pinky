@@ -271,6 +271,31 @@ class CompensationTypeControllerTest extends FeatureTestCase
         ]);
     }
 
+    public function test_admin_can_store_negative_fixed_amount_deduction(): void
+    {
+        // Un concepto con monto NEGATIVO es una deducción (Infonavit, préstamo).
+        $this->actingAsAdmin();
+
+        $this->post(route('compensation-types.store'), [
+            'name' => 'Descuento Infonavit',
+            'code' => 'DED-INFO',
+            'calculation_type' => 'fixed',
+            'fixed_amount' => -300.00,
+            'application_mode' => 'one_time',
+            'payment_period' => 'weekly',
+            'is_recurring' => true,
+            'priority' => 0,
+        ])
+            ->assertRedirect(route('compensation-types.index'))
+            ->assertSessionHas('success');
+
+        $this->assertDatabaseHas('compensation_types', [
+            'code' => 'DED-INFO',
+            'fixed_amount' => -300.00,
+            'is_recurring' => true,
+        ]);
+    }
+
     public function test_payment_period_defaults_to_monthly_and_can_be_set_weekly(): void
     {
         $this->actingAsAdmin();

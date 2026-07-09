@@ -89,7 +89,9 @@ class CompensationTypeController extends Controller
             'description' => ['nullable', 'string', 'max:500'],
             'calculation_type' => ['required', Rule::in(['fixed', 'percentage'])],
             'percentage_value' => ['required_if:calculation_type,percentage', 'nullable', 'numeric', 'min:0.01', 'max:999.99'],
-            'fixed_amount' => ['required_if:calculation_type,fixed', 'nullable', 'numeric', 'min:0.01', 'max:999999.99'],
+            // Permite montos NEGATIVOS: un monto negativo es una deducción
+            // (Infonavit, préstamo) que resta del efectivo (Luis 2026-07-09).
+            'fixed_amount' => ['required_if:calculation_type,fixed', 'nullable', 'numeric', 'between:-999999.99,999999.99', 'not_in:0'],
             'is_active' => ['boolean'],
             'application_mode' => ['required', Rule::in(['per_hour', 'per_day', 'one_time'])],
             'authorization_type' => ['nullable', Rule::in(['overtime', 'night_shift', 'holiday_worked', 'special'])],
@@ -166,7 +168,9 @@ class CompensationTypeController extends Controller
             'description' => ['nullable', 'string', 'max:500'],
             'calculation_type' => ['required', Rule::in(['fixed', 'percentage'])],
             'percentage_value' => ['required_if:calculation_type,percentage', 'nullable', 'numeric', 'min:0.01', 'max:999.99'],
-            'fixed_amount' => ['required_if:calculation_type,fixed', 'nullable', 'numeric', 'min:0.01', 'max:999999.99'],
+            // Permite montos NEGATIVOS: un monto negativo es una deducción
+            // (Infonavit, préstamo) que resta del efectivo (Luis 2026-07-09).
+            'fixed_amount' => ['required_if:calculation_type,fixed', 'nullable', 'numeric', 'between:-999999.99,999999.99', 'not_in:0'],
             'is_active' => ['boolean'],
             'application_mode' => ['required', Rule::in(['per_hour', 'per_day', 'one_time'])],
             'authorization_type' => ['nullable', Rule::in(['overtime', 'night_shift', 'holiday_worked', 'special'])],

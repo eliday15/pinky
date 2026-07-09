@@ -185,4 +185,113 @@ class RecurringCompensationTest extends FeatureTestCase
 
         $this->assertTrue($names->contains('Ayuda de transporte'), 'el recurrente semanal aparece en Otros Conceptos');
     }
+
+    // ------------------------------------------------------------------
+    // DEDUCCIONES: concepto recurrente con monto NEGATIVO (Infonavit,
+    // préstamos) que resta del EFECTIVO, topado al efectivo disponible.
+    // ------------------------------------------------------------------
+
+    /** Empleado que cobra TODO en efectivo (prueba + sin IMSS). */
+    private function cashEmployee(): Employee
+    {
+        return Employee::factory()->create([
+            'status' => 'active',
+            'daily_salary' => 800.00,
+            'hourly_rate' => 100.00,
+            'hire_date' => '2025-01-01',
+            'is_trial_period' => true,
+            'is_imss_enrolled' => false,
+        ]);
+    }
+
+    /** Empleado con IMSS: el base va al banco, solo los extras en efectivo. */
+    private function bankEmployee(): Employee
+    {
+        return Employee::factory()->create([
+            'status' => 'active',
+            'daily_salary' => 800.00,
+            'hourly_rate' => 100.00,
+            'hire_date' => '2025-01-01',
+            'is_imss_enrolled' => true,
+        ]);
+    }
+
+    public function test_negative_concept_deducts_from_cash(): void
+    {
+        // Empleado en efectivo: base 5600 en efectivo, Infonavit -300 →
+        // efectivo 5300, neto 5300, banco 0.
+        $employee = $this->cashEmployee();
+        $infonavit = $this->recurringType(-300.00, CompensationType::PAYMENT_PERIOD_WEEKLY);
+        $employee->compensationTypes()->attach($infonavit->id, ['is_active' => true]);
+
+        $entry = $this->calculator()->calculateEmployeePayroll($this->weekly(), $employee);
+
+        $this->assertEqualsWithDelta(5300.00, (float) $entry->net_pay, 0.01, 'el neto baja por la deducción');
+        $this->assertEqualsWithDelta(5300.00, (float) $entry->cash_amount, 0.01, 'sale del efectivo');
+        $this->assertEqualsWithDelta(0.00, (float) $entry->bank_amount, 0.01);
+    }
+
+    public function test_deduction_is_capped_at_available_cash_never_negative(): void
+    {
+        // Deducción que EXCEDE el efectivo (−6000 sobre 5600): se aplica solo lo
+        // que alcanza; el efectivo y el neto nunca quedan negativos.
+        $employee = $this->cashEmployee();
+        $prestamo = $this->recurringType(-6000.00, CompensationType::PAYMENT_PERIOD_WEEKLY);
+        $employee->compensationTypes()->attach($prestamo->id, ['is_active' => true]);
+
+        $entry = $this->calculator()->calculateEmployeePayroll($this->weekly(), $employee);
+
+        $this->assertEqualsWithDelta(0.00, (float) $entry->cash_amount, 0.01, 'no rebasa: efectivo en 0');
+        $this->assertEqualsWithDelta(0.00, (float) $entry->net_pay, 0.01);
+        $this->assertGreaterThanOrEqual(0.0, (float) $entry->cash_amount);
+    }
+
+    public function test_deduction_comes_from_cash_not_from_bank(): void
+    {
+        // IMSS: base 5600 al banco. Percepción +500 (efectivo) y deducción −300.
+        // Banco intacto (5600), efectivo 500−300=200, neto 5800.
+        $employee = $this->bankEmployee();
+        $bono = $this->recurringType(500.00, CompensationType::PAYMENT_PERIOD_WEEKLY);
+        $prestamo = $this->recurringType(-300.00, CompensationType::PAYMENT_PERIOD_WEEKLY);
+        $employee->compensationTypes()->attach($bono->id, ['is_active' => true]);
+        $employee->compensationTypes()->attach($prestamo->id, ['is_active' => true]);
+
+        $entry = $this->calculator()->calculateEmployeePayroll($this->weekly(), $employee);
+
+        $this->assertEqualsWithDelta(5600.00, (float) $entry->bank_amount, 0.01, 'la transferencia (base) no se toca');
+        $this->assertEqualsWithDelta(200.00, (float) $entry->cash_amount, 0.01, 'la deducción sale del efectivo');
+        $this->assertEqualsWithDelta(5800.00, (float) $entry->net_pay, 0.01);
+    }
+
+    public function test_deduction_not_applied_when_there_is_no_cash(): void
+    {
+        // IMSS sin extras en efectivo: no hay de dónde descontar → la deducción
+        // no se aplica (no toca el banco). El neto queda igual al base.
+        $employee = $this->bankEmployee();
+        $infonavit = $this->recurringType(-300.00, CompensationType::PAYMENT_PERIOD_WEEKLY);
+        $employee->compensationTypes()->attach($infonavit->id, ['is_active' => true]);
+
+        $entry = $this->calculator()->calculateEmployeePayroll($this->weekly(), $employee);
+
+        $this->assertEqualsWithDelta(5600.00, (float) $entry->net_pay, 0.01, 'sin efectivo no se descuenta');
+        $this->assertEqualsWithDelta(5600.00, (float) $entry->bank_amount, 0.01, 'el banco no se toca');
+        $this->assertEqualsWithDelta(0.00, (float) $entry->cash_amount, 0.01);
+    }
+
+    public function test_per_employee_negative_amount_deducts(): void
+    {
+        // El monto de la deducción por empleado (pivot) manda: Infonavit global
+        // -100 pero a este empleado -450.
+        $employee = $this->cashEmployee();
+        $infonavit = $this->recurringType(-100.00, CompensationType::PAYMENT_PERIOD_WEEKLY);
+        $employee->compensationTypes()->attach($infonavit->id, [
+            'is_active' => true,
+            'custom_fixed_amount' => -450.00,
+        ]);
+
+        $entry = $this->calculator()->calculateEmployeePayroll($this->weekly(), $employee);
+
+        $this->assertEqualsWithDelta(5150.00, (float) $entry->net_pay, 0.01, '5600 - 450');
+        $this->assertEqualsWithDelta(5150.00, (float) $entry->cash_amount, 0.01);
+    }
 }

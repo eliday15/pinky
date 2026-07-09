@@ -755,12 +755,14 @@ class CompensationRateResolverService
             $rate = $this->resolveRate($employee, $compType);
 
             // Monto fijo tal cual, o el porcentaje sobre el sueldo diario. No
-            // depende del application_mode: es una cantidad fija por periodo.
+            // depende del application_mode: es una cantidad fija por periodo. Un
+            // monto NEGATIVO es una deducción (Infonavit, préstamo) — se conserva
+            // el signo; la nómina lo descuenta del efectivo.
             $amount = $rate['fixed_amount'] !== null
                 ? round((float) $rate['fixed_amount'], 2)
                 : round($dailySalary * ((float) ($rate['percentage'] ?? 0) / 100), 2);
 
-            if ($amount <= 0) {
+            if ($amount === 0.0) {
                 continue;
             }
 
