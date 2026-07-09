@@ -27,6 +27,47 @@ const formatCurrency = (amount) => {
 };
 
 const breakdown = props.entry.calculation_breakdown || {};
+
+// Formatea una cantidad sin ceros de más: 600.00→"600", 3.50→"3.5".
+const num = (n) => Number(n || 0).toFixed(2).replace(/\.?0+$/, '');
+
+// Mismo ruteo que el backend (PayrollCalculatorService): un concepto es "Otros
+// conceptos" (cena, comida, dominical, recurrentes, desayunos, etc.) cuando NO
+// cae en horas extra / velada / festivo / fin de semana. Los recurrentes SIEMPRE
+// son "otros" (el backend no los rutea por tipo). Así lo itemizamos, igual que el
+// modal de cobro, en lugar del renglón agrupado.
+const isOtroConcepto = (c) => {
+    if (c.source === 'recurring') return true;
+    const code = c.code || '';
+    const authType = c.authorization_type ?? null;
+    const pull = c.attendance_pull_rule ?? null;
+    if (['HE', 'HED', 'HET'].includes(code)) return false;          // horas extra
+    if (code === 'VEL' || authType === 'night_shift') return false; // velada
+    if (authType === 'holiday_worked') return false;                // festivo
+    if (pull === 'weekend') return false;                           // fin de semana
+    return true;
+};
+
+// Solo los positivos: su suma es exactamente entry.other_compensation_pay (un
+// recurrente negativo es una deducción, no parte de "Otros conceptos").
+const otrosConceptos = computed(() =>
+    (breakdown.compensation_concepts ?? []).filter((c) => isOtroConcepto(c) && Number(c.amount) > 0)
+);
+
+// Detalle "cuántos hubo" — mismo formato que el modal de cobro.
+const conceptDetail = (c) => {
+    const qty = Number(c.quantity || 0);
+    const hours = Number(c.hours || 0);
+    const days = Number(c.days || 0);
+    const fixed = Number(c.rate?.fixed_amount || 0);
+    if (qty > 1) {
+        const unit = fixed > 0 ? fixed : (qty !== 0 ? Number(c.amount) / qty : 0);
+        return `${num(qty)} × ${formatCurrency(unit)}`;
+    }
+    if (hours > 0) return `${num(hours)} h`;
+    if (days > 0) return `${num(days)} día(s)`;
+    return '';
+};
 </script>
 
 <template>
@@ -255,7 +296,25 @@ const breakdown = props.entry.calculation_breakdown || {};
                     </div>
                     <span class="font-medium text-purple-600">{{ formatCurrency(entry.weekend_pay) }}</span>
                 </div>
-                <div v-if="entry.other_compensation_pay > 0" class="flex justify-between items-center py-2 border-b">
+                <!-- "Otros conceptos" itemizado, igual que el modal de cobro: un
+                     renglón por concepto con su nombre, en vez del agrupado. -->
+                <template v-if="otrosConceptos.length">
+                    <div
+                        v-for="(concept, idx) in otrosConceptos"
+                        :key="`otro-${idx}`"
+                        class="flex justify-between items-center py-2 border-b"
+                    >
+                        <div>
+                            <span class="text-gray-600">{{ concept.name }}</span>
+                            <span class="ml-2 px-2 py-0.5 bg-gray-100 rounded text-xs text-gray-500">{{ concept.code }}</span>
+                            <span v-if="conceptDetail(concept)" class="text-xs text-gray-400 ml-2">
+                                ({{ conceptDetail(concept) }})
+                            </span>
+                        </div>
+                        <span class="font-medium text-green-600">{{ formatCurrency(concept.amount) }}</span>
+                    </div>
+                </template>
+                <div v-else-if="entry.other_compensation_pay > 0" class="flex justify-between items-center py-2 border-b">
                     <div>
                         <span class="text-gray-600">Otros conceptos</span>
                         <span class="text-xs text-gray-400 ml-2">(cena, comida, dominical, etc.)</span>
