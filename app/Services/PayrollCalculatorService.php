@@ -225,7 +225,37 @@ class PayrollCalculatorService
         // días pagados = 7), así que NO se restan del base. Sí se restan la
         // incapacidad (la cubre el IMSS) y el permiso sin goce (día no pagado),
         // para no duplicar ni regalar pago.
-        $weekDays = $payBase ? $this->paidCalendarDays($employee, $startDate, $endDate) : 0;
+        // Sueldo base SEMANAL = semana completa de 7 días (séptimo día, Art. 69).
+        //
+        // 1) Se paga COMPLETO aunque el periodo abarque menos días (p. ej. 1-6):
+        //    la ventana base llega hasta el séptimo día (inicio + 6). Beneficio
+        //    de la duda: se adelanta el pago del día que aún no ocurre.
+        // 2) Para NO pagar doble ese día adelantado, la semana siguiente arranca
+        //    al día posterior al último día ya cubierto por la semana ANTERIOR
+        //    (mismo alcance): "corta un día antes" y paga solo lo real. Las
+        //    faltas de esos días caen en el periodo donde su fecha quede.
+        // Solo aplica al tipo semanal; quincenal/mensual conservan sus días
+        // calendario. El prorrateo por alta/baja lo conserva paidCalendarDays.
+        $baseStartDate = $startDate;
+        $baseEndDate = $endDate;
+        if ($payBase && $period->type === 'weekly') {
+            $baseEndDate = $startDate->copy()->addDays(6);
+
+            $prevWeekly = PayrollPeriod::where('type', 'weekly')
+                ->where('department_id', $period->department_id)
+                ->whereDate('start_date', '<', $startDateStr)
+                ->orderByDesc('start_date')
+                ->first();
+
+            if ($prevWeekly) {
+                // La semana anterior pagó completa hasta su inicio + 6.
+                $dayAfterPrevWeek = Carbon::parse($prevWeekly->start_date)->addDays(7);
+                if ($dayAfterPrevWeek->greaterThan($baseStartDate)) {
+                    $baseStartDate = $dayAfterPrevWeek;
+                }
+            }
+        }
+        $weekDays = $payBase ? $this->paidCalendarDays($employee, $baseStartDate, $baseEndDate) : 0;
         $daysPaidElsewhere = $payBase
             ? ($incidentMetrics['sick_leave_days']
                 + $incidentMetrics['permission_unpaid_days'])
