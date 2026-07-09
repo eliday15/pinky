@@ -354,4 +354,33 @@ class MonthlyLateAbsenceTest extends FeatureTestCase
             ->expectsOutputToContain('aún no termina')
             ->assertSuccessful();
     }
+
+    public function test_breakdown_details_which_late_days_caused_the_absence(): void
+    {
+        // El recibo debe explicar la falta por retardos: de qué mes y CUÁLES
+        // retardos (fechas) la originaron, no solo "por acumulación de retardos".
+        $employee = $this->employee();
+        $this->twelveJuneLates($employee);
+        $this->service()->ensureMonthlyIncidentsGenerated($employee);
+
+        // Periodo semanal que contiene el 1 jul, donde cae la FRT de junio.
+        $period = PayrollPeriod::factory()->weekly()->create([
+            'start_date' => '2026-06-29',
+            'end_date' => '2026-07-05',
+        ]);
+
+        $entry = $this->calculator()->calculateEmployeePayroll($period, $employee);
+        $breakdown = $entry->calculation_breakdown;
+
+        $detail = $breakdown['late_accumulation']['detail'] ?? [];
+        $this->assertNotEmpty($detail, 'el desglose incluye el detalle de la FRT');
+        $this->assertSame('2026-06', $detail[0]['month']);
+        $this->assertCount(12, $detail[0]['late_dates'], 'lista los 12 retardos de junio');
+        $this->assertContains('2026-06-01', $detail[0]['late_dates']);
+
+        // También en el renglón de deducción por fecha nula (la acumulación).
+        $frtRow = collect($breakdown['deduction_detail'])->firstWhere('reason', 'Falta por acumulación de retardos');
+        $this->assertNotNull($frtRow);
+        $this->assertSame('2026-06', $frtRow['late_detail'][0]['month']);
+    }
 }

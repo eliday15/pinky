@@ -102,15 +102,38 @@ const perDayDeduction = computed(() =>
 );
 
 const formatDayLabel = (date) => fmtDate(date, { weekday: 'short', day: 'numeric', month: 'short' });
+const formatShortDay = (date) => fmtDate(date, { day: 'numeric', month: 'short' });
+
+// '2026-06' -> 'junio 2026'
+const monthName = (ym) => {
+    const [y, m] = String(ym ?? '').split('-').map(Number);
+    if (!y || !m) return ym || 'el mes';
+    return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString('es-MX', { month: 'long', year: 'numeric' });
+};
+
+// Detalle legible de una falta por acumulación de retardos: qué mes y cuáles
+// retardos (fechas) la originaron.
+const lateAccumulationText = (lateDetail) => {
+    if (!Array.isArray(lateDetail) || !lateDetail.length) return '';
+    return lateDetail
+        .map((f) => {
+            const dates = (f.late_dates || []).map((dt) => formatShortDay(dt)).join(', ');
+            const count = f.late_dates?.length ?? f.days ?? 0;
+            return `${monthName(f.month)}: ${count} retardos${dates ? ` (${dates})` : ''}`;
+        })
+        .join('; ');
+};
 
 const deductionDetail = computed(() => {
     const per = perDayDeduction.value;
     const detailed = breakdown.deduction_detail;
     if (Array.isArray(detailed) && detailed.length) {
-        return detailed.map((d) => ({
-            label: d.reason + (d.date ? ` — ${formatDayLabel(d.date)}` : '') + (d.days > 1 ? ` (${d.days} días)` : ''),
-            amount: -(Number(d.days || 0) * per),
-        }));
+        return detailed.map((d) => {
+            let label = d.reason + (d.date ? ` — ${formatDayLabel(d.date)}` : '') + (d.days > 1 ? ` (${d.days} días)` : '');
+            const lateText = lateAccumulationText(d.late_detail);
+            if (lateText) label += ` — ${lateText}`;
+            return { label, amount: -(Number(d.days || 0) * per) };
+        });
     }
     // Fallback por categoría (asiento sin detalle de fechas): usa los conteos.
     const inc = Number(breakdown.incidents?.absence_incident_deduction_days ?? 0);

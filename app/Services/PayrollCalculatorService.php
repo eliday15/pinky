@@ -554,6 +554,32 @@ class PayrollCalculatorService
         // por qué se descuenta. Cada falta descuenta SD × 7/6 (séptimo día
         // incluido); la suma de 'days' = absence_deduction_days. Solo en el
         // periodo que paga base (el mensual no descuenta faltas).
+        // Detalle de la(s) falta(s) por acumulación de retardos: por cada FRT que
+        // cae en el periodo, qué mes acumuló y CUÁLES fueron los retardos (fechas)
+        // que la originaron, para que el recibo lo explique (no solo "por retardos").
+        $lateAccumulationDetail = [];
+        foreach (($incidentMetrics['late_absence_incidents'] ?? []) as $frt) {
+            $month = $frt['month'];
+            $lateDates = [];
+            if ($month) {
+                $mStart = Carbon::parse($month.'-01')->startOfMonth();
+                $lateDates = AttendanceRecord::where('employee_id', $employee->id)
+                    ->whereBetween('work_date', [$mStart->toDateString(), $mStart->copy()->endOfMonth()->toDateString()])
+                    ->where('status', 'late')
+                    ->orderBy('work_date')
+                    ->pluck('work_date')
+                    ->map(fn ($d) => Carbon::parse($d)->toDateString())
+                    ->values()
+                    ->all();
+            }
+            $lateAccumulationDetail[] = [
+                'month' => $month,
+                'days' => $frt['days'],
+                'reason' => $frt['reason'],
+                'late_dates' => $lateDates,
+            ];
+        }
+
         $deductionDetail = [];
         if ($payBase) {
             foreach (array_keys($metrics['days_absent_unjustified_dates']) as $date) {
@@ -564,9 +590,14 @@ class PayrollCalculatorService
             }
             usort($deductionDetail, fn ($a, $b) => strcmp((string) $a['date'], (string) $b['date']));
             if ($lateAbsencesGenerated > 0) {
-                // Las faltas por retardos son una acumulación mensual, sin una
-                // fecha única: se listan como un renglón con su conteo.
-                $deductionDetail[] = ['date' => null, 'reason' => 'Falta por acumulación de retardos', 'days' => $lateAbsencesGenerated];
+                // Falta(s) por retardos: acumulación mensual, con el detalle de
+                // cuáles retardos y de qué mes provienen.
+                $deductionDetail[] = [
+                    'date' => null,
+                    'reason' => 'Falta por acumulación de retardos',
+                    'days' => $lateAbsencesGenerated,
+                    'late_detail' => $lateAccumulationDetail,
+                ];
             }
         }
 
@@ -603,6 +634,7 @@ class PayrollCalculatorService
             'late_accumulation' => [
                 'late_absences_generated' => $lateAbsencesGenerated,
                 'source' => 'frt_incidents_mensuales',
+                'detail' => $lateAccumulationDetail,
             ],
             'night_shifts' => [
                 'hours' => $nightShiftMetrics['night_shift_hours'],
@@ -1153,6 +1185,7 @@ class PayrollCalculatorService
         $permissionUnpaidDays = 0;
         $absenceDays = 0;
         $lateAbsenceDays = 0;
+        $lateAbsenceIncidents = [];
 
         foreach ($incidents as $incident) {
             $incidentStart = Carbon::parse($incident->start_date);
@@ -1169,6 +1202,13 @@ class PayrollCalculatorService
                     $frtDays = max(1, (int) $incident->days_count);
                     $lateAbsenceDays += $frtDays;
                     $absenceDays += $frtDays;
+                    // Guardamos el mes acumulado para poder detallar en el
+                    // recibo CUÁLES retardos y CUÁNDO originaron la falta.
+                    $lateAbsenceIncidents[] = [
+                        'month' => $incident->late_month,
+                        'days' => $frtDays,
+                        'reason' => $incident->reason,
+                    ];
                 }
 
                 continue;
@@ -1226,6 +1266,7 @@ class PayrollCalculatorService
             'permission_unpaid_days' => $permissionUnpaidDays,
             'absence_days' => $absenceDays,
             'late_absence_days' => $lateAbsenceDays,
+            'late_absence_incidents' => $lateAbsenceIncidents,
         ];
     }
 
