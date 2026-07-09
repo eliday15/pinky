@@ -649,7 +649,62 @@ class PayrollController extends Controller
 
         return Inertia::render('Payroll/EntryDetail', [
             'entry' => $entry,
+            'cashSplit' => $this->cashSplitForEntry($entry),
         ]);
+    }
+
+    /**
+     * Reparto efectivo/transferencia del asiento para el detalle individual:
+     * cuánto va por banco (base) y cuánto en efectivo, separando el efectivo de
+     * ESTE periodo del acumulado que se recorrió sin cobrar de semanas previas.
+     *
+     * Si el efectivo del periodo ya se cerró usa el CashPayout congelado (la
+     * fuente de verdad del cobro). Si aún no, calcula un estimado en vivo con la
+     * misma regla del cierre (closeCash), para que el dato se vea desde antes.
+     */
+    private function cashSplitForEntry(PayrollEntry $entry): array
+    {
+        $payout = CashPayout::where('payroll_period_id', $entry->payroll_period_id)
+            ->where('employee_id', $entry->employee_id)
+            ->first();
+
+        if ($payout) {
+            return [
+                'is_closed' => true,
+                'bank_amount' => (float) $entry->bank_amount,
+                'period_amount' => (float) $payout->period_amount,
+                'opening_balance' => (float) $payout->opening_balance,
+                'total_due' => (float) $payout->total_due,
+                'amount_paid' => (float) $payout->amount_paid,
+                'outstanding' => round($payout->outstanding(), 2),
+                'status' => $payout->status,
+            ];
+        }
+
+        // Estimado en vivo: el acumulado es el saldo del cobro pendiente más
+        // reciente de un periodo anterior (mismo criterio que closeCash()).
+        $priorPending = CashPayout::where('employee_id', $entry->employee_id)
+            ->where('status', CashPayout::STATUS_PENDING)
+            ->whereHas('payrollPeriod', fn ($q) => $q->where('start_date', '<', $entry->payrollPeriod?->start_date))
+            ->with('payrollPeriod')
+            ->get()
+            ->sortByDesc(fn (CashPayout $p) => $p->payrollPeriod->start_date)
+            ->first();
+
+        $openingBalance = $priorPending ? round($priorPending->outstanding(), 2) : 0.0;
+        $periodAmount = $this->denominations->roundToPeso((float) $entry->cash_amount);
+        $totalDue = round($periodAmount + $openingBalance, 2);
+
+        return [
+            'is_closed' => false,
+            'bank_amount' => (float) $entry->bank_amount,
+            'period_amount' => $periodAmount,
+            'opening_balance' => $openingBalance,
+            'total_due' => $totalDue,
+            'amount_paid' => 0.0,
+            'outstanding' => $totalDue,
+            'status' => null,
+        ];
     }
 
     /**

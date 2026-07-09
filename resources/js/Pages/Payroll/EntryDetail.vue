@@ -7,6 +7,7 @@ import { periodTypeInfo } from '@/utils/payrollPeriodType';
 
 const props = defineProps({
     entry: Object,
+    cashSplit: { type: Object, default: () => ({}) },
 });
 
 const typeInfo = computed(() =>
@@ -349,6 +350,67 @@ const conceptDetail = (c) => {
                     <span class="font-bold text-gray-800 text-lg">Pago Neto</span>
                     <span class="font-bold text-green-600 text-2xl">{{ formatCurrency(entry.net_pay) }}</span>
                 </div>
+            </div>
+        </div>
+
+        <!-- Reparto del pago: qué va por transferencia y qué en efectivo, con el
+             efectivo de este periodo separado del acumulado que se recorrió sin
+             cobrar de semanas anteriores. -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+            <!-- Transferencia (banco) -->
+            <div class="bg-white rounded-lg shadow p-6 border-l-4 border-indigo-500">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h3 class="text-lg font-semibold text-gray-800">Transferencia</h3>
+                        <p class="text-xs text-gray-400">Sueldo base por banco / CONTPAQi</p>
+                    </div>
+                    <span class="text-2xl font-bold text-indigo-600">{{ formatCurrency(cashSplit.bank_amount) }}</span>
+                </div>
+                <p v-if="!(cashSplit.bank_amount > 0)" class="mt-3 text-sm text-gray-400">
+                    Este empleado no recibe nada por transferencia (todo va en efectivo).
+                </p>
+            </div>
+
+            <!-- Efectivo -->
+            <div class="bg-white rounded-lg shadow p-6 border-l-4 border-pink-500">
+                <div class="flex items-center justify-between mb-3">
+                    <div>
+                        <h3 class="text-lg font-semibold text-gray-800">Efectivo</h3>
+                        <p class="text-xs text-gray-400">Extras + base de quien cobra en efectivo</p>
+                    </div>
+                    <span
+                        v-if="cashSplit.status"
+                        class="px-2 py-1 rounded-full text-xs font-medium"
+                        :class="cashSplit.status === 'paid' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'"
+                    >
+                        {{ cashSplit.status === 'paid' ? 'Cobrado' : 'Pendiente' }}
+                    </span>
+                </div>
+                <div class="space-y-2 text-sm">
+                    <div class="flex justify-between">
+                        <span class="text-gray-600">Efectivo de este periodo</span>
+                        <span class="font-medium text-gray-800">{{ formatCurrency(cashSplit.period_amount) }}</span>
+                    </div>
+                    <div v-if="cashSplit.opening_balance > 0" class="flex justify-between text-amber-600">
+                        <span>Acumulado (no cobrado de la semana anterior)</span>
+                        <span class="font-medium">+{{ formatCurrency(cashSplit.opening_balance) }}</span>
+                    </div>
+                    <div v-if="cashSplit.amount_paid > 0" class="flex justify-between text-gray-400">
+                        <span>Ya cobrado</span>
+                        <span>-{{ formatCurrency(cashSplit.amount_paid) }}</span>
+                    </div>
+                    <div class="flex justify-between border-t pt-2 mt-1">
+                        <span class="font-semibold text-gray-800">
+                            {{ cashSplit.amount_paid > 0 ? 'Pendiente de cobrar' : 'Total a cobrar en efectivo' }}
+                        </span>
+                        <span class="font-bold text-pink-600 text-lg">
+                            {{ formatCurrency(cashSplit.amount_paid > 0 ? cashSplit.outstanding : cashSplit.total_due) }}
+                        </span>
+                    </div>
+                </div>
+                <p v-if="!cashSplit.is_closed" class="mt-3 text-xs text-gray-400">
+                    Estimado &mdash; el acumulado y el total se congelan al cerrar y preparar el efectivo del periodo.
+                </p>
             </div>
         </div>
 

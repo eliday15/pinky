@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Payroll;
 
+use App\Models\CashPayout;
 use App\Models\Employee;
 use App\Models\PayrollEntry;
 use App\Models\PayrollPeriod;
@@ -849,6 +850,71 @@ class PayrollControllerTest extends FeatureTestCase
                 ->has('entry.employee')
                 ->where('entry.payroll_period.id', $period->id)
                 ->has('entry.net_pay'));
+    }
+
+    public function test_entry_detail_includes_cash_split_estimate_when_not_closed(): void
+    {
+        $period = PayrollPeriod::factory()->review()->create();
+        $entry = PayrollEntry::factory()->create([
+            'payroll_period_id' => $period->id,
+            'cash_amount' => 500.00,
+            'bank_amount' => 1200.00,
+        ]);
+
+        $this->actingAsAdmin();
+
+        $this->get(route('payroll.entry', $entry))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Payroll/EntryDetail')
+                ->where('cashSplit.is_closed', false)
+                ->where('cashSplit.bank_amount', 1200)
+                ->where('cashSplit.period_amount', 500)
+                ->where('cashSplit.opening_balance', 0)
+                ->where('cashSplit.total_due', 500)
+                ->etc());
+    }
+
+    public function test_entry_detail_cash_split_surfaces_accumulated_prior_balance(): void
+    {
+        $employee = Employee::factory()->create();
+
+        // Semana anterior: efectivo pendiente (no cobrado) que se recorre.
+        $priorPeriod = PayrollPeriod::factory()->create([
+            'start_date' => '2026-06-24',
+            'end_date' => '2026-06-30',
+        ]);
+        CashPayout::create([
+            'payroll_period_id' => $priorPeriod->id,
+            'employee_id' => $employee->id,
+            'period_amount' => 300.00,
+            'opening_balance' => 0.00,
+            'total_due' => 300.00,
+            'amount_paid' => 0.00,
+            'status' => CashPayout::STATUS_PENDING,
+        ]);
+
+        // Semana actual, aún sin cerrar el efectivo.
+        $period = PayrollPeriod::factory()->review()->create([
+            'start_date' => '2026-07-01',
+            'end_date' => '2026-07-06',
+        ]);
+        $entry = PayrollEntry::factory()->create([
+            'payroll_period_id' => $period->id,
+            'employee_id' => $employee->id,
+            'cash_amount' => 800.00,
+            'bank_amount' => 0.00,
+        ]);
+
+        $this->actingAsAdmin();
+
+        $this->get(route('payroll.entry', $entry))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('cashSplit.opening_balance', 300)    // acumulado semana pasada
+                ->where('cashSplit.period_amount', 800)       // efectivo de esta semana
+                ->where('cashSplit.total_due', 1100)          // total a cobrar
+                ->etc());
     }
 
     public function test_entry_detail_forbidden_for_rrhh(): void
