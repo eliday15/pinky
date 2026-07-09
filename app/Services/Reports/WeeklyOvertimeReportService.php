@@ -4,8 +4,10 @@ namespace App\Services\Reports;
 
 use App\Models\AttendanceRecord;
 use App\Models\Authorization;
+use App\Models\CompensationType;
 use App\Models\Department;
 use App\Models\Employee;
+use App\Services\CompensationRateResolverService;
 use App\Services\OvertimeRoundingService;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
@@ -31,6 +33,7 @@ class WeeklyOvertimeReportService
 {
     public function __construct(
         private readonly OvertimeRoundingService $rounding = new OvertimeRoundingService,
+        private readonly CompensationRateResolverService $resolver = new CompensationRateResolverService,
     ) {}
 
     /**
@@ -431,11 +434,18 @@ class WeeklyOvertimeReportService
      * aprobado se vea en el reporte (petición de Dani 2026-07-01), no solo los
      * que se cargan desde checadas.
      *
-     * @return list<array{name: string, count: int, hours: float}>
+     * Cada concepto lleva también su VALOR en pesos (Luis 2026-07-09: "que me
+     * dé el valor y al final la suma"), calculado igual que la nómina: cantidad
+     * × tarifa del empleado para las autorizaciones, y el monto fijo (con signo
+     * — negativo = deducción) para los recurrentes.
+     *
+     * @return list<array{name: string, count: int, hours: float, amount: float}>
      */
     private function buildExtraConcepts(Collection $authorizations, ?Employee $employee = null): array
     {
         $extra = [];
+        $hourlyRate = (float) ($employee?->hourly_rate ?? 0);
+        $dailySalary = (float) ($employee?->daily_salary_computed ?? 0);
 
         foreach ($authorizations as $auth) {
             $type = $auth->compensationType;
@@ -448,9 +458,12 @@ class WeeklyOvertimeReportService
             }
 
             $name = $type->name ?: ($this->normalizeCode($type->code) ?: 'Concepto');
-            $extra[$name] ??= ['name' => $name, 'count' => 0, 'hours' => 0.0];
+            $extra[$name] ??= ['name' => $name, 'count' => 0, 'hours' => 0.0, 'amount' => 0.0];
             $extra[$name]['count']++;
             $extra[$name]['hours'] += (float) $auth->hours;
+            $extra[$name]['amount'] += $employee
+                ? $this->authorizationConceptAmount($employee, $type, (float) $auth->hours, $hourlyRate, $dailySalary)
+                : 0.0;
         }
 
         // Conceptos RECURRENTES semanales inscritos al empleado (Luis
@@ -466,14 +479,62 @@ class WeeklyOvertimeReportService
             }
 
             $name = $type->name ?: ($this->normalizeCode($type->code) ?: 'Concepto');
-            $extra[$name] ??= ['name' => $name, 'count' => 0, 'hours' => 0.0];
+            $extra[$name] ??= ['name' => $name, 'count' => 0, 'hours' => 0.0, 'amount' => 0.0];
             $extra[$name]['count']++;
+            $extra[$name]['amount'] += $this->recurringConceptAmount($employee, $type, $dailySalary);
         }
 
         return array_values(array_map(
-            fn (array $e) => ['name' => $e['name'], 'count' => $e['count'], 'hours' => round($e['hours'], 2)],
+            fn (array $e) => [
+                'name' => $e['name'],
+                'count' => $e['count'],
+                'hours' => round($e['hours'], 2),
+                'amount' => round($e['amount'], 2),
+            ],
             $extra,
         ));
+    }
+
+    /**
+     * Valor en pesos de una autorización de concepto, con el MISMO criterio que
+     * la nómina (CompensationRateResolverService::payAuthorizationConcepts):
+     * cantidad (bonos/horas/días) × tarifa resuelta del empleado.
+     */
+    private function authorizationConceptAmount(
+        Employee $employee,
+        CompensationType $type,
+        float $authHours,
+        float $hourlyRate,
+        float $dailySalary,
+    ): float {
+        $rate = $this->resolver->resolveRate($employee, $type);
+
+        [$hours, $days] = match ($type->application_mode) {
+            CompensationType::APPLICATION_PER_HOUR => [$authHours, 0.0],
+            CompensationType::APPLICATION_PER_DAY => [0.0, 1.0],
+            default => [0.0, 0.0],
+        };
+
+        $quantity = ($type->application_mode === CompensationType::APPLICATION_ONE_TIME && $authHours > 0)
+            ? $authHours
+            : 1.0;
+
+        $amount = $type->calculateCompensation($hourlyRate, $dailySalary, $hours, $days, $rate['percentage'], $rate['fixed_amount']);
+
+        return $quantity !== 1.0 ? round($amount * $quantity, 2) : $amount;
+    }
+
+    /**
+     * Valor en pesos de un concepto recurrente (mismo criterio que la nómina):
+     * el monto fijo con su signo (negativo = deducción) o el % del sueldo diario.
+     */
+    private function recurringConceptAmount(Employee $employee, CompensationType $type, float $dailySalary): float
+    {
+        $rate = $this->resolver->resolveRate($employee, $type);
+
+        return $rate['fixed_amount'] !== null
+            ? round((float) $rate['fixed_amount'], 2)
+            : round($dailySalary * ((float) ($rate['percentage'] ?? 0) / 100), 2);
     }
 
     /**
@@ -494,9 +555,10 @@ class WeeklyOvertimeReportService
 
         foreach ($rows as $row) {
             foreach ($row['extra_concepts'] ?? [] as $ec) {
-                $extraConcepts[$ec['name']] ??= ['name' => $ec['name'], 'count' => 0, 'hours' => 0.0];
+                $extraConcepts[$ec['name']] ??= ['name' => $ec['name'], 'count' => 0, 'hours' => 0.0, 'amount' => 0.0];
                 $extraConcepts[$ec['name']]['count'] += $ec['count'];
                 $extraConcepts[$ec['name']]['hours'] += $ec['hours'];
+                $extraConcepts[$ec['name']]['amount'] += $ec['amount'] ?? 0.0;
             }
             $totalHours += $row['totals']['total_hours'];
             $weekendHours += $row['totals']['weekend_hours'];
@@ -523,7 +585,7 @@ class WeeklyOvertimeReportService
             'cena_count' => $cenaCount,
             'comida_count' => $comidaCount,
             'extra_concepts' => array_values(array_map(
-                fn (array $e) => ['name' => $e['name'], 'count' => $e['count'], 'hours' => round($e['hours'], 2)],
+                fn (array $e) => ['name' => $e['name'], 'count' => $e['count'], 'hours' => round($e['hours'], 2), 'amount' => round($e['amount'] ?? 0.0, 2)],
                 $extraConcepts,
             )),
             'employee_count' => count($rows),

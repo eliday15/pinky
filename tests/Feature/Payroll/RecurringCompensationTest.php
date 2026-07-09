@@ -2,10 +2,12 @@
 
 namespace Tests\Feature\Payroll;
 
+use App\Models\Authorization;
 use App\Models\CompensationType;
 use App\Models\Department;
 use App\Models\Employee;
 use App\Models\PayrollPeriod;
+use App\Models\User;
 use App\Services\PayrollCalculatorService;
 use App\Services\Reports\WeeklyOvertimeReportService;
 use Carbon\Carbon;
@@ -181,9 +183,59 @@ class RecurringCompensationTest extends FeatureTestCase
             ->buildReport($department, Carbon::parse('2026-06-01'));
 
         $row = collect($report['rows'])->firstWhere('employee.id', $employee->id);
-        $names = collect($row['extra_concepts'])->pluck('name');
+        $concept = collect($row['extra_concepts'])->firstWhere('name', 'Ayuda de transporte');
 
-        $this->assertTrue($names->contains('Ayuda de transporte'), 'el recurrente semanal aparece en Otros Conceptos');
+        $this->assertNotNull($concept, 'el recurrente semanal aparece en Otros Conceptos');
+        $this->assertEqualsWithDelta(150.00, (float) $concept['amount'], 0.01, 'muestra el valor en pesos del concepto');
+    }
+
+    public function test_te_report_shows_concept_value_for_bonos_and_deduction(): void
+    {
+        // Valor en pesos (Luis 2026-07-09): un bono por unidades (Producción,
+        // one_time $1 × 600 bonos) muestra $600; un descuento recurrente
+        // (Infonavit -$300) muestra el negativo.
+        $department = Department::factory()->create(['name' => 'Producción', 'code' => 'PROD']);
+        $employee = Employee::factory()->create([
+            'status' => 'active',
+            'department_id' => $department->id,
+            'daily_salary' => 800.00,
+            'hire_date' => '2025-01-01',
+        ]);
+
+        $bono = CompensationType::factory()->fixed(1.00)->create([
+            'name' => 'Producción',
+            'code' => 'PROD-BONO',
+            'application_mode' => CompensationType::APPLICATION_ONE_TIME,
+            'authorization_type' => Authorization::TYPE_SPECIAL,
+        ]);
+        Authorization::create([
+            'employee_id' => $employee->id,
+            'requested_by' => User::factory()->create()->id,
+            'type' => Authorization::TYPE_SPECIAL,
+            'compensation_type_id' => $bono->id,
+            'date' => '2026-06-03',
+            'hours' => 600, // 600 bonos
+            'reason' => 'destajo',
+            'status' => Authorization::STATUS_APPROVED,
+        ]);
+
+        $infonavit = CompensationType::factory()->fixed(-300.00)->create([
+            'name' => 'Descuento Infonavit',
+            'code' => 'DED-INFO',
+            'application_mode' => CompensationType::APPLICATION_ONE_TIME,
+            'payment_period' => CompensationType::PAYMENT_PERIOD_WEEKLY,
+            'is_recurring' => true,
+        ]);
+        $employee->compensationTypes()->attach($infonavit->id, ['is_active' => true]);
+
+        $report = app(WeeklyOvertimeReportService::class)
+            ->buildReport($department, Carbon::parse('2026-06-01'));
+
+        $row = collect($report['rows'])->firstWhere('employee.id', $employee->id);
+        $concepts = collect($row['extra_concepts'])->keyBy('name');
+
+        $this->assertEqualsWithDelta(600.00, (float) $concepts['Producción']['amount'], 0.01, '$1 × 600 bonos');
+        $this->assertEqualsWithDelta(-300.00, (float) $concepts['Descuento Infonavit']['amount'], 0.01, 'el descuento va en negativo');
     }
 
     // ------------------------------------------------------------------
