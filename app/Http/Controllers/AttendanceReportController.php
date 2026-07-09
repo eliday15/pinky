@@ -39,7 +39,14 @@ class AttendanceReportController extends Controller implements HasMiddleware
     public function faltas(Request $request): Response
     {
         [$startDate, $endDate] = $this->getDateRange($request);
-        $activeEmployeeIds = $this->scopedActiveEmployeeIds();
+
+        // Los empleados exentos de asistencia ("no checa", sin checador) no
+        // generan faltas por checada — solo por incidencia manual. Se excluyen
+        // del reporte para que no aparezcan con faltas fantasma auto-generadas.
+        $exemptIds = Employee::where('is_attendance_exempt', true)->pluck('id');
+        $activeEmployeeIds = collect($this->scopedActiveEmployeeIds())
+            ->diff($exemptIds)
+            ->values();
 
         $lateAbsenceService = app(LateAbsenceService::class);
         $lateToAbsenceCount = $lateAbsenceService->threshold();

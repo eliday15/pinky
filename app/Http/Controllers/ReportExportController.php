@@ -381,7 +381,12 @@ class ReportExportController extends Controller implements HasMiddleware
     {
         $startDate = $request->get('start_date', Carbon::now()->startOfWeek()->toDateString());
         $endDate = $request->get('end_date', Carbon::now()->endOfWeek()->toDateString());
-        $activeEmployeeIds = $this->scopedActiveEmployeeIds();
+        // Los exentos ("no checa") no generan faltas por checada → se excluyen
+        // del Excel de Faltas igual que en el reporte web.
+        $exemptIds = Employee::where('is_attendance_exempt', true)->pluck('id');
+        $activeEmployeeIds = collect($this->scopedActiveEmployeeIds())
+            ->diff($exemptIds)
+            ->values();
         $maxLateBeforeAbsence = (int) SystemSetting::get('max_late_minutes_before_absence', 60);
         $earlyDepartureThreshold = (int) SystemSetting::get('early_departure_absence_threshold', 30);
         $earlyDepartureIsAbsence = (bool) SystemSetting::get('early_departure_is_absence', true);

@@ -100,6 +100,29 @@ class JustifiedReportsTest extends FeatureTestCase
         );
     }
 
+    public function test_faltas_report_excludes_attendance_exempt_employees(): void
+    {
+        // Un "no checa" (is_attendance_exempt) con registro absent NO debe salir
+        // en el reporte de Faltas: no genera faltas por checada.
+        $normal = $this->employee();
+        $exempt = Employee::factory()->create(['status' => 'active', 'is_attendance_exempt' => true]);
+
+        $this->absentNoShow($normal);
+        $this->absentNoShow($exempt);
+
+        $this->actingAsAdmin();
+
+        $this->get(route('reports.faltas', [
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-30',
+        ]))->assertInertia(fn (Assert $page) => $page
+            ->component('Reports/Faltas')
+            ->has('byEmployee', 1)
+            ->where('byEmployee.0.employee.id', $normal->id)
+            ->where('summary.total_faltas', 1)
+        );
+    }
+
     public function test_export_faltas_excludes_justified_absences(): void
     {
         $justified = $this->employee();
