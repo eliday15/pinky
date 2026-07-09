@@ -85,16 +85,53 @@ const conceptDetail = (c) => {
 // backend: transferLines suma bank_amount y efectivoLines suma cash_amount.
 const money = (n) => Number(n || 0);
 const paysBaseInCash = computed(() => !!props.cashSplit?.pays_base_in_cash);
-const baseDetail = `${breakdown.base?.base_paid_days ?? 0} días`;
+// Sueldo base: "N días × $sueldo diario" para que se entienda de dónde sale.
+const baseDetail = computed(() => {
+    const days = breakdown.base?.base_paid_days ?? 0;
+    const daily = Number(breakdown.rates?.daily_salary ?? props.entry.daily_salary ?? 0);
+    return daily > 0 ? `${num(days)} días × ${formatCurrency(daily)}` : `${num(days)} días`;
+});
+
+// --- Detalle de la deducción por falta (qué días y por qué) ---
+// Cada falta descuenta el sueldo diario × factor del séptimo día (7/6). Se toma
+// el detalle exacto del breakdown (fechas) si existe; si es un asiento viejo sin
+// ese detalle, se arma por categoría desde los conteos que sí trae el breakdown.
+const perDayDeduction = computed(() =>
+    Number(breakdown.rates?.daily_salary ?? props.entry.daily_salary ?? 0)
+    * Number(breakdown.rates?.rest_day_factor ?? (7 / 6))
+);
+
+const formatDayLabel = (date) => fmtDate(date, { weekday: 'short', day: 'numeric', month: 'short' });
+
+const deductionDetail = computed(() => {
+    const per = perDayDeduction.value;
+    const detailed = breakdown.deduction_detail;
+    if (Array.isArray(detailed) && detailed.length) {
+        return detailed.map((d) => ({
+            label: d.reason + (d.date ? ` — ${formatDayLabel(d.date)}` : '') + (d.days > 1 ? ` (${d.days} días)` : ''),
+            amount: -(Number(d.days || 0) * per),
+        }));
+    }
+    // Fallback por categoría (asiento sin detalle de fechas): usa los conteos.
+    const inc = Number(breakdown.incidents?.absence_incident_deduction_days ?? 0);
+    const frt = Number(breakdown.late_accumulation?.late_absences_generated ?? 0);
+    const total = Number(breakdown.incidents?.absence_deduction_days ?? 0);
+    const unjust = Math.max(0, total - inc - frt);
+    const rows = [];
+    if (unjust > 0) rows.push({ label: `Faltas injustificadas (${unjust})`, amount: -(unjust * per) });
+    if (frt > 0) rows.push({ label: `Faltas por acumulación de retardos (${frt})`, amount: -(frt * per) });
+    if (inc > 0) rows.push({ label: `Faltas por incidencia (${inc})`, amount: -(inc * per) });
+    return rows;
+});
 
 const transferLines = computed(() => {
     if (paysBaseInCash.value) return [];
     const lines = [];
     if (money(props.entry.regular_pay) !== 0) {
-        lines.push({ label: 'Sueldo base', detail: baseDetail, amount: money(props.entry.regular_pay) });
+        lines.push({ label: 'Sueldo base', detail: baseDetail.value, amount: money(props.entry.regular_pay) });
     }
     if (money(props.entry.deductions) > 0) {
-        lines.push({ label: 'Deducciones (faltas)', detail: '', amount: -money(props.entry.deductions) });
+        lines.push({ label: 'Deducciones (faltas)', detail: '', amount: -money(props.entry.deductions), isDeduction: true });
     }
     return lines;
 });
@@ -102,7 +139,7 @@ const transferLines = computed(() => {
 const efectivoLines = computed(() => {
     const lines = [];
     if (paysBaseInCash.value && money(props.entry.regular_pay) !== 0) {
-        lines.push({ label: 'Sueldo base', detail: baseDetail, amount: money(props.entry.regular_pay) });
+        lines.push({ label: 'Sueldo base', detail: baseDetail.value, amount: money(props.entry.regular_pay) });
     }
     if (money(props.entry.overtime_pay) > 0) lines.push({ label: 'Horas extra', detail: '', amount: money(props.entry.overtime_pay) });
     if (money(props.entry.holiday_pay) > 0) lines.push({ label: 'Días festivos', detail: '', amount: money(props.entry.holiday_pay) });
@@ -114,7 +151,7 @@ const efectivoLines = computed(() => {
     if (money(props.entry.vacation_pay) > 0) lines.push({ label: 'Vacaciones', detail: '', amount: money(props.entry.vacation_pay) });
     if (money(props.entry.bonuses) > 0) lines.push({ label: 'Bonos', detail: '', amount: money(props.entry.bonuses) });
     if (paysBaseInCash.value && money(props.entry.deductions) > 0) {
-        lines.push({ label: 'Deducciones (faltas)', detail: '', amount: -money(props.entry.deductions) });
+        lines.push({ label: 'Deducciones (faltas)', detail: '', amount: -money(props.entry.deductions), isDeduction: true });
     }
     return lines;
 });
@@ -323,112 +360,22 @@ const pesoRounding = computed(() => Number(props.cashSplit?.period_amount ?? 0) 
             </div>
         </div>
 
-        <!-- Payment Breakdown -->
-        <div v-if="fullView" class="bg-white rounded-lg shadow p-6 mt-6">
-            <h3 class="text-lg font-semibold text-gray-800 mb-4">Calculo de Pago</h3>
-            <div class="space-y-3">
-                <div class="flex justify-between items-center py-2 border-b">
-                    <div>
-                        <span class="text-gray-600">Pago regular</span>
-                        <span class="text-xs text-gray-400 ml-2">
-                            ({{ breakdown.base?.base_paid_days ?? 0 }} dias x {{ formatCurrency(entry.daily_salary) }})
-                        </span>
-                    </div>
-                    <span class="font-medium">{{ formatCurrency(entry.regular_pay) }}</span>
-                </div>
-                <div class="flex justify-between items-center py-2 border-b">
-                    <div>
-                        <span class="text-gray-600">Pago horas extra</span>
-                        <span v-if="!breakdown.rates?.uses_compensation_types" class="text-xs text-gray-400 ml-2">
-                            ({{ entry.overtime_hours }}h x {{ formatCurrency(entry.hourly_rate) }} x {{ entry.overtime_multiplier }})
-                        </span>
-                    </div>
-                    <span class="font-medium text-green-600">{{ formatCurrency(entry.overtime_pay) }}</span>
-                </div>
-                <div class="flex justify-between items-center py-2 border-b">
-                    <div>
-                        <span class="text-gray-600">Pago dias festivos</span>
-                        <span v-if="!breakdown.rates?.uses_compensation_types" class="text-xs text-gray-400 ml-2">
-                            ({{ entry.holiday_hours }}h x {{ formatCurrency(entry.hourly_rate) }} x {{ entry.holiday_multiplier }})
-                        </span>
-                    </div>
-                    <span class="font-medium text-blue-600">{{ formatCurrency(entry.holiday_pay) }}</span>
-                </div>
-                <div v-if="entry.velada_pay > 0" class="flex justify-between items-center py-2 border-b">
-                    <div>
-                        <span class="text-gray-600">Pago velada</span>
-                        <span v-if="entry.velada_days > 0" class="text-xs text-gray-400 ml-2">
-                            ({{ entry.velada_days }} velada{{ entry.velada_days > 1 ? 's' : '' }})
-                        </span>
-                    </div>
-                    <span class="font-medium text-indigo-600">{{ formatCurrency(entry.velada_pay) }}</span>
-                </div>
-                <div class="flex justify-between items-center py-2 border-b">
-                    <div>
-                        <span class="text-gray-600">Pago fin de semana</span>
-                    </div>
-                    <span class="font-medium text-purple-600">{{ formatCurrency(entry.weekend_pay) }}</span>
-                </div>
-                <!-- "Otros conceptos" itemizado, igual que el modal de cobro: un
-                     renglón por concepto con su nombre, en vez del agrupado. -->
-                <template v-if="otrosConceptos.length">
-                    <div
-                        v-for="(concept, idx) in otrosConceptos"
-                        :key="`otro-${idx}`"
-                        class="flex justify-between items-center py-2 border-b"
-                    >
-                        <div>
-                            <span class="text-gray-600">{{ concept.name }}</span>
-                            <span class="ml-2 px-2 py-0.5 bg-gray-100 rounded text-xs text-gray-500">{{ concept.code }}</span>
-                            <span v-if="conceptDetail(concept)" class="text-xs text-gray-400 ml-2">
-                                ({{ conceptDetail(concept) }})
-                            </span>
-                        </div>
-                        <span class="font-medium text-green-600">{{ formatCurrency(concept.amount) }}</span>
-                    </div>
-                </template>
-                <div v-else-if="entry.other_compensation_pay > 0" class="flex justify-between items-center py-2 border-b">
-                    <div>
-                        <span class="text-gray-600">Otros conceptos</span>
-                        <span class="text-xs text-gray-400 ml-2">(cena, comida, dominical, etc.)</span>
-                    </div>
-                    <span class="font-medium text-green-600">{{ formatCurrency(entry.other_compensation_pay) }}</span>
-                </div>
-                <div class="flex justify-between items-center py-2 border-b">
-                    <div>
-                        <span class="text-gray-600">Pago vacaciones</span>
-                        <span class="text-xs text-gray-400 ml-2">
-                            ({{ entry.vacation_days_paid }} dias)
-                        </span>
-                    </div>
-                    <span class="font-medium">{{ formatCurrency(entry.vacation_pay) }}</span>
-                </div>
-                <div v-if="entry.bonuses > 0" class="flex justify-between items-center py-2 border-b">
-                    <span class="text-gray-600">Bonos</span>
-                    <span class="font-medium text-green-600">{{ formatCurrency(entry.bonuses) }}</span>
-                </div>
-                <div class="flex justify-between items-center py-2 bg-gray-50 px-4 rounded-lg">
-                    <span class="font-medium text-gray-800">Pago Bruto</span>
-                    <span class="font-bold text-gray-800">{{ formatCurrency(entry.gross_pay) }}</span>
-                </div>
-                <div v-if="entry.deductions > 0" class="flex justify-between items-center py-2 border-b">
-                    <div>
-                        <span class="text-gray-600">Deducciones</span>
-                        <span class="text-xs text-gray-400 ml-2">(faltas sin goce)</span>
-                    </div>
-                    <span class="font-medium text-red-600">-{{ formatCurrency(entry.deductions) }}</span>
-                </div>
-                <div class="flex justify-between items-center py-4 bg-green-50 px-4 rounded-lg mt-4">
-                    <span class="font-bold text-gray-800 text-lg">Pago Neto</span>
-                    <span class="font-bold text-green-600 text-2xl">{{ formatCurrency(entry.net_pay) }}</span>
-                </div>
-            </div>
+        <!-- Cómo se paga: el desglose de pago va SIEMPRE dividido por canal en las
+             dos tablas de abajo (transferencia / efectivo), para no mezclar lo que
+             va al banco con lo que se cobra en efectivo. -->
+        <div v-if="fullView" class="mt-8 mb-2">
+            <h3 class="text-lg font-semibold text-gray-800">Cómo se paga</h3>
+            <p class="text-sm text-gray-500">
+                Bruto {{ formatCurrency(entry.gross_pay) }} · Neto
+                <span class="font-medium text-green-600">{{ formatCurrency(entry.net_pay) }}</span>.
+                Se reparte en dos: lo que va por transferencia y lo que se paga en efectivo.
+            </p>
         </div>
 
         <!-- Reparto del pago en DOS TABLAS: qué va por transferencia (banco) y qué
              en efectivo. El efectivo separa lo de este periodo del acumulado que
              se recorrió sin cobrar de semanas anteriores. -->
-        <div class="grid grid-cols-1 gap-6 mt-6" :class="{ 'lg:grid-cols-2': fullView }">
+        <div class="grid grid-cols-1 gap-6" :class="{ 'lg:grid-cols-2': fullView }">
             <!-- Tabla: Transferencia (banco) -->
             <div v-if="fullView || viewingTransfer" class="bg-white rounded-lg shadow overflow-hidden border-l-4 border-indigo-500">
                 <div class="px-6 py-4 border-b border-gray-100">
@@ -438,15 +385,24 @@ const pesoRounding = computed(() => Number(props.cashSplit?.period_amount ?? 0) 
                 <div class="p-6">
                     <table v-if="transferLines.length" class="min-w-full text-sm">
                         <tbody>
-                            <tr v-for="(l, i) in transferLines" :key="i" class="border-b last:border-0">
-                                <td class="py-2">
-                                    <span class="text-gray-600">{{ l.label }}</span>
-                                    <span v-if="l.detail" class="text-xs text-gray-400 ml-2">({{ l.detail }})</span>
-                                </td>
-                                <td class="py-2 text-right font-medium" :class="l.amount < 0 ? 'text-red-600' : 'text-gray-800'">
-                                    {{ l.amount < 0 ? '-' : '' }}{{ formatCurrency(Math.abs(l.amount)) }}
-                                </td>
-                            </tr>
+                            <template v-for="(l, i) in transferLines" :key="i">
+                                <tr class="border-b last:border-0">
+                                    <td class="py-2">
+                                        <span class="text-gray-600">{{ l.label }}</span>
+                                        <span v-if="l.detail" class="text-xs text-gray-400 ml-2">({{ l.detail }})</span>
+                                    </td>
+                                    <td class="py-2 text-right font-medium" :class="l.amount < 0 ? 'text-red-600' : 'text-gray-800'">
+                                        {{ l.amount < 0 ? '-' : '' }}{{ formatCurrency(Math.abs(l.amount)) }}
+                                    </td>
+                                </tr>
+                                <!-- Detalle de la falta: qué días y por qué se descuenta -->
+                                <template v-if="l.isDeduction">
+                                    <tr v-for="(d, di) in deductionDetail" :key="`d-${i}-${di}`" class="text-xs text-red-500/80">
+                                        <td class="py-1 pl-6">{{ d.label }}</td>
+                                        <td class="py-1 text-right">-{{ formatCurrency(Math.abs(d.amount)) }}</td>
+                                    </tr>
+                                </template>
+                            </template>
                         </tbody>
                         <tfoot>
                             <tr class="border-t-2 border-gray-200">
@@ -479,15 +435,24 @@ const pesoRounding = computed(() => Number(props.cashSplit?.period_amount ?? 0) 
                 <div class="p-6">
                     <table class="min-w-full text-sm">
                         <tbody>
-                            <tr v-for="(l, i) in efectivoLines" :key="i" class="border-b last:border-0">
-                                <td class="py-2">
-                                    <span class="text-gray-600">{{ l.label }}</span>
-                                    <span v-if="l.detail" class="text-xs text-gray-400 ml-2">({{ l.detail }})</span>
-                                </td>
-                                <td class="py-2 text-right font-medium" :class="l.amount < 0 ? 'text-red-600' : 'text-gray-800'">
-                                    {{ l.amount < 0 ? '-' : '' }}{{ formatCurrency(Math.abs(l.amount)) }}
-                                </td>
-                            </tr>
+                            <template v-for="(l, i) in efectivoLines" :key="i">
+                                <tr class="border-b last:border-0">
+                                    <td class="py-2">
+                                        <span class="text-gray-600">{{ l.label }}</span>
+                                        <span v-if="l.detail" class="text-xs text-gray-400 ml-2">({{ l.detail }})</span>
+                                    </td>
+                                    <td class="py-2 text-right font-medium" :class="l.amount < 0 ? 'text-red-600' : 'text-gray-800'">
+                                        {{ l.amount < 0 ? '-' : '' }}{{ formatCurrency(Math.abs(l.amount)) }}
+                                    </td>
+                                </tr>
+                                <!-- Detalle de la falta: qué días y por qué se descuenta -->
+                                <template v-if="l.isDeduction">
+                                    <tr v-for="(d, di) in deductionDetail" :key="`d-${i}-${di}`" class="text-xs text-red-500/80">
+                                        <td class="py-1 pl-6">{{ d.label }}</td>
+                                        <td class="py-1 text-right">-{{ formatCurrency(Math.abs(d.amount)) }}</td>
+                                    </tr>
+                                </template>
+                            </template>
                             <tr v-if="!efectivoLines.length">
                                 <td colspan="2" class="py-2 text-sm text-gray-400">Sin efectivo este periodo.</td>
                             </tr>

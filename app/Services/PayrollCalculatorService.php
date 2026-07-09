@@ -510,8 +510,29 @@ class PayrollCalculatorService
             $netPay = round($netPay - $appliedConceptDeduction, 2);
         }
 
+        // Detalle de la deducción por falta, para el recibo/detalle: qué días y
+        // por qué se descuenta. Cada falta descuenta SD × 7/6 (séptimo día
+        // incluido); la suma de 'days' = absence_deduction_days. Solo en el
+        // periodo que paga base (el mensual no descuenta faltas).
+        $deductionDetail = [];
+        if ($payBase) {
+            foreach (array_keys($metrics['days_absent_unjustified_dates']) as $date) {
+                $deductionDetail[] = ['date' => $date, 'reason' => 'Falta injustificada', 'days' => 1];
+            }
+            foreach (array_keys($incidentAbsenceDeductionDates) as $date) {
+                $deductionDetail[] = ['date' => $date, 'reason' => 'Falta por incidencia', 'days' => 1];
+            }
+            usort($deductionDetail, fn ($a, $b) => strcmp((string) $a['date'], (string) $b['date']));
+            if ($lateAbsencesGenerated > 0) {
+                // Las faltas por retardos son una acumulación mensual, sin una
+                // fecha única: se listan como un renglón con su conteo.
+                $deductionDetail[] = ['date' => null, 'reason' => 'Falta por acumulación de retardos', 'days' => $lateAbsencesGenerated];
+            }
+        }
+
         // Build calculation breakdown for transparency
         $breakdown = [
+            'deduction_detail' => $deductionDetail,
             'attendance' => [
                 'records' => $attendance->count(),
                 'regular_hours' => $metrics['regular_hours'],

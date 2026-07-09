@@ -117,6 +117,13 @@ class PayrollSplitTest extends FeatureTestCase
         $this->assertEqualsWithDelta(1400.00, (float) $entry->regular_pay, 0.01, 'base = 200 × 7');
         $this->assertEqualsWithDelta(233.33, (float) $entry->deductions, 0.01, '1 falta × 200 × 7/6');
         $this->assertEqualsWithDelta(1166.67, (float) $entry->net_pay, 0.01, 'semana con 1 falta');
+
+        // El detalle de la deducción explica QUÉ día y POR QUÉ se descuenta.
+        $detail = $entry->calculation_breakdown['deduction_detail'] ?? [];
+        $this->assertCount(1, $detail);
+        $this->assertSame('2026-06-03', $detail[0]['date']);
+        $this->assertSame('Falta injustificada', $detail[0]['reason']);
+        $this->assertSame(1, $detail[0]['days']);
     }
 
     /**
