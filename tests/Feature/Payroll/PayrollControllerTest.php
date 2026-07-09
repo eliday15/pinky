@@ -868,6 +868,7 @@ class PayrollControllerTest extends FeatureTestCase
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Payroll/EntryDetail')
                 ->where('cashSplit.is_closed', false)
+                ->has('cashSplit.pays_base_in_cash')
                 ->where('cashSplit.bank_amount', 1200)
                 ->where('cashSplit.period_amount', 500)
                 ->where('cashSplit.opening_balance', 0)

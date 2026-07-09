@@ -15,6 +15,12 @@ const props = defineProps({
 
 const typeInfo = computed(() => periodTypeInfo(props.period.type));
 
+// Las tarjetas de reparto llevan a su pantalla filtrada. Efectivo solo cuando ya
+// se preparó el efectivo (hay desglose que ver); transferencias en cuanto hay
+// asientos. Mismas condiciones que los botones de arriba.
+const canGoCash = computed(() => !!props.can?.payCash && !!props.period.cash_closed_at);
+const canGoTransfer = computed(() => !!props.can?.payCash && props.entries.length > 0);
+
 const hasTwoFactor = computed(() => usePage().props.auth.has_two_factor);
 const showApproveModal = ref(false);
 const showMarkPaidModal = ref(false);
@@ -239,22 +245,35 @@ const closeCash = () => {
             </ul>
         </div>
 
-        <!-- Reparto del pago: efectivo arriba, transferencia abajo -->
+        <!-- Reparto del pago: efectivo y transferencia. Cada tarjeta lleva a su
+             pantalla filtrada (solo efectivo / solo transferencias). -->
         <div v-if="entries.length > 0" class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-            <div class="bg-white rounded-lg shadow border-l-4 border-pink-500 p-5 flex items-center justify-between">
+            <component
+                :is="canGoCash ? Link : 'div'"
+                :href="canGoCash ? route('payroll.cash', period.id) : undefined"
+                class="bg-white rounded-lg shadow border-l-4 border-pink-500 p-5 flex items-center justify-between"
+                :class="canGoCash ? 'hover:shadow-md hover:bg-pink-50/40 transition cursor-pointer' : ''"
+            >
                 <div>
                     <p class="text-sm font-medium text-gray-500">Efectivo</p>
                     <p class="text-xs text-gray-400">Extras + base de quien cobra en efectivo</p>
+                    <p v-if="canGoCash" class="text-xs font-medium text-pink-600 mt-1">Ver solo efectivo &rarr;</p>
                 </div>
                 <p class="text-3xl font-bold text-pink-600">{{ formatCurrency(summary.total_cash) }}</p>
-            </div>
-            <div class="bg-white rounded-lg shadow border-l-4 border-indigo-500 p-5 flex items-center justify-between">
+            </component>
+            <component
+                :is="canGoTransfer ? Link : 'div'"
+                :href="canGoTransfer ? route('payroll.transfers', period.id) : undefined"
+                class="bg-white rounded-lg shadow border-l-4 border-indigo-500 p-5 flex items-center justify-between"
+                :class="canGoTransfer ? 'hover:shadow-md hover:bg-indigo-50/40 transition cursor-pointer' : ''"
+            >
                 <div>
                     <p class="text-sm font-medium text-gray-500">Transferencia</p>
                     <p class="text-xs text-gray-400">Sueldo base por banco / CONTPAQi</p>
+                    <p v-if="canGoTransfer" class="text-xs font-medium text-indigo-600 mt-1">Ver solo transferencias &rarr;</p>
                 </div>
                 <p class="text-3xl font-bold text-indigo-600">{{ formatCurrency(summary.total_transfer) }}</p>
-            </div>
+            </component>
         </div>
 
         <!-- Summary Cards -->

@@ -69,6 +69,53 @@ const conceptDetail = (c) => {
     if (days > 0) return `${num(days)} día(s)`;
     return '';
 };
+
+// --- Reparto por canal de pago (dos tablas) ---
+// El sueldo base (y sus deducciones por falta) van por TRANSFERENCIA para quien
+// cobra base en banco (IMSS); para quien cobra base en efectivo TODO va en
+// efectivo. Los extras (horas extra, festivo, velada, finde, otros conceptos,
+// vacaciones, bonos) siempre van en efectivo. Coincide con el reparto del
+// backend: transferLines suma bank_amount y efectivoLines suma cash_amount.
+const money = (n) => Number(n || 0);
+const paysBaseInCash = computed(() => !!props.cashSplit?.pays_base_in_cash);
+const baseDetail = `${breakdown.base?.base_paid_days ?? 0} días`;
+
+const transferLines = computed(() => {
+    if (paysBaseInCash.value) return [];
+    const lines = [];
+    if (money(props.entry.regular_pay) !== 0) {
+        lines.push({ label: 'Sueldo base', detail: baseDetail, amount: money(props.entry.regular_pay) });
+    }
+    if (money(props.entry.deductions) > 0) {
+        lines.push({ label: 'Deducciones (faltas)', detail: '', amount: -money(props.entry.deductions) });
+    }
+    return lines;
+});
+
+const efectivoLines = computed(() => {
+    const lines = [];
+    if (paysBaseInCash.value && money(props.entry.regular_pay) !== 0) {
+        lines.push({ label: 'Sueldo base', detail: baseDetail, amount: money(props.entry.regular_pay) });
+    }
+    if (money(props.entry.overtime_pay) > 0) lines.push({ label: 'Horas extra', detail: '', amount: money(props.entry.overtime_pay) });
+    if (money(props.entry.holiday_pay) > 0) lines.push({ label: 'Días festivos', detail: '', amount: money(props.entry.holiday_pay) });
+    if (money(props.entry.velada_pay) > 0) lines.push({ label: 'Velada', detail: '', amount: money(props.entry.velada_pay) });
+    if (money(props.entry.weekend_pay) > 0) lines.push({ label: 'Fin de semana', detail: '', amount: money(props.entry.weekend_pay) });
+    for (const c of otrosConceptos.value) {
+        lines.push({ label: c.name, detail: conceptDetail(c), amount: money(c.amount) });
+    }
+    if (money(props.entry.vacation_pay) > 0) lines.push({ label: 'Vacaciones', detail: '', amount: money(props.entry.vacation_pay) });
+    if (money(props.entry.bonuses) > 0) lines.push({ label: 'Bonos', detail: '', amount: money(props.entry.bonuses) });
+    if (paysBaseInCash.value && money(props.entry.deductions) > 0) {
+        lines.push({ label: 'Deducciones (faltas)', detail: '', amount: -money(props.entry.deductions) });
+    }
+    return lines;
+});
+
+// Suma exacta de los renglones de efectivo (= entry.cash_amount). El cobro se
+// redondea al peso (period_amount), por eso el redondeo se muestra aparte.
+const efectivoSubtotal = computed(() => efectivoLines.value.reduce((s, l) => s + l.amount, 0));
+const pesoRounding = computed(() => Number(props.cashSplit?.period_amount ?? 0) - efectivoSubtotal.value);
 </script>
 
 <template>
@@ -353,27 +400,45 @@ const conceptDetail = (c) => {
             </div>
         </div>
 
-        <!-- Reparto del pago: qué va por transferencia y qué en efectivo, con el
-             efectivo de este periodo separado del acumulado que se recorrió sin
-             cobrar de semanas anteriores. -->
+        <!-- Reparto del pago en DOS TABLAS: qué va por transferencia (banco) y qué
+             en efectivo. El efectivo separa lo de este periodo del acumulado que
+             se recorrió sin cobrar de semanas anteriores. -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
-            <!-- Transferencia (banco) -->
-            <div class="bg-white rounded-lg shadow p-6 border-l-4 border-indigo-500">
-                <div class="flex items-center justify-between">
-                    <div>
-                        <h3 class="text-lg font-semibold text-gray-800">Transferencia</h3>
-                        <p class="text-xs text-gray-400">Sueldo base por banco / CONTPAQi</p>
-                    </div>
-                    <span class="text-2xl font-bold text-indigo-600">{{ formatCurrency(cashSplit.bank_amount) }}</span>
+            <!-- Tabla: Transferencia (banco) -->
+            <div class="bg-white rounded-lg shadow overflow-hidden border-l-4 border-indigo-500">
+                <div class="px-6 py-4 border-b border-gray-100">
+                    <h3 class="text-lg font-semibold text-gray-800">Transferencia</h3>
+                    <p class="text-xs text-gray-400">Sueldo base por banco / CONTPAQi</p>
                 </div>
-                <p v-if="!(cashSplit.bank_amount > 0)" class="mt-3 text-sm text-gray-400">
-                    Este empleado no recibe nada por transferencia (todo va en efectivo).
-                </p>
+                <div class="p-6">
+                    <table v-if="transferLines.length" class="min-w-full text-sm">
+                        <tbody>
+                            <tr v-for="(l, i) in transferLines" :key="i" class="border-b last:border-0">
+                                <td class="py-2">
+                                    <span class="text-gray-600">{{ l.label }}</span>
+                                    <span v-if="l.detail" class="text-xs text-gray-400 ml-2">({{ l.detail }})</span>
+                                </td>
+                                <td class="py-2 text-right font-medium" :class="l.amount < 0 ? 'text-red-600' : 'text-gray-800'">
+                                    {{ l.amount < 0 ? '-' : '' }}{{ formatCurrency(Math.abs(l.amount)) }}
+                                </td>
+                            </tr>
+                        </tbody>
+                        <tfoot>
+                            <tr class="border-t-2 border-gray-200">
+                                <td class="py-3 font-semibold text-gray-800">Total a transferir</td>
+                                <td class="py-3 text-right font-bold text-indigo-600 text-lg">{{ formatCurrency(cashSplit.bank_amount) }}</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                    <p v-else class="text-sm text-gray-400">
+                        Este empleado no recibe nada por transferencia &mdash; todo su pago va en efectivo.
+                    </p>
+                </div>
             </div>
 
-            <!-- Efectivo -->
-            <div class="bg-white rounded-lg shadow p-6 border-l-4 border-pink-500">
-                <div class="flex items-center justify-between mb-3">
+            <!-- Tabla: Efectivo -->
+            <div class="bg-white rounded-lg shadow overflow-hidden border-l-4 border-pink-500">
+                <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
                     <div>
                         <h3 class="text-lg font-semibold text-gray-800">Efectivo</h3>
                         <p class="text-xs text-gray-400">Extras + base de quien cobra en efectivo</p>
@@ -386,31 +451,53 @@ const conceptDetail = (c) => {
                         {{ cashSplit.status === 'paid' ? 'Cobrado' : 'Pendiente' }}
                     </span>
                 </div>
-                <div class="space-y-2 text-sm">
-                    <div class="flex justify-between">
-                        <span class="text-gray-600">Efectivo de este periodo</span>
-                        <span class="font-medium text-gray-800">{{ formatCurrency(cashSplit.period_amount) }}</span>
-                    </div>
-                    <div v-if="cashSplit.opening_balance > 0" class="flex justify-between text-amber-600">
-                        <span>Acumulado (no cobrado de la semana anterior)</span>
-                        <span class="font-medium">+{{ formatCurrency(cashSplit.opening_balance) }}</span>
-                    </div>
-                    <div v-if="cashSplit.amount_paid > 0" class="flex justify-between text-gray-400">
-                        <span>Ya cobrado</span>
-                        <span>-{{ formatCurrency(cashSplit.amount_paid) }}</span>
-                    </div>
-                    <div class="flex justify-between border-t pt-2 mt-1">
-                        <span class="font-semibold text-gray-800">
-                            {{ cashSplit.amount_paid > 0 ? 'Pendiente de cobrar' : 'Total a cobrar en efectivo' }}
-                        </span>
-                        <span class="font-bold text-pink-600 text-lg">
-                            {{ formatCurrency(cashSplit.amount_paid > 0 ? cashSplit.outstanding : cashSplit.total_due) }}
-                        </span>
-                    </div>
+                <div class="p-6">
+                    <table class="min-w-full text-sm">
+                        <tbody>
+                            <tr v-for="(l, i) in efectivoLines" :key="i" class="border-b last:border-0">
+                                <td class="py-2">
+                                    <span class="text-gray-600">{{ l.label }}</span>
+                                    <span v-if="l.detail" class="text-xs text-gray-400 ml-2">({{ l.detail }})</span>
+                                </td>
+                                <td class="py-2 text-right font-medium" :class="l.amount < 0 ? 'text-red-600' : 'text-gray-800'">
+                                    {{ l.amount < 0 ? '-' : '' }}{{ formatCurrency(Math.abs(l.amount)) }}
+                                </td>
+                            </tr>
+                            <tr v-if="!efectivoLines.length">
+                                <td colspan="2" class="py-2 text-sm text-gray-400">Sin efectivo este periodo.</td>
+                            </tr>
+                        </tbody>
+                        <tfoot>
+                            <tr class="border-t-2 border-gray-200">
+                                <td class="py-3 font-semibold text-gray-800">Efectivo de este periodo</td>
+                                <td class="py-3 text-right font-semibold text-gray-800">{{ formatCurrency(efectivoSubtotal) }}</td>
+                            </tr>
+                            <tr v-if="Math.abs(pesoRounding) >= 0.005" class="text-gray-400">
+                                <td class="py-1">Redondeo al peso</td>
+                                <td class="py-1 text-right">{{ pesoRounding >= 0 ? '+' : '-' }}{{ formatCurrency(Math.abs(pesoRounding)) }}</td>
+                            </tr>
+                            <tr v-if="cashSplit.opening_balance > 0" class="text-amber-600">
+                                <td class="py-1">Acumulado (no cobrado de la semana anterior)</td>
+                                <td class="py-1 text-right font-medium">+{{ formatCurrency(cashSplit.opening_balance) }}</td>
+                            </tr>
+                            <tr v-if="cashSplit.amount_paid > 0" class="text-gray-400">
+                                <td class="py-1">Ya cobrado</td>
+                                <td class="py-1 text-right">-{{ formatCurrency(cashSplit.amount_paid) }}</td>
+                            </tr>
+                            <tr class="border-t border-gray-200">
+                                <td class="py-3 font-bold text-gray-800">
+                                    {{ cashSplit.amount_paid > 0 ? 'Pendiente de cobrar' : 'Total a cobrar en efectivo' }}
+                                </td>
+                                <td class="py-3 text-right font-bold text-pink-600 text-lg">
+                                    {{ formatCurrency(cashSplit.amount_paid > 0 ? cashSplit.outstanding : cashSplit.total_due) }}
+                                </td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                    <p v-if="!cashSplit.is_closed" class="mt-3 text-xs text-gray-400">
+                        Estimado &mdash; el acumulado y el total se congelan al cerrar y preparar el efectivo del periodo.
+                    </p>
                 </div>
-                <p v-if="!cashSplit.is_closed" class="mt-3 text-xs text-gray-400">
-                    Estimado &mdash; el acumulado y el total se congelan al cerrar y preparar el efectivo del periodo.
-                </p>
             </div>
         </div>
 

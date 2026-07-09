@@ -668,9 +668,12 @@ class PayrollController extends Controller
             ->where('employee_id', $entry->employee_id)
             ->first();
 
+        $paysBaseInCash = $entry->employee?->paysBaseInCash() ?? false;
+
         if ($payout) {
             return [
                 'is_closed' => true,
+                'pays_base_in_cash' => $paysBaseInCash,
                 'bank_amount' => (float) $entry->bank_amount,
                 'period_amount' => (float) $payout->period_amount,
                 'opening_balance' => (float) $payout->opening_balance,
@@ -697,6 +700,7 @@ class PayrollController extends Controller
 
         return [
             'is_closed' => false,
+            'pays_base_in_cash' => $paysBaseInCash,
             'bank_amount' => (float) $entry->bank_amount,
             'period_amount' => $periodAmount,
             'opening_balance' => $openingBalance,
