@@ -145,13 +145,16 @@ class RecurringCompensationTest extends FeatureTestCase
     {
         // Requisito de Luis (2026-07-09): "se paga en efectivo ese recurrente".
         // El recurrente es un EXTRA y los extras SIEMPRE salen en efectivo; el
-        // sueldo base va al banco para un empleado con IMSS ya fuera de prueba.
+        // sueldo base va al banco para un empleado FORMALIZADO (IMSS + número +
+        // sin periodo de prueba).
         $employee = Employee::factory()->create([
             'status' => 'active',
             'daily_salary' => 800.00,
             'hourly_rate' => 100.00,
             'hire_date' => '2025-01-01',
             'is_imss_enrolled' => true,
+            'imss_number' => '75-18-04-2297-6',
+            'is_trial_period' => false,
         ]);
         $type = $this->recurringType(150.00, CompensationType::PAYMENT_PERIOD_WEEKLY);
         $employee->compensationTypes()->attach($type->id, ['is_active' => true]);
@@ -256,7 +259,7 @@ class RecurringCompensationTest extends FeatureTestCase
         ]);
     }
 
-    /** Empleado con IMSS: el base va al banco, solo los extras en efectivo. */
+    /** Empleado FORMALIZADO (IMSS + número + sin prueba): base al banco. */
     private function bankEmployee(): Employee
     {
         return Employee::factory()->create([
@@ -265,6 +268,8 @@ class RecurringCompensationTest extends FeatureTestCase
             'hourly_rate' => 100.00,
             'hire_date' => '2025-01-01',
             'is_imss_enrolled' => true,
+            'imss_number' => '75-18-04-2297-6',
+            'is_trial_period' => false,
         ]);
     }
 

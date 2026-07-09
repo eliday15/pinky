@@ -78,12 +78,16 @@ class CashSplitCalculationTest extends FeatureTestCase
         $this->assertEqualsWithDelta(0.00, (float) $entry->bank_amount, 0.01, 'nada por transferencia');
     }
 
-    public function test_imss_enrolled_weekly_sends_base_to_bank_not_cash(): void
+    public function test_formalized_weekly_sends_base_to_bank_not_cash(): void
     {
+        // Formalizado = IMSS + número registrado + sin periodo de prueba.
         $employee = Employee::factory()->create([
             'status' => 'active',
             'daily_salary' => 800.00,
+            'hire_date' => '2025-01-01',
             'is_imss_enrolled' => true,
+            'imss_number' => '75-18-04-2297-6',
+            'is_trial_period' => false,
         ]);
         $this->presentWeek($employee);
 
@@ -98,6 +102,36 @@ class CashSplitCalculationTest extends FeatureTestCase
         $this->assertEqualsWithDelta(5600.00, (float) $entry->net_pay, 0.01, 'net_pay no cambia');
         $this->assertEqualsWithDelta(5600.00, (float) $entry->bank_amount, 0.01, 'base neto al banco');
         $this->assertEqualsWithDelta(0.00, (float) $entry->cash_amount, 0.01, 'sin extras, sin efectivo');
+    }
+
+    public function test_imss_without_number_or_in_trial_still_pays_base_in_cash(): void
+    {
+        // FORMALIZADO requiere IMSS + número + sin prueba. Si falta el número, o
+        // sigue en periodo de prueba (aunque sea indefinido), cobra en efectivo.
+        $period = PayrollPeriod::factory()->weekly()->create([
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-07',
+        ]);
+
+        $imssSinNumero = Employee::factory()->create([
+            'status' => 'active', 'daily_salary' => 800.00, 'hire_date' => '2025-01-01',
+            'is_imss_enrolled' => true, 'imss_number' => null, 'is_trial_period' => false,
+        ]);
+        $enPruebaIndefinida = Employee::factory()->create([
+            'status' => 'active', 'daily_salary' => 800.00, 'hire_date' => '2025-01-01',
+            'is_imss_enrolled' => true, 'imss_number' => '75-18-04-2297-6',
+            'is_trial_period' => true, 'trial_period_end_date' => null,
+        ]);
+        $this->presentWeek($imssSinNumero);
+        $this->presentWeek($enPruebaIndefinida);
+
+        $a = $this->calculator()->calculateEmployeePayroll($period, $imssSinNumero);
+        $b = $this->calculator()->calculateEmployeePayroll($period, $enPruebaIndefinida);
+
+        $this->assertEqualsWithDelta(5600.00, (float) $a->cash_amount, 0.01, 'IMSS sin número → efectivo');
+        $this->assertEqualsWithDelta(0.00, (float) $a->bank_amount, 0.01);
+        $this->assertEqualsWithDelta(5600.00, (float) $b->cash_amount, 0.01, 'prueba indefinida → efectivo');
+        $this->assertEqualsWithDelta(0.00, (float) $b->bank_amount, 0.01);
     }
 
     public function test_imss_flag_does_not_change_regular_or_net_pay(): void

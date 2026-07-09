@@ -480,7 +480,7 @@ class CashPayoutTest extends FeatureTestCase
     {
         // No trial + IMSS => el sueldo base va a banco (bank_amount > 0).
         $employee = Employee::factory()->create([
-            'status' => 'active', 'is_trial_period' => false, 'is_imss_enrolled' => true,
+            'status' => 'active', 'is_trial_period' => false, 'is_imss_enrolled' => true, 'imss_number' => '75-18-04-2297-6',
         ]);
         $period = PayrollPeriod::factory()->create(['type' => 'weekly', 'status' => 'approved']);
         PayrollEntry::factory()->create([
@@ -512,7 +512,7 @@ class CashPayoutTest extends FeatureTestCase
     {
         // IMSS => el efectivo son solo los extras (la base va a banco).
         $employee = Employee::factory()->create([
-            'status' => 'active', 'is_trial_period' => false, 'is_imss_enrolled' => true,
+            'status' => 'active', 'is_trial_period' => false, 'is_imss_enrolled' => true, 'imss_number' => '75-18-04-2297-6',
         ]);
         $period = PayrollPeriod::factory()->create(['type' => 'weekly', 'status' => 'approved']);
         PayrollEntry::factory()->create([
