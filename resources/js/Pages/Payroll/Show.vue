@@ -144,6 +144,18 @@ const closeCash = () => {
                         <span :class="[statusColors[period.status], 'px-3 py-1 text-sm font-medium rounded-full']">
                             {{ statusLabels[period.status] }}
                         </span>
+                        <span
+                            v-if="period.department"
+                            class="px-3 py-1 text-sm font-medium rounded-full bg-indigo-100 text-indigo-800"
+                        >
+                            {{ period.department.name }}
+                        </span>
+                        <span
+                            v-else
+                            class="px-3 py-1 text-sm font-medium rounded-full bg-gray-100 text-gray-600"
+                        >
+                            General
+                        </span>
                     </div>
                     <p class="text-gray-600 mt-1">
                         {{ formatDate(period.start_date) }} - {{ formatDate(period.end_date) }}

@@ -38,4 +38,14 @@ class DepartmentFactory extends Factory
             'is_active' => false,
         ]);
     }
+
+    /**
+     * Indicate that the department runs its own separate payroll (e.g. Taller).
+     */
+    public function separatePayroll(): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'has_separate_payroll' => true,
+        ]);
+    }
 }

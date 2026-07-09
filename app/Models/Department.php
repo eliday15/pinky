@@ -38,10 +38,12 @@ class Department extends Model
         'velada_end',
         'supervisor_user_id',
         'is_active',
+        'has_separate_payroll',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
+        'has_separate_payroll' => 'boolean',
         'default_break_minutes' => 'integer',
         'weekend_unit_hours' => 'integer',
         'cena_min_overtime_hours' => 'decimal:2',
@@ -88,5 +90,13 @@ class Department extends Model
     public function scopeActive($query)
     {
         return $query->where('is_active', true);
+    }
+
+    /**
+     * Scope for departments that run their own separate payroll (e.g. Taller).
+     */
+    public function scopeSeparatePayroll($query)
+    {
+        return $query->where('has_separate_payroll', true);
     }
 }

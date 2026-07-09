@@ -14,6 +14,7 @@ class PayrollPeriod extends Model
     protected $fillable = [
         'name',
         'type',
+        'department_id',
         'start_date',
         'end_date',
         'payment_date',
@@ -35,6 +36,23 @@ class PayrollPeriod extends Model
         'cash_closed_at' => 'datetime',
         'cash_delivery_confirmed_at' => 'datetime',
     ];
+
+    /**
+     * Departamento al que está acotado el periodo (alcance/scope). NULL = nómina
+     * GENERAL (todos menos los deptos con su propia nómina).
+     */
+    public function department(): BelongsTo
+    {
+        return $this->belongsTo(Department::class);
+    }
+
+    /**
+     * ¿Es la nómina general (sin departamento acotado)?
+     */
+    public function isGeneral(): bool
+    {
+        return $this->department_id === null;
+    }
 
     /**
      * Get the user who created this period.

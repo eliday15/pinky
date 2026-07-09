@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Exports\ContpaqiPrenominaExport;
 use App\Http\Traits\VerifiesTwoFactor;
 use App\Models\CashPayout;
+use App\Models\Department;
 use App\Models\PayrollEntry;
 use App\Models\PayrollPeriod;
 use App\Services\CashDenominationService;
@@ -13,6 +14,7 @@ use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 use Inertia\Response;
 use Maatwebsite\Excel\Excel;
@@ -37,7 +39,7 @@ class PayrollController extends Controller
             abort(403);
         }
 
-        $periods = PayrollPeriod::with(['createdBy', 'approvedBy'])
+        $periods = PayrollPeriod::with(['createdBy', 'approvedBy', 'department:id,name'])
             ->withCount('entries')
             ->withSum('entries', 'net_pay')
             ->orderBy('start_date', 'desc')
@@ -77,6 +79,11 @@ class PayrollController extends Controller
                 'end_date' => $suggestedEnd->toDateString(),
                 'payment_date' => $suggestedPayment->toDateString(),
             ],
+            // Departamentos con nómina propia (p. ej. Taller): el usuario elige
+            // si el periodo es General o de uno de estos departamentos.
+            'separatePayrollDepartments' => Department::separatePayroll()
+                ->orderBy('name')
+                ->get(['id', 'name']),
         ]);
     }
 
@@ -92,16 +99,27 @@ class PayrollController extends Controller
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'type' => ['required', 'in:weekly,biweekly,monthly'],
+            // Alcance: null = nómina general; un depto con nómina propia (Taller)
+            // = nómina de solo ese departamento.
+            'department_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('departments', 'id')->where('has_separate_payroll', true),
+            ],
             'start_date' => ['required', 'date'],
             'end_date' => ['required', 'date', 'after:start_date'],
             'payment_date' => ['required', 'date', 'after_or_equal:end_date'],
         ]);
 
-        // Check for overlapping periods
-        $overlap = PayrollPeriod::where(function ($q) use ($validated) {
-            $q->whereBetween('start_date', [$validated['start_date'], $validated['end_date']])
-                ->orWhereBetween('end_date', [$validated['start_date'], $validated['end_date']]);
-        })->exists();
+        $departmentId = $validated['department_id'] ?? null;
+
+        // El traslape se valida DENTRO del mismo alcance: una nómina general y
+        // una de Taller para las mismas fechas son complementarias, no chocan.
+        $overlap = PayrollPeriod::where('department_id', $departmentId)
+            ->where(function ($q) use ($validated) {
+                $q->whereBetween('start_date', [$validated['start_date'], $validated['end_date']])
+                    ->orWhereBetween('end_date', [$validated['start_date'], $validated['end_date']]);
+            })->exists();
 
         if ($overlap) {
             return redirect()->back()
@@ -111,6 +129,7 @@ class PayrollController extends Controller
 
         $period = PayrollPeriod::create([
             ...$validated,
+            'department_id' => $departmentId,
             'status' => 'draft',
             'created_by' => auth()->id(),
         ]);
@@ -133,7 +152,7 @@ class PayrollController extends Controller
             abort(403);
         }
 
-        $payroll->load(['createdBy', 'approvedBy']);
+        $payroll->load(['createdBy', 'approvedBy', 'department']);
 
         $entries = PayrollEntry::where('payroll_period_id', $payroll->id)
             ->with(['employee.department', 'employee.position'])

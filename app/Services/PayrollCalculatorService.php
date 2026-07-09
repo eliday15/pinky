@@ -50,12 +50,22 @@ class PayrollCalculatorService
 
         $period->update(['status' => 'calculating']);
 
-        // Eager load compensation types + department (weekend unit rule) to avoid N+1
+        // Eager load compensation types + department (weekend unit rule) to avoid N+1.
+        //
+        // Alcance del periodo (nómina por departamento):
+        // - department_id set  => SOLO ese departamento.
+        // - department_id NULL => nómina GENERAL: todos menos los deptos que
+        //   llevan su propia nómina (has_separate_payroll), p. ej. Taller.
         $employees = Employee::active()
             ->with([
                 'compensationTypes' => fn ($q) => $q->wherePivot('is_active', true),
                 'department',
             ])
+            ->when($period->department_id, fn ($q) => $q->where('department_id', $period->department_id))
+            ->when(
+                $period->department_id === null,
+                fn ($q) => $q->whereDoesntHave('department', fn ($d) => $d->where('has_separate_payroll', true))
+            )
             ->get();
 
         foreach ($employees as $employee) {

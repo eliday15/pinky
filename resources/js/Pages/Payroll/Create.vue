@@ -8,9 +8,19 @@ import { periodTypeInfo } from '@/utils/payrollPeriodType';
 
 const props = defineProps({
     suggestedDates: Object,
+    // Departamentos con nómina propia (p. ej. Taller). Si viene vacío, no se
+    // muestra el selector de alcance y todo es nómina general.
+    separatePayrollDepartments: {
+        type: Array,
+        default: () => [],
+    },
 });
 
 const typeInfo = computed(() => periodTypeInfo(form.type));
+
+const selectedDeptName = computed(
+    () => props.separatePayrollDepartments.find((d) => d.id === form.department_id)?.name ?? null,
+);
 
 const addDaysToDate = (dateStr, days) => {
     const d = new Date(`${dateStr}T00:00:00Z`);
@@ -30,6 +40,7 @@ const today = () => {
 const form = useForm({
     name: '',
     type: 'weekly',
+    department_id: null,
     start_date: addDaysToDate(today(), -6),
     end_date: today(),
     payment_date: addDaysToDate(today(), 1),
@@ -67,7 +78,8 @@ const formatDateForName = (date) => fmtDate(date, {
 const generateName = () => {
     if (form.start_date && form.end_date) {
         const typeLabel = form.type === 'biweekly' ? 'Quincena' : form.type === 'weekly' ? 'Semana' : 'Mes';
-        form.name = `${typeLabel} ${formatDateForName(form.start_date)} - ${formatDateForName(form.end_date)}`;
+        const suffix = selectedDeptName.value ? ` - ${selectedDeptName.value}` : '';
+        form.name = `${typeLabel} ${formatDateForName(form.start_date)} - ${formatDateForName(form.end_date)}${suffix}`;
     }
 };
 
@@ -134,6 +146,28 @@ const submit = () => {
                             </li>
                         </ul>
                     </div>
+                </div>
+
+                <!-- Alcance de la nómina (General / departamento con nómina propia) -->
+                <div v-if="separatePayrollDepartments.length">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">
+                        Nómina <span class="text-red-500">*</span>
+                    </label>
+                    <select
+                        v-model="form.department_id"
+                        class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                        :class="{ 'border-red-500': form.errors.department_id }"
+                    >
+                        <option :value="null">General (todos menos los de nómina propia)</option>
+                        <option v-for="dept in separatePayrollDepartments" :key="dept.id" :value="dept.id">
+                            Solo {{ dept.name }}
+                        </option>
+                    </select>
+                    <p class="mt-1 text-xs text-gray-500">
+                        La nómina <strong>General</strong> excluye a los departamentos con nómina propia
+                        (p. ej. Taller); cada uno se genera en su propio periodo.
+                    </p>
+                    <p v-if="form.errors.department_id" class="mt-1 text-sm text-red-600">{{ form.errors.department_id }}</p>
                 </div>
 
                 <!-- Date Range -->

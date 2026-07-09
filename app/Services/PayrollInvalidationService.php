@@ -36,22 +36,34 @@ class PayrollInvalidationService
     {
         $endDate = $endDate ?? $startDate;
 
+        // El empleado solo pertenece a UN alcance de nómina: si su departamento
+        // lleva nómina propia (Taller), únicamente su periodo de departamento le
+        // corresponde; si no, únicamente la nómina general (department_id NULL).
+        // Sin este filtro, un cambio de un empleado de Taller recalcularía/
+        // marcaría la nómina general (y le crearía una entrada) — doble conteo.
+        $employee = Employee::with('department')->find($employeeId);
+
+        if (! $employee) {
+            return;
+        }
+
         $periods = PayrollPeriod::where('start_date', '<=', $endDate)
             ->where('end_date', '>=', $startDate)
             ->whereIn('status', ['draft', 'calculating', 'review', 'approved'])
+            ->when(
+                $employee->department?->has_separate_payroll,
+                fn ($q) => $q->where('department_id', $employee->department_id),
+                fn ($q) => $q->whereNull('department_id')
+            )
             ->get();
 
         if ($periods->isEmpty()) {
             return;
         }
 
-        $employee = null;
-
         foreach ($periods as $period) {
             if (in_array($period->status, ['draft', 'calculating'], true)) {
-                $employee = $employee ?? Employee::find($employeeId);
-
-                if ($employee && $employee->status === 'active') {
+                if ($employee->status === 'active') {
                     $this->calculator->calculateEmployeePayroll($period, $employee);
                 }
 

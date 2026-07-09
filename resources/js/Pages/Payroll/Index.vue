@@ -97,7 +97,21 @@ const deletePeriod = (period) => {
                     <tr v-for="period in periods.data" :key="period.id" class="hover:bg-gray-50">
                         <td class="px-6 py-4 whitespace-nowrap">
                             <div>
-                                <p class="text-sm font-medium text-gray-900">{{ period.name }}</p>
+                                <div class="flex items-center gap-2">
+                                    <p class="text-sm font-medium text-gray-900">{{ period.name }}</p>
+                                    <span
+                                        v-if="period.department"
+                                        class="px-2 py-0.5 text-xs font-medium rounded-full bg-indigo-100 text-indigo-800"
+                                    >
+                                        {{ period.department.name }}
+                                    </span>
+                                    <span
+                                        v-else
+                                        class="px-2 py-0.5 text-xs font-medium rounded-full bg-gray-100 text-gray-600"
+                                    >
+                                        General
+                                    </span>
+                                </div>
                                 <p class="text-xs text-gray-500">
                                     {{ formatDate(period.start_date) }} - {{ formatDate(period.end_date) }}
                                 </p>

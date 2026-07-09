@@ -2,6 +2,7 @@
 
 namespace Database\Factories;
 
+use App\Models\Department;
 use App\Models\PayrollPeriod;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
@@ -65,6 +66,16 @@ class PayrollPeriodFactory extends Factory
     {
         return $this->state(fn (array $attributes) => [
             'type' => 'monthly',
+        ]);
+    }
+
+    /**
+     * Acota el periodo a un departamento (nómina propia, p. ej. Taller).
+     */
+    public function forDepartment(Department|int $department): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'department_id' => $department instanceof Department ? $department->id : $department,
         ]);
     }
 
