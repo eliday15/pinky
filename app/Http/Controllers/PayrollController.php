@@ -122,8 +122,12 @@ class PayrollController extends Controller
             })->exists();
 
         if ($overlap) {
+            $scopeLabel = $departmentId
+                ? (Department::find($departmentId)?->name ?? 'de departamento')
+                : 'General';
+
             return redirect()->back()
-                ->withErrors(['start_date' => 'Ya existe un periodo de nomina que se traslapa con estas fechas.'])
+                ->withErrors(['start_date' => "Ya existe una nomina {$scopeLabel} que se traslapa con estas fechas. Si quieres otra nomina para los mismos dias, cambia el selector \"Nomina\" (p. ej. a Solo Taller)."])
                 ->withInput();
         }
 
