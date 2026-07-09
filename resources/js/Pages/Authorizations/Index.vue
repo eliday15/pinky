@@ -206,6 +206,29 @@ const submitReject = () => {
     });
 };
 
+/* ---- Editar fecha (solo admin) ---- */
+const showEditDateModal = ref(false);
+const editDateAuth = ref(null);
+const editDateForm = useForm({ date: '' });
+
+const openEditDate = (auth) => {
+    editDateAuth.value = auth;
+    // auth.date viene como 'YYYY-MM-DD' (cast date:Y-m-d); el input date lo usa tal cual.
+    editDateForm.date = (auth.date || '').slice(0, 10);
+    editDateForm.clearErrors();
+    showEditDateModal.value = true;
+};
+
+const submitEditDate = () => {
+    editDateForm.post(route('authorizations.updateDate', editDateAuth.value.id), {
+        preserveScroll: true,
+        onSuccess: () => {
+            showEditDateModal.value = false;
+            editDateAuth.value = null;
+        },
+    });
+};
+
 const statusColors = {
     pending: 'bg-yellow-100 text-yellow-800',
     approved: 'bg-green-100 text-green-800',
@@ -498,6 +521,13 @@ const typeLabels = {
                             >
                                 Ver
                             </Link>
+                            <button
+                                v-if="can.edit_date && auth.status !== 'paid'"
+                                @click="openEditDate(auth)"
+                                class="text-indigo-600 hover:text-indigo-900"
+                            >
+                                Editar fecha
+                            </button>
                             <template v-if="auth.status === 'pending'">
                                 <button
                                     v-if="auth.can_approve"
@@ -713,6 +743,55 @@ const typeLabels = {
                                 class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
                             >
                                 Rechazar
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Editar fecha Modal (solo admin) -->
+        <div v-if="showEditDateModal && editDateAuth" class="fixed inset-0 z-50 overflow-y-auto">
+            <div class="flex items-center justify-center min-h-screen px-4">
+                <div class="fixed inset-0 bg-gray-500 bg-opacity-75" @click="showEditDateModal = false"></div>
+                <div class="relative bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-1">
+                        Editar fecha de la autorización
+                    </h3>
+                    <p class="text-sm text-gray-500 mb-4">
+                        {{ editDateAuth.employee?.full_name }} — mover la autorización a otra fecha
+                        cambia en qué semana de nómina cae.
+                    </p>
+                    <form @submit.prevent="submitEditDate">
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                Nueva fecha *
+                            </label>
+                            <input
+                                v-model="editDateForm.date"
+                                type="date"
+                                required
+                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                :class="{ 'border-red-500': editDateForm.errors.date }"
+                            />
+                            <p v-if="editDateForm.errors.date" class="mt-1 text-sm text-red-600">
+                                {{ editDateForm.errors.date }}
+                            </p>
+                        </div>
+                        <div class="flex justify-end space-x-3">
+                            <button
+                                type="button"
+                                @click="showEditDateModal = false"
+                                class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                type="submit"
+                                :disabled="editDateForm.processing"
+                                class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+                            >
+                                Guardar fecha
                             </button>
                         </div>
                     </form>

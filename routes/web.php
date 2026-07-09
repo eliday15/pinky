@@ -94,6 +94,7 @@ Route::middleware(['auth', 'password-changed', 'two-factor-setup'])->group(funct
     Route::post('/authorizations/{authorization}/approve', [AuthorizationController::class, 'approve'])->name('authorizations.approve');
     Route::post('/authorizations/{authorization}/reject', [AuthorizationController::class, 'reject'])->name('authorizations.reject');
     Route::post('/authorizations/{authorization}/mark-paid', [AuthorizationController::class, 'markPaid'])->name('authorizations.markPaid');
+    Route::post('/authorizations/{authorization}/update-date', [AuthorizationController::class, 'updateDate'])->name('authorizations.updateDate');
 
     // Payroll
     Route::get('/payroll', [PayrollController::class, 'index'])->name('payroll.index');

@@ -157,6 +157,8 @@ class AuthorizationController extends Controller
                 'create' => $user->can('create', Authorization::class),
                 'approve' => $user->hasPermissionTo('authorizations.approve'),
                 'reject' => $user->hasPermissionTo('authorizations.reject'),
+                // Solo el admin puede cambiar la fecha de una autorización.
+                'edit_date' => $user->hasRole('admin'),
             ],
         ]);
     }
@@ -1262,6 +1264,52 @@ class AuthorizationController extends Controller
         $authorization->markAsPaid();
 
         return redirect()->back()->with('success', 'Autorizacion marcada como pagada.');
+    }
+
+    /**
+     * Cambia la FECHA de una autorización — SOLO el admin (Luis 2026-07-09).
+     *
+     * La fecha determina en qué semana/periodo de nómina cae la autorización;
+     * moverla es lo que antes se hacía por base de datos. Recalcula el
+     * attendance de la fecha vieja y la nueva e invalida la nómina de los
+     * periodos que tocan AMBAS, para que el cambio se refleje. Una autorización
+     * ya pagada queda bloqueada.
+     */
+    public function updateDate(Request $request, Authorization $authorization, ZktecoSyncService $syncService): RedirectResponse
+    {
+        abort_unless(Auth::user()->hasRole('admin'), 403);
+
+        if ($authorization->isPaid()) {
+            return redirect()->back()->with('error', 'No se puede cambiar la fecha de una autorización ya pagada.');
+        }
+
+        $validated = $request->validate([
+            'date' => ['required', 'date'],
+        ]);
+
+        $oldDate = Carbon::parse($authorization->date)->toDateString();
+        $newDate = Carbon::parse($validated['date'])->toDateString();
+
+        if ($oldDate === $newDate) {
+            return redirect()->back()->with('success', 'La fecha no cambió.');
+        }
+
+        $authorization->update(['date' => $newDate]);
+
+        // Fecha NUEVA: recalcula asistencia, cierra anomalías e invalida nómina.
+        $this->applyApprovalEffects($authorization, $syncService);
+
+        // Fecha VIEJA: la autorización ya no está ahí, así que recalcula su
+        // attendance (si existe) e invalida la nómina de esa fecha también.
+        $oldRecord = AttendanceRecord::where('employee_id', $authorization->employee_id)
+            ->whereDate('work_date', $oldDate)
+            ->first();
+        if ($oldRecord) {
+            $syncService->recalculateAttendanceRecord($oldRecord);
+        }
+        app(PayrollInvalidationService::class)->invalidate($authorization->employee_id, $oldDate);
+
+        return redirect()->back()->with('success', 'Fecha actualizada.');
     }
 
     /**
