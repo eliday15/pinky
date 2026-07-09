@@ -8,7 +8,14 @@ import { periodTypeInfo } from '@/utils/payrollPeriodType';
 const props = defineProps({
     entry: Object,
     cashSplit: { type: Object, default: () => ({}) },
+    canal: { type: String, default: null },
 });
+
+// Modo de vista: al llegar desde "solo efectivo" / "solo transferencia" se
+// muestra únicamente ese canal; sin canal, el detalle completo.
+const viewingCash = computed(() => props.canal === 'efectivo');
+const viewingTransfer = computed(() => props.canal === 'transfer');
+const fullView = computed(() => !viewingCash.value && !viewingTransfer.value);
 
 const typeInfo = computed(() =>
     periodTypeInfo(props.entry.calculation_breakdown?.scope?.period_type || props.entry.payroll_period?.type)
@@ -137,6 +144,24 @@ const pesoRounding = computed(() => Number(props.cashSplit?.period_amount ?? 0) 
             </Link>
         </div>
 
+        <!-- Banner de canal: se está viendo solo un canal de pago -->
+        <div
+            v-if="!fullView"
+            class="mb-6 rounded-lg border p-3 flex items-center justify-between gap-3 flex-wrap"
+            :class="viewingCash ? 'border-pink-300 bg-pink-50' : 'border-indigo-300 bg-indigo-50'"
+        >
+            <p class="text-sm font-medium" :class="viewingCash ? 'text-pink-700' : 'text-indigo-700'">
+                Mostrando solo lo que se paga en {{ viewingCash ? 'efectivo' : 'transferencia' }}.
+            </p>
+            <Link
+                :href="route('payroll.entry', entry.id)"
+                class="text-sm font-medium underline"
+                :class="viewingCash ? 'text-pink-700' : 'text-indigo-700'"
+            >
+                Ver detalle completo
+            </Link>
+        </div>
+
         <!-- Employee Header -->
         <div class="bg-white rounded-lg shadow p-6 mb-6">
             <div class="flex items-center">
@@ -181,7 +206,7 @@ const pesoRounding = computed(() => Number(props.cashSplit?.period_amount ?? 0) 
         </div>
 
         <!-- What this period pays -->
-        <div class="border rounded-lg p-4 mb-6" :class="typeInfo.tone.box">
+        <div v-if="fullView" class="border rounded-lg p-4 mb-6" :class="typeInfo.tone.box">
             <div class="flex flex-wrap items-center gap-2">
                 <span class="px-2 py-0.5 text-xs font-medium rounded-full" :class="typeInfo.tone.chip">{{ typeInfo.label }}</span>
                 <p class="text-sm font-semibold" :class="typeInfo.tone.title">{{ typeInfo.title }}</p>
@@ -189,7 +214,7 @@ const pesoRounding = computed(() => Number(props.cashSplit?.period_amount ?? 0) 
             <p class="mt-1 text-sm" :class="typeInfo.tone.text">{{ typeInfo.description }}</p>
         </div>
 
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div v-if="fullView" class="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <!-- Hours Breakdown -->
             <div class="bg-white rounded-lg shadow p-6">
                 <h3 class="text-lg font-semibold text-gray-800 mb-4">Desglose de Horas</h3>
@@ -248,7 +273,7 @@ const pesoRounding = computed(() => Number(props.cashSplit?.period_amount ?? 0) 
         </div>
 
         <!-- Rates Applied -->
-        <div class="bg-white rounded-lg shadow p-6 mt-6">
+        <div v-if="fullView" class="bg-white rounded-lg shadow p-6 mt-6">
             <h3 class="text-lg font-semibold text-gray-800 mb-4">Tasas Aplicadas</h3>
             <div class="grid grid-cols-3 gap-4 text-sm">
                 <div class="bg-gray-50 rounded-lg p-4 text-center">
@@ -272,7 +297,7 @@ const pesoRounding = computed(() => Number(props.cashSplit?.period_amount ?? 0) 
         </div>
 
         <!-- Compensation Concepts Breakdown (when using comp types) -->
-        <div v-if="breakdown.compensation_concepts?.length" class="bg-white rounded-lg shadow p-6 mt-6">
+        <div v-if="fullView && breakdown.compensation_concepts?.length" class="bg-white rounded-lg shadow p-6 mt-6">
             <h3 class="text-lg font-semibold text-gray-800 mb-4">Conceptos de Compensacion</h3>
             <div class="space-y-3">
                 <div
@@ -299,7 +324,7 @@ const pesoRounding = computed(() => Number(props.cashSplit?.period_amount ?? 0) 
         </div>
 
         <!-- Payment Breakdown -->
-        <div class="bg-white rounded-lg shadow p-6 mt-6">
+        <div v-if="fullView" class="bg-white rounded-lg shadow p-6 mt-6">
             <h3 class="text-lg font-semibold text-gray-800 mb-4">Calculo de Pago</h3>
             <div class="space-y-3">
                 <div class="flex justify-between items-center py-2 border-b">
@@ -403,9 +428,9 @@ const pesoRounding = computed(() => Number(props.cashSplit?.period_amount ?? 0) 
         <!-- Reparto del pago en DOS TABLAS: qué va por transferencia (banco) y qué
              en efectivo. El efectivo separa lo de este periodo del acumulado que
              se recorrió sin cobrar de semanas anteriores. -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+        <div class="grid grid-cols-1 gap-6 mt-6" :class="{ 'lg:grid-cols-2': fullView }">
             <!-- Tabla: Transferencia (banco) -->
-            <div class="bg-white rounded-lg shadow overflow-hidden border-l-4 border-indigo-500">
+            <div v-if="fullView || viewingTransfer" class="bg-white rounded-lg shadow overflow-hidden border-l-4 border-indigo-500">
                 <div class="px-6 py-4 border-b border-gray-100">
                     <h3 class="text-lg font-semibold text-gray-800">Transferencia</h3>
                     <p class="text-xs text-gray-400">Sueldo base por banco / CONTPAQi</p>
@@ -437,7 +462,7 @@ const pesoRounding = computed(() => Number(props.cashSplit?.period_amount ?? 0) 
             </div>
 
             <!-- Tabla: Efectivo -->
-            <div class="bg-white rounded-lg shadow overflow-hidden border-l-4 border-pink-500">
+            <div v-if="fullView || viewingCash" class="bg-white rounded-lg shadow overflow-hidden border-l-4 border-pink-500">
                 <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
                     <div>
                         <h3 class="text-lg font-semibold text-gray-800">Efectivo</h3>
@@ -502,7 +527,7 @@ const pesoRounding = computed(() => Number(props.cashSplit?.period_amount ?? 0) 
         </div>
 
         <!-- Incidents Summary (from breakdown) -->
-        <div v-if="breakdown.incidents" class="bg-white rounded-lg shadow p-6 mt-6">
+        <div v-if="fullView && breakdown.incidents" class="bg-white rounded-lg shadow p-6 mt-6">
             <h3 class="text-lg font-semibold text-gray-800 mb-4">Incidencias en el Periodo</h3>
             <div class="grid grid-cols-5 gap-4">
                 <div class="text-center">

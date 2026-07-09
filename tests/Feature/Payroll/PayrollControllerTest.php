@@ -918,6 +918,29 @@ class PayrollControllerTest extends FeatureTestCase
                 ->etc());
     }
 
+    public function test_entry_detail_passes_validated_canal(): void
+    {
+        $period = PayrollPeriod::factory()->review()->create();
+        $entry = PayrollEntry::factory()->create(['payroll_period_id' => $period->id]);
+
+        $this->actingAsAdmin();
+
+        // Canal válido pasa tal cual.
+        $this->get(route('payroll.entry', ['entry' => $entry, 'canal' => 'efectivo']))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page->where('canal', 'efectivo')->etc());
+
+        // Canal inválido se descarta (null).
+        $this->get(route('payroll.entry', ['entry' => $entry, 'canal' => 'hacker']))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page->where('canal', null)->etc());
+
+        // Sin canal → null (detalle completo).
+        $this->get(route('payroll.entry', $entry))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page->where('canal', null)->etc());
+    }
+
     public function test_entry_detail_forbidden_for_rrhh(): void
     {
         $entry = PayrollEntry::factory()->create();

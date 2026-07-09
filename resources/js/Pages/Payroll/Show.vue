@@ -15,19 +15,19 @@ const props = defineProps({
 
 const typeInfo = computed(() => periodTypeInfo(props.period.type));
 
-// Las tarjetas de reparto llevan a su pantalla filtrada. Efectivo solo cuando ya
-// se preparó el efectivo (hay desglose que ver); transferencias en cuanto hay
-// asientos. Mismas condiciones que los botones de arriba.
-const canGoCash = computed(() => !!props.can?.payCash && !!props.period.cash_closed_at);
-const canGoTransfer = computed(() => !!props.can?.payCash && props.entries.length > 0);
-
 const hasTwoFactor = computed(() => usePage().props.auth.has_two_factor);
 const showApproveModal = ref(false);
 const showMarkPaidModal = ref(false);
 
 const search = ref('');
 const deptFilter = ref('');
+const channelFilter = ref(''); // '' | 'efectivo' | 'transfer'
 const showExportMenu = ref(false);
+
+// Alterna el filtro por canal (efectivo/transferencia) en la misma tabla.
+const toggleChannel = (channel) => {
+    channelFilter.value = channelFilter.value === channel ? '' : channel;
+};
 
 const statusColors = {
     draft: 'bg-gray-100 text-gray-800',
@@ -64,9 +64,15 @@ const departments = computed(() => {
     return [...new Set(names)].sort((a, b) => a.localeCompare(b, 'es'));
 });
 
-// Tabla filtrada por departamento (autocomplete) y/o por nombre/número.
+// Tabla filtrada por canal (efectivo/transferencia), departamento (autocomplete)
+// y/o por nombre/número.
 const visibleEntries = computed(() => {
     let list = props.entries;
+    if (channelFilter.value === 'efectivo') {
+        list = list.filter(e => Number(e.cash_amount) > 0);
+    } else if (channelFilter.value === 'transfer') {
+        list = list.filter(e => Number(e.bank_amount) > 0);
+    }
     if (deptFilter.value) {
         const d = deptFilter.value.toLowerCase();
         list = list.filter(e => (e.employee?.department?.name || '').toLowerCase().includes(d));
@@ -260,35 +266,39 @@ const closeCash = () => {
             </ul>
         </div>
 
-        <!-- Reparto del pago: efectivo y transferencia. Cada tarjeta lleva a su
-             pantalla filtrada (solo efectivo / solo transferencias). -->
+        <!-- Reparto del pago: efectivo y transferencia. Cada tarjeta filtra la
+             tabla de abajo a solo ese canal (clic de nuevo para quitar el filtro). -->
         <div v-if="entries.length > 0" class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-            <component
-                :is="canGoCash ? Link : 'div'"
-                :href="canGoCash ? route('payroll.cash', period.id) : undefined"
-                class="bg-white rounded-lg shadow border-l-4 border-pink-500 p-5 flex items-center justify-between"
-                :class="canGoCash ? 'hover:shadow-md hover:bg-pink-50/40 transition cursor-pointer' : ''"
+            <button
+                type="button"
+                @click="toggleChannel('efectivo')"
+                class="text-left bg-white rounded-lg shadow border-l-4 border-pink-500 p-5 flex items-center justify-between hover:shadow-md hover:bg-pink-50/40 transition cursor-pointer"
+                :class="channelFilter === 'efectivo' ? 'ring-2 ring-pink-400' : ''"
             >
                 <div>
                     <p class="text-sm font-medium text-gray-500">Efectivo</p>
                     <p class="text-xs text-gray-400">Extras + base de quien cobra en efectivo</p>
-                    <p v-if="canGoCash" class="text-xs font-medium text-pink-600 mt-1">Ver solo efectivo &rarr;</p>
+                    <p class="text-xs font-medium text-pink-600 mt-1">
+                        {{ channelFilter === 'efectivo' ? 'Mostrando solo efectivo — quitar filtro' : 'Ver solo efectivo →' }}
+                    </p>
                 </div>
                 <p class="text-3xl font-bold text-pink-600">{{ formatCurrency(summary.total_cash) }}</p>
-            </component>
-            <component
-                :is="canGoTransfer ? Link : 'div'"
-                :href="canGoTransfer ? route('payroll.transfers', period.id) : undefined"
-                class="bg-white rounded-lg shadow border-l-4 border-indigo-500 p-5 flex items-center justify-between"
-                :class="canGoTransfer ? 'hover:shadow-md hover:bg-indigo-50/40 transition cursor-pointer' : ''"
+            </button>
+            <button
+                type="button"
+                @click="toggleChannel('transfer')"
+                class="text-left bg-white rounded-lg shadow border-l-4 border-indigo-500 p-5 flex items-center justify-between hover:shadow-md hover:bg-indigo-50/40 transition cursor-pointer"
+                :class="channelFilter === 'transfer' ? 'ring-2 ring-indigo-400' : ''"
             >
                 <div>
                     <p class="text-sm font-medium text-gray-500">Transferencia</p>
                     <p class="text-xs text-gray-400">Sueldo base por banco / CONTPAQi</p>
-                    <p v-if="canGoTransfer" class="text-xs font-medium text-indigo-600 mt-1">Ver solo transferencias &rarr;</p>
+                    <p class="text-xs font-medium text-indigo-600 mt-1">
+                        {{ channelFilter === 'transfer' ? 'Mostrando solo transferencias — quitar filtro' : 'Ver solo transferencias →' }}
+                    </p>
                 </div>
                 <p class="text-3xl font-bold text-indigo-600">{{ formatCurrency(summary.total_transfer) }}</p>
-            </component>
+            </button>
         </div>
 
         <!-- Summary Cards -->
@@ -335,9 +345,9 @@ const closeCash = () => {
                 <option v-for="d in departments" :key="d" :value="d" />
             </datalist>
             <button
-                v-if="deptFilter || search"
+                v-if="deptFilter || search || channelFilter"
                 type="button"
-                @click="deptFilter = ''; search = ''"
+                @click="deptFilter = ''; search = ''; channelFilter = ''"
                 class="text-sm text-gray-500 hover:text-gray-700"
             >
                 Limpiar
@@ -423,7 +433,7 @@ const closeCash = () => {
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-right text-sm">
                             <Link
-                                :href="route('payroll.entry', entry.id)"
+                                :href="channelFilter ? route('payroll.entry', { entry: entry.id, canal: channelFilter }) : route('payroll.entry', entry.id)"
                                 class="text-pink-600 hover:text-pink-900"
                             >
                                 Ver

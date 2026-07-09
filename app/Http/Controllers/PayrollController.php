@@ -638,7 +638,7 @@ class PayrollController extends Controller
     /**
      * Show detail for a single employee's payroll entry.
      */
-    public function entryDetail(PayrollEntry $entry): Response
+    public function entryDetail(Request $request, PayrollEntry $entry): Response
     {
         $user = auth()->user();
         if (! $user->hasPermissionTo('payroll.view_basic') && ! $user->hasPermissionTo('payroll.view_complete')) {
@@ -647,9 +647,17 @@ class PayrollController extends Controller
 
         $entry->load(['employee.department', 'employee.position', 'employee.schedule', 'payrollPeriod']);
 
+        // Canal a resaltar: al llegar desde "solo efectivo" / "solo transferencia"
+        // el detalle muestra únicamente ese canal.
+        $canal = $request->query('canal');
+        if (! in_array($canal, ['efectivo', 'transfer'], true)) {
+            $canal = null;
+        }
+
         return Inertia::render('Payroll/EntryDetail', [
             'entry' => $entry,
             'cashSplit' => $this->cashSplitForEntry($entry),
+            'canal' => $canal,
         ]);
     }
 
