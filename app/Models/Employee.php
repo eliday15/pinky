@@ -602,14 +602,15 @@ class Employee extends Model
     /**
      * ¿El sueldo BASE de este empleado se paga en EFECTIVO?
      *
-     * Solo cuando sigue en periodo de prueba Y aún NO está inscrito al IMSS; en
-     * cualquier otro caso el base se paga por TRANSFERENCIA (banco/CONTPAQi).
-     * Los EXTRAS siempre son efectivo. Fuente única de la regla: la consumen el
-     * cálculo de nómina y el cierre de efectivo.
+     * Regla (Luis 2026-07-09): todo empleado que NO está inscrito al IMSS cobra
+     * su base en EFECTIVO; el que SÍ está inscrito lo cobra por TRANSFERENCIA
+     * (banco/CONTPAQi). El periodo de prueba ya no importa. Los EXTRAS siempre
+     * son efectivo. Fuente única de la regla: la consumen el cálculo de nómina y
+     * el cierre de efectivo.
      */
     public function paysBaseInCash(): bool
     {
-        return $this->isInTrialPeriod() && ! $this->is_imss_enrolled;
+        return ! $this->is_imss_enrolled;
     }
 
     /**

@@ -53,13 +53,14 @@ class CashSplitCalculationTest extends FeatureTestCase
         $this->assertEqualsWithDelta(0.00, (float) $entry->bank_amount, 0.01);
     }
 
-    public function test_non_trial_weekly_sends_base_to_bank(): void
+    public function test_non_imss_weekly_sends_base_to_cash(): void
     {
-        // Empleado de planta (ya NO en prueba): aunque no tenga el flag de IMSS,
-        // su sueldo base se paga por TRANSFERENCIA, no en efectivo.
+        // Regla Luis 2026-07-09: todo empleado SIN IMSS cobra su base en
+        // EFECTIVO, esté o no en periodo de prueba.
         $employee = Employee::factory()->create([
             'status' => 'active',
             'daily_salary' => 800.00,
+            'hire_date' => '2025-01-01',
             'is_imss_enrolled' => false,
             'is_trial_period' => false,
         ]);
@@ -73,8 +74,8 @@ class CashSplitCalculationTest extends FeatureTestCase
         $entry = $this->calculator()->calculateEmployeePayroll($period, $employee);
 
         $this->assertEqualsWithDelta(5600.00, (float) $entry->net_pay, 0.01, 'net_pay no cambia');
-        $this->assertEqualsWithDelta(5600.00, (float) $entry->bank_amount, 0.01, 'base por transferencia');
-        $this->assertEqualsWithDelta(0.00, (float) $entry->cash_amount, 0.01, 'sin extras, sin efectivo');
+        $this->assertEqualsWithDelta(5600.00, (float) $entry->cash_amount, 0.01, 'sin IMSS: base en efectivo');
+        $this->assertEqualsWithDelta(0.00, (float) $entry->bank_amount, 0.01, 'nada por transferencia');
     }
 
     public function test_imss_enrolled_weekly_sends_base_to_bank_not_cash(): void
