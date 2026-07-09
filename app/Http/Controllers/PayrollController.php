@@ -14,7 +14,6 @@ use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 use Inertia\Response;
 use Maatwebsite\Excel\Excel;
@@ -73,17 +72,19 @@ class PayrollController extends Controller
         $suggestedEnd = $suggestedStart->copy()->addDays(13);
         $suggestedPayment = $suggestedEnd->copy()->addDays(3);
 
+        // Departamentos con nómina propia (p. ej. Taller): solo para informar en
+        // el formulario que, además de la General, se generará una por cada uno.
+        $separatePayrollDepartments = Department::separatePayroll()
+            ->orderBy('name')
+            ->pluck('name');
+
         return Inertia::render('Payroll/Create', [
             'suggestedDates' => [
                 'start_date' => $suggestedStart->toDateString(),
                 'end_date' => $suggestedEnd->toDateString(),
                 'payment_date' => $suggestedPayment->toDateString(),
             ],
-            // Departamentos con nómina propia (p. ej. Taller): el usuario elige
-            // si el periodo es General o de uno de estos departamentos.
-            'separatePayrollDepartments' => Department::separatePayroll()
-                ->orderBy('name')
-                ->get(['id', 'name']),
+            'separatePayrollDepartments' => $separatePayrollDepartments,
         ]);
     }
 
@@ -99,47 +100,74 @@ class PayrollController extends Controller
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'type' => ['required', 'in:weekly,biweekly,monthly'],
-            // Alcance: null = nómina general; un depto con nómina propia (Taller)
-            // = nómina de solo ese departamento.
-            'department_id' => [
-                'nullable',
-                'integer',
-                Rule::exists('departments', 'id')->where('has_separate_payroll', true),
-            ],
             'start_date' => ['required', 'date'],
             'end_date' => ['required', 'date', 'after:start_date'],
             'payment_date' => ['required', 'date', 'after_or_equal:end_date'],
         ]);
 
-        $departmentId = $validated['department_id'] ?? null;
+        // "De un jalón": un solo alta genera la nómina GENERAL más una por cada
+        // departamento con nómina propia (p. ej. Taller), todas con las mismas
+        // fechas/tipo. Los alcances que ya existan para esas fechas se saltan
+        // (así se puede completar los que falten sin duplicar).
+        $scopes = collect([['id' => null, 'name' => 'General']])
+            ->merge(
+                Department::separatePayroll()->orderBy('name')->get(['id', 'name'])
+                    ->map(fn ($d) => ['id' => $d->id, 'name' => $d->name])
+            );
 
-        // El traslape se valida DENTRO del mismo alcance: una nómina general y
-        // una de Taller para las mismas fechas son complementarias, no chocan.
-        $overlap = PayrollPeriod::where('department_id', $departmentId)
-            ->where(function ($q) use ($validated) {
-                $q->whereBetween('start_date', [$validated['start_date'], $validated['end_date']])
-                    ->orWhereBetween('end_date', [$validated['start_date'], $validated['end_date']]);
-            })->exists();
+        $created = collect();
+        $skipped = collect();
 
-        if ($overlap) {
-            $scopeLabel = $departmentId
-                ? (Department::find($departmentId)?->name ?? 'de departamento')
-                : 'General';
+        foreach ($scopes as $scope) {
+            $overlap = PayrollPeriod::where('department_id', $scope['id'])
+                ->where(function ($q) use ($validated) {
+                    $q->whereBetween('start_date', [$validated['start_date'], $validated['end_date']])
+                        ->orWhereBetween('end_date', [$validated['start_date'], $validated['end_date']]);
+                })->exists();
 
+            if ($overlap) {
+                $skipped->push($scope['name']);
+
+                continue;
+            }
+
+            $created->push(PayrollPeriod::create([
+                ...$validated,
+                'name' => $scope['id'] ? $validated['name'].' - '.$scope['name'] : $validated['name'],
+                'department_id' => $scope['id'],
+                'status' => 'draft',
+                'created_by' => auth()->id(),
+            ]));
+        }
+
+        if ($created->isEmpty()) {
             return redirect()->back()
-                ->withErrors(['start_date' => "Ya existe una nomina {$scopeLabel} que se traslapa con estas fechas. Si quieres otra nomina para los mismos dias, cambia el selector \"Nomina\" (p. ej. a Solo Taller)."])
+                ->withErrors(['start_date' => 'Ya existe(n) la(s) nomina(s) '.$skipped->implode(', ').' que se traslapan con estas fechas.'])
                 ->withInput();
         }
 
-        $period = PayrollPeriod::create([
-            ...$validated,
-            'department_id' => $departmentId,
-            'status' => 'draft',
-            'created_by' => auth()->id(),
-        ]);
+        // Calcular cada una de inmediato (best-effort): si una falla queda en
+        // draft para recalcular a mano y no tumba a las demás.
+        foreach ($created as $period) {
+            try {
+                $this->calculator->calculatePeriod($period);
+            } catch (\Throwable $e) {
+                report($e);
+                $period->update(['status' => 'draft']);
+            }
+        }
 
-        return redirect()->route('payroll.show', $period)
-            ->with('success', 'Periodo de nomina creado. Presiona "Calcular" para generar la nomina.');
+        $msg = 'Se generaron '.$created->count().' nómina(s): '.$created->pluck('name')->implode(', ').'.';
+        if ($skipped->isNotEmpty()) {
+            $msg .= ' Ya existían: '.$skipped->implode(', ').'.';
+        }
+
+        // Una sola → a su detalle; varias → a la lista para verlas todas.
+        if ($created->count() === 1) {
+            return redirect()->route('payroll.show', $created->first())->with('success', $msg);
+        }
+
+        return redirect()->route('payroll.index')->with('success', $msg);
     }
 
     /**

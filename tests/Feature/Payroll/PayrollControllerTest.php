@@ -145,8 +145,11 @@ class PayrollControllerTest extends FeatureTestCase
     // store
     // ---------------------------------------------------------------------
 
-    public function test_store_creates_draft_period_and_redirects_to_show(): void
+    public function test_store_creates_and_calculates_period_and_redirects_to_show(): void
     {
+        // Sin departamentos con nómina propia solo se genera la General: un
+        // periodo, que se calcula de inmediato (queda en 'review') y redirige
+        // a su detalle.
         $admin = $this->actingAsAdmin();
 
         $response = $this->post(route('payroll.store'), [
@@ -165,7 +168,8 @@ class PayrollControllerTest extends FeatureTestCase
         $this->assertDatabaseHas('payroll_periods', [
             'name' => 'Quincena de prueba',
             'type' => 'biweekly',
-            'status' => 'draft',
+            'department_id' => null,
+            'status' => 'review',
             'created_by' => $admin->id,
         ]);
     }

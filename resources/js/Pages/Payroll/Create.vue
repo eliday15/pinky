@@ -8,8 +8,8 @@ import { periodTypeInfo } from '@/utils/payrollPeriodType';
 
 const props = defineProps({
     suggestedDates: Object,
-    // Departamentos con nómina propia (p. ej. Taller). Si viene vacío, no se
-    // muestra el selector de alcance y todo es nómina general.
+    // Nombres de departamentos con nómina propia (p. ej. ["Taller"]). Al crear,
+    // el sistema genera la General MÁS una por cada uno, de un jalón.
     separatePayrollDepartments: {
         type: Array,
         default: () => [],
@@ -18,9 +18,8 @@ const props = defineProps({
 
 const typeInfo = computed(() => periodTypeInfo(form.type));
 
-const selectedDeptName = computed(
-    () => props.separatePayrollDepartments.find((d) => d.id === form.department_id)?.name ?? null,
-);
+// Etiquetas de las nóminas que se generarán en un solo alta.
+const payrollsToGenerate = computed(() => ['General', ...props.separatePayrollDepartments]);
 
 const addDaysToDate = (dateStr, days) => {
     const d = new Date(`${dateStr}T00:00:00Z`);
@@ -40,7 +39,6 @@ const today = () => {
 const form = useForm({
     name: '',
     type: 'weekly',
-    department_id: null,
     start_date: addDaysToDate(today(), -6),
     end_date: today(),
     payment_date: addDaysToDate(today(), 1),
@@ -78,8 +76,7 @@ const formatDateForName = (date) => fmtDate(date, {
 const generateName = () => {
     if (form.start_date && form.end_date) {
         const typeLabel = form.type === 'biweekly' ? 'Quincena' : form.type === 'weekly' ? 'Semana' : 'Mes';
-        const suffix = selectedDeptName.value ? ` - ${selectedDeptName.value}` : '';
-        form.name = `${typeLabel} ${formatDateForName(form.start_date)} - ${formatDateForName(form.end_date)}${suffix}`;
+        form.name = `${typeLabel} ${formatDateForName(form.start_date)} - ${formatDateForName(form.end_date)}`;
     }
 };
 
@@ -148,26 +145,16 @@ const submit = () => {
                     </div>
                 </div>
 
-                <!-- Alcance de la nómina (General / departamento con nómina propia) -->
-                <div v-if="separatePayrollDepartments.length">
-                    <label class="block text-sm font-medium text-gray-700 mb-1">
-                        Nómina <span class="text-red-500">*</span>
-                    </label>
-                    <select
-                        v-model="form.department_id"
-                        class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                        :class="{ 'border-red-500': form.errors.department_id }"
-                    >
-                        <option :value="null">General (todos menos los de nómina propia)</option>
-                        <option v-for="dept in separatePayrollDepartments" :key="dept.id" :value="dept.id">
-                            Solo {{ dept.name }}
-                        </option>
-                    </select>
-                    <p class="mt-1 text-xs text-gray-500">
-                        La nómina <strong>General</strong> excluye a los departamentos con nómina propia
-                        (p. ej. Taller); cada uno se genera en su propio periodo.
+                <!-- Aviso: se generan todas las nóminas de un jalón -->
+                <div v-if="separatePayrollDepartments.length" class="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+                    <p class="text-sm font-semibold text-indigo-800">
+                        Se generarán {{ payrollsToGenerate.length }} nóminas de un jalón
                     </p>
-                    <p v-if="form.errors.department_id" class="mt-1 text-sm text-red-600">{{ form.errors.department_id }}</p>
+                    <p class="mt-1 text-sm text-indigo-700">
+                        Con estas fechas se crean y calculan:
+                        <span class="font-semibold">{{ payrollsToGenerate.join(', ') }}</span>.
+                        Los departamentos con nómina propia (p. ej. Taller) salen de la General y van en la suya.
+                    </p>
                 </div>
 
                 <!-- Date Range -->
@@ -256,8 +243,8 @@ const submit = () => {
                             <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
                         </svg>
                         <div class="ml-3 text-sm text-blue-700">
-                            <p class="font-medium">Siguiente paso</p>
-                            <p>Despues de crear el periodo, podras calcular la nomina para todos los empleados activos.</p>
+                            <p class="font-medium">Al crear</p>
+                            <p>La nomina se genera Y se calcula automaticamente para todos los empleados activos; luego solo la revisas y apruebas.</p>
                         </div>
                     </div>
                 </div>
@@ -275,7 +262,7 @@ const submit = () => {
                         :disabled="form.processing"
                         class="px-6 py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700 disabled:opacity-50"
                     >
-                        {{ form.processing ? 'Creando...' : 'Crear Periodo' }}
+                        {{ form.processing ? 'Generando...' : 'Generar Nomina' }}
                     </button>
                 </div>
             </form>

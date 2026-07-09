@@ -84,12 +84,16 @@ class DepartmentScopedPayrollTest extends FeatureTestCase
         $this->assertCount(1, $employeeIds);
     }
 
-    public function test_store_allows_general_and_department_periods_same_dates(): void
+    public function test_store_generates_general_and_taller_in_one_shot(): void
     {
+        // Un solo alta genera AMBAS nóminas (General + Taller), ya calculadas,
+        // con cada empleado en la que le toca.
         $taller = Department::factory()->separatePayroll()->create(['name' => 'Taller']);
+        $normal = Department::factory()->create(['name' => 'Corte']);
+        $tallerEmp = Employee::factory()->create(['status' => 'active', 'daily_salary' => 800, 'department_id' => $taller->id]);
+        $normalEmp = Employee::factory()->create(['status' => 'active', 'daily_salary' => 800, 'department_id' => $normal->id]);
         $this->actingAsAdmin();
 
-        // General
         $this->post(route('payroll.store'), [
             'name' => 'Semana 28',
             'type' => 'weekly',
@@ -98,58 +102,47 @@ class DepartmentScopedPayrollTest extends FeatureTestCase
             'payment_date' => '2026-07-13',
         ])->assertSessionHasNoErrors();
 
-        // Taller, MISMAS fechas: no debe considerarse traslape.
-        $this->post(route('payroll.store'), [
-            'name' => 'Semana 28 - Taller',
-            'type' => 'weekly',
-            'department_id' => $taller->id,
-            'start_date' => '2026-07-06',
-            'end_date' => '2026-07-12',
-            'payment_date' => '2026-07-13',
-        ])->assertSessionHasNoErrors();
+        $this->assertEquals(2, PayrollPeriod::count(), 'se crean exactamente 2 nóminas');
 
-        $this->assertDatabaseHas('payroll_periods', ['name' => 'Semana 28', 'department_id' => null]);
-        $this->assertDatabaseHas('payroll_periods', ['name' => 'Semana 28 - Taller', 'department_id' => $taller->id]);
+        $general = PayrollPeriod::whereNull('department_id')->firstOrFail();
+        $tallerPeriod = PayrollPeriod::where('department_id', $taller->id)->firstOrFail();
+
+        // Ambas ya calculadas (review) y nombradas.
+        $this->assertEquals('review', $general->status);
+        $this->assertEquals('review', $tallerPeriod->status);
+        $this->assertEquals('Semana 28', $general->name);
+        $this->assertEquals('Semana 28 - Taller', $tallerPeriod->name);
+
+        // Partición: cada empleado en su nómina, no en la otra.
+        $this->assertTrue($general->entries()->where('employee_id', $normalEmp->id)->exists());
+        $this->assertFalse($general->entries()->where('employee_id', $tallerEmp->id)->exists());
+        $this->assertTrue($tallerPeriod->entries()->where('employee_id', $tallerEmp->id)->exists());
+        $this->assertFalse($tallerPeriod->entries()->where('employee_id', $normalEmp->id)->exists());
     }
 
-    public function test_store_rejects_two_general_periods_same_dates(): void
+    public function test_store_second_alta_same_dates_is_rejected(): void
     {
+        Department::factory()->separatePayroll()->create(['name' => 'Taller']);
         $this->actingAsAdmin();
 
-        $this->post(route('payroll.store'), [
-            'name' => 'General A',
+        $payload = [
+            'name' => 'Semana 28',
             'type' => 'weekly',
             'start_date' => '2026-07-06',
             'end_date' => '2026-07-12',
             'payment_date' => '2026-07-13',
-        ])->assertSessionHasNoErrors();
+        ];
 
+        $this->post(route('payroll.store'), $payload)->assertSessionHasNoErrors();
+        $this->assertEquals(2, PayrollPeriod::count());
+
+        // Segundo alta con las mismas fechas: General y Taller ya existen → error,
+        // no se duplica nada.
         $this->from(route('payroll.create'))
-            ->post(route('payroll.store'), [
-                'name' => 'General B',
-                'type' => 'weekly',
-                'start_date' => '2026-07-06',
-                'end_date' => '2026-07-12',
-                'payment_date' => '2026-07-13',
-            ])
+            ->post(route('payroll.store'), $payload)
             ->assertSessionHasErrors(['start_date']);
-    }
 
-    public function test_store_rejects_department_without_separate_payroll(): void
-    {
-        $normal = Department::factory()->create(['name' => 'Corte']);
-        $this->actingAsAdmin();
-
-        $this->from(route('payroll.create'))
-            ->post(route('payroll.store'), [
-                'name' => 'Corte aparte',
-                'type' => 'weekly',
-                'department_id' => $normal->id,
-                'start_date' => '2026-07-06',
-                'end_date' => '2026-07-12',
-                'payment_date' => '2026-07-13',
-            ])
-            ->assertSessionHasErrors(['department_id']);
+        $this->assertEquals(2, PayrollPeriod::count());
     }
 
     public function test_invalidation_targets_only_the_matching_scope(): void
