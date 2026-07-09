@@ -26,6 +26,7 @@ const showApproveModal = ref(false);
 const showMarkPaidModal = ref(false);
 
 const search = ref('');
+const deptFilter = ref('');
 const showExportMenu = ref(false);
 
 const statusColors = {
@@ -57,14 +58,28 @@ const formatCurrency = (amount) => {
     }).format(amount || 0);
 };
 
-const filteredEntries = () => {
-    if (!search.value) return props.entries;
-    const s = search.value.toLowerCase();
-    return props.entries.filter(e =>
-        e.employee?.full_name?.toLowerCase().includes(s) ||
-        e.employee?.employee_number?.toLowerCase().includes(s)
-    );
-};
+// Departamentos presentes en el periodo, para el autocomplete del filtro.
+const departments = computed(() => {
+    const names = props.entries.map(e => e.employee?.department?.name).filter(Boolean);
+    return [...new Set(names)].sort((a, b) => a.localeCompare(b, 'es'));
+});
+
+// Tabla filtrada por departamento (autocomplete) y/o por nombre/número.
+const visibleEntries = computed(() => {
+    let list = props.entries;
+    if (deptFilter.value) {
+        const d = deptFilter.value.toLowerCase();
+        list = list.filter(e => (e.employee?.department?.name || '').toLowerCase().includes(d));
+    }
+    if (search.value) {
+        const s = search.value.toLowerCase();
+        list = list.filter(e =>
+            e.employee?.full_name?.toLowerCase().includes(s) ||
+            e.employee?.employee_number?.toLowerCase().includes(s)
+        );
+    }
+    return list;
+});
 
 const calculatePayroll = () => {
     if (confirm('¿Calcular/recalcular la nomina para este periodo? Esto actualizara todos los registros.')) {
@@ -301,14 +316,35 @@ const closeCash = () => {
             </div>
         </div>
 
-        <!-- Search -->
-        <div class="bg-white rounded-lg shadow p-4 mb-6">
+        <!-- Search + filtro por departamento (autocomplete) -->
+        <div class="bg-white rounded-lg shadow p-4 mb-6 flex flex-wrap items-center gap-3">
             <input
                 v-model="search"
                 type="text"
                 placeholder="Buscar empleado..."
-                class="w-full max-w-md rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                class="flex-1 min-w-[200px] max-w-md rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
             />
+            <input
+                v-model="deptFilter"
+                list="dept-options"
+                type="text"
+                placeholder="Todos los departamentos"
+                class="w-64 rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+            />
+            <datalist id="dept-options">
+                <option v-for="d in departments" :key="d" :value="d" />
+            </datalist>
+            <button
+                v-if="deptFilter || search"
+                type="button"
+                @click="deptFilter = ''; search = ''"
+                class="text-sm text-gray-500 hover:text-gray-700"
+            >
+                Limpiar
+            </button>
+            <span class="text-sm text-gray-400 ml-auto">
+                {{ visibleEntries.length }} de {{ entries.length }} empleados
+            </span>
         </div>
 
         <!-- Entries Table -->
@@ -331,7 +367,7 @@ const closeCash = () => {
                     </tr>
                 </thead>
                 <tbody class="bg-white divide-y divide-gray-200">
-                    <tr v-for="entry in filteredEntries()" :key="entry.id" class="hover:bg-gray-50">
+                    <tr v-for="entry in visibleEntries" :key="entry.id" class="hover:bg-gray-50">
                         <td class="px-6 py-4 whitespace-nowrap">
                             <div class="flex items-center">
                                 <div class="w-8 h-8 rounded-full bg-pink-100 flex items-center justify-center">
@@ -397,6 +433,11 @@ const closeCash = () => {
                     <tr v-if="entries.length === 0">
                         <td :colspan="can?.viewComplete ? 12 : 10" class="px-6 py-12 text-center text-gray-500">
                             No hay registros de nomina. Presiona "Calcular Nomina" para generar.
+                        </td>
+                    </tr>
+                    <tr v-else-if="visibleEntries.length === 0">
+                        <td :colspan="can?.viewComplete ? 12 : 10" class="px-6 py-12 text-center text-gray-500">
+                            Ningun empleado coincide con el filtro.
                         </td>
                     </tr>
                 </tbody>
