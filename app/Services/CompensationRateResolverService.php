@@ -724,6 +724,63 @@ class CompensationRateResolverService
     }
 
     /**
+     * Conceptos RECURRENTES del empleado que pagan en este periodo (Luis
+     * 2026-07-09): cantidades fijas que se dan CADA periodo (semanal o mensual,
+     * según payment_period) de forma automática, SIN autorización y sin
+     * condición de asistencia. Una por concepto recurrente activo inscrito al
+     * empleado, con el monto resuelto (personalizado del empleado → puesto →
+     * depto → global). El application_mode es irrelevante: siempre paga el
+     * monto fijo (o el % del sueldo diario) una vez por periodo.
+     *
+     * @param  Employee  $employee  Empleado con compensationTypes eager-loaded
+     * @param  array|null  $allowedPaymentPeriods  Periodos que paga la nómina actual
+     * @return list<array<string, mixed>>
+     */
+    public function calculateRecurringConcepts(
+        Employee $employee,
+        float $hourlyRate,
+        float $dailySalary,
+        ?array $allowedPaymentPeriods = null,
+    ): array {
+        $concepts = [];
+
+        foreach ($employee->compensationTypes as $compType) {
+            if (! $compType->pivot->is_active || ! $compType->is_recurring) {
+                continue;
+            }
+            if (! $this->paymentPeriodAllowed($compType, $allowedPaymentPeriods)) {
+                continue;
+            }
+
+            $rate = $this->resolveRate($employee, $compType);
+
+            // Monto fijo tal cual, o el porcentaje sobre el sueldo diario. No
+            // depende del application_mode: es una cantidad fija por periodo.
+            $amount = $rate['fixed_amount'] !== null
+                ? round((float) $rate['fixed_amount'], 2)
+                : round($dailySalary * ((float) ($rate['percentage'] ?? 0) / 100), 2);
+
+            if ($amount <= 0) {
+                continue;
+            }
+
+            $concepts[] = [
+                'code' => $compType->code,
+                'name' => $compType->name,
+                'hours' => 0.0,
+                'days' => 0,
+                'rate' => $rate,
+                'amount' => $amount,
+                'authorization_type' => $compType->authorization_type,
+                'attendance_pull_rule' => $compType->attendance_pull_rule,
+                'source' => 'recurring',
+            ];
+        }
+
+        return $concepts;
+    }
+
+    /**
      * Check if an employee has any compensation types assigned.
      *
      * Args:

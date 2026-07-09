@@ -84,7 +84,7 @@ class WeeklyOvertimeReportService
             $cursor->addDay();
         }
 
-        $employees = Employee::with(['schedule', 'department'])
+        $employees = Employee::with(['schedule', 'department', 'compensationTypes'])
             ->where('department_id', $department->id)
             ->where('status', 'active')
             ->orderBy('full_name')
@@ -185,7 +185,7 @@ class WeeklyOvertimeReportService
         }
 
         $weekendUnits = $weekendUnitHours ? $weekendUnitsAccum : null;
-        $extraConcepts = $this->buildExtraConcepts($authorizations);
+        $extraConcepts = $this->buildExtraConcepts($authorizations, $employee);
 
         return [
             'employee' => [
@@ -433,7 +433,7 @@ class WeeklyOvertimeReportService
      *
      * @return list<array{name: string, count: int, hours: float}>
      */
-    private function buildExtraConcepts(Collection $authorizations): array
+    private function buildExtraConcepts(Collection $authorizations, ?Employee $employee = null): array
     {
         $extra = [];
 
@@ -451,6 +451,23 @@ class WeeklyOvertimeReportService
             $extra[$name] ??= ['name' => $name, 'count' => 0, 'hours' => 0.0];
             $extra[$name]['count']++;
             $extra[$name]['hours'] += (float) $auth->hours;
+        }
+
+        // Conceptos RECURRENTES semanales inscritos al empleado (Luis
+        // 2026-07-09): cantidades fijas que se pagan cada semana sin
+        // autorización. Aparecen una vez en "Otros Conceptos" para que se vean
+        // en la hoja, ya que no tienen una fila de autorización que los traiga.
+        foreach ($employee?->compensationTypes ?? collect() as $type) {
+            if (! $type->pivot?->is_active || ! $type->is_recurring || ! $type->paidWeekly()) {
+                continue;
+            }
+            if (in_array($this->normalizeCode($type->code), self::KNOWN_CODES, true)) {
+                continue;
+            }
+
+            $name = $type->name ?: ($this->normalizeCode($type->code) ?: 'Concepto');
+            $extra[$name] ??= ['name' => $name, 'count' => 0, 'hours' => 0.0];
+            $extra[$name]['count']++;
         }
 
         return array_values(array_map(

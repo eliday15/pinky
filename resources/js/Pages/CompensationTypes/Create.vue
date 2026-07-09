@@ -23,6 +23,7 @@ const form = useForm({
     attendance_pull_rule: null,
     priority: 0,
     payment_period: 'monthly',
+    is_recurring: false,
     employee_ids: [],
     employee_percentages: {},
     employee_fixed_amounts: {},
@@ -232,6 +233,24 @@ const submit = () => {
                             </div>
                             <p v-if="form.errors.payment_period" class="mt-1 text-sm text-red-600">
                                 {{ form.errors.payment_period }}
+                            </p>
+                        </div>
+
+                        <div>
+                            <label class="flex items-start gap-2">
+                                <input
+                                    v-model="form.is_recurring"
+                                    type="checkbox"
+                                    class="mt-0.5 rounded border-gray-300 text-pink-600 focus:ring-pink-500"
+                                />
+                                <span class="text-sm text-gray-700">
+                                    <span class="font-medium">Recurrente</span> — se paga solo, automáticamente, cada
+                                    periodo (según arriba) a cada empleado inscrito, sin necesidad de una autorización.
+                                    Úsalo para una cantidad fija que se da cada semana o cada mes.
+                                </span>
+                            </label>
+                            <p v-if="form.errors.is_recurring" class="mt-1 text-sm text-red-600">
+                                {{ form.errors.is_recurring }}
                             </p>
                         </div>
 

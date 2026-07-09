@@ -437,6 +437,26 @@ class PayrollCalculatorService
             }
         }
 
+        // ---- Conceptos RECURRENTES (Luis 2026-07-09) ----
+        // Cantidades fijas que se dan al empleado CADA periodo (semanal o
+        // mensual, según payment_period del concepto) de forma automática, sin
+        // autorización ni condición de asistencia. Corre para todo empleado con
+        // conceptos, en el periodo cuyo payment_period coincide
+        // ($allowedPaymentPeriods): así un concepto semanal cae en la nómina
+        // semanal y uno mensual en la mensual, una sola vez por periodo.
+        if ($useCompTypes && $allowedPaymentPeriods !== []) {
+            $recurringConcepts = $this->resolver->calculateRecurringConcepts(
+                $employee,
+                $hourlyRate,
+                $dailySalary,
+                $allowedPaymentPeriods,
+            );
+            foreach ($recurringConcepts as $concept) {
+                $otherCompensationPay += $concept['amount'];
+                $compensationConcepts[] = $concept;
+            }
+        }
+
         // Calculate total bonuses (0 on a weekly period)
         $totalBonuses = $punctualityBonus + $weeklyBonus + $monthlyBonus
             + $nightShiftBonusPay

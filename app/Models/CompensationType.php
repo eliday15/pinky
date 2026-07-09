@@ -84,6 +84,7 @@ class CompensationType extends Model
         'attendance_pull_rule',
         'priority',
         'payment_period',
+        'is_recurring',
     ];
 
     protected $casts = [
@@ -91,6 +92,7 @@ class CompensationType extends Model
         'fixed_amount' => 'decimal:2',
         'is_active' => 'boolean',
         'priority' => 'integer',
+        'is_recurring' => 'boolean',
     ];
 
     /**
@@ -187,6 +189,15 @@ class CompensationType extends Model
     public function scopeActive($query)
     {
         return $query->where('is_active', true);
+    }
+
+    /**
+     * Scope for recurring compensation types (fixed amount paid automatically
+     * each period, without an authorization).
+     */
+    public function scopeRecurring($query)
+    {
+        return $query->where('is_recurring', true);
     }
 
     /**
