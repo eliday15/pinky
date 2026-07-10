@@ -71,6 +71,10 @@ class FiscalSettingsSeeder extends Seeder
             ['fiscal_imss_eym_excess_pct', '0.40', 'IMSS obrero: % sobre excedente de 3 UMA'],
             ['fiscal_imss_excess_uma_multiple', '3', 'IMSS: múltiplo de UMA del excedente'],
             ['fiscal_sbc_cap_uma', '25', 'Tope del SBC en UMA'],
+            // Días de aguinaldo para el factor de integración del SDI (Art. 27
+            // LSS). 15 = mínimo LFT; verificado: los factores de Contpaq Sem28
+            // salen exactos con 15.
+            ['fiscal_aguinaldo_days', '15', 'Días de aguinaldo (factor de integración SDI)'],
         ];
         foreach ($settings as [$key, $value, $label]) {
             SystemSetting::updateOrCreate(
