@@ -820,6 +820,8 @@ class PayrollCalculatorService
                 'period_type' => $period->type,
                 'pays_base' => $payBase,
                 'pays_extras' => $payExtras,
+                // Días pagados del periodo base (insumo de acumulados anuales).
+                'week_days' => $payBase ? (float) $weekDays : 0.0,
             ],
             'calculations' => [
                 'regular_pay' => $basePay,
@@ -853,6 +855,7 @@ class PayrollCalculatorService
                 // por transferencia) y ajuste del neto a múltiplo de $0.20.
                 'taxable_base' => $isrTaxableBase,
                 'taxable_transfer_extras' => round($taxableTransferExtras ?? 0.0, 2),
+                'transfer_extras_total' => round($transferExtras, 2),
                 'net_adjustment' => $netAdjustment,
             ],
         ];

@@ -254,6 +254,14 @@ class PayrollController extends Controller
             'approved_by' => auth()->id(),
         ]);
 
+        // Acumulados anuales (ISR retenido, gravado, días): se reconstruyen
+        // desde cero para el año del periodo — idempotente, re-aprobar no
+        // duplica. Solo los periodos base (semanales) alimentan el acumulado.
+        if ($payroll->paysBase() && $payroll->type === 'weekly') {
+            app(\App\Services\Fiscal\EmployeeAnnualTotalService::class)
+                ->rebuildYear((int) $payroll->start_date->year);
+        }
+
         return redirect()->route('payroll.show', $payroll)
             ->with('success', 'Nomina aprobada.');
     }
