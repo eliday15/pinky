@@ -53,9 +53,9 @@ const hasTimeRange = computed(() => {
 const permissionDate = ref('');
 const permissionTime = ref('');
 
-/** Sync permission date/time to form fields. */
+/** Sync permission date/time to form fields (skipped for uses_vacation_hours types). */
 watch([permissionDate, permissionTime], ([date, time]) => {
-    if (date && hasTimeRange.value) {
+    if (date && hasTimeRange.value && !usesVacationHours.value) {
         form.start_date = date;
         form.end_date = date;
         form.start_time = time || '';
@@ -176,6 +176,34 @@ const isVacationType = computed(() => {
     return selectedIncidentType.value?.deducts_vacation === true;
 });
 
+const usesVacationHours = computed(() => {
+    return selectedIncidentType.value?.uses_vacation_hours === true;
+});
+
+const vacationHoursBank = computed(() => {
+    if (!selectedEmployeeData.value) return { remaining: 0, enrolled: false };
+    return {
+        remaining: selectedEmployeeData.value.vacation_hours_bank_remaining ?? 0,
+        enrolled: selectedEmployeeData.value.uses_vacation_hours_bank === true,
+    };
+});
+
+const vacationHoursBankWarning = computed(() => {
+    if (!usesVacationHours.value) return null;
+    if (!selectedEmployeeData.value) return null;
+    if (!vacationHoursBank.value.enrolled || vacationHoursBank.value.remaining === 0) {
+        return 'El empleado no tiene bolsa de horas a cuenta de vacaciones activa.';
+    }
+    if (form.hours && parseFloat(form.hours) > vacationHoursBank.value.remaining) {
+        return `El empleado solo tiene ${vacationHoursBank.value.remaining} h disponibles en su bolsa.`;
+    }
+    return null;
+});
+
+const submitDisabled = computed(() => {
+    return form.processing || (usesVacationHours.value && vacationHoursBankWarning.value !== null);
+});
+
 const vacationWarning = computed(() => {
     if (!isVacationType.value) return null;
     if (daysCount.value > vacationBalance.value.available) {
@@ -250,6 +278,31 @@ const submit = () => {
                     </div>
                 </div>
 
+                <!-- Vacation Hours Bank Info -->
+                <div v-if="selectedEmployeeData && usesVacationHours" class="bg-gray-50 rounded-lg p-4">
+                    <h4 class="text-sm font-medium text-gray-700 mb-2">Bolsa de horas a cuenta de vacaciones</h4>
+                    <div class="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                            <span class="text-gray-500">Disponible en bolsa:</span>
+                            <span
+                                class="ml-2 font-medium"
+                                :class="vacationHoursBank.remaining > 0 ? 'text-green-600' : 'text-gray-400'"
+                            >
+                                {{ vacationHoursBank.remaining }} h
+                            </span>
+                        </div>
+                        <div>
+                            <span class="text-gray-500">Estado:</span>
+                            <span
+                                class="ml-2 font-medium"
+                                :class="vacationHoursBank.enrolled ? 'text-green-600' : 'text-red-600'"
+                            >
+                                {{ vacationHoursBank.enrolled ? 'Inscrito' : 'No inscrito' }}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Incident Type -->
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">
@@ -292,8 +345,44 @@ const submit = () => {
                     </span>
                 </div>
 
+                <!-- Vacation hours type: single date + hours input -->
+                <div v-if="usesVacationHours" class="grid grid-cols-2 gap-6">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">
+                            Fecha <span class="text-red-500">*</span>
+                        </label>
+                        <input
+                            v-model="form.start_date"
+                            type="date"
+                            class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                            :class="{ 'border-red-500': form.errors.start_date }"
+                            @change="form.end_date = form.start_date"
+                        />
+                        <p v-if="form.errors.start_date" class="mt-1 text-sm text-red-600">
+                            {{ form.errors.start_date }}
+                        </p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">
+                            Horas a cuenta de vacaciones <span class="text-red-500">*</span>
+                        </label>
+                        <input
+                            v-model.number="form.hours"
+                            type="number"
+                            step="0.5"
+                            min="0.5"
+                            max="24"
+                            class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                            :class="{ 'border-red-500': form.errors.hours }"
+                        />
+                        <p v-if="form.errors.hours" class="mt-1 text-sm text-red-600">
+                            {{ form.errors.hours }}
+                        </p>
+                    </div>
+                </div>
+
                 <!-- Date Range (normal types - date only) -->
-                <div v-if="!hasTimeRange">
+                <div v-if="!hasTimeRange && !usesVacationHours">
                     <div class="grid grid-cols-2 gap-6">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">
@@ -336,7 +425,7 @@ const submit = () => {
                 </div>
 
                 <!-- Permission type: single date + time -->
-                <div v-if="hasTimeRange" class="grid grid-cols-2 gap-6">
+                <div v-if="hasTimeRange && !usesVacationHours" class="grid grid-cols-2 gap-6">
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">
                             Fecha <span class="text-red-500">*</span>
@@ -398,6 +487,16 @@ const submit = () => {
                             <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
                         </svg>
                         <p class="ml-3 text-sm text-yellow-700">{{ vacationWarning }}</p>
+                    </div>
+                </div>
+
+                <!-- Vacation Hours Bank Warning -->
+                <div v-if="vacationHoursBankWarning" class="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                    <div class="flex">
+                        <svg class="h-5 w-5 text-yellow-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+                        </svg>
+                        <p class="ml-3 text-sm text-yellow-700">{{ vacationHoursBankWarning }}</p>
                     </div>
                 </div>
 
@@ -483,7 +582,7 @@ const submit = () => {
                     </Link>
                     <button
                         type="submit"
-                        :disabled="form.processing"
+                        :disabled="submitDisabled"
                         class="px-6 py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700 disabled:opacity-50"
                     >
                         {{ form.processing ? 'Guardando...' : 'Crear Incidencia' }}

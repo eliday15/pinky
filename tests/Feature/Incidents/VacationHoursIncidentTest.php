@@ -28,13 +28,14 @@ class VacationHoursIncidentTest extends FeatureTestCase
         ]);
     }
 
-    private function employee(int $entitled = 10, int $usedDays = 0, float $usedHours = 0, ?int $scheduleId = null): Employee
+    private function employee(int $entitled = 10, int $usedDays = 0, float $usedHours = 0, float $creditedHours = 0, ?int $scheduleId = null): Employee
     {
         return Employee::factory()->create([
             'status' => 'active',
             'vacation_days_entitled' => $entitled,
             'vacation_days_used' => $usedDays,
             'vacation_hours_used' => $usedHours,
+            'vacation_hours_credited' => $creditedHours,
             'schedule_id' => $scheduleId ?? Schedule::factory()->create(['entry_time' => '07:00', 'exit_time' => '15:00'])->id,
         ]);
     }
@@ -43,7 +44,8 @@ class VacationHoursIncidentTest extends FeatureTestCase
     {
         $this->actingAsAdmin();
         $type = $this->hoursType();
-        $emp = $this->employee(entitled: 10);
+        // RRHH convirtió 2 días → bolsa de 16 h.
+        $emp = $this->employee(entitled: 10, creditedHours: 16);
 
         $this->post(route('incidents.store'), [
             'employee_id' => $emp->id,
@@ -55,8 +57,8 @@ class VacationHoursIncidentTest extends FeatureTestCase
 
         $emp->refresh();
         $this->assertEqualsWithDelta(2.0, (float) $emp->vacation_hours_used, 0.01);
-        // 10 días × 8 − 2 = 78 h disponibles.
-        $this->assertEqualsWithDelta(78.0, $emp->vacation_hours_remaining, 0.01);
+        // Bolsa: 16 convertidas − 2 usadas = 14 h disponibles.
+        $this->assertEqualsWithDelta(14.0, $emp->vacation_hours_bank_remaining, 0.01);
     }
 
     public function test_permit_beyond_available_hours_is_rejected(): void
@@ -84,7 +86,8 @@ class VacationHoursIncidentTest extends FeatureTestCase
         $this->actingAsAdmin();
         $type = $this->hoursType();
         $schedule = Schedule::factory()->create(['entry_time' => '07:00', 'exit_time' => '15:00']);
-        $emp = $this->employee(entitled: 10, scheduleId: $schedule->id);
+        // Inscrito: RRHH convirtió 2 días → bolsa de 16 h.
+        $emp = $this->employee(entitled: 10, creditedHours: 16, scheduleId: $schedule->id);
 
         // Llegó 2h tarde (09:00 vs 07:00) → sin permiso sería falta por umbral.
         $record = AttendanceRecord::factory()->create([

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\AttendanceRecord;
+use App\Models\CheckOmission;
 use App\Models\Department;
 use App\Models\Employee;
 use App\Models\Holiday;
@@ -641,8 +642,12 @@ class ZktecoSyncService
         $isObligatoryDay = $employee->isObligatoryWorkDay(Carbon::parse($attendance->work_date));
 
         if (! $attendance->check_in && $isObligatoryDay && ! $attendance->is_holiday) {
+            // Una omisión de checada APROBADA justifica la falta por no registrar
+            // la entrada: "entrega de mercancía" paga completo (present) y "otro"
+            // la convierte en retardo (late). (Dani 2026-07-09)
+            $omissionStatus = $this->approvedOmissionStatus($attendance);
             if (! $preserveStatus) {
-                $attendance->update(['status' => 'absent']);
+                $attendance->update(['status' => $omissionStatus ?? 'absent']);
             }
 
             return;
@@ -835,6 +840,28 @@ class ZktecoSyncService
             $qualifiesForPunctualityBonus = false;
         }
 
+        // Falta por SALIDA faltante (Dani 2026-07-09): registró entrada pero NO
+        // salida en un día obligatorio → falta, igual que la entrada faltante. Se
+        // excluyen los turnos nocturnos/velada (cruzan medianoche y no siempre
+        // cierran checada) y los días no obligatorios (fin de semana/festivo).
+        if ($checkInTime && ! $checkOutTime && $isObligatoryDay && ! $attendance->is_holiday
+            && ! $isNightShift && ! $isNonObligatoryDay) {
+            $status = 'absent';
+            $qualifiesForPunctualityBonus = false;
+        }
+
+        // Una omisión de checada APROBADA sobreescribe el status del día:
+        // "entrega de mercancía" lo deja como present (paga completo) y "otro" lo
+        // convierte en retardo (late), que sí cuenta para el acumulado mensual de
+        // retardos → falta. (Dani 2026-07-09)
+        $omissionStatus = $this->approvedOmissionStatus($attendance);
+        if ($omissionStatus !== null) {
+            $status = $omissionStatus;
+            if ($omissionStatus === 'present') {
+                $qualifiesForPunctualityBonus = false;
+            }
+        }
+
         $requiresReview = ! $checkOutTime && $checkInTime;
 
         // Night shift bonus qualification
@@ -874,6 +901,27 @@ class ZktecoSyncService
         // ya no mantiene contadores semanales ni genera incidencias FRT — eso
         // también elimina el re-incremento de retardos que ocurría en cada
         // recalculateAttendanceRecord() (p.ej. al aprobar una autorización).
+    }
+
+    /**
+     * Si hay una omisión de checada APROBADA para el día, devuelve el status que
+     * debe forzarse: 'present' para "entrega de mercancía" (paga completo) y
+     * 'late' para "otro" (retardo). Devuelve null si no hay omisión aprobada.
+     */
+    private function approvedOmissionStatus(AttendanceRecord $attendance): ?string
+    {
+        $omission = CheckOmission::query()
+            ->where('employee_id', $attendance->employee_id)
+            ->whereDate('work_date', Carbon::parse($attendance->work_date)->toDateString())
+            ->where('status', CheckOmission::STATUS_APPROVED)
+            ->orderByDesc('approved_at')
+            ->first();
+
+        if (! $omission) {
+            return null;
+        }
+
+        return $omission->isDelivery() ? 'present' : 'late';
     }
 
     /**

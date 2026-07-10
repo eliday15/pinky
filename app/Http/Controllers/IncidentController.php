@@ -145,7 +145,18 @@ class IncidentController extends Controller
 
         return Inertia::render('Incidents/Create', [
             'incidentTypes' => IncidentType::active()->get(),
-            'employees' => $employeesQuery->get(['id', 'full_name', 'employee_number', 'vacation_days_entitled', 'vacation_days_used']),
+            'employees' => $employeesQuery
+                ->get(['id', 'full_name', 'employee_number', 'vacation_days_entitled', 'vacation_days_used', 'vacation_hours_used', 'vacation_hours_credited'])
+                ->map(fn (Employee $e) => [
+                    'id' => $e->id,
+                    'full_name' => $e->full_name,
+                    'employee_number' => $e->employee_number,
+                    'vacation_days_entitled' => $e->vacation_days_entitled,
+                    'vacation_days_used' => $e->vacation_days_used,
+                    // Bolsa de horas a cuenta de vacaciones (Dani 2026-07-09).
+                    'vacation_hours_bank_remaining' => round($e->vacation_hours_bank_remaining, 2),
+                    'uses_vacation_hours_bank' => $e->usesVacationHoursBank(),
+                ]),
             'selectedEmployee' => $request->employee ?? $user->employee?->id,
         ]);
     }
@@ -212,21 +223,25 @@ class IncidentController extends Controller
         $autoApproved = false;
         if (! $incidentType->requires_approval) {
             // Validate vacation balance before auto-approving a deducts_vacation type.
+            // Descuenta de forma proporcional las horas ya gastadas de la bolsa.
             if ($incidentType->deducts_vacation) {
-                $available = $employee->vacation_days_entitled - $employee->vacation_days_used;
+                $available = $employee->vacation_days_available_for_request;
                 if ($validated['days_count'] > $available) {
+                    $availableLabel = rtrim(rtrim(number_format($available, 2), '0'), '.');
+
                     return redirect()->back()->withErrors([
-                        'saldo' => "Saldo insuficiente de vacaciones. Disponibles: {$available} dias, solicitados: {$validated['days_count']} dias.",
+                        'saldo' => "Saldo insuficiente de vacaciones. Disponibles: {$availableLabel} dias, solicitados: {$validated['days_count']} dias.",
                     ])->withInput();
                 }
             }
-            // Horas a cuenta de vacaciones: valida el saldo EN HORAS.
+            // Horas a cuenta de vacaciones: valida contra la BOLSA (horas
+            // convertidas por RRHH menos las ya gastadas).
             if ($incidentType->uses_vacation_hours) {
                 $requested = (float) ($validated['hours'] ?? 0);
-                $availableHours = $employee->vacation_hours_remaining;
-                if ($requested > $availableHours) {
+                $availableHours = $employee->vacation_hours_bank_remaining;
+                if ($requested <= 0 || $requested > $availableHours) {
                     return redirect()->back()->withErrors([
-                        'saldo' => "Saldo insuficiente de horas de vacaciones. Disponibles: {$availableHours} h, solicitadas: {$requested} h.",
+                        'saldo' => "Saldo insuficiente en la bolsa de horas de vacaciones. Disponibles: {$availableHours} h, solicitadas: {$requested} h.",
                     ])->withInput();
                 }
             }
@@ -421,11 +436,13 @@ class IncidentController extends Controller
                 continue;
             }
 
-            // Skip if auto-approve + deducts_vacation would overdraft the balance.
+            // Skip if auto-approve + deducts_vacation would overdraft the balance
+            // (proporcional: descuenta también las horas ya gastadas de la bolsa).
             if ($status === 'approved' && $incidentType->deducts_vacation) {
-                $available = $employee->vacation_days_entitled - $employee->vacation_days_used;
+                $available = $employee->vacation_days_available_for_request;
                 if ($daysCount > $available) {
-                    $skipped[] = "{$employee->full_name} (saldo {$available}/{$daysCount})";
+                    $availableLabel = rtrim(rtrim(number_format($available, 2), '0'), '.');
+                    $skipped[] = "{$employee->full_name} (saldo {$availableLabel}/{$daysCount})";
 
                     continue;
                 }
@@ -586,19 +603,21 @@ class IncidentController extends Controller
 
         // FASE 2.1: Validate vacation balance before approving
         if ($incidentType->deducts_vacation) {
-            $availableVacationDays = $employee->vacation_days_entitled - $employee->vacation_days_used;
+            $availableVacationDays = $employee->vacation_days_available_for_request;
 
             if ($incident->days_count > $availableVacationDays) {
+                $availableLabel = rtrim(rtrim(number_format($availableVacationDays, 2), '0'), '.');
+
                 return redirect()->back()->withErrors([
-                    'saldo' => "Saldo insuficiente de vacaciones. Disponibles: {$availableVacationDays} dias, solicitados: {$incident->days_count} dias.",
+                    'saldo' => "Saldo insuficiente de vacaciones. Disponibles: {$availableLabel} dias, solicitados: {$incident->days_count} dias.",
                 ]);
             }
         }
         if ($incidentType->uses_vacation_hours) {
-            $availableHours = $employee->vacation_hours_remaining;
-            if ((float) $incident->hours > $availableHours) {
+            $availableHours = $employee->vacation_hours_bank_remaining;
+            if ((float) $incident->hours <= 0 || (float) $incident->hours > $availableHours) {
                 return redirect()->back()->withErrors([
-                    'saldo' => "Saldo insuficiente de horas de vacaciones. Disponibles: {$availableHours} h, solicitadas: {$incident->hours} h.",
+                    'saldo' => "Saldo insuficiente en la bolsa de horas de vacaciones. Disponibles: {$availableHours} h, solicitadas: {$incident->hours} h.",
                 ]);
             }
         }

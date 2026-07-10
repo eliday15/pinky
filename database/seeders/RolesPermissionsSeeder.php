@@ -53,6 +53,8 @@ class RolesPermissionsSeeder extends Seeder
             'incidents.create',
             'incidents.approve',
             'incidents.reject',
+            // Bolsa de horas a cuenta de vacaciones (RRHH convierte días → horas)
+            'vacation_hours.manage',
 
             // Autorizaciones (Horas Extra, Veladas, Permisos)
             'authorizations.view_all',
@@ -67,6 +69,13 @@ class RolesPermissionsSeeder extends Seeder
             'anomalies.view_team',
             'anomalies.resolve',
             'anomalies.dismiss',
+
+            // Omisión de checada (falta por checada incompleta): el jefe/supervisor
+            // AUTORIZA (create), el administrador APRUEBA (approve).
+            'check_omissions.view_all',
+            'check_omissions.view_team',
+            'check_omissions.create',
+            'check_omissions.approve',
 
             // Nómina
             'payroll.view_basic',
@@ -125,6 +134,11 @@ class RolesPermissionsSeeder extends Seeder
             'employees.edit_personal',
             // Asistencia - solo lectura
             'attendance.view_all',
+            // Omisión de checada - captura/autoriza y consulta (no aprueba)
+            'check_omissions.view_all',
+            'check_omissions.create',
+            // Bolsa de horas a cuenta de vacaciones - RRHH la administra
+            'vacation_hours.manage',
             // Desayunos - kiosco y consulta
             'breakfasts.register',
             'breakfasts.view',
@@ -145,6 +159,9 @@ class RolesPermissionsSeeder extends Seeder
             'authorizations.create',
             // Anomalías - team view only (no resolve)
             'anomalies.view_team',
+            // Omisión de checada - el jefe autoriza (create) su equipo; no aprueba
+            'check_omissions.view_team',
+            'check_omissions.create',
             // Reportes - team-scoped (own direct reports): attendance/discipline/
             // overtime/payroll reports limited to subordinates via ScopesReportEmployees.
             'reports.view_team',

@@ -5,6 +5,8 @@ use App\Http\Controllers\AttendanceController;
 use App\Http\Controllers\AttendanceReportController;
 use App\Http\Controllers\AuditLogController;
 use App\Http\Controllers\AuthorizationController;
+use App\Http\Controllers\CheckOmissionController;
+use App\Http\Controllers\VacationHoursBankController;
 use App\Http\Controllers\BreakfastController;
 use App\Http\Controllers\CompensationTypeController;
 use App\Http\Controllers\DashboardController;
@@ -196,6 +198,19 @@ Route::middleware(['auth', 'password-changed', 'two-factor-setup'])->group(funct
     Route::post('/anomalies/{anomaly}/link-authorization', [AnomalyResolutionController::class, 'linkAuthorization'])->name('anomalies.linkAuthorization');
     Route::post('/anomalies/{anomaly}/link-incident', [AnomalyResolutionController::class, 'linkIncident'])->name('anomalies.linkIncident');
     Route::get('/anomalies/{anomaly}/linkables', [AnomalyResolutionController::class, 'linkables'])->name('anomalies.linkables');
+
+    // Omisión de checada (autorización de falta por checada incompleta)
+    Route::get('/check-omissions', [CheckOmissionController::class, 'index'])->name('check-omissions.index');
+    Route::get('/check-omissions/export', [CheckOmissionController::class, 'export'])->name('check-omissions.export');
+    Route::get('/check-omissions/create', [CheckOmissionController::class, 'create'])->name('check-omissions.create');
+    Route::post('/check-omissions', [CheckOmissionController::class, 'store'])->name('check-omissions.store');
+    Route::post('/check-omissions/{checkOmission}/approve', [CheckOmissionController::class, 'approve'])->name('check-omissions.approve');
+    Route::post('/check-omissions/{checkOmission}/reject', [CheckOmissionController::class, 'reject'])->name('check-omissions.reject');
+
+    // Bolsa de horas a cuenta de vacaciones (RRHH convierte días → horas)
+    Route::get('/vacation-hours', [VacationHoursBankController::class, 'index'])->name('vacation-hours.index');
+    Route::post('/vacation-hours/convert', [VacationHoursBankController::class, 'convert'])->name('vacation-hours.convert');
+    Route::post('/vacation-hours/revert', [VacationHoursBankController::class, 'revert'])->name('vacation-hours.revert');
 
     // Users
     Route::resource('users', UserController::class)->except(['show']);
