@@ -75,6 +75,7 @@ const updateValue = (index, setting, event) => {
 const groupLabels = {
     attendance: 'Asistencia',
     payroll: 'Nomina',
+    fiscal: 'Fiscal (ISR/IMSS)',
     breakfast: 'Desayunos',
     general: 'General',
     seguridad: 'Seguridad',

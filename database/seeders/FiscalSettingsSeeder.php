@@ -52,8 +52,14 @@ class FiscalSettingsSeeder extends Seeder
         ]);
 
         // ---- Escalares 2026 (system_settings) ----
+        // El flag se crea APAGADO solo si no existe; NO se sobrescribe en re-seed
+        // (para no apagar las retenciones en cada deploy una vez activadas).
+        SystemSetting::firstOrCreate(
+            ['key' => 'fiscal_retentions_enabled'],
+            ['value' => '0', 'type' => 'boolean', 'group' => 'fiscal', 'label' => 'Activar retenciones ISR/IMSS/Infonavit en la nómina'],
+        );
+
         $settings = [
-            ['fiscal_retentions_enabled', '0', 'Activar retenciones ISR/IMSS/Infonavit en la nómina'],
             ['fiscal_uma_daily', '113.14', 'UMA diaria (2026)'],
             ['fiscal_minimum_wage_daily', '315.04', 'Salario mínimo diario (2026)'],
             ['fiscal_imss_worker_fixed_pct', '2.375', 'IMSS obrero: % fijo sobre SBC'],
@@ -64,7 +70,7 @@ class FiscalSettingsSeeder extends Seeder
         foreach ($settings as [$key, $value, $label]) {
             SystemSetting::updateOrCreate(
                 ['key' => $key],
-                ['value' => $value, 'type' => 'string', 'group' => 'fiscal', 'label' => $label],
+                ['value' => $value, 'type' => 'float', 'group' => 'fiscal', 'label' => $label],
             );
         }
     }

@@ -154,20 +154,23 @@ const transferLines = computed(() => {
         lines.push({ label: 'Sueldo base', detail: baseDetail.value, amount: money(props.entry.regular_pay) });
     }
     if (money(props.entry.deductions) > 0) {
+        // isDeduction dispara el detalle de faltas — solo aquí, no bajo ISR/IMSS.
         lines.push({ label: 'Deducciones (faltas)', detail: '', amount: -money(props.entry.deductions), isDeduction: true });
     }
-    // Retenciones fiscales del trabajador (formalizado): reducen la transferencia.
+    // Retenciones fiscales del trabajador (formalizado): reducen la transferencia,
+    // igual que en la Lista de Raya de Contpaq (ISR, IMSS, Infonavit). Se pintan
+    // en rojo por amount<0; NO llevan isDeduction (no repiten el detalle de faltas).
     if (money(props.entry.isr_amount) > 0) {
-        lines.push({ label: 'ISR', detail: '', amount: -money(props.entry.isr_amount), isDeduction: true });
+        lines.push({ label: 'ISR (retención)', detail: '', amount: -money(props.entry.isr_amount) });
     }
     if (money(props.entry.imss_amount) > 0) {
-        lines.push({ label: 'IMSS', detail: '', amount: -money(props.entry.imss_amount), isDeduction: true });
+        lines.push({ label: 'IMSS (retención)', detail: '', amount: -money(props.entry.imss_amount) });
     }
     if (money(props.entry.infonavit_amount) > 0) {
-        lines.push({ label: 'Infonavit', detail: '', amount: -money(props.entry.infonavit_amount), isDeduction: true });
+        lines.push({ label: 'Infonavit (crédito)', detail: '', amount: -money(props.entry.infonavit_amount) });
     }
     if (money(props.entry.subsidy_amount) > 0) {
-        lines.push({ label: 'Subsidio al empleo', detail: '', amount: money(props.entry.subsidy_amount) });
+        lines.push({ label: 'Subsidio al empleo', detail: 'se acredita a favor', amount: money(props.entry.subsidy_amount) });
     }
     return lines;
 });

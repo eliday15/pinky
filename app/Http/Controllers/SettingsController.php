@@ -34,6 +34,7 @@ class SettingsController extends Controller
             'groups' => [
                 ['key' => 'attendance', 'label' => 'Asistencia'],
                 ['key' => 'payroll', 'label' => 'Nomina'],
+                ['key' => 'fiscal', 'label' => 'Fiscal (ISR/IMSS)'],
                 ['key' => 'breakfast', 'label' => 'Desayunos'],
                 ['key' => 'general', 'label' => 'General'],
                 ['key' => 'seguridad', 'label' => 'Seguridad'],
