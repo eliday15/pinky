@@ -115,6 +115,29 @@ class ZktecoSyncService
                 continue;
             }
 
+            $employeeNumber = 'EMP-'.str_pad($userId, 4, '0', STR_PAD_LEFT);
+
+            // A device user whose EMP-XXXX number is already taken — or was
+            // freed by the soft-delete rename to EMP-XXXX_deleted_<id> — belongs
+            // to an employee RRHH deliberately detached: marking "No checa"
+            // clears zkteco_user_id, and deleting renames the number. Importing
+            // again would either hit the unique employee_number (one such
+            // collision aborted every sync run 2026-07-08 → 2026-07-10) or
+            // resurrect a baja as a ghost employee. The `_` LIKE wildcard is
+            // fine here: a false positive only skips an auto-import.
+            $numberTaken = Employee::withTrashed()
+                ->where(function ($query) use ($employeeNumber) {
+                    $query->where('employee_number', $employeeNumber)
+                        ->orWhere('employee_number', 'like', $employeeNumber.'_deleted_%');
+                })
+                ->exists();
+
+            if ($numberTaken) {
+                Log::info("ZKTeco Sync: skipped device user {$userId} — {$employeeNumber} belongs to a detached or deleted employee");
+
+                continue;
+            }
+
             // Determine status based on recent attendance
             $hasRecentAttendance = in_array($userId, $usersWithRecentAttendance);
             $status = $hasRecentAttendance ? 'active' : 'inactive';
@@ -122,20 +145,28 @@ class ZktecoSyncService
             // Parse name for new employee
             $nameParts = $this->parseName($name, $userId);
 
-            // Create employee
-            Employee::create([
-                'employee_number' => 'EMP-'.str_pad($userId, 4, '0', STR_PAD_LEFT),
-                'zkteco_user_id' => $userId,
-                'first_name' => $nameParts['first_name'],
-                'last_name' => $nameParts['last_name'],
-                'full_name' => $nameParts['full_name'],
-                'hire_date' => Carbon::now()->subYears(1),
-                'department_id' => $defaultDepartment->id,
-                'position_id' => $defaultPosition->id,
-                'schedule_id' => $defaultSchedule->id,
-                'hourly_rate' => 125.00,
-                'status' => $status,
-            ]);
+            try {
+                Employee::create([
+                    'employee_number' => $employeeNumber,
+                    'zkteco_user_id' => $userId,
+                    'first_name' => $nameParts['first_name'],
+                    'last_name' => $nameParts['last_name'],
+                    'full_name' => $nameParts['full_name'],
+                    'hire_date' => Carbon::now()->subYears(1),
+                    'department_id' => $defaultDepartment->id,
+                    'position_id' => $defaultPosition->id,
+                    'schedule_id' => $defaultSchedule->id,
+                    'hourly_rate' => 125.00,
+                    'status' => $status,
+                ]);
+            } catch (\Throwable $e) {
+                // Isolate per-user failures (mirrors the per-day isolation in
+                // syncAttendance) so one bad device user can never abort the
+                // whole sync and freeze attendance processing for everyone.
+                Log::error("ZKTeco Sync: failed to import device user {$userId}: ".$e->getMessage());
+
+                continue;
+            }
 
             $imported++;
             Log::info("Imported employee {$userId} ({$nameParts['full_name']}) - status: {$status}");
