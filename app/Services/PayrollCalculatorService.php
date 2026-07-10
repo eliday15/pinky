@@ -457,20 +457,43 @@ class PayrollCalculatorService
             }
         }
 
-        // ---- Prima vacacional de FORMALIZADOS en la SEMANAL (transferencia) ----
-        // Contpaq paga la prima vacacional junto con el sueldo de la semana, por
-        // transferencia. Para empatar el neto transferido, en el periodo BASE
-        // (semanal) los empleados formalizados cobran aquí su prima (los días de
-        // vacación ya se contaron en $incidentMetrics); en la mensual se suprimió
-        // arriba para no pagar doble. Se marca como $transferExtras para que el
-        // reparto la mande al BANCO (transferencia), no al efectivo.
+        // ---- Percepciones por TRANSFERENCIA de FORMALIZADOS (como Contpaq) ----
+        // Contpaq paga ciertas percepciones junto con el sueldo de la semana, por
+        // transferencia (no en efectivo ni en la mensual): la PRIMA VACACIONAL, el
+        // bono de CUMPLEAÑOS (1 día de sueldo la semana del cumpleaños) y cualquier
+        // concepto marcado pays_via_transfer (aguinaldo, etc.). En el periodo BASE
+        // (semanal) se suman a $transferExtras para que el reparto las mande al
+        // BANCO; siguen contando en gross/net vía su bucket. Cada percepción de
+        // transferencia se marca via_transfer=true en el concepto para que el
+        // recibo la muestre en la transferencia y NO en el efectivo.
         $transferExtras = 0.0;
         if ($payBase && ! $baseInCash) {
+            // Prima vacacional (en la mensual se suprimió arriba para no doblar).
             $weeklyVacationPremium = round($incidentMetrics['vacation_days'] * $dailySalary
                 * ((float) ($employee->vacation_premium_percentage ?? 0) / 100), 2);
             if ($weeklyVacationPremium > 0) {
                 $vacationPremiumPay += $weeklyVacationPremium;
                 $transferExtras += $weeklyVacationPremium;
+            }
+
+            // Bono de cumpleaños: 1 día de sueldo si el cumpleaños del empleado
+            // (mes/día) cae dentro del periodo. Inerte hasta que se capture la
+            // fecha de nacimiento (birth_date NULL → no paga).
+            if ($dailySalary > 0 && $employee->birthdayFallsBetween($startDate, $endDate)) {
+                $birthdayBonus = round($dailySalary, 2);
+                $otherCompensationPay += $birthdayBonus;
+                $transferExtras += $birthdayBonus;
+                $compensationConcepts[] = [
+                    'code' => 'CUMPLE',
+                    'name' => 'Cumpleaños',
+                    'hours' => 0,
+                    'days' => 1,
+                    'quantity' => 1,
+                    'rate' => ['percentage' => null, 'fixed_amount' => $birthdayBonus],
+                    'amount' => $birthdayBonus,
+                    'via_transfer' => true,
+                    'source' => 'birthday',
+                ];
             }
         }
 
@@ -541,6 +564,30 @@ class PayrollCalculatorService
                     $otherCompensationPay += $concept['amount'];
                 }
                 $compensationConcepts[] = $concept;
+            }
+        }
+
+        // Conceptos marcados pays_via_transfer (aguinaldo y demás): para los
+        // formalizados se mueven del efectivo a la TRANSFERENCIA. Corre aquí, con
+        // TODOS los conceptos ya ensamblados (comp types + recurrentes). El monto
+        // ya está en gross/net vía su bucket; sumarlo a $transferExtras solo cambia
+        // el reparto (banco). Cada uno se marca via_transfer para el recibo.
+        if ($payBase && ! $baseInCash) {
+            $conceptCodes = collect($compensationConcepts)->pluck('code')->filter()->unique()->all();
+            if (! empty($conceptCodes)) {
+                $transferCodes = CompensationType::whereIn('code', $conceptCodes)
+                    ->where('pays_via_transfer', true)
+                    ->pluck('code')
+                    ->all();
+                if (! empty($transferCodes)) {
+                    foreach ($compensationConcepts as &$concept) {
+                        if (in_array(($concept['code'] ?? ''), $transferCodes, true) && empty($concept['via_transfer'])) {
+                            $transferExtras += (float) $concept['amount'];
+                            $concept['via_transfer'] = true;
+                        }
+                    }
+                    unset($concept);
+                }
             }
         }
 

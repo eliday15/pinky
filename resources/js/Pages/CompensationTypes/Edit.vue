@@ -40,6 +40,7 @@ const form = useForm({
     priority: props.compensationType.priority ?? 0,
     payment_period: props.compensationType.payment_period || 'monthly',
     is_recurring: props.compensationType.is_recurring ?? false,
+    pays_via_transfer: props.compensationType.pays_via_transfer ?? false,
     employee_ids: initialEmployeeIds,
     employee_percentages: initialEmployeePercentages,
     employee_fixed_amounts: initialEmployeeFixedAmounts,
@@ -268,6 +269,24 @@ const submit = () => {
                             </label>
                             <p v-if="form.errors.is_recurring" class="mt-1 text-sm text-red-600">
                                 {{ form.errors.is_recurring }}
+                            </p>
+                        </div>
+
+                        <div>
+                            <label class="flex items-start gap-2">
+                                <input
+                                    v-model="form.pays_via_transfer"
+                                    type="checkbox"
+                                    class="mt-0.5 rounded border-gray-300 text-pink-600 focus:ring-pink-500"
+                                />
+                                <span class="text-sm text-gray-700">
+                                    <span class="font-medium">Se paga por transferencia</span> — para empleados
+                                    formalizados, este concepto cae en la transferencia (banco) junto con el sueldo,
+                                    no en el efectivo (como Contpaq). Úsalo para aguinaldo, gratificaciones, etc.
+                                </span>
+                            </label>
+                            <p v-if="form.errors.pays_via_transfer" class="mt-1 text-sm text-red-600">
+                                {{ form.errors.pays_via_transfer }}
                             </p>
                         </div>
 

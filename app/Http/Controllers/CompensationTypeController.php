@@ -99,6 +99,7 @@ class CompensationTypeController extends Controller
             'priority' => ['integer', 'min:0'],
             'payment_period' => ['nullable', Rule::in([CompensationType::PAYMENT_PERIOD_WEEKLY, CompensationType::PAYMENT_PERIOD_MONTHLY])],
             'is_recurring' => ['boolean'],
+            'pays_via_transfer' => ['boolean'],
             'position_ids' => ['nullable', 'array'],
             'position_ids.*' => ['exists:positions,id'],
             'position_percentages' => ['nullable', 'array'],
@@ -118,7 +119,7 @@ class CompensationTypeController extends Controller
                 'name', 'code', 'description', 'calculation_type',
                 'percentage_value', 'fixed_amount', 'is_active',
                 'application_mode', 'authorization_type', 'attendance_pull_rule', 'priority',
-                'payment_period', 'is_recurring',
+                'payment_period', 'is_recurring', 'pays_via_transfer',
             ])->toArray()
         );
 
@@ -178,6 +179,7 @@ class CompensationTypeController extends Controller
             'priority' => ['integer', 'min:0'],
             'payment_period' => ['nullable', Rule::in([CompensationType::PAYMENT_PERIOD_WEEKLY, CompensationType::PAYMENT_PERIOD_MONTHLY])],
             'is_recurring' => ['boolean'],
+            'pays_via_transfer' => ['boolean'],
             'position_ids' => ['nullable', 'array'],
             'position_ids.*' => ['exists:positions,id'],
             'position_percentages' => ['nullable', 'array'],
@@ -197,7 +199,7 @@ class CompensationTypeController extends Controller
                 'name', 'code', 'description', 'calculation_type',
                 'percentage_value', 'fixed_amount', 'is_active',
                 'application_mode', 'authorization_type', 'attendance_pull_rule', 'priority',
-                'payment_period', 'is_recurring',
+                'payment_period', 'is_recurring', 'pays_via_transfer',
             ])->toArray()
         );
 

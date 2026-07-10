@@ -37,6 +37,7 @@ const form = useForm({
     credential_type: '',
     credential_number: '',
     hire_date: todayLocal(),
+    birth_date: '',
     termination_date: '',
     department_id: '',
     position_id: '',
@@ -625,6 +626,22 @@ watch(() => form.hire_date, onHireDateChange);
                             />
                             <p v-if="form.errors.hire_date" class="mt-1 text-sm text-red-600">
                                 {{ form.errors.hire_date }}
+                            </p>
+                        </div>
+
+                        <div v-if="canEditAll">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                Fecha de Nacimiento
+                            </label>
+                            <input
+                                v-model="form.birth_date"
+                                type="date"
+                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                :class="{ 'border-red-500': form.errors.birth_date }"
+                            />
+                            <p class="mt-1 text-xs text-gray-400">Para el bono de cumpleaños (1 día de sueldo la semana del cumpleaños).</p>
+                            <p v-if="form.errors.birth_date" class="mt-1 text-sm text-red-600">
+                                {{ form.errors.birth_date }}
                             </p>
                         </div>
 

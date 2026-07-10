@@ -64,6 +64,7 @@ class Employee extends Model
         'credential_type',
         'credential_number',
         'hire_date',
+        'birth_date',
         'termination_date',
         'department_id',
         'position_id',
@@ -99,6 +100,7 @@ class Employee extends Model
 
     protected $casts = [
         'hire_date' => 'date:Y-m-d',
+        'birth_date' => 'date:Y-m-d',
         'termination_date' => 'date:Y-m-d',
         'trial_period_end_date' => 'date:Y-m-d',
         'hourly_rate' => 'decimal:2',
@@ -664,6 +666,38 @@ class Employee extends Model
             && ! $this->isInTrialPeriod();
 
         return ! $formalized;
+    }
+
+    /**
+     * ¿El cumpleaños del empleado (mes/día) cae dentro del rango dado?
+     *
+     * Compara solo mes y día (ignora el año), recorriendo los días del periodo.
+     * Así una semana que cruza el fin de año (dic→ene) también acierta. Devuelve
+     * false si no hay fecha de nacimiento capturada.
+     *
+     * Args:
+     *     start: Primer día del rango (inclusive).
+     *     end: Último día del rango (inclusive).
+     *
+     * Returns:
+     *     true si algún día del rango coincide con el mes/día de nacimiento.
+     */
+    public function birthdayFallsBetween(\Carbon\Carbon $start, \Carbon\Carbon $end): bool
+    {
+        if (! $this->birth_date) {
+            return false;
+        }
+
+        $bMonth = (int) $this->birth_date->format('n');
+        $bDay = (int) $this->birth_date->format('j');
+
+        for ($day = $start->copy(); $day->lte($end); $day->addDay()) {
+            if ((int) $day->format('n') === $bMonth && (int) $day->format('j') === $bDay) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

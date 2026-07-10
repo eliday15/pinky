@@ -158,6 +158,14 @@ const transferLines = computed(() => {
     if (money(props.entry.vacation_premium_pay) > 0) {
         lines.push({ label: 'Prima vacacional', detail: '', amount: money(props.entry.vacation_premium_pay) });
     }
+    // Percepciones marcadas via_transfer (cumpleaños, aguinaldo, etc.): Contpaq
+    // las paga por transferencia junto con el sueldo. Se muestran aquí, no en el
+    // efectivo (allá se saltan por el mismo flag).
+    for (const c of (breakdown.compensation_concepts ?? [])) {
+        if (c.via_transfer && money(c.amount) > 0) {
+            lines.push({ label: c.name, detail: conceptDetail(c), amount: money(c.amount) });
+        }
+    }
     if (money(props.entry.deductions) > 0) {
         // isDeduction dispara el detalle de faltas — solo aquí, no bajo ISR/IMSS.
         lines.push({ label: 'Deducciones (faltas)', detail: '', amount: -money(props.entry.deductions), isDeduction: true });
@@ -190,6 +198,9 @@ const efectivoLines = computed(() => {
     if (money(props.entry.velada_pay) > 0) lines.push({ label: 'Velada', detail: '', amount: money(props.entry.velada_pay) });
     if (money(props.entry.weekend_pay) > 0) lines.push({ label: 'Fin de semana', detail: '', amount: money(props.entry.weekend_pay) });
     for (const c of otrosConceptos.value) {
+        // Las percepciones por transferencia (cumpleaños, aguinaldo) van en la
+        // transferencia del formalizado, no aquí.
+        if (c.via_transfer) continue;
         lines.push({ label: c.name, detail: conceptDetail(c), amount: money(c.amount) });
     }
     if (money(props.entry.vacation_pay) > 0) lines.push({ label: 'Vacaciones', detail: '', amount: money(props.entry.vacation_pay) });

@@ -85,6 +85,7 @@ class CompensationType extends Model
         'priority',
         'payment_period',
         'is_recurring',
+        'pays_via_transfer',
     ];
 
     protected $casts = [
@@ -93,6 +94,7 @@ class CompensationType extends Model
         'is_active' => 'boolean',
         'priority' => 'integer',
         'is_recurring' => 'boolean',
+        'pays_via_transfer' => 'boolean',
     ];
 
     /**
