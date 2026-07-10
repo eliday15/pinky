@@ -10,7 +10,9 @@ use App\Models\SystemSetting;
  * cuota obrera = 0 (Art. 36 LSS, el patrón la absorbe).
  *
  * Calibrado contra Contpaq Sem28: 2.375% + 0.40% sobre excedente de 3 UMA,
- * UMA $113.14 — reproduce el IMSS de la semana completa al centavo.
+ * UMA $117.31 (oficial INEGI 2026) — reproduce el IMSS de la semana completa
+ * al centavo ($0.47 de error total en 79 empleados; la UMA vieja de 2025
+ * $113.14 daba $27.42).
  */
 class ImssCalculatorService
 {
@@ -22,7 +24,7 @@ class ImssCalculatorService
 
     public function __construct()
     {
-        $this->uma = (float) SystemSetting::get('fiscal_uma_daily', 113.14);
+        $this->uma = (float) SystemSetting::get('fiscal_uma_daily', 117.31);
         $this->minWage = (float) SystemSetting::get('fiscal_minimum_wage_daily', 315.04);
         $this->fixedPct = (float) SystemSetting::get('fiscal_imss_worker_fixed_pct', 2.375);
         $this->excessPct = (float) SystemSetting::get('fiscal_imss_eym_excess_pct', 0.40);

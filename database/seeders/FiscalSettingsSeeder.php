@@ -60,8 +60,13 @@ class FiscalSettingsSeeder extends Seeder
         );
 
         $settings = [
-            ['fiscal_uma_daily', '113.14', 'UMA diaria (2026)'],
-            ['fiscal_minimum_wage_daily', '315.04', 'Salario mínimo diario (2026)'],
+            // Valores OFICIALES 2026 (verificados contra Contpaq Sem28):
+            // - UMA $117.31 (INEGI, vigente 1-feb-2026). Reproduce el IMSS de
+            //   Contpaq casi al centavo ($0.47 de error total en 79 empleados vs
+            //   $27.42 con la UMA vieja de 2025 $113.14).
+            // - Salario mínimo general $315.04 (CONASAMI, DOF 19-dic-2025).
+            ['fiscal_uma_daily', '117.31', 'UMA diaria (2026, INEGI)'],
+            ['fiscal_minimum_wage_daily', '315.04', 'Salario mínimo diario (2026, CONASAMI)'],
             ['fiscal_imss_worker_fixed_pct', '2.375', 'IMSS obrero: % fijo sobre SBC'],
             ['fiscal_imss_eym_excess_pct', '0.40', 'IMSS obrero: % sobre excedente de 3 UMA'],
             ['fiscal_imss_excess_uma_multiple', '3', 'IMSS: múltiplo de UMA del excedente'],

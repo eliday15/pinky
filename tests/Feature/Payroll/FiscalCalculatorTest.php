@@ -31,7 +31,9 @@ class FiscalCalculatorTest extends FeatureTestCase
     {
         $imss = app(ImssCalculatorService::class);
         // Empleado normal (sal_diario > mínimo): 2.375% + 0.40% excedente de 3 UMA.
-        $this->assertEqualsWithDelta(71.78, $imss->workerQuota(420.26, 7, 396.88), 0.60);
+        // Con la UMA oficial 2026 ($117.31) el resultado es EXACTO al de Contpaq
+        // (tolerancia estrecha para fijar la corrección y evitar regresar a $113.14).
+        $this->assertEqualsWithDelta(71.78, $imss->workerQuota(420.26, 7, 396.88), 0.05);
     }
 
     public function test_imss_zero_for_minimum_wage(): void
