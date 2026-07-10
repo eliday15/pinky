@@ -86,6 +86,7 @@ class CompensationType extends Model
         'payment_period',
         'is_recurring',
         'pays_via_transfer',
+        'sat_perception_code',
     ];
 
     protected $casts = [

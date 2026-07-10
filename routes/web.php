@@ -106,6 +106,11 @@ Route::middleware(['auth', 'password-changed', 'two-factor-setup'])->group(funct
     Route::post('/payroll/{payroll}/calculate', [PayrollController::class, 'calculate'])->name('payroll.calculate');
     Route::post('/payroll/{payroll}/approve', [PayrollController::class, 'approve'])->name('payroll.approve');
     Route::post('/payroll/{payroll}/mark-paid', [PayrollController::class, 'markPaid'])->name('payroll.markPaid');
+    // Timbrado CFDI de nómina (Facturama): timbrar/cancelar periodo + descargas.
+    Route::post('/payroll/{payroll}/cfdi/stamp', [\App\Http\Controllers\PayrollCfdiController::class, 'stamp'])->name('payroll.cfdi.stamp');
+    Route::post('/payroll/{payroll}/cfdi/cancel', [\App\Http\Controllers\PayrollCfdiController::class, 'cancel'])->name('payroll.cfdi.cancel');
+    Route::get('/payroll-entries/{entry}/cfdi/xml', [\App\Http\Controllers\PayrollCfdiController::class, 'downloadXml'])->name('payroll.cfdi.xml');
+    Route::get('/payroll-entries/{entry}/cfdi/pdf', [\App\Http\Controllers\PayrollCfdiController::class, 'downloadPdf'])->name('payroll.cfdi.pdf');
     // Pago en efectivo: cierre (billetes), página de cobro y cobro con PIN.
     Route::post('/payroll/{payroll}/close-cash', [PayrollController::class, 'closeCash'])->name('payroll.closeCash');
     Route::post('/payroll/{payroll}/confirm-delivery', [PayrollController::class, 'confirmCashDelivery'])->name('payroll.confirmDelivery');

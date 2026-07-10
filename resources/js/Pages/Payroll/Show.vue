@@ -11,7 +11,16 @@ const props = defineProps({
     entries: Array,
     summary: Object,
     can: Object,
+    cfdi: Object, // { stamped, pending, error, canceled, stampable }
 });
+
+// Timbrado CFDI: disparar el timbrado del periodo aprobado.
+const stampCfdi = () => {
+    router.post(route('payroll.cfdi.stamp', props.period.id), {}, { preserveScroll: true });
+};
+const cancelCfdi = () => {
+    router.post(route('payroll.cfdi.cancel', props.period.id), {}, { preserveScroll: true });
+};
 
 const typeInfo = computed(() => periodTypeInfo(props.period.type));
 
@@ -197,6 +206,31 @@ const closeCash = () => {
                     >
                         Aprobar Nomina
                     </button>
+                    <!-- Timbrado CFDI (nómina aprobada): timbra los recibos de los
+                         formalizados ante el SAT vía Facturama. -->
+                    <button
+                        v-if="can?.approve && ['approved', 'paid'].includes(period.status) && cfdi && cfdi.stampable > 0 && cfdi.stamped < cfdi.stampable"
+                        @click="stampCfdi"
+                        class="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700"
+                        :title="`${cfdi.stamped} de ${cfdi.stampable} timbrados`"
+                    >
+                        Timbrar CFDI ({{ cfdi.stamped }}/{{ cfdi.stampable }})
+                    </button>
+                    <button
+                        v-if="can?.approve && cfdi && cfdi.stamped > 0"
+                        @click="cancelCfdi"
+                        class="px-4 py-2 bg-white border border-red-300 text-red-600 rounded-lg hover:bg-red-50"
+                        title="Cancela los CFDI ante el SAT (necesario para recalcular)"
+                    >
+                        Cancelar CFDI ({{ cfdi.stamped }})
+                    </button>
+                    <span
+                        v-if="cfdi && cfdi.error > 0"
+                        class="px-3 py-2 text-sm bg-red-100 text-red-700 rounded-lg"
+                        title="Recibos con error del PAC: corrige los datos y vuelve a timbrar"
+                    >
+                        {{ cfdi.error }} con error
+                    </span>
                     <button
                         v-if="can?.approve && period.status === 'approved'"
                         @click="markPaid"

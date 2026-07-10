@@ -193,10 +193,15 @@ class PayrollController extends Controller
 
         $summary = $this->calculator->getPeriodSummary($payroll);
 
+        // Estatus del timbrado CFDI (solo informativo; el botón aparece para
+        // quien puede aprobar y con nómina aprobada).
+        $cfdiStatus = app(\App\Services\Cfdi\PayrollCfdiService::class)->periodStatus($payroll);
+
         return Inertia::render('Payroll/Show', [
             'period' => $payroll,
             'entries' => $entries,
             'summary' => $summary,
+            'cfdi' => $cfdiStatus,
             'can' => [
                 'viewComplete' => $user->hasPermissionTo('payroll.view_complete'),
                 'calculate' => $user->hasPermissionTo('payroll.calculate'),
@@ -227,6 +232,17 @@ class PayrollController extends Controller
         if (! $recalculable) {
             return redirect()->back()
                 ->with('error', 'No se puede recalcular una nomina aprobada o pagada.');
+        }
+
+        // CANDADO CFDI: un periodo con recibos TIMBRADOS ante el SAT no se
+        // recalcula sin cancelarlos primero (si no, los montos del CFDI dejan
+        // de coincidir con lo pagado y habría que re-timbrar duplicado).
+        $stamped = \App\Models\PayrollCfdi::whereHas('payrollEntry', fn ($q) => $q->where('payroll_period_id', $payroll->id))
+            ->where('status', \App\Models\PayrollCfdi::STATUS_STAMPED)
+            ->count();
+        if ($stamped > 0) {
+            return redirect()->back()
+                ->with('error', "Esta nómina tiene {$stamped} recibo(s) CFDI timbrado(s). Cancela el timbrado antes de recalcular.");
         }
 
         $this->calculator->calculatePeriod($payroll);

@@ -128,5 +128,24 @@ class FiscalSettingsSeeder extends Seeder
         // El % agregado viejo (2.375) fue reemplazado por el split por ramo
         // (EyM 0.625 + IV/CyV 1.75); se elimina para no mostrar un knob muerto.
         SystemSetting::where('key', 'fiscal_imss_worker_fixed_pct')->delete();
+
+        // ---- Datos de la EMPRESA (emisor del CFDI de nómina) ----
+        // firstOrCreate: se siembran con lo conocido del PDF de Contpaq y se
+        // corrigen/completan una vez en Configuración → Empresa (no se pisan
+        // en cada deploy).
+        $company = [
+            ['company_legal_name', 'VESTIDOS PINKY', 'Razón social (emisor CFDI)', 'string'],
+            ['company_rfc', 'VPI731127SV8', 'RFC de la empresa', 'string'],
+            ['company_employer_registration', 'C4121138109', 'Registro patronal IMSS', 'string'],
+            ['company_zip_code', '', 'Código postal fiscal (lugar de expedición)', 'string'],
+            ['company_fiscal_regime', '601', 'Régimen fiscal de la empresa (catálogo SAT)', 'string'],
+            ['company_position_risk', '3', 'Clase de riesgo del puesto (c_RiesgoPuesto)', 'string'],
+        ];
+        foreach ($company as [$key, $value, $label, $type]) {
+            SystemSetting::firstOrCreate(
+                ['key' => $key],
+                ['value' => $value, 'type' => $type, 'group' => 'empresa', 'label' => $label],
+            );
+        }
     }
 }

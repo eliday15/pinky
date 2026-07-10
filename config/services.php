@@ -35,4 +35,15 @@ return [
         ],
     ],
 
+    // PAC de timbrado CFDI de nómina (Facturama). driver 'fake' para
+    // desarrollo/tests sin credenciales; sandbox=true usa apisandbox.
+    'cfdi' => [
+        'driver' => env('CFDI_DRIVER', 'fake'), // facturama | fake
+    ],
+    'facturama' => [
+        'user' => env('FACTURAMA_USER'),
+        'password' => env('FACTURAMA_PASSWORD'),
+        'sandbox' => env('FACTURAMA_SANDBOX', true),
+    ],
+
 ];

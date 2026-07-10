@@ -137,6 +137,14 @@ class PayrollEntry extends Model
     }
 
     /**
+     * CFDIs de nómina de este entry (historial: cancelados + el activo).
+     */
+    public function cfdis(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(PayrollCfdi::class);
+    }
+
+    /**
      * Calculate gross pay from components.
      *
      * Mismos conceptos que persiste PayrollCalculatorService (auditoría #90:
