@@ -936,10 +936,23 @@ class PayrollController extends Controller
             $canal = null;
         }
 
+        // CFDI timbrado del entry (si existe): uuid + disponibilidad de
+        // descargas XML/PDF para el recibo.
+        $stampedCfdi = $entry->cfdis()
+            ->where('status', \App\Models\PayrollCfdi::STATUS_STAMPED)
+            ->latest('stamped_at')
+            ->first();
+
         return Inertia::render('Payroll/EntryDetail', [
             'entry' => $entry,
             'cashSplit' => $this->cashSplitForEntry($entry),
             'canal' => $canal,
+            'cfdi' => $stampedCfdi ? [
+                'uuid' => $stampedCfdi->uuid,
+                'stamped_at' => $stampedCfdi->stamped_at?->toDateTimeString(),
+                'has_xml' => (bool) $stampedCfdi->xml_path,
+                'has_pdf' => (bool) $stampedCfdi->pdf_path,
+            ] : null,
         ]);
     }
 

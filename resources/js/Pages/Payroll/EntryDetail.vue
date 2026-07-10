@@ -9,6 +9,8 @@ const props = defineProps({
     entry: Object,
     cashSplit: { type: Object, default: () => ({}) },
     canal: { type: String, default: null },
+    // CFDI timbrado del entry: { uuid, stamped_at, has_xml, has_pdf } | null.
+    cfdi: { type: Object, default: null },
 });
 
 // Modo de vista: al llegar desde "solo efectivo" / "solo transferencia" se
@@ -185,6 +187,12 @@ const transferLines = computed(() => {
     if (money(props.entry.subsidy_amount) > 0) {
         lines.push({ label: 'Subsidio al empleo', detail: 'se acredita a favor', amount: money(props.entry.subsidy_amount) });
     }
+    // Ajuste al neto (concepto 99 de Contpaq): centavos que redondean la
+    // transferencia a múltiplos de $0.20 — sin esta línea las filas no
+    // sumarían el total del banco.
+    if (money(props.entry.net_adjustment) !== 0) {
+        lines.push({ label: 'Ajuste al neto', detail: 'redondeo a $0.20', amount: money(props.entry.net_adjustment) });
+    }
     return lines;
 });
 
@@ -230,13 +238,29 @@ const pesoRounding = computed(() => Number(props.cashSplit?.period_amount ?? 0) 
             </h2>
         </template>
 
-        <div class="mb-6">
+        <div class="mb-6 flex items-center justify-between flex-wrap gap-3">
             <Link
                 :href="route('payroll.show', entry.payroll_period_id)"
                 class="text-pink-600 hover:text-pink-800"
             >
                 &larr; Volver al periodo
             </Link>
+
+            <!-- Recibo CFDI timbrado ante el SAT: folio fiscal + descargas -->
+            <div v-if="cfdi" class="flex items-center gap-2 text-sm bg-teal-50 border border-teal-200 rounded-lg px-3 py-1.5">
+                <span class="text-teal-700 font-medium">CFDI timbrado</span>
+                <span class="text-gray-500 font-mono text-xs" :title="`Timbrado: ${cfdi.stamped_at}`">{{ cfdi.uuid }}</span>
+                <a
+                    v-if="cfdi.has_xml"
+                    :href="route('payroll.cfdi.xml', entry.id)"
+                    class="text-teal-700 underline hover:text-teal-900"
+                >XML</a>
+                <a
+                    v-if="cfdi.has_pdf"
+                    :href="route('payroll.cfdi.pdf', entry.id)"
+                    class="text-teal-700 underline hover:text-teal-900"
+                >PDF</a>
+            </div>
         </div>
 
         <!-- Banner de canal: se está viendo solo un canal de pago -->

@@ -56,6 +56,13 @@ echo "=== Starting scheduler ==="
 # overwrite the same hashed cache subdirectory.
 su -s /bin/bash www-data -c "php artisan schedule:work >> storage/logs/scheduler.log 2>&1" &
 
+echo "=== Starting queue worker ==="
+# Worker de colas (QUEUE_CONNECTION=database): lo necesitan los jobs de
+# timbrado CFDI (StampPayrollCfdi) y el sync ZKTeco. Loop de reinicio simple:
+# si el worker muere, se relanza en 5s; --max-time=3600 recicla el proceso
+# cada hora contra fugas de memoria. Mismo patrón www-data que el scheduler.
+su -s /bin/bash www-data -c "while true; do php artisan queue:work --tries=3 --timeout=180 --max-time=3600 >> storage/logs/queue.log 2>&1; sleep 5; done" &
+
 # Stream Laravel log to stderr so errors appear in Coolify's log viewer
 touch storage/logs/laravel.log
 tail -f storage/logs/laravel.log >&2 &

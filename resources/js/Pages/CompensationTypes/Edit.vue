@@ -41,6 +41,7 @@ const form = useForm({
     payment_period: props.compensationType.payment_period || 'monthly',
     is_recurring: props.compensationType.is_recurring ?? false,
     pays_via_transfer: props.compensationType.pays_via_transfer ?? false,
+    sat_perception_code: props.compensationType.sat_perception_code || '',
     employee_ids: initialEmployeeIds,
     employee_percentages: initialEmployeePercentages,
     employee_fixed_amounts: initialEmployeeFixedAmounts,
@@ -288,6 +289,19 @@ const submit = () => {
                             <p v-if="form.errors.pays_via_transfer" class="mt-1 text-sm text-red-600">
                                 {{ form.errors.pays_via_transfer }}
                             </p>
+                            <div v-if="form.pays_via_transfer" class="mt-2 ml-6">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">
+                                    Clave SAT (percepción del recibo CFDI)
+                                </label>
+                                <input
+                                    v-model="form.sat_perception_code"
+                                    type="text"
+                                    maxlength="3"
+                                    class="w-40 rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                    placeholder="029"
+                                />
+                                <p class="mt-1 text-xs text-gray-400">Catálogo c_TipoPercepcion: 001 sueldo, 002 aguinaldo, 019 horas extra, 021 prima vac., 029 premios/bonos. Vacío = 038 (otros ingresos).</p>
+                            </div>
                         </div>
 
                         <div v-if="form.calculation_type === 'percentage'">

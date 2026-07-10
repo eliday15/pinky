@@ -113,6 +113,10 @@ const form = useForm({
     is_trial_period: props.employee.is_trial_period || false,
     trial_period_end_date: props.employee.trial_period_end_date?.split('T')[0] || '',
     imss_number: props.employee.imss_number || '',
+    rfc: props.employee.rfc || '',
+    curp: props.employee.curp || '',
+    clabe: props.employee.clabe || '',
+    bank_code: props.employee.bank_code || '',
     is_imss_enrolled: props.employee.is_imss_enrolled || false,
     is_attendance_exempt: props.employee.is_attendance_exempt || false,
     cash_pin: '',
@@ -988,6 +992,23 @@ watch(() => form.hire_date, onHireDateChange);
                                 <input v-model="form.is_imss_enrolled" type="checkbox" class="rounded border-gray-300 text-pink-600 focus:ring-pink-500" />
                                 <span class="ml-2 text-sm text-gray-700">Ya esta inscrito en el IMSS</span>
                             </label>
+                        </div>
+                        <!-- Datos fiscales del CFDI de nómina (recibo timbrado) -->
+                        <div v-if="canEditAll">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">RFC</label>
+                            <input v-model="form.rfc" type="text" maxlength="13" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 uppercase" placeholder="XAXX010101000" />
+                        </div>
+                        <div v-if="canEditAll">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">CURP</label>
+                            <input v-model="form.curp" type="text" maxlength="18" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 uppercase" placeholder="Para el recibo CFDI timbrado" />
+                        </div>
+                        <div v-if="canEditAll">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">CLABE</label>
+                            <input v-model="form.clabe" type="text" maxlength="18" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" placeholder="18 dígitos (transferencia)" />
+                        </div>
+                        <div v-if="canEditAll">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Banco (clave SAT)</label>
+                            <input v-model="form.bank_code" type="text" maxlength="3" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" placeholder="012 = BBVA, 014 = Santander…" />
                         </div>
                         <div v-if="canEditAll" class="md:col-span-2">
                             <label class="flex items-center">
