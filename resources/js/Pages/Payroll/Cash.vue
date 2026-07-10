@@ -10,6 +10,8 @@ const props = defineProps({
     globalBreakdown: Object,
     denominations: Array,
     summary: Object,
+    collection: Object,
+    returnBreakdown: Object,
     can: Object,
 });
 
@@ -23,8 +25,9 @@ const formatPieces = (denom) => (denom >= 20 ? `Billete $${denom}` : `Moneda $${
 // El pago en efectivo son 2 pasos: (1) preparar la entrega — definir con qué
 // billetes/monedas se va a entregar el dinero — y (2) cobrar con la contraseña
 // de cada empleado. No se puede cobrar sin confirmar antes la entrega (paso 1).
+// El Paso 1 es exclusivo del custodio (superadmin); el cobrador solo ve el 2.
 const deliveryConfirmed = computed(() => !!props.period.cash_delivery_confirmed_at);
-const step = ref(deliveryConfirmed.value ? 2 : 1);
+const step = ref(deliveryConfirmed.value || !props.can?.deliverCash ? 2 : 1);
 
 const confirmDeliveryForm = useForm({});
 const confirmDelivery = () => {
@@ -32,6 +35,46 @@ const confirmDelivery = () => {
         preserveScroll: true,
         onSuccess: () => { step.value = 2; },
     });
+};
+
+// --- Cierre del cobro y devolución del sobrante ---
+// Al terminar de cobrar, el cobrador cierra la nómina: se congela cuánto
+// efectivo debe regresar (lo no cobrado) y ya no se puede cobrar aquí; el
+// saldo de cada empleado se acumula a la siguiente semana. El superadmin
+// después confirma que recibió el efectivo devuelto (o reabre si fue error).
+const collectionClosed = computed(() => !!props.collection?.closed_at);
+const returnReceived = computed(() => !!props.collection?.received_at);
+const returnAmount = computed(() => Number(props.collection?.return_amount ?? 0));
+
+// Filas [{denom,count}] del snapshot de billetes a regresar, de mayor a menor.
+const returnRows = computed(() =>
+    Object.entries(props.returnBreakdown || {})
+        .map(([denom, count]) => ({ denom: Number(denom), count: Number(count) }))
+        .filter((r) => r.count > 0)
+        .sort((a, b) => b.denom - a.denom)
+);
+
+const formatDateTime = (value) => (value
+    ? new Date(value).toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' })
+    : '');
+
+const showCloseCollection = ref(false);
+const closeCollectionForm = useForm({});
+const submitCloseCollection = () => {
+    closeCollectionForm.post(route('payroll.closeCollection', props.period.id), {
+        preserveScroll: true,
+        onSuccess: () => { showCloseCollection.value = false; },
+    });
+};
+
+const receiveReturnForm = useForm({});
+const submitReceiveReturn = () => {
+    receiveReturnForm.post(route('payroll.receiveReturn', props.period.id), { preserveScroll: true });
+};
+
+const reopenForm = useForm({});
+const submitReopen = () => {
+    reopenForm.post(route('payroll.reopenCollection', props.period.id), { preserveScroll: true });
 };
 
 // --- Denominaciones disponibles (flexible) ---
@@ -161,18 +204,81 @@ const submitCollect = () => {
 
     <AppLayout>
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-            <!-- Header -->
+            <!-- Header: el cobrador no tiene acceso al detalle de la nómina,
+                 su regreso es a la lista de cobro de efectivo. -->
             <div class="mb-6">
-                <Link :href="route('payroll.show', period.id)" class="text-pink-600 hover:text-pink-800 text-sm">
+                <Link v-if="can?.payCash" :href="route('payroll.show', period.id)" class="text-pink-600 hover:text-pink-800 text-sm">
                     &larr; Volver a la nomina
+                </Link>
+                <Link v-else :href="route('payroll.cashCollection')" class="text-pink-600 hover:text-pink-800 text-sm">
+                    &larr; Volver a cobro de efectivo
                 </Link>
                 <h1 class="text-2xl font-bold text-gray-800 mt-2">Pago en efectivo</h1>
                 <p class="text-gray-500">{{ period.name }}</p>
             </div>
 
+            <!-- Nómina cerrada por el cobrador: efectivo a regresar y su recepción -->
+            <div v-if="collectionClosed" class="mb-6 rounded-lg border p-4" :class="returnReceived ? 'border-green-300 bg-green-50' : 'border-pink-300 bg-pink-50'">
+                <div class="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                        <p class="text-sm font-semibold" :class="returnReceived ? 'text-green-800' : 'text-pink-800'">
+                            Nómina cerrada el {{ formatDateTime(collection.closed_at) }}<template v-if="collection.closed_by_name"> por {{ collection.closed_by_name }}</template>
+                        </p>
+                        <p v-if="returnAmount > 0" class="text-2xl font-bold mt-1" :class="returnReceived ? 'text-green-700' : 'text-pink-700'">
+                            Efectivo a regresar: {{ formatCurrency(returnAmount) }}
+                        </p>
+                        <p v-else class="text-sm mt-1" :class="returnReceived ? 'text-green-700' : 'text-pink-700'">
+                            Todos los empleados cobraron: no hay efectivo por regresar.
+                        </p>
+                        <p v-if="returnRows.length" class="text-xs text-gray-600 mt-2">
+                            Billetes a regresar:
+                            <template v-for="(row, i) in returnRows" :key="row.denom">
+                                <span>{{ row.count }}&times;${{ row.denom }}</span><span v-if="i < returnRows.length - 1">, </span>
+                            </template>
+                        </p>
+                        <p class="text-xs text-gray-500 mt-2">
+                            Lo no cobrado se acumula a cada empleado y se paga la siguiente semana.
+                        </p>
+                        <p v-if="returnReceived" class="text-sm font-medium text-green-700 mt-2">
+                            &#10003; Efectivo recibido el {{ formatDateTime(collection.received_at) }}<template v-if="collection.received_by_name"> por {{ collection.received_by_name }}</template>
+                        </p>
+                    </div>
+                    <div v-if="!returnReceived" class="flex flex-col gap-2">
+                        <button
+                            v-if="can?.receiveReturn"
+                            type="button"
+                            :disabled="receiveReturnForm.processing"
+                            @click="submitReceiveReturn"
+                            class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-medium disabled:opacity-50"
+                        >
+                            Recibir efectivo devuelto{{ returnAmount > 0 ? ` (${formatCurrency(returnAmount)})` : '' }}
+                        </button>
+                        <button
+                            v-if="can?.reopenCollection"
+                            type="button"
+                            :disabled="reopenForm.processing"
+                            @click="submitReopen"
+                            class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-medium disabled:opacity-50"
+                        >
+                            Reabrir cobro
+                        </button>
+                        <p v-if="!can?.receiveReturn" class="text-xs text-gray-500 max-w-[14rem]">
+                            Entrega el efectivo al super admin; él confirmará la recepción.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- El cobrador aún no puede hacer nada: falta que el custodio entregue -->
+            <div v-if="!deliveryConfirmed && !can?.deliverCash" class="mb-6 rounded-lg border border-blue-200 bg-blue-50 p-4">
+                <p class="text-sm text-blue-800">
+                    El super admin aún no confirma la entrega del efectivo de este periodo. Podrás cobrar en cuanto la confirme.
+                </p>
+            </div>
+
             <!-- La nómina se recalculó después de cerrar el efectivo: los billetes
                  de abajo están viejos hasta aprobar y volver a cerrar. -->
-            <div v-if="cashStale" class="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-4">
+            <div v-if="cashStale && can?.deliverCash" class="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-4">
                 <p class="text-sm font-semibold text-amber-800">
                     &#9888; Los montos de abajo están desactualizados
                 </p>
@@ -202,9 +308,12 @@ const submitCollect = () => {
                 </div>
             </div>
 
-            <!-- Pasos: (1) preparar la entrega / definir billetes  (2) cobrar -->
+            <!-- Pasos: (1) preparar la entrega / definir billetes  (2) cobrar.
+                 El Paso 1 es exclusivo del custodio (superadmin); el cobrador
+                 solo ve el Paso 2. -->
             <div class="flex gap-2 mb-6">
                 <button
+                    v-if="can?.deliverCash"
                     type="button"
                     @click="step = 1"
                     class="flex-1 px-4 py-3 rounded-lg border text-sm font-medium transition-colors"
@@ -294,7 +403,7 @@ const submitCollect = () => {
                     &#10003; Entrega del efectivo confirmada.
                 </p>
                 <button
-                    v-if="!deliveryConfirmed && can?.payCash"
+                    v-if="!deliveryConfirmed && can?.deliverCash"
                     type="button"
                     :disabled="confirmDeliveryForm.processing"
                     @click="confirmDelivery"
@@ -370,7 +479,7 @@ const submitCollect = () => {
                             </td>
                             <td class="px-4 py-3 text-right">
                                 <button
-                                    v-if="can?.payCash && payout.status !== 'paid'"
+                                    v-if="can?.collectCash && payout.status !== 'paid'"
                                     :disabled="!payout.has_cash_pin || !deliveryConfirmed"
                                     :title="!deliveryConfirmed ? 'Primero confirma la preparación del efectivo (Paso 1)' : (payout.has_cash_pin ? '' : 'El empleado no tiene contraseña de cobro configurada')"
                                     @click="openCollect(payout)"
@@ -381,6 +490,9 @@ const submitCollect = () => {
                                 <span v-else-if="payout.status === 'paid'" class="text-xs text-gray-400">
                                     {{ payout.collected_at ? new Date(payout.collected_at).toLocaleDateString('es-MX') : '' }}
                                 </span>
+                                <span v-else-if="collectionClosed" class="text-xs text-gray-400" title="La nómina se cerró; el saldo se acumula a la siguiente semana">
+                                    Se acumula
+                                </span>
                             </td>
                         </tr>
                         <tr v-if="!cashPayouts.length">
@@ -390,6 +502,29 @@ const submitCollect = () => {
                         </tr>
                     </tbody>
                 </table>
+            </div>
+
+            <!-- Cerrar nómina: al terminar de cobrar, congela el efectivo a
+                 regresar y bloquea nuevos cobros en este periodo. -->
+            <div v-if="can?.closeCollection" class="mt-6 bg-white rounded-lg shadow p-4 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                    <p class="text-sm font-medium text-gray-800">¿Terminaste de cobrar?</p>
+                    <p class="text-xs text-gray-500">
+                        <template v-if="summary.pending_count > 0">
+                            Quedan {{ summary.pending_count }} empleado(s) sin cobrar por {{ formatCurrency(summary.total_pending) }}; ese efectivo se regresa a la empresa y su saldo se acumula a la siguiente semana.
+                        </template>
+                        <template v-else>
+                            Todos cobraron: al cerrar no habrá efectivo por regresar.
+                        </template>
+                    </p>
+                </div>
+                <button
+                    type="button"
+                    @click="showCloseCollection = true"
+                    class="px-5 py-2.5 bg-gray-800 text-white rounded-lg hover:bg-gray-900 text-sm font-medium"
+                >
+                    Cerrar nómina
+                </button>
             </div>
             </div>
             <!-- /PASO 2 -->
@@ -473,6 +608,54 @@ const submitCollect = () => {
                             </button>
                         </div>
                     </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Close collection modal -->
+        <div v-if="showCloseCollection" class="fixed inset-0 z-50 overflow-y-auto">
+            <div class="flex items-center justify-center min-h-screen px-4">
+                <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" @click="showCloseCollection = false"></div>
+
+                <div class="relative bg-white rounded-lg shadow-xl max-w-md w-full">
+                    <div class="px-6 py-4 border-b border-gray-200">
+                        <h3 class="text-lg font-semibold text-gray-900">Cerrar nómina</h3>
+                        <p class="text-sm text-gray-500 mt-1">{{ period.name }}</p>
+                    </div>
+
+                    <div class="px-6 py-4">
+                        <template v-if="summary.pending_count > 0">
+                            <p class="text-sm text-gray-600">
+                                Quedan <span class="font-semibold">{{ summary.pending_count }}</span> empleado(s) sin cobrar.
+                            </p>
+                            <p class="text-2xl font-bold text-pink-700 mt-2">
+                                Efectivo a regresar: {{ formatCurrency(summary.total_pending) }}
+                            </p>
+                        </template>
+                        <template v-else>
+                            <p class="text-sm text-gray-600">
+                                Todos los empleados cobraron. No hay efectivo por regresar.
+                            </p>
+                        </template>
+                        <p class="text-xs text-gray-500 mt-3">
+                            Al cerrar ya no se podrá cobrar en este periodo. El efectivo no cobrado se regresa a la empresa
+                            y el saldo de cada empleado se acumula automáticamente a la siguiente semana.
+                        </p>
+                    </div>
+
+                    <div class="px-6 py-4 border-t border-gray-200 flex justify-end space-x-3">
+                        <button type="button" @click="showCloseCollection = false" class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50">
+                            Cancelar
+                        </button>
+                        <button
+                            type="button"
+                            :disabled="closeCollectionForm.processing"
+                            @click="submitCloseCollection"
+                            class="px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900 disabled:opacity-50"
+                        >
+                            {{ closeCollectionForm.processing ? 'Cerrando...' : 'Cerrar nómina' }}
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>

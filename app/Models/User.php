@@ -76,7 +76,7 @@ class User extends Authenticatable
      */
     public function requiresTwoFactor(): bool
     {
-        return $this->hasAnyRole(['admin', 'rrhh', 'supervisor']);
+        return $this->hasAnyRole(['superadmin', 'admin', 'rrhh', 'supervisor']);
     }
 
     /**
@@ -85,5 +85,32 @@ class User extends Authenticatable
     public function employee()
     {
         return $this->hasOne(Employee::class);
+    }
+
+    /**
+     * ¿Este usuario puede operar el efectivo de este periodo de nómina?
+     *
+     * Quien tiene payroll.pay_cash (admin/superadmin) opera todas. Los
+     * cobradores solo la suya: cobrador_general los periodos GENERALES
+     * (department_id NULL) y cobrador_taller los periodos de departamentos con
+     * nómina propia (has_separate_payroll, hoy solo Taller).
+     */
+    public function allowsCashPeriod(PayrollPeriod $period): bool
+    {
+        if ($this->hasPermissionTo('payroll.pay_cash')) {
+            return true;
+        }
+
+        if ($this->hasRole('cobrador_general') && $period->department_id === null) {
+            return true;
+        }
+
+        if ($this->hasRole('cobrador_taller')
+            && $period->department_id !== null
+            && $period->department?->has_separate_payroll) {
+            return true;
+        }
+
+        return false;
     }
 }

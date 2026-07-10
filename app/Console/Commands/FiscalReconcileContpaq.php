@@ -35,7 +35,7 @@ class FiscalReconcileContpaq extends Command
             return self::FAILURE;
         }
 
-        $uma = (float) SystemSetting::get('fiscal_uma_daily', 113.14);
+        $uma = (float) SystemSetting::get('fiscal_uma_daily', 117.31);
         $tolIsr = (float) $this->option('tol-isr');
         $tolImss = (float) $this->option('tol-imss');
 
@@ -57,11 +57,20 @@ class FiscalReconcileContpaq extends Command
             $sdi = (float) ($emp->sdi ?: ($r['sdi'] ?? 0));
             $dias = (float) ($r['dias'] ?? 7);
 
+            // Gravable = componentes gravados (sueldo + séptimo + vacaciones +
+            // cumpleaños) + excedentes de prima (15 UMA) y aguinaldo (30 UMA).
+            // USAR EL JSON FULL (contpaq_full_sem28.json): el parse viejo no
+            // desglosaba vacaciones de algunos empleados y subestimaba.
             $grav = ($r['sueldo'] ?? 0) + ($r['septimo'] ?? 0) + ($r['vacaciones'] ?? 0) + ($r['cumple'] ?? 0)
                 + max(0, ($r['prima_vac'] ?? 0) - 15 * $uma) + max(0, ($r['aguinaldo'] ?? 0) - 30 * $uma);
 
-            $isr = $isrCalc->calculate($grav, $sal)['isr'];
-            $imss = $imssCalc->workerQuota($sbc, $dias, $sal);
+            // Faltas enteras inferidas de los días de Contpaq (días pagados =
+            // 7 − faltas×7/6 → faltas = (7−dias)×6/7). El IMSS cotiza los 7
+            // días en EyM y descuenta las faltas solo de IV+CyV (Art. 31 LSS).
+            $faltas = (int) round((7.0 - $dias) * 6.0 / 7.0);
+
+            $isr = $isrCalc->calculate($grav, $sal, 'weekly', 7.0)['isr'];
+            $imss = $imssCalc->workerQuota($sbc, 7.0, $sal, $faltas);
             $inf = $infCalc->deduction($emp, $sdi, $dias, 7.0);
             $cInf = ($r['infonavit_cf'] ?? 0) + ($r['infonavit_fd'] ?? 0);
 

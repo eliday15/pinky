@@ -112,6 +112,12 @@ Route::middleware(['auth', 'password-changed', 'two-factor-setup'])->group(funct
     Route::get('/payroll/{payroll}/cash', [PayrollController::class, 'cash'])->name('payroll.cash');
     Route::get('/payroll/{payroll}/transfers', [PayrollController::class, 'transfers'])->name('payroll.transfers');
     Route::post('/payroll/{payroll}/payouts/{payout}/collect', [PayrollController::class, 'collectCash'])->name('payroll.payouts.collect');
+    // Cierre del cobro por el cobrador (congela el efectivo a regresar),
+    // recepción/reapertura por el custodio (superadmin) y landing del cobrador.
+    Route::get('/cobro-efectivo', [PayrollController::class, 'cashCollectionIndex'])->name('payroll.cashCollection');
+    Route::post('/payroll/{payroll}/close-collection', [PayrollController::class, 'closeCashCollection'])->name('payroll.closeCollection');
+    Route::post('/payroll/{payroll}/receive-return', [PayrollController::class, 'receiveCashReturn'])->name('payroll.receiveReturn');
+    Route::post('/payroll/{payroll}/reopen-collection', [PayrollController::class, 'reopenCashCollection'])->name('payroll.reopenCollection');
     Route::delete('/payroll/{payroll}', [PayrollController::class, 'destroy'])->name('payroll.destroy');
     Route::get('/payroll/{payroll}/export/contpaqi', [PayrollController::class, 'exportContpaqi'])->name('payroll.export.contpaqi');
     Route::get('/payroll/entry/{entry}', [PayrollController::class, 'entryDetail'])->name('payroll.entry');

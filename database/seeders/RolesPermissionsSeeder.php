@@ -85,6 +85,14 @@ class RolesPermissionsSeeder extends Seeder
             'payroll.approve',
             'payroll.pay_cash',
             'payroll.export',
+            // Efectivo con segregación de funciones: el super admin ENTREGA el
+            // efectivo (paso 1) y RECIBE la devolución del sobrante; el cobrador
+            // solo COBRA (paso 2) y CIERRA su nómina. deliver/receive son
+            // exclusivos de superadmin (ni admin los tiene).
+            'payroll.cash.deliver',
+            'payroll.cash.collect',
+            'payroll.cash.close',
+            'payroll.cash.receive',
 
             // Reportes
             'reports.view_all',
@@ -121,9 +129,30 @@ class RolesPermissionsSeeder extends Seeder
             Permission::firstOrCreate(['name' => $permission]);
         }
 
-        // Create Admin role with all permissions
+        // Create Super Admin role: TODO, incluida la custodia física del
+        // efectivo (entregar al cobrador y recibir la devolución del sobrante).
+        $superadmin = Role::firstOrCreate(['name' => 'superadmin']);
+        $superadmin->syncPermissions(Permission::all());
+
+        // Create Admin role with all permissions EXCEPT cash custody: entregar
+        // y recibir el efectivo es exclusivo del superadmin (segregación de
+        // funciones pedida por el negocio).
         $admin = Role::firstOrCreate(['name' => 'admin']);
-        $admin->syncPermissions(Permission::all());
+        $admin->syncPermissions(
+            Permission::whereNotIn('name', ['payroll.cash.deliver', 'payroll.cash.receive'])->get()
+        );
+
+        // Cobradores de nómina: SOLO cobran (paso 2) y cierran el cobro de SU
+        // nómina — general (department_id NULL) o taller (departamento con
+        // nómina propia). El scope se resuelve por nombre de rol en
+        // User::allowsCashPeriod().
+        foreach (['cobrador_general', 'cobrador_taller'] as $cobradorRole) {
+            $cobrador = Role::firstOrCreate(['name' => $cobradorRole]);
+            $cobrador->syncPermissions([
+                'payroll.cash.collect',
+                'payroll.cash.close',
+            ]);
+        }
 
         // Create RRHH role - HR data entry: create + edit personal-only fields, read attendance
         $rrhh = Role::firstOrCreate(['name' => 'rrhh']);

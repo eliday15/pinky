@@ -305,13 +305,21 @@ class PayrollController extends Controller
      */
     public function closeCash(Request $request, PayrollPeriod $payroll): RedirectResponse
     {
-        if (! auth()->user()->hasPermissionTo('payroll.pay_cash')) {
+        // Preparar/entregar el efectivo es exclusivo del custodio (superadmin).
+        if (! auth()->user()->hasPermissionTo('payroll.cash.deliver')) {
             abort(403);
         }
 
         if ($payroll->status !== 'approved') {
             return redirect()->back()
                 ->with('error', 'Solo se puede preparar el efectivo de una nomina aprobada.');
+        }
+
+        // Con el cobro ya cerrado el efectivo se devolvió: re-prepararlo
+        // reactivaría el cobro por la puerta de atrás. Hay que reabrir primero.
+        if ($payroll->isCashCollectionClosed()) {
+            return redirect()->back()
+                ->with('error', 'El cobro de este periodo ya se cerró. Reabre el cobro antes de volver a preparar el efectivo.');
         }
 
         DB::transaction(function () use ($payroll) {
@@ -404,7 +412,8 @@ class PayrollController extends Controller
      */
     public function confirmCashDelivery(Request $request, PayrollPeriod $payroll): RedirectResponse
     {
-        if (! auth()->user()->hasPermissionTo('payroll.pay_cash')) {
+        // Confirmar la entrega física del efectivo es del custodio (superadmin).
+        if (! auth()->user()->hasPermissionTo('payroll.cash.deliver')) {
             abort(403);
         }
 
@@ -507,9 +516,12 @@ class PayrollController extends Controller
     public function cash(PayrollPeriod $payroll): Response
     {
         $user = auth()->user();
-        if (! $user->hasPermissionTo('payroll.pay_cash')) {
+        if (! $user->hasPermissionTo('payroll.pay_cash') && ! $user->hasPermissionTo('payroll.cash.collect')) {
             abort(403);
         }
+
+        // El cobrador solo ve SU nómina (general o taller).
+        abort_unless($user->allowsCashPeriod($payroll), 403);
 
         // Asientos por empleado: fuente del desglose concepto-por-concepto del
         // efectivo en el modal de cobro, y del chequeo de "desactualizado".
@@ -555,6 +567,9 @@ class PayrollController extends Controller
         );
         $cashStale = abs($entriesCashRounded - (float) $payouts->sum('period_amount')) > 0.5;
 
+        $collectionClosed = $payroll->isCashCollectionClosed();
+        $payroll->loadMissing(['cashCollectionClosedBy:id,name', 'cashReturnReceivedBy:id,name']);
+
         return Inertia::render('Payroll/Cash', [
             'period' => $payroll,
             'payouts' => $payouts,
@@ -569,8 +584,33 @@ class PayrollController extends Controller
                 'paid_count' => $payouts->where('status', CashPayout::STATUS_PAID)->count(),
                 'total_cash' => $totalCash,
             ],
+            // Estado del cierre del cobro y devolución del sobrante.
+            'collection' => [
+                'closed_at' => $payroll->cash_collection_closed_at,
+                'closed_by_name' => $payroll->cashCollectionClosedBy?->name,
+                'return_amount' => $payroll->cash_return_amount !== null ? (float) $payroll->cash_return_amount : null,
+                'received_at' => $payroll->cash_return_received_at,
+                'received_by_name' => $payroll->cashReturnReceivedBy?->name,
+            ],
+            // Billetes a regresar tras el cierre (snapshot del monto congelado).
+            'returnBreakdown' => $collectionClosed
+                ? $this->denominations->breakdown((int) round((float) $payroll->cash_return_amount))
+                : [],
             'can' => [
                 'payCash' => $user->hasPermissionTo('payroll.pay_cash'),
+                'deliverCash' => $user->hasPermissionTo('payroll.cash.deliver'),
+                'collectCash' => ($user->hasPermissionTo('payroll.pay_cash') || $user->hasPermissionTo('payroll.cash.collect'))
+                    && $payroll->isCashDeliveryConfirmed()
+                    && ! $collectionClosed,
+                'closeCollection' => ($user->hasPermissionTo('payroll.pay_cash') || $user->hasPermissionTo('payroll.cash.close'))
+                    && $payroll->isCashDeliveryConfirmed()
+                    && ! $collectionClosed,
+                'receiveReturn' => $user->hasPermissionTo('payroll.cash.receive')
+                    && $collectionClosed
+                    && ! $payroll->isCashReturnReceived(),
+                'reopenCollection' => $user->hasPermissionTo('payroll.cash.receive')
+                    && $collectionClosed
+                    && ! $payroll->isCashReturnReceived(),
             ],
         ]);
     }
@@ -616,9 +656,13 @@ class PayrollController extends Controller
      */
     public function collectCash(Request $request, PayrollPeriod $payroll, CashPayout $payout): RedirectResponse
     {
-        if (! auth()->user()->hasPermissionTo('payroll.pay_cash')) {
+        $user = auth()->user();
+        if (! $user->hasPermissionTo('payroll.pay_cash') && ! $user->hasPermissionTo('payroll.cash.collect')) {
             abort(403);
         }
+
+        // El cobrador solo cobra en SU nómina (general o taller).
+        abort_unless($user->allowsCashPeriod($payroll), 403);
 
         if ($payout->payroll_period_id !== $payroll->id) {
             abort(404);
@@ -634,6 +678,13 @@ class PayrollController extends Controller
         if (! $payroll->isCashDeliveryConfirmed()) {
             return redirect()->back()
                 ->with('error', 'Primero confirma la preparación del efectivo (Paso 1) antes de cobrar.');
+        }
+
+        // Con el cobro cerrado el efectivo ya se regresó a la empresa: el saldo
+        // del empleado se acumula y se cobra la siguiente semana.
+        if ($payroll->isCashCollectionClosed()) {
+            return redirect()->back()
+                ->with('error', 'La nomina ya esta cerrada; el efectivo se regreso y el saldo se acumula a la siguiente semana.');
         }
 
         if ($payout->status === CashPayout::STATUS_PAID) {
@@ -692,6 +743,158 @@ class PayrollController extends Controller
 
         return redirect()->route('payroll.cash', $payroll)
             ->with('success', "Cobro registrado para {$payout->employee->full_name}.");
+    }
+
+    /**
+     * Cerrar el cobro del periodo (fin del paso 2), hecho por el cobrador.
+     *
+     * Congela cuánto efectivo debe regresar a la empresa (la suma de lo no
+     * cobrado) y bloquea nuevos cobros en este periodo. Los payouts pendientes
+     * NO se tocan: siguen pendientes y se acumulan al empleado en el cierre de
+     * efectivo de la siguiente semana (opening_balance).
+     */
+    public function closeCashCollection(Request $request, PayrollPeriod $payroll): RedirectResponse
+    {
+        $user = auth()->user();
+        if (! $user->hasPermissionTo('payroll.pay_cash') && ! $user->hasPermissionTo('payroll.cash.close')) {
+            abort(403);
+        }
+
+        abort_unless($user->allowsCashPeriod($payroll), 403);
+
+        if (! $payroll->isCashDeliveryConfirmed()) {
+            return redirect()->back()
+                ->with('error', 'No se puede cerrar el cobro: aun no se confirma la entrega del efectivo (Paso 1).');
+        }
+
+        if ($payroll->isCashCollectionClosed()) {
+            return redirect()->back()
+                ->with('error', 'El cobro de este periodo ya esta cerrado.');
+        }
+
+        // Efectivo a regresar = suma de los saldos aún no cobrados (incluye
+        // pagos parciales por su outstanding). Se maneja en pesos enteros
+        // porque los payouts se congelan redondeados al peso.
+        $returnAmount = $this->denominations->roundToPeso(
+            (float) $payroll->cashPayouts()->pending()->get()
+                ->sum(fn (CashPayout $p) => max(0.0, $p->outstanding()))
+        );
+
+        $payroll->update([
+            'cash_collection_closed_at' => now(),
+            'cash_collection_closed_by' => $user->id,
+            'cash_return_amount' => $returnAmount,
+        ]);
+
+        $formatted = number_format($returnAmount, 2);
+
+        return redirect()->route('payroll.cash', $payroll)
+            ->with('success', $returnAmount > 0
+                ? "Nomina cerrada. Debes regresar \${$formatted} en efectivo a la empresa."
+                : 'Nomina cerrada. Todos cobraron: no hay efectivo por regresar.');
+    }
+
+    /**
+     * Confirmar que la empresa recibió el efectivo devuelto tras el cierre.
+     * Exclusivo del custodio (superadmin). Con la recepción confirmada el
+     * cierre queda definitivo (ya no se puede reabrir).
+     */
+    public function receiveCashReturn(Request $request, PayrollPeriod $payroll): RedirectResponse
+    {
+        if (! auth()->user()->hasPermissionTo('payroll.cash.receive')) {
+            abort(403);
+        }
+
+        if (! $payroll->isCashCollectionClosed()) {
+            return redirect()->back()
+                ->with('error', 'El cobro de este periodo aun no se cierra.');
+        }
+
+        if ($payroll->isCashReturnReceived()) {
+            return redirect()->back()
+                ->with('error', 'El efectivo devuelto de este periodo ya se habia recibido.');
+        }
+
+        $payroll->update([
+            'cash_return_received_at' => now(),
+            'cash_return_received_by' => auth()->id(),
+        ]);
+
+        return redirect()->route('payroll.cash', $payroll)
+            ->with('success', 'Efectivo devuelto recibido. Ciclo de efectivo del periodo completado.');
+    }
+
+    /**
+     * Reabrir un cierre de cobro hecho por error. Exclusivo del custodio
+     * (superadmin) y solo mientras NO haya confirmado la recepción del
+     * efectivo devuelto.
+     */
+    public function reopenCashCollection(Request $request, PayrollPeriod $payroll): RedirectResponse
+    {
+        if (! auth()->user()->hasPermissionTo('payroll.cash.receive')) {
+            abort(403);
+        }
+
+        if (! $payroll->isCashCollectionClosed()) {
+            return redirect()->back()
+                ->with('error', 'El cobro de este periodo no esta cerrado.');
+        }
+
+        if ($payroll->isCashReturnReceived()) {
+            return redirect()->back()
+                ->with('error', 'No se puede reabrir: el efectivo devuelto ya se recibio.');
+        }
+
+        $payroll->update([
+            'cash_collection_closed_at' => null,
+            'cash_collection_closed_by' => null,
+            'cash_return_amount' => null,
+        ]);
+
+        return redirect()->route('payroll.cash', $payroll)
+            ->with('success', 'Cobro reabierto. Ya se puede volver a cobrar en este periodo.');
+    }
+
+    /**
+     * Landing del cobrador: lista de periodos de SU nómina con el efectivo ya
+     * preparado, para entrar a cobrar. También accesible para admin/superadmin
+     * (ven todas).
+     */
+    public function cashCollectionIndex(): Response
+    {
+        $user = auth()->user();
+        if (! $user->hasPermissionTo('payroll.pay_cash') && ! $user->hasPermissionTo('payroll.cash.collect')) {
+            abort(403);
+        }
+
+        $periods = PayrollPeriod::with('department:id,name')
+            ->whereNotNull('cash_closed_at')
+            ->orderBy('start_date', 'desc')
+            ->get()
+            ->filter(fn (PayrollPeriod $p) => $user->allowsCashPeriod($p))
+            ->values()
+            ->take(26); // ~medio año de semanas; sin paginación para mantenerlo simple
+
+        $pendingByPeriod = CashPayout::whereIn('payroll_period_id', $periods->pluck('id'))
+            ->pending()
+            ->get()
+            ->groupBy('payroll_period_id')
+            ->map(fn ($group) => (float) $group->sum(fn (CashPayout $p) => max(0.0, $p->outstanding())));
+
+        return Inertia::render('Payroll/CashCollectionIndex', [
+            'periods' => $periods->map(fn (PayrollPeriod $p) => [
+                'id' => $p->id,
+                'name' => $p->name,
+                'start_date' => $p->start_date?->toDateString(),
+                'end_date' => $p->end_date?->toDateString(),
+                'department_name' => $p->department?->name,
+                'delivery_confirmed' => $p->isCashDeliveryConfirmed(),
+                'collection_closed' => $p->isCashCollectionClosed(),
+                'return_received' => $p->isCashReturnReceived(),
+                'return_amount' => $p->cash_return_amount !== null ? (float) $p->cash_return_amount : null,
+                'total_pending' => $pendingByPeriod->get($p->id, 0.0),
+            ]),
+        ]);
     }
 
     /**

@@ -23,6 +23,11 @@ class PayrollPeriod extends Model
         'recalculation_flagged_at',
         'cash_closed_at',
         'cash_delivery_confirmed_at',
+        'cash_collection_closed_at',
+        'cash_collection_closed_by',
+        'cash_return_amount',
+        'cash_return_received_at',
+        'cash_return_received_by',
         'created_by',
         'approved_by',
     ];
@@ -35,6 +40,9 @@ class PayrollPeriod extends Model
         'recalculation_flagged_at' => 'datetime',
         'cash_closed_at' => 'datetime',
         'cash_delivery_confirmed_at' => 'datetime',
+        'cash_collection_closed_at' => 'datetime',
+        'cash_return_amount' => 'decimal:2',
+        'cash_return_received_at' => 'datetime',
     ];
 
     /**
@@ -156,5 +164,41 @@ class PayrollPeriod extends Model
     public function isCashDeliveryConfirmed(): bool
     {
         return $this->cash_delivery_confirmed_at !== null;
+    }
+
+    /**
+     * Whether the cash collection (paso 2 "cobrar") was closed by the collector.
+     * Al cerrar se congela el efectivo a regresar (cash_return_amount) y ya no
+     * se puede cobrar en este periodo; lo no cobrado se acumula al empleado en
+     * el siguiente cierre de efectivo.
+     */
+    public function isCashCollectionClosed(): bool
+    {
+        return $this->cash_collection_closed_at !== null;
+    }
+
+    /**
+     * Whether the returned cash (sobrante del cierre) was received back by the
+     * company (super admin). Una vez recibido, el cierre ya no se puede reabrir.
+     */
+    public function isCashReturnReceived(): bool
+    {
+        return $this->cash_return_received_at !== null;
+    }
+
+    /**
+     * Get the user (cobrador) who closed the cash collection.
+     */
+    public function cashCollectionClosedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'cash_collection_closed_by');
+    }
+
+    /**
+     * Get the user (super admin) who received the returned cash.
+     */
+    public function cashReturnReceivedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'cash_return_received_by');
     }
 }
