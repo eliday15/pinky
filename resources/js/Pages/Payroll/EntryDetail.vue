@@ -156,6 +156,19 @@ const transferLines = computed(() => {
     if (money(props.entry.deductions) > 0) {
         lines.push({ label: 'Deducciones (faltas)', detail: '', amount: -money(props.entry.deductions), isDeduction: true });
     }
+    // Retenciones fiscales del trabajador (formalizado): reducen la transferencia.
+    if (money(props.entry.isr_amount) > 0) {
+        lines.push({ label: 'ISR', detail: '', amount: -money(props.entry.isr_amount), isDeduction: true });
+    }
+    if (money(props.entry.imss_amount) > 0) {
+        lines.push({ label: 'IMSS', detail: '', amount: -money(props.entry.imss_amount), isDeduction: true });
+    }
+    if (money(props.entry.infonavit_amount) > 0) {
+        lines.push({ label: 'Infonavit', detail: '', amount: -money(props.entry.infonavit_amount), isDeduction: true });
+    }
+    if (money(props.entry.subsidy_amount) > 0) {
+        lines.push({ label: 'Subsidio al empleo', detail: '', amount: money(props.entry.subsidy_amount) });
+    }
     return lines;
 });
 

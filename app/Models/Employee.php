@@ -78,6 +78,11 @@ class Employee extends Model
         'trial_period_end_date',
         'imss_number',
         'is_imss_enrolled',
+        'rfc',
+        'sdi',
+        'sbc',
+        'infonavit_credit_type',
+        'infonavit_credit_value',
         'is_attendance_exempt',
         'cash_pin',
         'daily_salary',
@@ -86,6 +91,7 @@ class Employee extends Model
         'vacation_days_entitled',
         'vacation_days_used',
         'vacation_hours_used',
+        'vacation_hours_credited',
         'vacation_days_reserved',
         'vacation_premium_percentage',
         'status',
@@ -102,9 +108,13 @@ class Employee extends Model
         'monthly_bonus_amount' => 'decimal:2',
         'vacation_premium_percentage' => 'decimal:2',
         'vacation_hours_used' => 'decimal:2',
+        'vacation_hours_credited' => 'decimal:2',
         'is_minimum_wage' => 'boolean',
         'is_trial_period' => 'boolean',
         'is_imss_enrolled' => 'boolean',
+        'sdi' => 'decimal:2',
+        'sbc' => 'decimal:2',
+        'infonavit_credit_value' => 'decimal:4',
         'is_attendance_exempt' => 'boolean',
         'schedule_overrides' => 'array',
     ];
@@ -570,6 +580,43 @@ class Employee extends Model
         return max(
             0.0,
             $this->vacation_days_remaining * self::VACATION_HOURS_PER_DAY - (float) ($this->vacation_hours_used ?? 0),
+        );
+    }
+
+    /**
+     * Horas disponibles en la BOLSA explícita de vacaciones (Dani 2026-07-09):
+     * las horas convertidas por RRHH (`vacation_hours_credited`) menos las ya
+     * gastadas, sin exceder nunca las horas que el saldo real de vacaciones
+     * respalda (defensivo — el descuento del saldo es proporcional a lo gastado).
+     */
+    public function getVacationHoursBankRemainingAttribute(): float
+    {
+        $credited = (float) ($this->vacation_hours_credited ?? 0);
+        $used = (float) ($this->vacation_hours_used ?? 0);
+
+        return max(0.0, min($credited - $used, $this->vacation_hours_remaining));
+    }
+
+    /** ¿El colaborador usa la bolsa de horas a cuenta de vacaciones? (opt-in) */
+    public function usesVacationHoursBank(): bool
+    {
+        return (float) ($this->vacation_hours_credited ?? 0) > 0;
+    }
+
+    /**
+     * Días de vacaciones disponibles para una solicitud de días completos,
+     * descontando de forma PROPORCIONAL las horas ya gastadas de la bolsa
+     * (8 h = 1 día). Evita el doble gasto: tomar días como vacación y como horas.
+     * Mantiene la misma base que el gate histórico (derecho − usados) y solo
+     * agrega el término proporcional de horas.
+     */
+    public function getVacationDaysAvailableForRequestAttribute(): float
+    {
+        $usedHoursAsDays = (float) ($this->vacation_hours_used ?? 0) / self::VACATION_HOURS_PER_DAY;
+
+        return max(
+            0.0,
+            $this->vacation_days_entitled - $this->vacation_days_used - $usedHoursAsDays,
         );
     }
 

@@ -31,10 +31,16 @@ class PayrollCalculatorService
 
     private LateAbsenceService $lateAbsences;
 
-    public function __construct(CompensationRateResolverService $resolver, LateAbsenceService $lateAbsences)
-    {
+    private \App\Services\Fiscal\FiscalDeductionService $fiscal;
+
+    public function __construct(
+        CompensationRateResolverService $resolver,
+        LateAbsenceService $lateAbsences,
+        \App\Services\Fiscal\FiscalDeductionService $fiscal,
+    ) {
         $this->resolver = $resolver;
         $this->lateAbsences = $lateAbsences;
+        $this->fiscal = $fiscal;
     }
 
     /**
@@ -539,6 +545,20 @@ class PayrollCalculatorService
             $cashAmount = round($netPay - $bankAmount, 2);
         }
 
+        // ---- Retenciones fiscales del trabajador (ISR + IMSS + Infonavit − subsidio) ----
+        // Solo aplican a empleados FORMALIZADOS (los que cobran base por banco) en el
+        // periodo que paga base. Reducen la TRANSFERENCIA y el neto — nunca el
+        // efectivo (que son los extras). La base gravable del ISR es el sueldo base
+        // del periodo (incluye vacaciones pagadas en base, todas gravables).
+        $fiscalDeductions = ['isr' => 0.0, 'imss' => 0.0, 'infonavit' => 0.0, 'subsidy' => 0.0, 'total' => 0.0];
+        if ($payBase && ! $baseInCash) {
+            $fiscalDeductions = $this->fiscal->compute($employee, $regularPay, (float) $weekDays);
+            if (abs($fiscalDeductions['total']) > 0.001) {
+                $bankAmount = max(0.0, round($bankAmount - $fiscalDeductions['total'], 2));
+                $netPay = max(0.0, round($netPay - $fiscalDeductions['total'], 2));
+            }
+        }
+
         // Deducciones de concepto (Infonavit, préstamos): salen del EFECTIVO y se
         // topan al efectivo disponible, nunca lo dejan negativo ("siempre y
         // cuando no rebase el importe" — Luis 2026-07-09). No tocan la
@@ -703,6 +723,15 @@ class PayrollCalculatorService
                 'concept_deductions' => $appliedConceptDeduction,
                 'net_pay' => $netPay,
             ],
+            // Retenciones fiscales del trabajador (formalizados): ISR + IMSS +
+            // Infonavit − subsidio. Reducen la transferencia.
+            'fiscal' => [
+                'isr' => $fiscalDeductions['isr'],
+                'imss' => $fiscalDeductions['imss'],
+                'infonavit' => $fiscalDeductions['infonavit'],
+                'subsidy' => $fiscalDeductions['subsidy'],
+                'total' => $fiscalDeductions['total'],
+            ],
         ];
 
         // Create or update payroll entry
@@ -750,6 +779,10 @@ class PayrollCalculatorService
                 'monthly_bonus' => $monthlyBonus,
                 'bonuses' => $totalBonuses,
                 'deductions' => round($deductions + $appliedConceptDeduction, 2),
+                'isr_amount' => $fiscalDeductions['isr'],
+                'imss_amount' => $fiscalDeductions['imss'],
+                'infonavit_amount' => $fiscalDeductions['infonavit'],
+                'subsidy_amount' => $fiscalDeductions['subsidy'],
                 'gross_pay' => $grossPay,
                 'net_pay' => $netPay,
                 'cash_amount' => $cashAmount,

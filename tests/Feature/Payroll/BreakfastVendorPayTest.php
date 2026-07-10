@@ -29,10 +29,14 @@ class BreakfastVendorPayTest extends FeatureTestCase
      */
     private function makeVendor(): Employee
     {
+        // hire_date fijo: el factory lo pone aleatorio y si cae dentro del
+        // periodo prorratea la base (paidCalendarDays), causando un flake en el
+        // assert de regular_pay = SD × 7.
         $vendor = Employee::factory()->create([
             'status' => 'active',
             'daily_salary' => 0,
             'hourly_rate' => 0,
+            'hire_date' => '2025-01-01',
         ]);
 
         SystemSetting::set('breakfast_vendor_employee_id', $vendor->id);

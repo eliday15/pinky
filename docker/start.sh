@@ -39,6 +39,9 @@ run_as_web "php artisan migrate --force" 2>&1 || echo "Migration failed but cont
 # que permisos nuevos como payroll.pay_cash existan tras cada deploy sin un paso
 # manual. NO crea usuarios ni toca asignaciones usuario->rol.
 run_as_web "php artisan db:seed --class=RolesPermissionsSeeder --force" 2>&1 || echo "Roles/permissions seed failed but continuing..."
+# Config fiscal (tarifa ISR, subsidio, UMA, % IMSS): idempotente. El flag de
+# retenciones queda apagado hasta activarlo manualmente en Configuración.
+run_as_web "php artisan db:seed --class=FiscalSettingsSeeder --force" 2>&1 || echo "Fiscal seed failed but continuing..."
 run_as_web "php artisan config:cache"
 run_as_web "php artisan route:cache"
 run_as_web "php artisan view:cache"
