@@ -37,6 +37,7 @@ class PayrollCalculatorService
         CompensationRateResolverService $resolver,
         LateAbsenceService $lateAbsences,
         \App\Services\Fiscal\FiscalDeductionService $fiscal,
+        private \App\Services\Fiscal\EmployerQuotaCalculatorService $employerQuotas,
     ) {
         $this->resolver = $resolver;
         $this->lateAbsences = $lateAbsences;
@@ -650,6 +651,7 @@ class PayrollCalculatorService
         $fiscalDeductions = ['isr' => 0.0, 'imss' => 0.0, 'infonavit' => 0.0, 'subsidy' => 0.0, 'total' => 0.0];
         $isrTaxableBase = 0.0;
         $netAdjustment = 0.0;
+        $employerCosts = null;
         if ($payBase && ! $baseInCash) {
             // Base gravable = sueldo base + gravado de las percepciones por
             // transferencia (prima excedente de 15 UMA, cumpleaños, aguinaldo
@@ -660,6 +662,21 @@ class PayrollCalculatorService
             if (abs($fiscalDeductions['total']) > 0.001) {
                 $bankAmount = max(0.0, round($bankAmount - $fiscalDeductions['total'], 2));
                 $netPay = max(0.0, round($netPay - $fiscalDeductions['total'], 2));
+            }
+
+            // Costo PATRONAL (informativo/provisión, no toca el pago del
+            // trabajador): cuotas IMSS de la empresa por ramo, SAR, Infonavit,
+            // RT e ISN sobre las percepciones formales del periodo. Solo con
+            // retenciones activas (mismo gate que las deducciones).
+            if ((bool) SystemSetting::get('fiscal_retentions_enabled', false)) {
+                $sbcForEmployer = (float) ($employee->sbc ?: $employee->sdi ?: 0);
+                $employerCosts = $this->employerQuotas->quotas(
+                    $sbcForEmployer,
+                    (float) $weekDays,
+                    (int) $absenceDeductionDays,
+                    $dailySalary,
+                    round($regularPay + $transferExtras, 2),
+                );
             }
 
             // Ajuste al neto (concepto 99 de Contpaq): el neto transferido se
@@ -858,6 +875,9 @@ class PayrollCalculatorService
                 'transfer_extras_total' => round($transferExtras, 2),
                 'net_adjustment' => $netAdjustment,
             ],
+            // Costo patronal del periodo (cuotas IMSS empresa por ramo, SAR,
+            // Infonavit, RT, ISN): informativo/provisión; null si no aplica.
+            'employer_costs' => $employerCosts,
         ];
 
         // Create or update payroll entry
@@ -1557,6 +1577,25 @@ class PayrollCalculatorService
         $totalTransferGross = round($totalTransfer + $totalRetentions, 2);
         $employeeCount = $entries->count();
 
+        // Costo patronal del periodo (suma del bloque employer_costs de cada
+        // entry): lo que la empresa provisiona por IMSS/SAR/Infonavit/ISN.
+        $totalEmployerCost = 0.0;
+        $employerByRubro = [];
+        foreach ($entries as $entry) {
+            $costs = $entry->calculation_breakdown['employer_costs'] ?? null;
+            if (! is_array($costs)) {
+                continue;
+            }
+            foreach ($costs as $rubro => $amount) {
+                if ($rubro === 'total') {
+                    $totalEmployerCost += (float) $amount;
+                } else {
+                    $employerByRubro[$rubro] = round(($employerByRubro[$rubro] ?? 0.0) + (float) $amount, 2);
+                }
+            }
+        }
+        $totalEmployerCost = round($totalEmployerCost, 2);
+
         $byDepartment = $entries->groupBy('employee.department.name')->map(function ($group) {
             return [
                 'count' => $group->count(),
@@ -1581,6 +1620,8 @@ class PayrollCalculatorService
             'total_infonavit' => $totalInfonavit,
             'total_subsidy' => $totalSubsidy,
             'total_retentions' => $totalRetentions,
+            'total_employer_cost' => $totalEmployerCost,
+            'employer_cost_by_rubro' => $employerByRubro,
             'average_pay' => $employeeCount > 0 ? $totalNet / $employeeCount : 0,
             'by_department' => $byDepartment,
         ];

@@ -51,6 +51,24 @@ class FiscalSettingsSeeder extends Seeder
             'subsidy' => 123.34,
         ]);
 
+        // ---- Tabla CyV PATRONAL 2026 (reforma de pensiones, % por SBC/UMA) ----
+        // VALIDADA contra Contpaq Sem28: se aplica por SBC en UMA a TODOS los
+        // empleados (sin fila "1 SM": el SBC del salario mínimo cae en ~2.8 UMA
+        // → 6.026%), y aparte se absorbe la cuota obrera de los mínimos
+        // (Art. 36). Reproduce el rubro CyV empresa a ±0.3%.
+        \App\Models\FiscalCyvBracket::query()->delete();
+        foreach ([
+            [1.50, 3.676],
+            [2.00, 4.851],
+            [2.50, 5.556],
+            [3.00, 6.026],
+            [3.50, 6.361],
+            [4.00, 6.613],
+            [99.0, 7.513],
+        ] as [$upper, $pct]) {
+            \App\Models\FiscalCyvBracket::create(['upper_uma' => $upper, 'employer_pct' => $pct]);
+        }
+
         // ---- Escalares 2026 (system_settings) ----
         // El flag se crea APAGADO solo si no existe; NO se sobrescribe en re-seed
         // (para no apagar las retenciones en cada deploy una vez activadas).
@@ -87,6 +105,18 @@ class FiscalSettingsSeeder extends Seeder
             // LSS). 15 = mínimo LFT; verificado: los factores de Contpaq Sem28
             // salen exactos con 15.
             ['fiscal_aguinaldo_days', '15', 'Días de aguinaldo (factor de integración SDI)'],
+            // ---- Cuotas PATRONALES (Fase 2, validadas vs Contpaq Sem28) ----
+            ['fiscal_emp_eym_fixed_uma_pct', '20.40', 'Patrón: EyM cuota fija (% de UMA por día)'],
+            ['fiscal_emp_eym_excess_pct', '1.10', 'Patrón: EyM % sobre excedente de 3 UMA'],
+            ['fiscal_emp_eym_money_gmp_pct', '1.75', 'Patrón: EyM dinero (0.70) + GMP (1.05) %'],
+            ['fiscal_emp_iv_pct', '1.75', 'Patrón: Invalidez y Vida %'],
+            ['fiscal_emp_guarderia_pct', '1.00', 'Patrón: Guarderías e infraestructura %'],
+            ['fiscal_emp_retiro_pct', '2.00', 'Patrón: Retiro (SAR) %'],
+            ['fiscal_emp_infonavit_pct', '5.00', 'Patrón: Infonavit %'],
+            // Prima de riesgo de trabajo de la empresa: 0 hasta capturar la
+            // vigente (la fija el IMSS cada febrero; pedirla al contador).
+            ['fiscal_emp_riesgo_trabajo_pct', '0', 'Patrón: prima de Riesgo de Trabajo % (capturar la vigente)'],
+            ['fiscal_isn_pct', '3.00', 'Impuesto sobre nómina estatal (Edomex) %'],
         ];
         foreach ($settings as [$key, $value, $label]) {
             SystemSetting::updateOrCreate(
