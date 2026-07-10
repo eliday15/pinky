@@ -68,6 +68,14 @@ class UserPolicy
             }
         }
 
+        // Cannot delete last superadmin (custodio del efectivo)
+        if ($model->hasRole('superadmin')) {
+            $superadminCount = User::role('superadmin')->count();
+            if ($superadminCount <= 1) {
+                return false;
+            }
+        }
+
         return true;
     }
 

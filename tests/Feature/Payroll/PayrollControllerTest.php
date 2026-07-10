@@ -327,6 +327,8 @@ class PayrollControllerTest extends FeatureTestCase
                     ->has('total_infonavit')
                     ->has('total_subsidy')
                     ->has('total_retentions')
+                    ->has('total_employer_cost')
+                    ->has('employer_cost_by_rubro')
                     ->has('average_pay')
                     ->has('by_department'))
                 ->has('can', fn (Assert $can) => $can
@@ -334,7 +336,9 @@ class PayrollControllerTest extends FeatureTestCase
                     ->where('calculate', true)
                     ->where('approve', true)
                     ->where('export', true)
-                    ->where('payCash', true)));
+                    ->where('payCash', true)
+                    // Entregar el efectivo es exclusivo del superadmin.
+                    ->where('deliverCash', false)));
     }
 
     public function test_show_orders_entries_by_net_pay_desc(): void

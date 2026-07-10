@@ -203,6 +203,8 @@ class PayrollController extends Controller
                 'approve' => $user->hasPermissionTo('payroll.approve'),
                 'export' => $user->hasPermissionTo('payroll.export'),
                 'payCash' => $user->hasPermissionTo('payroll.pay_cash'),
+                // Preparar/entregar el efectivo es exclusivo del custodio (superadmin).
+                'deliverCash' => $user->hasPermissionTo('payroll.cash.deliver'),
             ],
         ]);
     }
@@ -867,7 +869,9 @@ class PayrollController extends Controller
             abort(403);
         }
 
-        $periods = PayrollPeriod::with('department:id,name')
+        // has_separate_payroll viaja en el eager-load porque allowsCashPeriod()
+        // decide el scope del cobrador_taller con esa bandera.
+        $periods = PayrollPeriod::with('department:id,name,has_separate_payroll')
             ->whereNotNull('cash_closed_at')
             ->orderBy('start_date', 'desc')
             ->get()
@@ -992,7 +996,7 @@ class PayrollController extends Controller
             abort(403);
         }
 
-        if ($payroll->status !== 'draft' && ! auth()->user()->hasRole('admin')) {
+        if ($payroll->status !== 'draft' && ! auth()->user()->hasAnyRole(['superadmin', 'admin'])) {
             return redirect()->back()
                 ->with('error', 'Solo se pueden eliminar periodos en borrador.');
         }

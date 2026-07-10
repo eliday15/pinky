@@ -58,6 +58,21 @@ const formatCurrency = (amount) => {
     }).format(amount || 0);
 };
 
+// Etiquetas de los rubros del costo patronal (summary.employer_cost_by_rubro).
+const employerRubroLabels = {
+    eym_fixed: 'EyM cuota fija',
+    eym_excess: 'EyM excedente',
+    eym_money_gmp: 'EyM dinero+GMP',
+    iv: 'Invalidez y Vida',
+    cyv: 'Cesantía y Vejez',
+    guarderia: 'Guarderías',
+    retiro: 'Retiro SAR',
+    infonavit: 'Infonavit',
+    riesgo_trabajo: 'Riesgo de Trabajo',
+    absorbed_worker: 'Cuota obrera absorbida (mínimos)',
+    isn: 'Impuesto s/ nómina',
+};
+
 // Departamentos presentes en el periodo, para el autocomplete del filtro.
 const departments = computed(() => {
     const names = props.entries.map(e => e.employee?.department?.name).filter(Boolean);
@@ -191,8 +206,9 @@ const closeCash = () => {
                     >
                         Marcar como Pagada
                     </button>
+                    <!-- Preparar el efectivo es exclusivo del custodio (superadmin) -->
                     <button
-                        v-if="can?.payCash && period.status === 'approved'"
+                        v-if="can?.deliverCash && period.status === 'approved'"
                         @click="closeCash"
                         class="px-4 py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700"
                     >
@@ -253,8 +269,13 @@ const closeCash = () => {
         <div v-if="can?.payCash && period.status === 'approved' && !period.cash_closed_at" class="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-3">
             <p class="text-sm text-amber-800">
                 <span class="font-semibold">Falta preparar el efectivo.</span>
-                No puedes marcar la nómina como pagada hasta cerrar el efectivo: presiona
-                <span class="font-medium">&laquo;Cerrar y preparar efectivo&raquo;</span>, prepara la entrega y cobra.
+                No puedes marcar la nómina como pagada hasta cerrar el efectivo:
+                <template v-if="can?.deliverCash">
+                    presiona <span class="font-medium">&laquo;Cerrar y preparar efectivo&raquo;</span>, prepara la entrega y cobra.
+                </template>
+                <template v-else>
+                    pídele al super admin que cierre y prepare el efectivo (es quien lo custodia).
+                </template>
             </p>
         </div>
 
@@ -319,6 +340,24 @@ const closeCash = () => {
                     <p class="text-3xl font-bold text-indigo-600">{{ formatCurrency(summary.total_transfer) }}</p>
                 </div>
             </button>
+        </div>
+
+        <!-- Costo patronal (informativo/provisión: IMSS empresa, SAR, Infonavit, ISN) -->
+        <div v-if="can?.viewComplete && Number(summary.total_employer_cost) > 0" class="bg-white rounded-lg shadow border-l-4 border-amber-500 p-5 mb-6">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-sm font-medium text-gray-500">Costo patronal (no se descuenta al empleado)</p>
+                    <p class="text-xs text-gray-400">Cuotas IMSS de la empresa, Retiro SAR 2%, Infonavit 5%, Impuesto estatal 3% — lo que se provisiona para SUA/pagos</p>
+                    <div class="mt-2 text-xs text-gray-500 flex flex-wrap gap-x-4 gap-y-0.5">
+                        <span v-for="(label, key) in employerRubroLabels" :key="key">
+                            <template v-if="Number(summary.employer_cost_by_rubro?.[key]) > 0">
+                                {{ label }}: <span class="font-medium text-gray-700">{{ formatCurrency(summary.employer_cost_by_rubro[key]) }}</span>
+                            </template>
+                        </span>
+                    </div>
+                </div>
+                <p class="text-3xl font-bold text-amber-600">{{ formatCurrency(summary.total_employer_cost) }}</p>
+            </div>
         </div>
 
         <!-- Summary Cards -->

@@ -32,12 +32,16 @@ const hasRole = (role) => {
     return roles.value.includes(role);
 };
 
+// Los cobradores de nómina solo ven la cobranza: sin Dashboard ni ningún otro
+// módulo (sus roles no tienen más permisos).
+const isCobrador = computed(() => hasRole('cobrador_general') || hasRole('cobrador_taller'));
+
 const navigation = computed(() => [
     {
         name: 'Dashboard',
         href: 'dashboard',
         icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6',
-        show: !hasRole('supervisor'), // Dashboard hidden for supervisors
+        show: !hasRole('supervisor') && !isCobrador.value, // Dashboard hidden for supervisors and cobradores
     },
     {
         name: 'Empleados',
@@ -86,6 +90,14 @@ const navigation = computed(() => [
         href: 'payroll.index',
         icon: 'M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z',
         show: canAny(['payroll.view_basic', 'payroll.view_complete']),
+    },
+    {
+        // Landing del cobrador: solo cobra (paso 2) y cierra su nómina. Los
+        // admins entran al efectivo desde Nomina, no necesitan este item.
+        name: 'Cobro de efectivo',
+        href: 'payroll.cashCollection',
+        icon: 'M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z',
+        show: can('payroll.cash.collect') && !canAny(['payroll.view_basic', 'payroll.view_complete']),
     },
     {
         name: 'Desayunos',

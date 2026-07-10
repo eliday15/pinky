@@ -13,7 +13,8 @@ use Tests\FeatureTestCase;
  * Cierre de efectivo (closeCash), página de cobro (cash), cobro con PIN
  * (collectCash) y acumulado por empleado (opening_balance).
  *
- * Solo admin tiene payroll.pay_cash; el resto recibe 403.
+ * El superadmin (payroll.cash.deliver) prepara y entrega; cobrar exige
+ * payroll.pay_cash o payroll.cash.collect; el resto recibe 403.
  */
 class CashPayoutTest extends FeatureTestCase
 {
@@ -73,7 +74,7 @@ class CashPayoutTest extends FeatureTestCase
     public function test_close_cash_requires_approved_status(): void
     {
         [$period] = $this->approvedPeriodWithEntry(1000, ['status' => 'review']);
-        $this->actingAsAdmin();
+        $this->actingAsSuperadmin();
 
         $this->post(route('payroll.closeCash', $period->id))
             ->assertRedirect();
@@ -85,7 +86,7 @@ class CashPayoutTest extends FeatureTestCase
     public function test_close_cash_creates_payouts_with_breakdown_and_marks_closed(): void
     {
         [$period, $employee] = $this->approvedPeriodWithEntry(1247.40);
-        $this->actingAsAdmin();
+        $this->actingAsSuperadmin();
 
         $this->post(route('payroll.closeCash', $period->id))
             ->assertRedirect(route('payroll.cash', $period->id));
@@ -111,7 +112,7 @@ class CashPayoutTest extends FeatureTestCase
     public function test_cash_page_renders_for_admin(): void
     {
         [$period] = $this->approvedPeriodWithEntry(1000);
-        $this->actingAsAdmin();
+        $this->actingAsSuperadmin();
         $this->post(route('payroll.closeCash', $period->id));
 
         $this->get(route('payroll.cash', $period->id))
@@ -138,7 +139,7 @@ class CashPayoutTest extends FeatureTestCase
         [$period, $employee] = $this->approvedPeriodWithEntry(1000);
         $employee->update(['cash_pin' => '4321']);
 
-        $admin = $this->actingAsAdmin();
+        $superadmin = $this->actingAsSuperadmin();
         $this->post(route('payroll.closeCash', $period->id));
         $this->confirmDelivery($period);
 
@@ -151,7 +152,7 @@ class CashPayoutTest extends FeatureTestCase
         $this->assertSame('paid', $payout->status);
         $this->assertEqualsWithDelta(1000.00, (float) $payout->amount_paid, 0.01);
         $this->assertTrue((bool) $payout->pin_verified);
-        $this->assertSame($admin->id, $payout->collected_by);
+        $this->assertSame($superadmin->id, $payout->collected_by);
         $this->assertNotNull($payout->collected_at);
     }
 
@@ -160,7 +161,7 @@ class CashPayoutTest extends FeatureTestCase
         [$period, $employee] = $this->approvedPeriodWithEntry(1000);
         $employee->update(['cash_pin' => '4321']);
 
-        $this->actingAsAdmin();
+        $this->actingAsSuperadmin();
         $this->post(route('payroll.closeCash', $period->id));
         $this->confirmDelivery($period);
         $payout = CashPayout::where('payroll_period_id', $period->id)->firstOrFail();
@@ -175,7 +176,7 @@ class CashPayoutTest extends FeatureTestCase
     {
         [$period, $employee] = $this->approvedPeriodWithEntry(1000);
         $employee->update(['cash_pin' => '4321']);
-        $this->actingAsAdmin();
+        $this->actingAsSuperadmin();
         $this->post(route('payroll.closeCash', $period->id));
         $payout = CashPayout::where('payroll_period_id', $period->id)->firstOrFail();
 
@@ -195,7 +196,7 @@ class CashPayoutTest extends FeatureTestCase
             'status' => 'active', 'cash_pin' => '4321',
             'is_trial_period' => true, 'trial_period_end_date' => null, 'is_imss_enrolled' => false,
         ]);
-        $this->actingAsAdmin();
+        $this->actingAsSuperadmin();
 
         // P1: $500, never collected.
         $p1 = PayrollPeriod::factory()->create([
@@ -236,7 +237,7 @@ class CashPayoutTest extends FeatureTestCase
             'status' => 'active', 'cash_pin' => '4321',
             'is_trial_period' => true, 'trial_period_end_date' => null, 'is_imss_enrolled' => false,
         ]);
-        $this->actingAsAdmin();
+        $this->actingAsSuperadmin();
 
         // P1: $500, cerrado y entrega confirmada, pero NO cobrado.
         $p1 = PayrollPeriod::factory()->create([
@@ -286,7 +287,7 @@ class CashPayoutTest extends FeatureTestCase
             'status' => 'active', 'cash_pin' => '4321',
             'is_trial_period' => true, 'trial_period_end_date' => null, 'is_imss_enrolled' => false,
         ]);
-        $this->actingAsAdmin();
+        $this->actingAsSuperadmin();
 
         $p1 = PayrollPeriod::factory()->create([
             'type' => 'weekly', 'status' => 'approved',
@@ -326,7 +327,7 @@ class CashPayoutTest extends FeatureTestCase
     {
         [$period, $employee] = $this->approvedPeriodWithEntry(50);
         $employee->update(['cash_pin' => '4321']);
-        $this->actingAsAdmin();
+        $this->actingAsSuperadmin();
 
         // Cierra, confirma la entrega y cobra los $50.
         $this->post(route('payroll.closeCash', $period->id));
@@ -353,7 +354,7 @@ class CashPayoutTest extends FeatureTestCase
     {
         [$period, $employee] = $this->approvedPeriodWithEntry(650);
         $employee->update(['cash_pin' => '4321']);
-        $this->actingAsAdmin();
+        $this->actingAsSuperadmin();
 
         $this->post(route('payroll.closeCash', $period->id));
         $this->confirmDelivery($period);
@@ -373,7 +374,7 @@ class CashPayoutTest extends FeatureTestCase
     public function test_cash_page_flags_stale_when_recalc_changed_cash(): void
     {
         [$period] = $this->approvedPeriodWithEntry(50);
-        $this->actingAsAdmin();
+        $this->actingAsSuperadmin();
         $this->post(route('payroll.closeCash', $period->id));
 
         // Un recálculo sube el efectivo del asiento después de cerrar el efectivo.
@@ -387,7 +388,7 @@ class CashPayoutTest extends FeatureTestCase
     public function test_cash_page_not_stale_right_after_close(): void
     {
         [$period] = $this->approvedPeriodWithEntry(50);
-        $this->actingAsAdmin();
+        $this->actingAsSuperadmin();
         $this->post(route('payroll.closeCash', $period->id));
 
         $this->get(route('payroll.cash', $period->id))
@@ -399,7 +400,7 @@ class CashPayoutTest extends FeatureTestCase
     {
         [$period, $employee] = $this->approvedPeriodWithEntry(50);
         $employee->update(['cash_pin' => '4321']);
-        $this->actingAsAdmin();
+        $this->actingAsSuperadmin();
 
         $this->post(route('payroll.closeCash', $period->id));
         $this->confirmDelivery($period);
@@ -425,7 +426,7 @@ class CashPayoutTest extends FeatureTestCase
     {
         [$period, $employee] = $this->approvedPeriodWithEntry(1000);
         $employee->update(['cash_pin' => '4321']);
-        $this->actingAsAdmin();
+        $this->actingAsSuperadmin();
         $this->post(route('payroll.closeCash', $period->id));
 
         // Efectivo cerrado pero entrega SIN confirmar: no se puede cobrar.
@@ -441,7 +442,7 @@ class CashPayoutTest extends FeatureTestCase
     public function test_confirm_delivery_requires_cash_closed(): void
     {
         [$period] = $this->approvedPeriodWithEntry(1000);
-        $this->actingAsAdmin();
+        $this->actingAsSuperadmin();
 
         // El efectivo no se ha cerrado todavía.
         $this->from(route('payroll.show', $period->id))
@@ -454,7 +455,7 @@ class CashPayoutTest extends FeatureTestCase
     public function test_reclosing_cash_resets_delivery_confirmation(): void
     {
         [$period] = $this->approvedPeriodWithEntry(1000);
-        $this->actingAsAdmin();
+        $this->actingAsSuperadmin();
         $this->post(route('payroll.closeCash', $period->id));
         $this->confirmDelivery($period);
         $this->assertNotNull($period->fresh()->cash_delivery_confirmed_at);
@@ -467,7 +468,7 @@ class CashPayoutTest extends FeatureTestCase
     public function test_confirm_delivery_forbidden_without_permission(): void
     {
         [$period] = $this->approvedPeriodWithEntry(1000);
-        $this->actingAsAdmin();
+        $this->actingAsSuperadmin();
         $this->post(route('payroll.closeCash', $period->id));
 
         $this->actingAsSupervisor();
@@ -489,7 +490,7 @@ class CashPayoutTest extends FeatureTestCase
             'cash_amount' => 0, 'bank_amount' => 1000,
         ]);
 
-        $this->actingAsAdmin();
+        $this->actingAsSuperadmin();
         $this->get(route('payroll.transfers', $period->id))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
@@ -529,7 +530,7 @@ class CashPayoutTest extends FeatureTestCase
             ],
         ]);
 
-        $this->actingAsAdmin();
+        $this->actingAsSuperadmin();
         $this->post(route('payroll.closeCash', $period->id));
 
         // Efectivo = Horas extra $100 + Cena $50 + Puntualidad $600 (sin base ni

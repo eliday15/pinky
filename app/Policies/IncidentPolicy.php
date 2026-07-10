@@ -107,7 +107,7 @@ class IncidentPolicy
         }
 
         // Can't approve own incidents (unless admin)
-        if ($this->isOwnIncident($user, $incident) && ! $user->hasRole('admin')) {
+        if ($this->isOwnIncident($user, $incident) && ! $user->hasAnyRole(['superadmin', 'admin'])) {
             return false;
         }
 
@@ -129,7 +129,7 @@ class IncidentPolicy
         }
 
         // Can't reject own incidents (unless admin)
-        if ($this->isOwnIncident($user, $incident) && ! $user->hasRole('admin')) {
+        if ($this->isOwnIncident($user, $incident) && ! $user->hasAnyRole(['superadmin', 'admin'])) {
             return false;
         }
 

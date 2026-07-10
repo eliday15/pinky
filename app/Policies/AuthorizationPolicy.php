@@ -105,7 +105,7 @@ class AuthorizationPolicy
         }
 
         // Can't approve own authorizations (unless admin)
-        if ($this->isOwnAuthorization($user, $authorization) && ! $user->hasRole('admin')) {
+        if ($this->isOwnAuthorization($user, $authorization) && ! $user->hasAnyRole(['superadmin', 'admin'])) {
             return false;
         }
 
@@ -134,7 +134,7 @@ class AuthorizationPolicy
         }
 
         // Can't reject own authorizations (unless admin)
-        if ($this->isOwnAuthorization($user, $authorization) && ! $user->hasRole('admin')) {
+        if ($this->isOwnAuthorization($user, $authorization) && ! $user->hasAnyRole(['superadmin', 'admin'])) {
             return false;
         }
 

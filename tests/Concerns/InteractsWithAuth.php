@@ -87,10 +87,22 @@ trait InteractsWithAuth
         return Employee::factory()->create(array_merge(['user_id' => $user->id], $attributes));
     }
 
+    /** Create a superadmin user (todo + custodia del efectivo). */
+    protected function superadminUser(array $attributes = []): User
+    {
+        return $this->createUser('superadmin', $attributes);
+    }
+
     /** Create an admin user (full permissions). */
     protected function adminUser(array $attributes = []): User
     {
         return $this->createUser('admin', $attributes);
+    }
+
+    /** Create a cash-collector user (cobrador_general | cobrador_taller). */
+    protected function cobradorUser(string $role = 'cobrador_general', array $attributes = []): User
+    {
+        return $this->createUser($role, $attributes);
     }
 
     /** Create an RRHH (HR) user. */
@@ -111,10 +123,28 @@ trait InteractsWithAuth
         return $this->createUser('employee', $attributes);
     }
 
+    /** Create a superadmin user and immediately authenticate as them. */
+    protected function actingAsSuperadmin(array $attributes = []): User
+    {
+        $user = $this->superadminUser($attributes);
+        $this->actingAs($user);
+
+        return $user;
+    }
+
     /** Create an admin user and immediately authenticate as them. */
     protected function actingAsAdmin(array $attributes = []): User
     {
         $user = $this->adminUser($attributes);
+        $this->actingAs($user);
+
+        return $user;
+    }
+
+    /** Create a cobrador user and immediately authenticate as them. */
+    protected function actingAsCobrador(string $role = 'cobrador_general', array $attributes = []): User
+    {
+        $user = $this->cobradorUser($role, $attributes);
         $this->actingAs($user);
 
         return $user;

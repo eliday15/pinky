@@ -32,13 +32,19 @@ class DashboardController extends Controller
         $today = now()->toDateString();
 
         // Get role-specific data
-        if ($user->hasRole('admin') || $user->hasRole('rrhh')) {
+        if ($user->hasRole('superadmin') || $user->hasRole('admin') || $user->hasRole('rrhh')) {
             return $this->adminDashboard($today);
         }
 
         // Supervisors are redirected to incidents - they only have access to incidents and authorizations
         if ($user->hasRole('supervisor')) {
             return redirect()->route('incidents.index');
+        }
+
+        // Los cobradores de nómina solo ven la cobranza: su landing es la lista
+        // de nóminas con efectivo preparado.
+        if ($user->hasRole('cobrador_general') || $user->hasRole('cobrador_taller')) {
+            return redirect()->route('payroll.cashCollection');
         }
 
         return $this->employeeDashboard($today, $user);

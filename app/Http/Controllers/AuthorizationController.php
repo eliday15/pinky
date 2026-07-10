@@ -158,7 +158,7 @@ class AuthorizationController extends Controller
                 'approve' => $user->hasPermissionTo('authorizations.approve'),
                 'reject' => $user->hasPermissionTo('authorizations.reject'),
                 // Solo el admin puede cambiar la fecha de una autorización.
-                'edit_date' => $user->hasRole('admin'),
+                'edit_date' => $user->hasAnyRole(['superadmin', 'admin']),
             ],
         ]);
     }
@@ -1277,7 +1277,7 @@ class AuthorizationController extends Controller
      */
     public function updateDate(Request $request, Authorization $authorization, ZktecoSyncService $syncService): RedirectResponse
     {
-        abort_unless(Auth::user()->hasRole('admin'), 403);
+        abort_unless(Auth::user()->hasAnyRole(['superadmin', 'admin']), 403);
 
         if ($authorization->isPaid()) {
             return redirect()->back()->with('error', 'No se puede cambiar la fecha de una autorización ya pagada.');
