@@ -183,6 +183,11 @@ class PayrollCalculatorService
         $payBase = $period->paysBase();
         $payExtras = $period->paysExtras();
 
+        // Formalizado (va a transferencia) vs efectivo. Se iza aquí porque el
+        // reparto de la prima vacacional (semanal para formalizados, mensual
+        // para efectivo) lo necesita antes del cálculo de extras.
+        $baseInCash = $employee->paysBaseInCash();
+
         // Get rates
         // hourly_rate ya NO es el insumo del sueldo: se conserva derivado del
         // sueldo diario solo como compatibilidad para el cálculo legacy de
@@ -426,6 +431,14 @@ class PayrollCalculatorService
             $vacationPremiumPay = round($incidentMetrics['vacation_days'] * $dailySalary
                 * ((float) ($employee->vacation_premium_percentage ?? 0) / 100), 2);
 
+            // Los FORMALIZADOS (transferencia) cobran su prima vacacional en la
+            // nómina SEMANAL por transferencia, como Contpaq (se calcula abajo en
+            // el periodo base). Aquí en la mensual se suprime para no pagarla
+            // doble; los empleados de EFECTIVO la siguen cobrando en la mensual.
+            if (! $baseInCash) {
+                $vacationPremiumPay = 0.0;
+            }
+
             // Incapacidades (DECISIONES §4): con goce se pagan; sin goce el
             // día simplemente no se paga (vía horas), sin deducción extra.
             $sickLeavePay = $incidentMetrics['sick_leave_paid_days'] * $dailySalary;
@@ -441,6 +454,23 @@ class PayrollCalculatorService
                 $veladaPay = $veladaMetrics['velada_authorized_hours'] * $hourlyRate * $veladaMultiplier;
                 $holidayPay = $metrics['holiday_hours'] * $hourlyRate * $holidayMultiplier;
                 $weekendPay = $metrics['weekend_hours'] * $hourlyRate * $overtimeMultiplier;
+            }
+        }
+
+        // ---- Prima vacacional de FORMALIZADOS en la SEMANAL (transferencia) ----
+        // Contpaq paga la prima vacacional junto con el sueldo de la semana, por
+        // transferencia. Para empatar el neto transferido, en el periodo BASE
+        // (semanal) los empleados formalizados cobran aquí su prima (los días de
+        // vacación ya se contaron en $incidentMetrics); en la mensual se suprimió
+        // arriba para no pagar doble. Se marca como $transferExtras para que el
+        // reparto la mande al BANCO (transferencia), no al efectivo.
+        $transferExtras = 0.0;
+        if ($payBase && ! $baseInCash) {
+            $weeklyVacationPremium = round($incidentMetrics['vacation_days'] * $dailySalary
+                * ((float) ($employee->vacation_premium_percentage ?? 0) / 100), 2);
+            if ($weeklyVacationPremium > 0) {
+                $vacationPremiumPay += $weeklyVacationPremium;
+                $transferExtras += $weeklyVacationPremium;
             }
         }
 
@@ -536,12 +566,14 @@ class PayrollCalculatorService
         // efectivo. La fórmula es única para los tres tipos de periodo: en
         // mensual basePay y deductions son 0, así que bank=0 y cash=net_pay (los
         // extras). NO altera regular_pay/gross_pay/net_pay.
-        $baseInCash = $employee->paysBaseInCash();
         if ($baseInCash) {
             $cashAmount = round($netPay, 2);
             $bankAmount = 0.0;
         } else {
-            $bankAmount = max(0.0, round($basePay - $deductions, 2));
+            // El base neto MÁS los extras de transferencia (prima vacacional de
+            // los formalizados, como Contpaq) van al BANCO; los demás extras al
+            // efectivo. En la mensual basePay/deductions/transferExtras son 0.
+            $bankAmount = max(0.0, round($basePay - $deductions + $transferExtras, 2));
             $cashAmount = round($netPay - $bankAmount, 2);
         }
 

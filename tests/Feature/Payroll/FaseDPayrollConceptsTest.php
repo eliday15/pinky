@@ -159,6 +159,54 @@ class FaseDPayrollConceptsTest extends FeatureTestCase
     }
 
     /**
+     * Los empleados FORMALIZADOS (transferencia) cobran su prima vacacional en la
+     * nómina SEMANAL por transferencia, como Contpaq — no en la mensual y no en
+     * efectivo. Los de efectivo la siguen cobrando en la mensual (test anterior).
+     */
+    public function test_formalized_vacation_premium_paid_in_weekly_transfer(): void
+    {
+        $employee = $this->employee([
+            'daily_salary' => 800.00,
+            'vacation_premium_percentage' => 25.00,
+            'is_imss_enrolled' => true,
+            'imss_number' => '12345678901',
+            'is_trial_period' => false,
+        ]);
+        $this->assertFalse($employee->paysBaseInCash(), 'formalizado: cobra por transferencia');
+
+        $vac = $this->typeWithCode('VAC', [
+            'category' => 'vacation',
+            'is_paid' => true,
+            'deducts_vacation' => true,
+            'count_mode' => IncidentType::COUNT_WORKING_DAYS,
+        ]);
+        $this->approvedIncident($employee, $vac, '2026-06-01', '2026-06-05', 6);
+
+        // --- Semanal (lun 1 – dom 7 jun): la prima se paga aquí, por transferencia ---
+        $weekly = PayrollPeriod::factory()->weekly()->create([
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-07',
+        ]);
+        $weeklyEntry = $this->calculator()->calculateEmployeePayroll($weekly, $employee);
+
+        $this->assertEqualsWithDelta(1200.00, (float) $weeklyEntry->vacation_premium_pay, 0.01,
+            'prima 6×800×25% se paga en la semanal para formalizados');
+        $this->assertGreaterThanOrEqual(1200.00, (float) $weeklyEntry->bank_amount,
+            'la prima se transfiere (banco), no en efectivo');
+        $this->assertEqualsWithDelta(0.00, (float) $weeklyEntry->cash_amount, 0.01,
+            'nada de la prima del formalizado cae en efectivo');
+
+        // --- Mensual: la prima ya NO se repite aquí (evita doble pago) ---
+        $monthly = PayrollPeriod::factory()->monthly()->create([
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-30',
+        ]);
+        $monthlyEntry = $this->calculator()->calculateEmployeePayroll($monthly, $employee);
+        $this->assertEqualsWithDelta(0.00, (float) $monthlyEntry->vacation_premium_pay, 0.01,
+            'la prima del formalizado no se repite en la mensual');
+    }
+
+    /**
      * DECISIONES §11 (auditoría #87): el sueldo diario usa la JORNADA REAL
      * del horario efectivo, no 8 horas fijas. La prima vacacional de un empleado
      * de 6 horas se calcula sobre 6 × tarifa (el día en sí va en el base).

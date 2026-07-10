@@ -153,6 +153,11 @@ const transferLines = computed(() => {
     if (money(props.entry.regular_pay) !== 0) {
         lines.push({ label: 'Sueldo base', detail: baseDetail.value, amount: money(props.entry.regular_pay) });
     }
+    // Prima vacacional del formalizado: Contpaq la paga en la semana por
+    // transferencia, junto con el sueldo (no en la mensual/efectivo).
+    if (money(props.entry.vacation_premium_pay) > 0) {
+        lines.push({ label: 'Prima vacacional', detail: '', amount: money(props.entry.vacation_premium_pay) });
+    }
     if (money(props.entry.deductions) > 0) {
         // isDeduction dispara el detalle de faltas — solo aquí, no bajo ISR/IMSS.
         lines.push({ label: 'Deducciones (faltas)', detail: '', amount: -money(props.entry.deductions), isDeduction: true });
@@ -188,6 +193,9 @@ const efectivoLines = computed(() => {
         lines.push({ label: c.name, detail: conceptDetail(c), amount: money(c.amount) });
     }
     if (money(props.entry.vacation_pay) > 0) lines.push({ label: 'Vacaciones', detail: '', amount: money(props.entry.vacation_pay) });
+    // Prima vacacional de los empleados de EFECTIVO: se paga en la mensual (los
+    // formalizados la cobran por transferencia, ver transferLines).
+    if (paysBaseInCash.value && money(props.entry.vacation_premium_pay) > 0) lines.push({ label: 'Prima vacacional', detail: '', amount: money(props.entry.vacation_premium_pay) });
     if (money(props.entry.bonuses) > 0) lines.push({ label: 'Bonos', detail: '', amount: money(props.entry.bonuses) });
     if (paysBaseInCash.value && money(props.entry.deductions) > 0) {
         lines.push({ label: 'Deducciones (faltas)', detail: '', amount: -money(props.entry.deductions), isDeduction: true });
