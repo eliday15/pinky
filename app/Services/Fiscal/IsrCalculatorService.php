@@ -12,8 +12,12 @@ use App\Models\SystemSetting;
  * acredita el subsidio: isr_final = max(0, isr − subsidio); si el subsidio
  * supera al ISR, el excedente se acredita (suma al pago).
  *
- * Salario mínimo → ISR exento (0). Tarifa calibrada contra Contpaq Sem28
- * (reproduce el ISR de 155 empleados al ±$1).
+ * Salario mínimo → ISR exento (0) SOLO mientras no tenga percepciones
+ * gravables extra: si un mínimo cobra un extra gravado (cumpleaños, etc.), el
+ * ISR aplica sobre TODO el gravable (regla verificada con FOFH/LOAX/LOLV de
+ * Contpaq Sem28: base mínima 2205.28 + cumpleaños 315.04 → tarifa sobre
+ * 2520.32 = 191.55, − subsidio 123.34 = 68.21 exacto). Tarifa calibrada contra
+ * Contpaq Sem28 (reproduce el ISR de 155 empleados al ±$1).
  */
 class IsrCalculatorService
 {
@@ -27,12 +31,16 @@ class IsrCalculatorService
     /**
      * @param  float  $taxableBase  Base gravable del periodo (percepciones gravables).
      * @param  float  $dailySalary  Sueldo diario (para la exención de salario mínimo).
+     * @param  string  $periodType  Tipo de tarifa ('weekly').
+     * @param  float  $days  Días del periodo (para el tope de la exención de mínimo).
      * @return array{isr: float, subsidy_credited: float, isr_before_subsidy: float}
      */
-    public function calculate(float $taxableBase, float $dailySalary, string $periodType = 'weekly'): array
+    public function calculate(float $taxableBase, float $dailySalary, string $periodType = 'weekly', float $days = 7.0): array
     {
-        // Salario mínimo: exento de ISR.
-        if ($dailySalary <= $this->minWage + 0.01) {
+        // Salario mínimo: exento de ISR mientras el gravable no exceda su base
+        // pura (SD×días). Con extras gravados (cumpleaños, bonos) el ISR aplica
+        // sobre todo el gravable (verificado vs Contpaq: FOFH/LOAX/LOLV).
+        if ($dailySalary <= $this->minWage + 0.01 && $taxableBase <= $this->minWage * $days + 0.01) {
             return ['isr' => 0.0, 'subsidy_credited' => 0.0, 'isr_before_subsidy' => 0.0];
         }
 

@@ -36,6 +36,25 @@ class FiscalCalculatorTest extends FeatureTestCase
         $this->assertEqualsWithDelta(71.78, $imss->workerQuota(420.26, 7, 396.88), 0.05);
     }
 
+    /**
+     * Ausentismo (Art. 31 LSS), regla derivada de los 6 casos reales con faltas
+     * de Contpaq Sem28: EyM (fijo 0.625% + excedente 0.40%) cotiza los 7 días;
+     * IV+CyV (1.75%) solo los días sin falta.
+     */
+    public function test_imss_absenteeism_matches_contpaq_golden_cases(): void
+    {
+        $imss = app(ImssCalculatorService::class);
+
+        // AAMG-730: sbc 457.45, 3 faltas → $55.00
+        $this->assertEqualsWithDelta(55.00, $imss->workerQuota(457.45, 7, 435.38, 3), 0.02);
+        // AOCA-020: sbc 379.77, 2 faltas → $50.63
+        $this->assertEqualsWithDelta(50.63, $imss->workerQuota(379.77, 7, 360.00, 2), 0.02);
+        // EEMM-721: sbc 590.49, 1 falta → $94.51
+        $this->assertEqualsWithDelta(94.51, $imss->workerQuota(590.49, 7, 556.23, 1), 0.02);
+        // LOCR-800: sbc 457.46, 1 falta → $71.00
+        $this->assertEqualsWithDelta(71.00, $imss->workerQuota(457.46, 7, 435.38, 1), 0.02);
+    }
+
     public function test_imss_zero_for_minimum_wage(): void
     {
         $imss = app(ImssCalculatorService::class);
@@ -49,6 +68,21 @@ class FiscalCalculatorTest extends FeatureTestCase
         $isr = app(IsrCalculatorService::class);
         $r = $isr->calculate(2909.20, 415.60); // sal_diario > mínimo, sin subsidio
         $this->assertEqualsWithDelta(234.29, $r['isr'], 0.50);
+    }
+
+    /**
+     * Salario mínimo CON extra gravado (cumpleaños) pierde la exención: caso
+     * real FOFH/LOAX/LOLV de Contpaq Sem28 — base 2205.28 + cumple 315.04 =
+     * gravable 2520.32 → tarifa 191.55 − subsidio 123.34 = ISR 68.21.
+     */
+    public function test_minimum_wage_with_taxable_extra_pays_isr(): void
+    {
+        $isr = app(IsrCalculatorService::class);
+        $res = $isr->calculate(2520.32, 315.04, 'weekly', 7.0);
+
+        $this->assertEqualsWithDelta(191.55, $res['isr_before_subsidy'], 0.02);
+        $this->assertEqualsWithDelta(68.21, $res['isr'], 0.02);
+        $this->assertEqualsWithDelta(0.0, $res['subsidy_credited'], 0.01);
     }
 
     public function test_isr_zero_for_minimum_wage(): void

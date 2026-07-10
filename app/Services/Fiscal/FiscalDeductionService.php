@@ -37,9 +37,10 @@ class FiscalDeductionService
     /**
      * @param  float  $taxableBase  Percepciones gravables del periodo (base + gravable de extras).
      * @param  float  $days  Días del periodo.
+     * @param  int  $absenceDays  Faltas enteras del periodo (ausentismo IMSS: reducen IV+CyV).
      * @return array{isr: float, imss: float, infonavit: float, subsidy: float, total: float}
      */
-    public function compute(Employee $employee, float $taxableBase, float $days): array
+    public function compute(Employee $employee, float $taxableBase, float $days, int $absenceDays = 0): array
     {
         $zero = ['isr' => 0.0, 'imss' => 0.0, 'infonavit' => 0.0, 'subsidy' => 0.0, 'total' => 0.0];
 
@@ -51,8 +52,8 @@ class FiscalDeductionService
         $sdi = (float) ($employee->sdi ?: $dailySalary);
         $sbc = (float) ($employee->sbc ?: $sdi);
 
-        $isrRes = $this->isr->calculate($taxableBase, $dailySalary);
-        $imss = $this->imss->workerQuota($sbc, $days, $dailySalary);
+        $isrRes = $this->isr->calculate($taxableBase, $dailySalary, 'weekly', $days);
+        $imss = $this->imss->workerQuota($sbc, $days, $dailySalary, $absenceDays);
         $infonavit = $this->infonavit->deduction($employee, $sdi, $days);
         $subsidy = $isrRes['subsidy_credited'];
 

@@ -467,13 +467,23 @@ class PayrollCalculatorService
         // transferencia se marca via_transfer=true en el concepto para que el
         // recibo la muestre en la transferencia y NO en el efectivo.
         $transferExtras = 0.0;
+        // Gravado de las percepciones por transferencia (LISR Art. 93): la
+        // prima vacacional es exenta hasta 15 UMA, el aguinaldo hasta 30 UMA;
+        // el cumpleaños/bonos son 100% gravados. Alimenta la base del ISR —
+        // p.ej. un salario mínimo con cumpleaños pierde la exención y paga ISR
+        // sobre todo (verificado vs Contpaq FOFH/LOAX/LOLV).
+        $taxableTransferExtras = 0.0;
         if ($payBase && ! $baseInCash) {
+            $umaDaily = (float) SystemSetting::get('fiscal_uma_daily', 117.31);
+
             // Prima vacacional (en la mensual se suprimió arriba para no doblar).
             $weeklyVacationPremium = round($incidentMetrics['vacation_days'] * $dailySalary
                 * ((float) ($employee->vacation_premium_percentage ?? 0) / 100), 2);
             if ($weeklyVacationPremium > 0) {
                 $vacationPremiumPay += $weeklyVacationPremium;
                 $transferExtras += $weeklyVacationPremium;
+                // Exenta hasta 15 UMA; solo el excedente grava.
+                $taxableTransferExtras += max(0.0, $weeklyVacationPremium - 15 * $umaDaily);
             }
 
             // Bono de cumpleaños: 1 día de sueldo si el cumpleaños del empleado
@@ -483,6 +493,7 @@ class PayrollCalculatorService
                 $birthdayBonus = round($dailySalary, 2);
                 $otherCompensationPay += $birthdayBonus;
                 $transferExtras += $birthdayBonus;
+                $taxableTransferExtras += $birthdayBonus; // 100% gravado
                 $compensationConcepts[] = [
                     'code' => 'CUMPLE',
                     'name' => 'Cumpleaños',
@@ -580,10 +591,17 @@ class PayrollCalculatorService
                     ->pluck('code')
                     ->all();
                 if (! empty($transferCodes)) {
+                    $umaDailyConcepts = (float) SystemSetting::get('fiscal_uma_daily', 117.31);
                     foreach ($compensationConcepts as &$concept) {
                         if (in_array(($concept['code'] ?? ''), $transferCodes, true) && empty($concept['via_transfer'])) {
-                            $transferExtras += (float) $concept['amount'];
+                            $amount = (float) $concept['amount'];
+                            $transferExtras += $amount;
                             $concept['via_transfer'] = true;
+                            // Gravado: el aguinaldo es exento hasta 30 UMA
+                            // (LISR Art. 93 XIV); otros conceptos gravan completos.
+                            $taxableTransferExtras += ($concept['code'] === 'AGUIN')
+                                ? max(0.0, $amount - 30 * $umaDailyConcepts)
+                                : $amount;
                         }
                     }
                     unset($concept);
@@ -630,11 +648,32 @@ class PayrollCalculatorService
         // efectivo (que son los extras). La base gravable del ISR es el sueldo base
         // del periodo (incluye vacaciones pagadas en base, todas gravables).
         $fiscalDeductions = ['isr' => 0.0, 'imss' => 0.0, 'infonavit' => 0.0, 'subsidy' => 0.0, 'total' => 0.0];
+        $isrTaxableBase = 0.0;
+        $netAdjustment = 0.0;
         if ($payBase && ! $baseInCash) {
-            $fiscalDeductions = $this->fiscal->compute($employee, $regularPay, (float) $weekDays);
+            // Base gravable = sueldo base + gravado de las percepciones por
+            // transferencia (prima excedente de 15 UMA, cumpleaños, aguinaldo
+            // excedente de 30 UMA). Las faltas enteras van por ausentismo IMSS
+            // (Art. 31 LSS): reducen los días cotizados de IV+CyV.
+            $isrTaxableBase = round($regularPay + $taxableTransferExtras, 2);
+            $fiscalDeductions = $this->fiscal->compute($employee, $isrTaxableBase, (float) $weekDays, (int) $absenceDeductionDays);
             if (abs($fiscalDeductions['total']) > 0.001) {
                 $bankAmount = max(0.0, round($bankAmount - $fiscalDeductions['total'], 2));
                 $netPay = max(0.0, round($netPay - $fiscalDeductions['total'], 2));
+            }
+
+            // Ajuste al neto (concepto 99 de Contpaq): el neto transferido se
+            // redondea al múltiplo de $0.20 más cercano; los centavos de ajuste
+            // se guardan aparte (recibo/CFDI). Solo con retenciones activas.
+            if ($bankAmount > 0
+                && (bool) SystemSetting::get('fiscal_retentions_enabled', false)
+                && (bool) SystemSetting::get('fiscal_net_adjustment_enabled', true)) {
+                $roundedBank = round(round($bankAmount * 5) / 5, 2);
+                $netAdjustment = round($roundedBank - $bankAmount, 2);
+                if (abs($netAdjustment) > 0.001) {
+                    $bankAmount = $roundedBank;
+                    $netPay = round($netPay + $netAdjustment, 2);
+                }
             }
         }
 
@@ -810,6 +849,11 @@ class PayrollCalculatorService
                 'infonavit' => $fiscalDeductions['infonavit'],
                 'subsidy' => $fiscalDeductions['subsidy'],
                 'total' => $fiscalDeductions['total'],
+                // Base gravable del ISR (sueldo base + gravado de percepciones
+                // por transferencia) y ajuste del neto a múltiplo de $0.20.
+                'taxable_base' => $isrTaxableBase,
+                'taxable_transfer_extras' => round($taxableTransferExtras ?? 0.0, 2),
+                'net_adjustment' => $netAdjustment,
             ],
         ];
 
@@ -862,6 +906,7 @@ class PayrollCalculatorService
                 'imss_amount' => $fiscalDeductions['imss'],
                 'infonavit_amount' => $fiscalDeductions['infonavit'],
                 'subsidy_amount' => $fiscalDeductions['subsidy'],
+                'net_adjustment' => $netAdjustment,
                 'gross_pay' => $grossPay,
                 'net_pay' => $netPay,
                 'cash_amount' => $cashAmount,

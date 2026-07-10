@@ -59,6 +59,13 @@ class FiscalSettingsSeeder extends Seeder
             ['value' => '0', 'type' => 'boolean', 'group' => 'fiscal', 'label' => 'Activar retenciones ISR/IMSS/Infonavit en la nómina'],
         );
 
+        // Ajuste al neto (concepto 99 de Contpaq): redondea la transferencia al
+        // múltiplo de $0.20. firstOrCreate para respetar el toggle del usuario.
+        SystemSetting::firstOrCreate(
+            ['key' => 'fiscal_net_adjustment_enabled'],
+            ['value' => '1', 'type' => 'boolean', 'group' => 'fiscal', 'label' => 'Ajustar el neto transferido a múltiplos de $0.20 (como Contpaq)'],
+        );
+
         $settings = [
             // Valores OFICIALES 2026 (verificados contra Contpaq Sem28):
             // - UMA $117.31 (INEGI, vigente 1-feb-2026). Reproduce el IMSS de
@@ -67,8 +74,13 @@ class FiscalSettingsSeeder extends Seeder
             // - Salario mínimo general $315.04 (CONASAMI, DOF 19-dic-2025).
             ['fiscal_uma_daily', '117.31', 'UMA diaria (2026, INEGI)'],
             ['fiscal_minimum_wage_daily', '315.04', 'Salario mínimo diario (2026, CONASAMI)'],
-            ['fiscal_imss_worker_fixed_pct', '2.375', 'IMSS obrero: % fijo sobre SBC'],
-            ['fiscal_imss_eym_excess_pct', '0.40', 'IMSS obrero: % sobre excedente de 3 UMA'],
+            // IMSS obrero POR RAMO (regla de ausentismo Art. 31 LSS, derivada de
+            // Contpaq Sem28): EyM (0.625 = dinero 0.25 + GMP 0.375) cotiza todos
+            // los días aunque haya faltas; IV+CyV (1.75) solo días sin falta.
+            // En semana completa equivale al agregado histórico 2.375%.
+            ['fiscal_imss_eym_fixed_pct', '0.625', 'IMSS obrero: % EyM fijo (no descuenta faltas)'],
+            ['fiscal_imss_ivcv_pct', '1.75', 'IMSS obrero: % IV+CyV (descuenta faltas)'],
+            ['fiscal_imss_eym_excess_pct', '0.40', 'IMSS obrero: % sobre excedente de 3 UMA (no descuenta faltas)'],
             ['fiscal_imss_excess_uma_multiple', '3', 'IMSS: múltiplo de UMA del excedente'],
             ['fiscal_sbc_cap_uma', '25', 'Tope del SBC en UMA'],
             // Días de aguinaldo para el factor de integración del SDI (Art. 27
@@ -82,5 +94,9 @@ class FiscalSettingsSeeder extends Seeder
                 ['value' => $value, 'type' => 'float', 'group' => 'fiscal', 'label' => $label],
             );
         }
+
+        // El % agregado viejo (2.375) fue reemplazado por el split por ramo
+        // (EyM 0.625 + IV/CyV 1.75); se elimina para no mostrar un knob muerto.
+        SystemSetting::where('key', 'fiscal_imss_worker_fixed_pct')->delete();
     }
 }
