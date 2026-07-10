@@ -507,6 +507,47 @@ class PayrollCalculatorService
                     'source' => 'birthday',
                 ];
             }
+
+            // AGUINALDO anual automático (LFT Art. 87): el periodo semanal que
+            // CONTIENE la fecha configurada (fiscal_aguinaldo_payment_date)
+            // paga el proporcional: días de aguinaldo × SD × (días trabajados
+            // del año / 365). Exento hasta 30 UMA (LISR Art. 93 XIV). Sin
+            // fecha configurada no paga nada; idempotente al recálculo.
+            $aguinaldoDate = (string) SystemSetting::get('fiscal_aguinaldo_payment_date', '');
+            if ($aguinaldoDate !== '' && $dailySalary > 0) {
+                try {
+                    $payDay = Carbon::parse($aguinaldoDate);
+                } catch (\Throwable) {
+                    $payDay = null;
+                }
+                if ($payDay && $payDay->betweenIncluded($startDate, $endDate)) {
+                    $aguinaldoDays = (float) SystemSetting::get('fiscal_aguinaldo_days', 15);
+                    $yearStart = $payDay->copy()->startOfYear();
+                    $workedFrom = $employee->hire_date && $employee->hire_date->gt($yearStart)
+                        ? $employee->hire_date->copy()
+                        : $yearStart;
+                    // Proporción por días CALENDARIO del año trabajados (año
+                    // completo = aguinaldo completo, como la práctica LFT).
+                    $daysWorked = min(365, max(0, (int) $workedFrom->diffInDays($payDay->copy()->endOfYear()) + 1));
+                    $aguinaldoAmount = round($aguinaldoDays * $dailySalary * ($daysWorked / 365), 2);
+                    if ($aguinaldoAmount > 0) {
+                        $otherCompensationPay += $aguinaldoAmount;
+                        $transferExtras += $aguinaldoAmount;
+                        $taxableTransferExtras += max(0.0, $aguinaldoAmount - 30 * $umaDaily);
+                        $compensationConcepts[] = [
+                            'code' => 'AGUINALDO',
+                            'name' => 'Aguinaldo',
+                            'hours' => 0,
+                            'days' => round($aguinaldoDays * $daysWorked / 365, 2),
+                            'quantity' => 1,
+                            'rate' => ['percentage' => null, 'fixed_amount' => $aguinaldoAmount],
+                            'amount' => $aguinaldoAmount,
+                            'via_transfer' => true,
+                            'source' => 'aguinaldo',
+                        ];
+                    }
+                }
+            }
         }
 
         // Dinner & night-shift bonus: when the employee is on the

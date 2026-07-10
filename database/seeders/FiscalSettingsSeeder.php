@@ -84,6 +84,15 @@ class FiscalSettingsSeeder extends Seeder
             ['value' => '1', 'type' => 'boolean', 'group' => 'fiscal', 'label' => 'Ajustar el neto transferido a múltiplos de $0.20 (como Contpaq)'],
         );
 
+        // Fecha de pago del AGUINALDO anual (LFT: antes del 20 de diciembre).
+        // El periodo semanal que CONTIENE esta fecha paga automáticamente el
+        // aguinaldo proporcional a los formalizados. Vacía = no paga (RRHH la
+        // fija cada año, p. ej. 2026-12-15).
+        SystemSetting::firstOrCreate(
+            ['key' => 'fiscal_aguinaldo_payment_date'],
+            ['value' => '', 'type' => 'string', 'group' => 'fiscal', 'label' => 'Fecha de pago del aguinaldo (el periodo que la contiene lo paga; vacía = no)'],
+        );
+
         $settings = [
             // Valores OFICIALES 2026 (verificados contra Contpaq Sem28):
             // - UMA $117.31 (INEGI, vigente 1-feb-2026). Reproduce el IMSS de

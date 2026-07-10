@@ -93,7 +93,10 @@ class PayrollCfdiBuilder
                 continue;
             }
             $code = (string) ($concept['code'] ?? '');
-            if ($code === 'AGUIN') {
+            // AGUIN = concepto manual (finiquitos); AGUINALDO = el anual
+            // automático del calculador. Ambos son percepción SAT 002 con
+            // exención de 30 UMA.
+            if (in_array($code, ['AGUIN', 'AGUINALDO'], true)) {
                 $exempt = min($amount, 30 * $uma);
                 $perceptions[] = $this->perception('002', 'Aguinaldo', round($amount - $exempt, 2), $exempt);
 
