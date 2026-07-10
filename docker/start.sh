@@ -42,6 +42,9 @@ run_as_web "php artisan db:seed --class=RolesPermissionsSeeder --force" 2>&1 || 
 # Config fiscal (tarifa ISR, subsidio, UMA, % IMSS): idempotente. El flag de
 # retenciones queda apagado hasta activarlo manualmente en Configuración.
 run_as_web "php artisan db:seed --class=FiscalSettingsSeeder --force" 2>&1 || echo "Fiscal seed failed but continuing..."
+# Concepto Aguinaldo (pagado por transferencia): idempotente (firstOrCreate por
+# código), no pisa el concepto si ya existe.
+run_as_web "php artisan db:seed --class=AguinaldoConceptSeeder --force" 2>&1 || echo "Aguinaldo concept seed failed but continuing..."
 run_as_web "php artisan config:cache"
 run_as_web "php artisan route:cache"
 run_as_web "php artisan view:cache"
