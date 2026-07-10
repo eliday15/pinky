@@ -1418,6 +1418,16 @@ class PayrollCalculatorService
         // vs transferencia (base por banco/CONTPAQi de quien está en IMSS).
         $totalCash = $entries->sum('cash_amount');
         $totalTransfer = $entries->sum('bank_amount');
+        // Retenciones fiscales del trabajador (formalizados): reducen la
+        // transferencia. El BRUTO de la transferencia = neto transferido + lo
+        // retenido (ISR + IMSS + Infonavit − subsidio) — para comparar contra el
+        // sueldo base de Contpaq antes de retenciones.
+        $totalIsr = $entries->sum('isr_amount');
+        $totalImss = $entries->sum('imss_amount');
+        $totalInfonavit = $entries->sum('infonavit_amount');
+        $totalSubsidy = $entries->sum('subsidy_amount');
+        $totalRetentions = round($totalIsr + $totalImss + $totalInfonavit - $totalSubsidy, 2);
+        $totalTransferGross = round($totalTransfer + $totalRetentions, 2);
         $employeeCount = $entries->count();
 
         $byDepartment = $entries->groupBy('employee.department.name')->map(function ($group) {
@@ -1438,6 +1448,12 @@ class PayrollCalculatorService
             'total_overtime' => $totalOvertime,
             'total_cash' => $totalCash,
             'total_transfer' => $totalTransfer,
+            'total_transfer_gross' => $totalTransferGross,
+            'total_isr' => $totalIsr,
+            'total_imss' => $totalImss,
+            'total_infonavit' => $totalInfonavit,
+            'total_subsidy' => $totalSubsidy,
+            'total_retentions' => $totalRetentions,
             'average_pay' => $employeeCount > 0 ? $totalNet / $employeeCount : 0,
             'by_department' => $byDepartment,
         ];

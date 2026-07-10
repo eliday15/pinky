@@ -305,11 +305,19 @@ const closeCash = () => {
                 <div>
                     <p class="text-sm font-medium text-gray-500">Transferencia</p>
                     <p class="text-xs text-gray-400">Sueldo base por banco / CONTPAQi</p>
+                    <!-- Bruto → retenciones → neto (como la Lista de Raya) -->
+                    <div v-if="Number(summary.total_retentions) > 0" class="mt-2 text-xs space-y-0.5">
+                        <p class="text-gray-500">Bruto: <span class="font-medium text-gray-700">{{ formatCurrency(summary.total_transfer_gross) }}</span></p>
+                        <p class="text-red-500">− Retenciones (ISR/IMSS/Infonavit): {{ formatCurrency(summary.total_retentions) }}</p>
+                    </div>
                     <p class="text-xs font-medium text-indigo-600 mt-1">
                         {{ channelFilter === 'transfer' ? 'Mostrando solo transferencias — quitar filtro' : 'Ver solo transferencias →' }}
                     </p>
                 </div>
-                <p class="text-3xl font-bold text-indigo-600">{{ formatCurrency(summary.total_transfer) }}</p>
+                <div class="text-right">
+                    <p v-if="Number(summary.total_retentions) > 0" class="text-xs text-gray-400">Neto a transferir</p>
+                    <p class="text-3xl font-bold text-indigo-600">{{ formatCurrency(summary.total_transfer) }}</p>
+                </div>
             </button>
         </div>
 
