@@ -664,10 +664,11 @@ class CompensationRateResolverService
             // quantity (units/bonos, stored in auth->hours), e.g. "600 bonos ×
             // $1 = $600". The quantity defaults to 1 so a plain lump-sum concept
             // (or an authorization with no quantity) keeps paying its fixed
-            // amount exactly once, as before.
+            // amount exactly once, as before. A NEGATIVE quantity is a
+            // deduction (descuento) and keeps its sign.
             $quantity = 1.0;
             if ($compType->application_mode === CompensationType::APPLICATION_ONE_TIME
-                && (float) $auth->hours > 0) {
+                && abs((float) $auth->hours) > 0) {
                 $quantity = (float) $auth->hours;
             }
 
@@ -684,9 +685,15 @@ class CompensationRateResolverService
                 $amount = round($amount * $quantity, 2);
             }
 
-            if ($amount <= 0) {
-                // Misconfigured comp type (e.g. a fixed amount left at 0).
-                // Surface it instead of silently paying nothing.
+            // Un monto negativo en un concepto de monto único es una DEDUCCIÓN
+            // deliberada (misma convención que los recurrentes: el signo se
+            // conserva y la nómina lo resta). En los demás modos un monto <= 0
+            // solo puede venir de un concepto mal configurado (p. ej. monto en
+            // 0) — se avisa en vez de pagar nada en silencio.
+            $isOneTimeDeduction = $compType->application_mode === CompensationType::APPLICATION_ONE_TIME
+                && $amount < 0;
+
+            if ($amount == 0.0 || ($amount < 0 && ! $isOneTimeDeduction)) {
                 Log::warning('Compensation authorization resolved to zero amount', [
                     'authorization_id' => $auth->id,
                     'compensation_type_id' => $compType->id,

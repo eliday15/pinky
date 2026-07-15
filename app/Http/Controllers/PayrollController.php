@@ -502,7 +502,7 @@ class PayrollController extends Controller
             $fixed = (float) ($concept['rate']['fixed_amount'] ?? 0);
 
             $detail = '';
-            if ($qty > 1) {
+            if (abs($qty) > 1) {
                 $unit = $fixed > 0 ? $fixed : ($qty != 0.0 ? $amount / $qty : 0.0);
                 $detail = $num($qty).' × $'.number_format($unit, 2);
             } elseif ($hours > 0) {

@@ -2214,7 +2214,12 @@ class AuthorizationController extends Controller
             ? $applicationMode === CompensationType::APPLICATION_PER_HOUR
             : in_array($type, [Authorization::TYPE_OVERTIME, Authorization::TYPE_NIGHT_SHIFT], true);
 
-        return ['nullable', 'numeric', 'min:0', 'max:'.($isPerHour ? '24' : '999999.99')];
+        // Monto único acepta cantidad NEGATIVA = descuento (misma convención
+        // que los conceptos recurrentes: el signo se conserva y la nómina lo
+        // resta). Por hora / por día siguen exigiendo cantidades positivas.
+        $min = $applicationMode === CompensationType::APPLICATION_ONE_TIME ? '-999999.99' : '0';
+
+        return ['nullable', 'numeric', 'min:'.$min, 'max:'.($isPerHour ? '24' : '999999.99')];
     }
 
     /**

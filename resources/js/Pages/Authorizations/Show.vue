@@ -361,11 +361,14 @@ const submitReject = () => {
                                 v-model="approveForm.hours"
                                 type="number"
                                 step="0.01"
-                                min="0"
+                                :min="authorization.compensation_type?.application_mode === 'one_time' ? undefined : 0"
                                 placeholder="Sin cambio"
                                 class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
                                 :class="{ 'border-red-500': approveForm.errors.hours }"
                             />
+                            <p v-if="authorization.compensation_type?.application_mode === 'one_time'" class="mt-1 text-xs text-gray-400">
+                                Negativo = descuento.
+                            </p>
                             <p v-if="approveForm.errors.hours" class="mt-1 text-sm text-red-600">
                                 {{ approveForm.errors.hours }}
                             </p>

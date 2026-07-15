@@ -817,9 +817,9 @@ const submitCount = computed(() => {
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Cantidad</label>
-                            <input v-model="form.hours" type="number" step="1" min="1" placeholder="1" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.hours }" />
+                            <input v-model="form.hours" type="number" step="1" placeholder="1" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.hours }" />
                             <p v-if="form.errors.hours" class="mt-1 text-sm text-red-600">{{ form.errors.hours }}</p>
-                            <p class="mt-1 text-xs text-gray-500">Numero de unidades</p>
+                            <p class="mt-1 text-xs text-gray-500">Numero de unidades. Negativo = descuento.</p>
                         </div>
                     </div>
 
@@ -847,7 +847,7 @@ const submitCount = computed(() => {
                                 </div>
                                 <div class="flex items-center gap-1">
                                     <label class="text-xs text-gray-500">Cant.</label>
-                                    <input type="number" step="1" min="1" :value="entry.hours"
+                                    <input type="number" step="1" :min="isOneTime ? undefined : 1" :value="entry.hours"
                                         @input="setEntryField(idx, 'hours', $event.target.value)"
                                         class="w-20 text-xs rounded border-gray-300 focus:border-pink-500 focus:ring-pink-500 py-1" />
                                 </div>

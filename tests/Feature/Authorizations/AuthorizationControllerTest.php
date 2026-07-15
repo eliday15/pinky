@@ -391,6 +391,56 @@ class AuthorizationControllerTest extends FeatureTestCase
         ]);
     }
 
+    public function test_store_accepts_negative_quantity_for_one_time_concept(): void
+    {
+        // Cantidad negativa en un concepto de monto único = descuento
+        // (Adriana 2026-07-14): -763 × monto = deducción en la nómina.
+        $this->actingAsAdmin();
+        $emp = Employee::factory()->create();
+        $discount = CompensationType::factory()->create([
+            'name' => 'Monto Unico',
+            'calculation_type' => 'fixed',
+            'fixed_amount' => 1.00,
+            'application_mode' => CompensationType::APPLICATION_ONE_TIME,
+            'authorization_type' => 'special',
+        ]);
+
+        $this->from(route('authorizations.create'))->post(route('authorizations.store'), [
+            'employee_id' => $emp->id,
+            'type' => Authorization::TYPE_SPECIAL,
+            'compensation_type_id' => $discount->id,
+            'date' => '2026-07-10',
+            'hours' => -763,
+            'reason' => 'Descuento por adelanto',
+        ])->assertSessionHasNoErrors();
+
+        $this->assertDatabaseHas('authorizations', [
+            'employee_id' => $emp->id,
+            'compensation_type_id' => $discount->id,
+            'hours' => -763.00,
+        ]);
+    }
+
+    public function test_store_rejects_negative_hours_for_per_hour_concept(): void
+    {
+        $this->actingAsAdmin();
+        $emp = Employee::factory()->create();
+        $overtime = CompensationType::factory()->create([
+            'name' => 'Horas Extra',
+            'application_mode' => CompensationType::APPLICATION_PER_HOUR,
+            'authorization_type' => 'overtime',
+        ]);
+
+        $this->from(route('authorizations.create'))->post(route('authorizations.store'), [
+            'employee_id' => $emp->id,
+            'type' => Authorization::TYPE_OVERTIME,
+            'compensation_type_id' => $overtime->id,
+            'date' => '2026-07-10',
+            'hours' => -2,
+            'reason' => 'Negativo no permitido por hora',
+        ])->assertSessionHasErrors('hours');
+    }
+
     public function test_store_keeps_pending_when_creator_cannot_approve(): void
     {
         // Un supervisor puede crear pero NO aprobar (sin authorizations.approve):

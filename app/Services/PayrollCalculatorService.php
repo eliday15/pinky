@@ -345,6 +345,10 @@ class PayrollCalculatorService
         $weeklyBonus = 0.0;
         $monthlyBonus = 0.0;
         $compensationConcepts = [];
+        // Descuentos autorizados (monto único con cantidad negativa): se
+        // acumulan aquí y se suman a $conceptDeductions más abajo — mismo
+        // trato que un recurrente negativo (salen del efectivo, con tope).
+        $authorizedConceptDeductions = 0.0;
 
         // Night-shift metrics feed both the comp-types velada input and the
         // legacy dinner/night bonus. Se calculan cuando se pagan extras o cuando
@@ -405,6 +409,16 @@ class PayrollCalculatorService
                 $code = $concept['code'] ?? '';
                 $authType = $concept['authorization_type'] ?? null;
                 $pullRule = $concept['attendance_pull_rule'] ?? null;
+
+                // Un monto NEGATIVO (descuento de monto único) es una DEDUCCIÓN:
+                // no resta de un bucket de percepción; se descuenta del efectivo
+                // con tope, igual que los recurrentes negativos. El concepto se
+                // queda en el desglose con su signo para el recibo.
+                if ((float) $concept['amount'] < 0) {
+                    $authorizedConceptDeductions += abs((float) $concept['amount']);
+
+                    continue;
+                }
 
                 if (in_array($code, ['HE', 'HED', 'HET'], true)) {
                     $overtimePay += $concept['amount'];
@@ -601,8 +615,9 @@ class PayrollCalculatorService
         // etc.): en vez de sumar, se acumula en $conceptDeductions y se descuenta
         // del EFECTIVO más abajo, topada al efectivo disponible ("de su sueldo en
         // efectivo se tiene que poder descontar siempre y cuando no rebase el
-        // importe" — Luis 2026-07-09). No toca la transferencia (base).
-        $conceptDeductions = 0.0;
+        // importe" — Luis 2026-07-09). No toca la transferencia (base). Arranca
+        // con los descuentos autorizados (monto único con cantidad negativa).
+        $conceptDeductions = $authorizedConceptDeductions;
         if ($useCompTypes && $allowedPaymentPeriods !== []) {
             $recurringConcepts = $this->resolver->calculateRecurringConcepts(
                 $employee,

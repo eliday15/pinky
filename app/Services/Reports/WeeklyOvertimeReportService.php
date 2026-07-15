@@ -515,7 +515,9 @@ class WeeklyOvertimeReportService
             default => [0.0, 0.0],
         };
 
-        $quantity = ($type->application_mode === CompensationType::APPLICATION_ONE_TIME && $authHours > 0)
+        // La cantidad conserva su signo: negativa = descuento (deducción), igual
+        // que en la nómina.
+        $quantity = ($type->application_mode === CompensationType::APPLICATION_ONE_TIME && abs($authHours) > 0)
             ? $authHours
             : 1.0;
 
