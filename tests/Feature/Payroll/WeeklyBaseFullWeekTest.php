@@ -8,9 +8,10 @@ use App\Services\PayrollCalculatorService;
 use Tests\FeatureTestCase;
 
 /**
- * Sueldo base semanal = semana completa (SD×7, séptimo día) aunque el periodo
- * abarque menos días (beneficio de la duda). Para no pagar doble el día
- * adelantado, la semana siguiente "corta" los días ya cubiertos por la anterior.
+ * Sueldo base semanal = semana completa (SD×7, séptimo día) SIEMPRE, sin
+ * importar en qué día corte el periodo (decisión de negocio 2026-07-15). Las
+ * faltas/extras de días posteriores al corte se ajustan en la semana siguiente
+ * por fecha; la semana siguiente NO recorta días por lo ya pagado.
  */
 class WeeklyBaseFullWeekTest extends FeatureTestCase
 {
@@ -43,10 +44,11 @@ class WeeklyBaseFullWeekTest extends FeatureTestCase
         $this->assertEqualsWithDelta(7000.00, (float) $entry->regular_pay, 0.01, '6 días pero paga semana completa SD×7');
     }
 
-    public function test_next_week_cuts_the_day_already_paid(): void
+    public function test_next_week_also_pays_full_week(): void
     {
         // La semana anterior (1-6) pagó completa hasta el día 7. La siguiente
-        // (7-13) arranca en el 8 → paga solo 6 días reales (SD×6), sin doblar.
+        // TAMBIÉN paga SD×7: cada semana es completa sin importar el corte; los
+        // ajustes de los días adelantados caen por fecha en su propio periodo.
         $emp = $this->employee();
 
         PayrollPeriod::factory()->weekly()->create([
@@ -61,7 +63,7 @@ class WeeklyBaseFullWeekTest extends FeatureTestCase
 
         $entry = $this->calculator()->calculateEmployeePayroll($current, $emp);
 
-        $this->assertEqualsWithDelta(6000.00, (float) $entry->regular_pay, 0.01, 'corta el día 7 ya pagado → SD×6');
+        $this->assertEqualsWithDelta(7000.00, (float) $entry->regular_pay, 0.01, 'la siguiente semana también paga SD×7 completa');
     }
 
     public function test_contiguous_full_weeks_are_unchanged(): void
