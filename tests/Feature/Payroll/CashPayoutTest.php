@@ -107,6 +107,66 @@ class CashPayoutTest extends FeatureTestCase
         $this->assertNotNull($period->fresh()->cash_closed_at);
     }
 
+    public function test_close_cash_rewrites_corrupt_paid_payout_without_collection(): void
+    {
+        // Residuo del bug 2026-07-15: el cierre viejo dejó payouts con monto
+        // NEGATIVO marcados 'paid' sin dinero entregado (amount_paid = 0). El
+        // candado "pagado no se toca" NO debe protegerlos: al re-cerrar se
+        // reescriben con el efectivo vigente de la entry.
+        [$period, $employee] = $this->approvedPeriodWithEntry(500.00);
+
+        CashPayout::create([
+            'payroll_period_id' => $period->id,
+            'employee_id' => $employee->id,
+            'period_amount' => -342.00,
+            'opening_balance' => 0,
+            'total_due' => -342.00,
+            'amount_paid' => 0,
+            'status' => CashPayout::STATUS_PAID,
+            'denomination_breakdown' => [],
+        ]);
+
+        $this->actingAsSuperadmin();
+        $this->post(route('payroll.closeCash', $period->id))->assertRedirect();
+
+        $payout = CashPayout::where('payroll_period_id', $period->id)
+            ->where('employee_id', $employee->id)
+            ->firstOrFail();
+
+        $this->assertEqualsWithDelta(500.00, (float) $payout->period_amount, 0.01);
+        $this->assertEqualsWithDelta(500.00, (float) $payout->total_due, 0.01);
+        $this->assertSame(CashPayout::STATUS_PENDING, $payout->status);
+    }
+
+    public function test_close_cash_preserves_actually_collected_payout(): void
+    {
+        // Un cobro con dinero realmente entregado (amount_paid > 0) sí se
+        // conserva intacto al re-cerrar: nunca se "descobra".
+        [$period, $employee] = $this->approvedPeriodWithEntry(700.00);
+
+        CashPayout::create([
+            'payroll_period_id' => $period->id,
+            'employee_id' => $employee->id,
+            'period_amount' => 700.00,
+            'opening_balance' => 0,
+            'total_due' => 700.00,
+            'amount_paid' => 700.00,
+            'status' => CashPayout::STATUS_PAID,
+            'denomination_breakdown' => [],
+            'collected_at' => now(),
+        ]);
+
+        $this->actingAsSuperadmin();
+        $this->post(route('payroll.closeCash', $period->id))->assertRedirect();
+
+        $payout = CashPayout::where('payroll_period_id', $period->id)
+            ->where('employee_id', $employee->id)
+            ->firstOrFail();
+
+        $this->assertSame(CashPayout::STATUS_PAID, $payout->status);
+        $this->assertEqualsWithDelta(700.00, (float) $payout->amount_paid, 0.01);
+    }
+
     // ---- cash page ------------------------------------------------------
 
     public function test_cash_page_renders_for_admin(): void

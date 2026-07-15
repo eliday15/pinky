@@ -389,13 +389,23 @@ class PayrollController extends Controller
                     $openingBalance = $priorPending ? $priorPending->outstanding() : 0.0;
                 }
 
-                $periodAmount = $this->denominations->roundToPeso((float) $entry->cash_amount);
+                // Nunca guardar montos negativos en el ledger (defensa: el
+                // cálculo ya no produce cash negativo, pero un dato corrupto
+                // no debe propagarse a los cobros).
+                $periodAmount = max(0.0, $this->denominations->roundToPeso((float) $entry->cash_amount));
                 $totalDue = $periodAmount + $openingBalance;
                 $outstanding = round($totalDue - $alreadyPaid, 2);
 
                 // Ya pagado y sin diferencia a favor del empleado: se deja tal
-                // cual (nunca genera saldo negativo / "descobro").
-                if ($existing && $existing->status === CashPayout::STATUS_PAID && $outstanding <= 0.005) {
+                // cual (nunca genera saldo negativo / "descobro"). SOLO protege
+                // cobros con dinero realmente entregado (amount_paid > 0): un
+                // payout "paid" con $0 cobrado es un cierre sin nada que cobrar
+                // o un residuo corrupto (bug del re-parte 2026-07-15) y debe
+                // reescribirse con los montos vigentes.
+                if ($existing
+                    && $existing->status === CashPayout::STATUS_PAID
+                    && (float) $existing->amount_paid > 0
+                    && $outstanding <= 0.005) {
                     continue;
                 }
 
