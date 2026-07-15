@@ -53,6 +53,14 @@ class AppServiceProvider extends ServiceProvider
     {
         Vite::prefetch(concurrency: 3);
 
+        // El queue worker es un proceso de larga vida: sin esta limpieza, el
+        // memo estático de SystemSetting serviría valores viejos para siempre
+        // si alguien cambia un setting mientras el worker corre. Por request
+        // web/artisan el memo muere solo con el proceso.
+        \Illuminate\Support\Facades\Queue::before(
+            fn () => \App\Models\SystemSetting::forgetMemo()
+        );
+
         // Register policies
         foreach ($this->policies as $model => $policy) {
             Gate::policy($model, $policy);

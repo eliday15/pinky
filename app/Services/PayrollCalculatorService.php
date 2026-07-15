@@ -27,6 +27,28 @@ class PayrollCalculatorService
      */
     private const SEVENTH_DAY_DIVISOR = 6;
 
+    /**
+     * Contexto precargado del periodo en curso (solo durante calculatePeriod):
+     * evita repetir por empleado las consultas de asistencia, incidencias,
+     * autorizaciones y festivos. Null en el camino de un solo empleado.
+     */
+    private ?PayrollPeriodCalculationContext $periodContext = null;
+
+    /**
+     * Memo: ¿existe algún concepto activo con payment_period=weekly? Es un
+     * dato de catálogo estable durante el cálculo; antes se consultaba por
+     * empleado.
+     */
+    private ?bool $weeklyConceptsExist = null;
+
+    /**
+     * Memo: códigos de conceptos con pays_via_transfer=true (catálogo chico y
+     * estable; antes un query por empleado formalizado).
+     *
+     * @var list<string>|null
+     */
+    private ?array $transferConceptCodes = null;
+
     private CompensationRateResolverService $resolver;
 
     private LateAbsenceService $lateAbsences;
@@ -67,6 +89,9 @@ class PayrollCalculatorService
             ->with([
                 'compensationTypes' => fn ($q) => $q->wherePivot('is_active', true),
                 'department',
+                // El horario alimenta daily_salary_computed / isObligatoryWorkDay;
+                // sin eager load se lazy-loadea una vez por empleado.
+                'schedule',
             ])
             ->when($period->department_id, fn ($q) => $q->where('department_id', $period->department_id))
             ->when(
@@ -75,8 +100,17 @@ class PayrollCalculatorService
             )
             ->get();
 
-        foreach ($employees as $employee) {
-            $this->calculateEmployeePayroll($period, $employee);
+        // Precarga en LOTE lo que calculateEmployeePayroll consultaba por
+        // empleado. El finally garantiza que el contexto no sobreviva al
+        // periodo (los caminos de un solo empleado siguen consultando directo).
+        $this->periodContext = $this->buildPeriodContext($period, $employees);
+
+        try {
+            foreach ($employees as $employee) {
+                $this->calculateEmployeePayroll($period, $employee);
+            }
+        } finally {
+            $this->periodContext = null;
         }
 
         // El recálculo completo deja el periodo al día: limpia la marca de
@@ -86,6 +120,70 @@ class PayrollCalculatorService
             'requires_recalculation' => false,
             'recalculation_flagged_at' => null,
         ]);
+    }
+
+    /**
+     * Precarga en 4 consultas lo que el cálculo necesita de TODOS los
+     * empleados del periodo (asistencia, incidencias aprobadas, autorizaciones
+     * aprobadas/pagadas y festivos), agrupado por empleado. Las condiciones
+     * replican EXACTAMENTE las consultas por-empleado de
+     * calculateEmployeePayroll — solo cambia el número de viajes a la base.
+     *
+     * Las FRT mensuales se generan ANTES de leer incidencias (en lote), igual
+     * que en el camino por-empleado, para que una FRT recién creada que caiga
+     * en este periodo sí se lea.
+     *
+     * @param  \Illuminate\Support\Collection<int, Employee>  $employees
+     */
+    private function buildPeriodContext(PayrollPeriod $period, Collection $employees): PayrollPeriodCalculationContext
+    {
+        $startDate = Carbon::parse($period->start_date);
+        $endDate = Carbon::parse($period->end_date);
+        $startDateStr = $startDate->toDateString();
+        $endDateStr = $endDate->toDateString();
+        $employeeIds = $employees->pluck('id')->all();
+
+        $this->lateAbsences->ensureForEmployees($employees);
+
+        $attendanceByEmployee = AttendanceRecord::whereIn('employee_id', $employeeIds)
+            ->whereBetween('work_date', [$startDateStr, $endDateStr])
+            ->orderBy('id')
+            ->get()
+            ->groupBy('employee_id');
+
+        $incidentsByEmployee = Incident::whereIn('employee_id', $employeeIds)
+            ->where('status', 'approved')
+            ->where(function ($q) use ($startDateStr, $endDateStr) {
+                $q->whereBetween('start_date', [$startDateStr, $endDateStr])
+                    ->orWhereBetween('end_date', [$startDateStr, $endDateStr])
+                    ->orWhere(function ($q2) use ($startDateStr, $endDateStr) {
+                        $q2->where('start_date', '<=', $startDateStr)
+                            ->where('end_date', '>=', $endDateStr);
+                    });
+            })
+            ->with('incidentType')
+            ->orderBy('id')
+            ->get()
+            ->groupBy('employee_id');
+
+        $authorizationsByEmployee = Authorization::whereIn('employee_id', $employeeIds)
+            ->whereBetween('date', [$startDate, $endDate])
+            ->whereIn('status', [Authorization::STATUS_APPROVED, Authorization::STATUS_PAID])
+            ->with('compensationType')
+            ->orderBy('id')
+            ->get()
+            ->groupBy('employee_id');
+
+        $holidays = Holiday::whereBetween('date', [$startDateStr, $endDateStr])->get();
+
+        return new PayrollPeriodCalculationContext(
+            periodId: $period->id,
+            attendanceByEmployee: $attendanceByEmployee,
+            incidentsByEmployee: $incidentsByEmployee,
+            authorizationsByEmployee: $authorizationsByEmployee,
+            holidays: $holidays,
+            monthlyIncidentsEnsured: true,
+        );
     }
 
     /**
@@ -101,10 +199,19 @@ class PayrollCalculatorService
         $startDate = Carbon::parse($period->start_date);
         $endDate = Carbon::parse($period->end_date);
 
+        // Contexto del periodo (cálculo en lote): datos ya precargados por
+        // buildPeriodContext. Null en el camino de un solo empleado.
+        $ctx = ($this->periodContext && $this->periodContext->periodId === $period->id)
+            ? $this->periodContext
+            : null;
+
         // Regla mensual retardos→falta: garantizar que todo mes cerrado tenga
         // su incidencia FRT generada ANTES de leer las incidencias del periodo
-        // (idempotente; la FRT cae en la primera nómina tras el cierre).
-        $this->lateAbsences->ensureMonthlyIncidentsGenerated($employee);
+        // (idempotente; la FRT cae en la primera nómina tras el cierre). En el
+        // cálculo en lote ya se garantizó para todos en buildPeriodContext.
+        if (! $ctx?->monthlyIncidentsEnsured) {
+            $this->lateAbsences->ensureMonthlyIncidentsGenerated($employee);
+        }
 
         // Compare DATE columns against plain date strings (not Carbon
         // datetimes): on SQLite a '2026-07-01' DATE sorts BEFORE the
@@ -113,36 +220,44 @@ class PayrollCalculatorService
         $startDateStr = $startDate->toDateString();
         $endDateStr = $endDate->toDateString();
 
-        // Get attendance records for the period
-        $attendance = AttendanceRecord::where('employee_id', $employee->id)
-            ->whereBetween('work_date', [$startDateStr, $endDateStr])
-            ->get();
+        if ($ctx) {
+            $attendance = $ctx->attendanceByEmployee->get($employee->id, collect());
+            $incidents = $ctx->incidentsByEmployee->get($employee->id, collect());
+            $holidays = $ctx->holidays;
+            $approvedAuthorizations = $ctx->authorizationsByEmployee->get($employee->id, collect());
+        } else {
+            // Get attendance records for the period
+            $attendance = AttendanceRecord::where('employee_id', $employee->id)
+                ->whereBetween('work_date', [$startDateStr, $endDateStr])
+                ->get();
 
-        // Get approved incidents for the period
-        $incidents = Incident::where('employee_id', $employee->id)
-            ->where('status', 'approved')
-            ->where(function ($q) use ($startDateStr, $endDateStr) {
-                $q->whereBetween('start_date', [$startDateStr, $endDateStr])
-                    ->orWhereBetween('end_date', [$startDateStr, $endDateStr])
-                    ->orWhere(function ($q2) use ($startDateStr, $endDateStr) {
-                        $q2->where('start_date', '<=', $startDateStr)
-                            ->where('end_date', '>=', $endDateStr);
-                    });
-            })
-            ->with('incidentType')
-            ->get();
+            // Get approved incidents for the period
+            $incidents = Incident::where('employee_id', $employee->id)
+                ->where('status', 'approved')
+                ->where(function ($q) use ($startDateStr, $endDateStr) {
+                    $q->whereBetween('start_date', [$startDateStr, $endDateStr])
+                        ->orWhereBetween('end_date', [$startDateStr, $endDateStr])
+                        ->orWhere(function ($q2) use ($startDateStr, $endDateStr) {
+                            $q2->where('start_date', '<=', $startDateStr)
+                                ->where('end_date', '>=', $endDateStr);
+                        });
+                })
+                ->with('incidentType')
+                ->get();
 
-        // Get holidays in the period
-        $holidays = Holiday::whereBetween('date', [$startDateStr, $endDateStr])->get();
+            // Get holidays in the period
+            $holidays = Holiday::whereBetween('date', [$startDateStr, $endDateStr])->get();
+
+            // Get approved authorizations for the period (for holiday/weekend gating
+            // AND to honor each authorization's specific compensation_type_id).
+            $approvedAuthorizations = Authorization::where('employee_id', $employee->id)
+                ->whereBetween('date', [$startDate, $endDate])
+                ->whereIn('status', [Authorization::STATUS_APPROVED, Authorization::STATUS_PAID])
+                ->with('compensationType')
+                ->get();
+        }
+
         $holidayDates = $holidays->pluck('date')->map(fn ($d) => Carbon::parse($d)->toDateString())->toArray();
-
-        // Get approved authorizations for the period (for holiday/weekend gating
-        // AND to honor each authorization's specific compensation_type_id).
-        $approvedAuthorizations = Authorization::where('employee_id', $employee->id)
-            ->whereBetween('date', [$startDate, $endDate])
-            ->whereIn('status', [Authorization::STATUS_APPROVED, Authorization::STATUS_PAID])
-            ->with('compensationType')
-            ->get();
 
         // Días justificados por incidencias aprobadas (DECISIONES §8): un día
         // absent/late cubierto por vacación, incapacidad, permiso o falta
@@ -224,9 +339,9 @@ class PayrollCalculatorService
         $runCompTypes = $useCompTypes && (
             $payExtras
             || (in_array(CompensationType::PAYMENT_PERIOD_WEEKLY, $allowedPaymentPeriods, true)
-                && CompensationType::active()
+                && ($this->weeklyConceptsExist ??= CompensationType::active()
                     ->where('payment_period', CompensationType::PAYMENT_PERIOD_WEEKLY)
-                    ->exists())
+                    ->exists()))
         );
 
         // ---- BASE (weekly): sueldo diario × días pagados del periodo ----
@@ -340,7 +455,7 @@ class PayrollCalculatorService
         if ($payExtras || $runCompTypes) {
             // FASE 3.3: Night shifts and dinner allowances — pagados solo por
             // noche realmente trabajada (velada en checadas) y autorizada.
-            $nightShiftMetrics = $this->calculateNightShiftMetrics($employee, $startDate, $endDate, $attendance);
+            $nightShiftMetrics = $this->calculateNightShiftMetrics($approvedAuthorizations, $attendance);
         }
 
         $authorizedOvertimeHours = ($payExtras || $runCompTypes)
@@ -627,10 +742,13 @@ class PayrollCalculatorService
         if ($payBase && ! $baseInCash) {
             $conceptCodes = collect($compensationConcepts)->pluck('code')->filter()->unique()->all();
             if (! empty($conceptCodes)) {
-                $transferCodes = CompensationType::whereIn('code', $conceptCodes)
-                    ->where('pays_via_transfer', true)
+                // Catálogo chico y estable: se trae UNA vez la lista completa de
+                // códigos pays_via_transfer y se intersecta en memoria (mismo
+                // resultado que el whereIn por empleado de antes).
+                $this->transferConceptCodes ??= CompensationType::where('pays_via_transfer', true)
                     ->pluck('code')
                     ->all();
+                $transferCodes = array_values(array_intersect($conceptCodes, $this->transferConceptCodes));
                 if (! empty($transferCodes)) {
                     $umaDailyConcepts = (float) SystemSetting::get('fiscal_uma_daily', 117.31);
                     foreach ($compensationConcepts as &$concept) {
@@ -1119,23 +1237,19 @@ class PayrollCalculatorService
      * duplicadas, y solo cuando la checada de esa fecha registró velada real
      * (velada_hours > 0).
      *
-     * @param  Employee  $employee  Employee
-     * @param  Carbon  $startDate  Start date
-     * @param  Carbon  $endDate  End date
+     * @param  Collection  $approvedAuthorizations  Autorizaciones aprobadas/pagadas del periodo (ya cargadas)
      * @param  Collection  $attendance  Attendance records of the period
      * @return array Night shift metrics
      */
-    private function calculateNightShiftMetrics(Employee $employee, Carbon $startDate, Carbon $endDate, Collection $attendance): array
+    private function calculateNightShiftMetrics(Collection $approvedAuthorizations, Collection $attendance): array
     {
         $nightShiftBonus = (float) SystemSetting::get('night_shift_bonus', 100);
         $dinnerAllowanceAmount = (float) SystemSetting::get('dinner_allowance_amount', 75);
 
-        // Get approved night shift authorizations for the period
-        $approvedNightShifts = Authorization::where('employee_id', $employee->id)
-            ->whereBetween('date', [$startDate->toDateString(), $endDate->toDateString()])
-            ->where('type', Authorization::TYPE_NIGHT_SHIFT)
-            ->whereIn('status', [Authorization::STATUS_APPROVED, Authorization::STATUS_PAID])
-            ->get();
+        // Autorizaciones de velada del periodo: mismo universo que la consulta
+        // anterior por empleado (aprobadas/pagadas, en rango) filtrado por tipo.
+        $approvedNightShifts = $approvedAuthorizations
+            ->filter(fn ($authorization) => $authorization->type === Authorization::TYPE_NIGHT_SHIFT);
 
         $nightShiftHours = $approvedNightShifts->sum('hours');
 

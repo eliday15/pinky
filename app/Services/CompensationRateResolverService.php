@@ -18,6 +18,28 @@ use Illuminate\Support\Facades\Log;
 class CompensationRateResolverService
 {
     /**
+     * Memo por tipo de autorización del catálogo de tipos activos. El catálogo
+     * no cambia durante un cálculo y la consulta es idéntica para todos los
+     * empleados — antes se repetía por empleado (y por tier de TE).
+     *
+     * @var array<string, \Illuminate\Database\Eloquent\Collection<int, CompensationType>>
+     */
+    private array $activeTypesByAuth = [];
+
+    /**
+     * Tipos de compensación activos para un tipo de autorización, ordenados por
+     * prioridad y con positions/departments cargados (memoizado por proceso).
+     */
+    private function activeTypesFor(string $authType): \Illuminate\Database\Eloquent\Collection
+    {
+        return $this->activeTypesByAuth[$authType] ??= CompensationType::active()
+            ->forAuthorizationType($authType)
+            ->with(['positions', 'departments'])
+            ->orderBy('priority')
+            ->get();
+    }
+
+    /**
      * Resolve the effective percentage and fixed amount for a given compensation type.
      *
      * Args:
@@ -116,11 +138,7 @@ class CompensationRateResolverService
      */
     public function findApplicableType(Employee $employee, string $authType): ?CompensationType
     {
-        $compTypes = CompensationType::active()
-            ->forAuthorizationType($authType)
-            ->with(['positions', 'departments'])
-            ->orderBy('priority')
-            ->get();
+        $compTypes = $this->activeTypesFor($authType);
 
         if ($compTypes->isEmpty()) {
             return null;
@@ -157,11 +175,7 @@ class CompensationRateResolverService
      */
     public function resolveOvertimeTiers(Employee $employee, float $totalHours, float $weeklyThreshold = 9.0): array
     {
-        $overtimeTypes = CompensationType::active()
-            ->forAuthorizationType('overtime')
-            ->with(['positions', 'departments'])
-            ->orderBy('priority')
-            ->get();
+        $overtimeTypes = $this->activeTypesFor('overtime');
 
         if ($overtimeTypes->isEmpty() || $totalHours <= 0) {
             return [];

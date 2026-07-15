@@ -192,4 +192,98 @@ class LateAbsenceService
 
         return $generated;
     }
+
+    /**
+     * Versión en lote de ensureMonthlyIncidentsGenerated para el cálculo de
+     * nómina: un solo query trae los pares (empleado, mes) ya procesados y
+     * solo se intenta generar lo que falta. En estado estable (todo generado)
+     * cuesta 1 query en total en vez de meses × empleados.
+     *
+     * @param  \Illuminate\Support\Collection<int, Employee>  $employees
+     */
+    public function ensureForEmployees(\Illuminate\Support\Collection $employees, ?Carbon $today = null): int
+    {
+        $today = $today ?? Carbon::today();
+        $startMonth = $this->startMonth();
+
+        if (! $startMonth || $employees->isEmpty()) {
+            return 0;
+        }
+
+        $lastClosed = $today->copy()->startOfMonth()->subMonthNoOverflow();
+
+        if ($startMonth->gt($lastClosed)) {
+            return 0;
+        }
+
+        // Pares empleado|mes ya procesados — con soft-deleted, igual que
+        // generateForMonth: una FRT borrada fue decisión humana, no se regenera.
+        $processed = Incident::withTrashed()
+            ->whereIn('employee_id', $employees->pluck('id'))
+            ->whereNotNull('late_month')
+            ->get(['employee_id', 'late_month'])
+            ->map(fn (Incident $i) => $i->employee_id.'|'.$i->late_month)
+            ->flip();
+
+        $generated = 0;
+
+        for ($month = $startMonth->copy(); $month->lte($lastClosed); $month->addMonthNoOverflow()) {
+            $monthKey = $month->format('Y-m');
+
+            $pending = $employees->filter(
+                fn (Employee $e) => ! isset($processed[$e->id.'|'.$monthKey])
+            );
+
+            if ($pending->isEmpty()) {
+                continue;
+            }
+
+            $start = $month->copy()->startOfMonth();
+            $end = $month->copy()->endOfMonth();
+
+            $holidayDates = Holiday::whereBetween('date', [$start->toDateString(), $end->toDateString()])
+                ->pluck('date')
+                ->map(fn ($d) => Carbon::parse($d)->toDateString())
+                ->all();
+
+            // Retardos del mes de TODOS los pendientes en un query. El conteo
+            // en memoria replica lateCountForMonth: excluye festivos y días no
+            // obligatorios (fin de semana / fuera de horario).
+            $latesByEmployee = AttendanceRecord::whereIn('employee_id', $pending->pluck('id'))
+                ->whereBetween('work_date', [$start->toDateString(), $end->toDateString()])
+                ->where('status', 'late')
+                ->get(['employee_id', 'work_date'])
+                ->groupBy('employee_id');
+
+            foreach ($pending as $employee) {
+                $lateCount = $latesByEmployee->get($employee->id, collect())
+                    ->filter(function ($record) use ($employee, $holidayDates) {
+                        $date = Carbon::parse($record->work_date);
+
+                        if (in_array($date->toDateString(), $holidayDates, true)) {
+                            return false;
+                        }
+
+                        return $employee->isObligatoryWorkDay($date);
+                    })
+                    ->count();
+
+                if ($this->absencesFromLates($lateCount) < 1) {
+                    // Sin FRT que generar: el mes queda sin marca (igual que el
+                    // camino por-empleado) y se re-evalúa en el siguiente
+                    // cálculo — pero ya al costo del query en lote.
+                    continue;
+                }
+
+                // Candidato real (raro): generateForMonth re-verifica
+                // idempotencia y conteo por su cuenta — sigue siendo la única
+                // fuente de verdad de la creación.
+                if ($this->generateForMonth($employee, $month, $today) !== null) {
+                    $generated++;
+                }
+            }
+        }
+
+        return $generated;
+    }
 }

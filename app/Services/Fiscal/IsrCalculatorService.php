@@ -23,6 +23,19 @@ class IsrCalculatorService
 {
     private float $minWage;
 
+    /**
+     * Memo de tarifas por period_type: las tablas de brackets no cambian
+     * durante un cálculo, así que se cargan una vez (ordenadas descendente por
+     * lower_limit) y el bracket se elige en memoria — antes eran 2 queries por
+     * empleado.
+     *
+     * @var array<string, \Illuminate\Support\Collection<int, FiscalIsrBracket>>
+     */
+    private array $isrBrackets = [];
+
+    /** @var array<string, \Illuminate\Support\Collection<int, FiscalSubsidyBracket>> */
+    private array $subsidyBrackets = [];
+
     public function __construct()
     {
         $this->minWage = (float) SystemSetting::get('fiscal_minimum_wage_daily', 315.04);
@@ -55,10 +68,14 @@ class IsrCalculatorService
 
     private function tariffIsr(float $gravable, string $periodType): float
     {
-        $bracket = FiscalIsrBracket::where('period_type', $periodType)
-            ->where('lower_limit', '<=', $gravable)
+        $this->isrBrackets[$periodType] ??= FiscalIsrBracket::where('period_type', $periodType)
             ->orderByDesc('lower_limit')
-            ->first();
+            ->get();
+
+        // Ordenados descendente: el primero con lower_limit <= gravable es el
+        // bracket que aplica (mismo criterio que el query original).
+        $bracket = $this->isrBrackets[$periodType]
+            ->first(fn ($b) => (float) $b->lower_limit <= $gravable);
 
         if (! $bracket) {
             return 0.0;
@@ -72,13 +89,14 @@ class IsrCalculatorService
 
     private function subsidyFor(float $gravable, string $periodType): float
     {
-        $bracket = FiscalSubsidyBracket::where('period_type', $periodType)
-            ->where('lower_limit', '<=', $gravable)
-            ->where(function ($q) use ($gravable) {
-                $q->whereNull('upper_limit')->orWhere('upper_limit', '>=', $gravable);
-            })
+        $this->subsidyBrackets[$periodType] ??= FiscalSubsidyBracket::where('period_type', $periodType)
             ->orderByDesc('lower_limit')
-            ->first();
+            ->get();
+
+        $bracket = $this->subsidyBrackets[$periodType]->first(
+            fn ($b) => (float) $b->lower_limit <= $gravable
+                && ($b->upper_limit === null || (float) $b->upper_limit >= $gravable)
+        );
 
         return $bracket ? (float) $bracket->subsidy : 0.0;
     }

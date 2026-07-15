@@ -16,12 +16,16 @@ use Tests\Concerns\InteractsWithAuth;
  */
 abstract class FeatureTestCase extends TestCase
 {
-    use RefreshDatabase;
     use InteractsWithAuth;
+    use RefreshDatabase;
 
     protected function setUp(): void
     {
         parent::setUp();
+
+        // El memo estático de settings sobrevive entre tests del mismo proceso;
+        // sin esta limpieza un test heredaría valores del anterior.
+        \App\Models\SystemSetting::forgetMemo();
 
         $this->seed(RolesPermissionsSeeder::class);
     }

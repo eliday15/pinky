@@ -35,6 +35,18 @@ class SystemSetting extends Model
      */
     private const CACHE_TTL = 3600;
 
+    /**
+     * Memo del proceso: evita ir al cache store en lecturas repetidas de la
+     * misma llave. En producción CACHE_STORE=database, así que sin memo cada
+     * get() cuesta un query aunque el valor esté "cacheado" — en un cálculo de
+     * nómina son miles. Se invalida con cualquier escritura al modelo (saved/
+     * deleted) y por job de cola (Queue::before), y los tests lo limpian en
+     * setUp.
+     *
+     * @var array<string, mixed>
+     */
+    private static array $memo = [];
+
     protected $fillable = [
         'key',
         'value',
@@ -44,12 +56,24 @@ class SystemSetting extends Model
         'description',
     ];
 
+    protected static function booted(): void
+    {
+        // Escrituras directas (set(), seeders, factories) invalidan el memo de
+        // esa llave para no servir valores viejos dentro del mismo proceso.
+        static::saved(fn (self $setting) => self::forgetMemo($setting->key));
+        static::deleted(fn (self $setting) => self::forgetMemo($setting->key));
+    }
+
     /**
      * Get a setting value by key.
      */
     public static function get(string $key, mixed $default = null): mixed
     {
-        return Cache::remember(self::CACHE_PREFIX . $key, self::CACHE_TTL, function () use ($key, $default) {
+        if (array_key_exists($key, self::$memo)) {
+            return self::$memo[$key];
+        }
+
+        return self::$memo[$key] = Cache::remember(self::CACHE_PREFIX.$key, self::CACHE_TTL, function () use ($key, $default) {
             $setting = self::where('key', $key)->first();
 
             if (! $setting) {
@@ -71,7 +95,22 @@ class SystemSetting extends Model
             $setting->update(['value' => self::serializeValue($value, $setting->type)]);
         }
 
-        Cache::forget(self::CACHE_PREFIX . $key);
+        Cache::forget(self::CACHE_PREFIX.$key);
+        self::forgetMemo($key);
+    }
+
+    /**
+     * Olvida una llave del memo del proceso (o todo el memo con null).
+     */
+    public static function forgetMemo(?string $key = null): void
+    {
+        if ($key === null) {
+            self::$memo = [];
+
+            return;
+        }
+
+        unset(self::$memo[$key]);
     }
 
     /**
@@ -92,8 +131,10 @@ class SystemSetting extends Model
     {
         $keys = self::pluck('key');
         foreach ($keys as $key) {
-            Cache::forget(self::CACHE_PREFIX . $key);
+            Cache::forget(self::CACHE_PREFIX.$key);
         }
+
+        self::forgetMemo();
     }
 
     /**
