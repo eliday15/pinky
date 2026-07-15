@@ -53,7 +53,7 @@ watch(
     >
         <div
             v-if="visible"
-            class="fixed bottom-6 right-6 z-50 flex max-w-md items-start gap-3 rounded-lg px-4 py-3 shadow-lg"
+            class="fixed bottom-6 right-6 z-50 flex max-w-md items-start gap-3 rounded-lg px-4 py-3 shadow-lg print:hidden"
             :class="styles[kind]"
             role="status"
         >

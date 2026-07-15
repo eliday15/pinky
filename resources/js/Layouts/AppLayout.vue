@@ -189,7 +189,7 @@ const hasRoute = (routeName) => {
         <!-- Sidebar -->
         <aside
             :class="[
-                'fixed inset-y-0 left-0 z-50 w-64 bg-white shadow-lg transform transition-transform duration-300 ease-in-out flex flex-col',
+                'fixed inset-y-0 left-0 z-50 w-64 bg-white shadow-lg transform transition-transform duration-300 ease-in-out flex flex-col print:hidden',
                 showingSidebar ? 'translate-x-0' : '-translate-x-full'
             ]"
         >
@@ -255,9 +255,9 @@ const hasRoute = (routeName) => {
         </aside>
 
         <!-- Main Content Area -->
-        <div :class="['transition-all duration-300', showingSidebar ? 'ml-64' : 'ml-0']">
+        <div :class="['transition-all duration-300 print:!ml-0', showingSidebar ? 'ml-64' : 'ml-0']">
             <!-- Top Navigation -->
-            <nav class="bg-white border-b border-gray-100 shadow-sm">
+            <nav class="bg-white border-b border-gray-100 shadow-sm print:hidden">
                 <div class="px-4 sm:px-6 lg:px-8">
                     <div class="flex h-16 justify-between">
                         <div class="flex items-center">
@@ -312,7 +312,7 @@ const hasRoute = (routeName) => {
             </nav>
 
             <!-- Page Content -->
-            <main class="p-6">
+            <main class="p-6 print:p-0">
                 <slot />
             </main>
         </div>

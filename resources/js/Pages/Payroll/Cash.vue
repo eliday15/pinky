@@ -1,7 +1,7 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, nextTick } from 'vue';
 
 const props = defineProps({
     period: Object,
@@ -147,8 +147,33 @@ const collectable = (p) => Math.max(0, Number(p.total_due) - Number(p.amount_pai
 // transferencia y sin extras no se listan ni se cobran con PIN).
 const cashPayouts = computed(() => props.payouts.filter((p) => Number(p.total_due) > 0));
 
+// --- Impresión del conteo de billetes ---
+// window.print() sobre una hoja print-only (la app se oculta con print:hidden)
+// con el conteo global de billetes y el desglose por empleado para los sobres.
+const printedAt = ref(null);
+const printedAtLabel = computed(() => (printedAt.value
+    ? printedAt.value.toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' })
+    : ''));
+
+const printCash = () => {
+    printedAt.value = new Date();
+    nextTick(() => window.print());
+};
+
+// Desglose "3×$500, 2×$50" de un monto, para la hoja impresa.
+const breakdownLabel = (amount) => {
+    const parts = breakdownRows(amount).map((r) => `${r.count}×$${r.denom}`);
+    const lo = leftoverOf(amount);
+    let label = parts.join(', ') || '—';
+    if (lo > 0) label += ` (falta ${formatCurrency(lo)})`;
+    return label;
+};
+
 // Lo pendiente de cobro es lo que hay que retirar del banco.
 const pendingPayouts = computed(() => cashPayouts.value.filter((p) => p.status !== 'paid'));
+
+// Total pendiente autoconsistente con la tabla impresa (suma de collectable).
+const pendingTotal = computed(() => pendingPayouts.value.reduce((s, p) => s + collectable(p), 0));
 
 // Global = suma de los desgloses individuales (cada empleado recibe billetes
 // exactos, no se comparten piezas) sobre el saldo pendiente.
@@ -203,18 +228,30 @@ const submitCollect = () => {
     <Head :title="`Pago en efectivo: ${period.name}`" />
 
     <AppLayout>
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 print:hidden">
             <!-- Header: el cobrador no tiene acceso al detalle de la nómina,
                  su regreso es a la lista de cobro de efectivo. -->
-            <div class="mb-6">
-                <Link v-if="can?.payCash" :href="route('payroll.show', period.id)" class="text-pink-600 hover:text-pink-800 text-sm">
-                    &larr; Volver a la nomina
-                </Link>
-                <Link v-else :href="route('payroll.cashCollection')" class="text-pink-600 hover:text-pink-800 text-sm">
-                    &larr; Volver a cobro de efectivo
-                </Link>
-                <h1 class="text-2xl font-bold text-gray-800 mt-2">Pago en efectivo</h1>
-                <p class="text-gray-500">{{ period.name }}</p>
+            <div class="mb-6 flex flex-wrap items-end justify-between gap-3">
+                <div>
+                    <Link v-if="can?.payCash" :href="route('payroll.show', period.id)" class="text-pink-600 hover:text-pink-800 text-sm">
+                        &larr; Volver a la nomina
+                    </Link>
+                    <Link v-else :href="route('payroll.cashCollection')" class="text-pink-600 hover:text-pink-800 text-sm">
+                        &larr; Volver a cobro de efectivo
+                    </Link>
+                    <h1 class="text-2xl font-bold text-gray-800 mt-2">Pago en efectivo</h1>
+                    <p class="text-gray-500">{{ period.name }}</p>
+                </div>
+                <button
+                    type="button"
+                    @click="printCash"
+                    class="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-medium"
+                >
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4H7v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                    </svg>
+                    Imprimir billetes
+                </button>
             </div>
 
             <!-- Nómina cerrada por el cobrador: efectivo a regresar y su recepción -->
@@ -529,6 +566,80 @@ const submitCollect = () => {
             </div>
             <!-- /PASO 2 -->
         </div>
+
+        <!-- Hoja imprimible: conteo de billetes a retirar + desglose por
+             empleado para armar los sobres. Solo existe al imprimir
+             (hidden print:block); la app entera se oculta con print:hidden. -->
+        <section class="hidden print:block bg-white p-2 text-black">
+            <div class="flex items-baseline justify-between border-b-2 border-black pb-2 mb-4">
+                <h1 class="text-xl font-bold">Pago en efectivo — {{ period.name }}</h1>
+                <p class="text-xs">Impreso: {{ printedAtLabel }}</p>
+            </div>
+
+            <div class="flex gap-10 mb-5 text-sm">
+                <p>Efectivo pendiente de cobro: <span class="font-bold">{{ formatCurrency(pendingTotal) }}</span></p>
+                <p>Empleados por cobrar: <span class="font-bold">{{ pendingPayouts.length }}</span></p>
+            </div>
+
+            <h2 class="text-base font-bold mb-2">Billetes y monedas a retirar</h2>
+            <table class="w-full text-sm mb-2">
+                <thead>
+                    <tr class="border-b-2 border-black text-left">
+                        <th class="py-1 pr-4">Denominación</th>
+                        <th class="py-1 pr-4 text-right">Cantidad</th>
+                        <th class="py-1 text-right">Subtotal</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr v-for="row in globalRows" :key="`print-${row.denom}`" class="border-b border-gray-400">
+                        <td class="py-1 pr-4">{{ formatPieces(row.denom) }}</td>
+                        <td class="py-1 pr-4 text-right font-bold">{{ row.count }}</td>
+                        <td class="py-1 text-right">{{ formatCurrency(row.denom * row.count) }}</td>
+                    </tr>
+                </tbody>
+                <tfoot>
+                    <tr class="font-bold">
+                        <td class="py-1 pr-4">Total ({{ globalPieces }} piezas)</td>
+                        <td></td>
+                        <td class="py-1 text-right">{{ formatCurrency(globalAmount) }}</td>
+                    </tr>
+                </tfoot>
+            </table>
+            <p v-if="globalCalc.leftover > 0" class="text-sm mb-2">
+                &#9888; Faltan {{ formatCurrency(globalCalc.leftover) }} que no se pueden formar con las denominaciones elegidas.
+            </p>
+            <p class="text-xs mb-6">Denominaciones usadas: {{ activeDenoms.map((d) => `$${d}`).join(', ') }}</p>
+
+            <h2 class="text-base font-bold mb-2">Sobres por empleado (pendientes de cobro)</h2>
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="border-b-2 border-black text-left">
+                        <th class="py-1 pr-3">Empleado</th>
+                        <th class="py-1 pr-3 text-right">Total a cobrar</th>
+                        <th class="py-1">Billetes</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr v-for="payout in pendingPayouts" :key="`print-emp-${payout.id}`" class="border-b border-gray-400">
+                        <td class="py-1 pr-3">{{ payout.employee_name }} <span class="text-xs">({{ payout.employee_number }})</span></td>
+                        <td class="py-1 pr-3 text-right font-bold">{{ formatCurrency(collectable(payout)) }}</td>
+                        <td class="py-1 text-xs">{{ breakdownLabel(collectable(payout)) }}</td>
+                    </tr>
+                </tbody>
+                <tfoot>
+                    <tr class="font-bold">
+                        <td class="py-1 pr-3">Total ({{ pendingPayouts.length }} empleados)</td>
+                        <td class="py-1 pr-3 text-right">{{ formatCurrency(pendingTotal) }}</td>
+                        <td></td>
+                    </tr>
+                </tfoot>
+            </table>
+
+            <div class="mt-12 flex gap-16 text-sm">
+                <div class="flex-1 border-t border-black pt-1">Preparó — nombre y firma</div>
+                <div class="flex-1 border-t border-black pt-1">Recibió — nombre y firma</div>
+            </div>
+        </section>
 
         <!-- Collect modal -->
         <div v-if="showCollect" class="fixed inset-0 z-50 overflow-y-auto">
