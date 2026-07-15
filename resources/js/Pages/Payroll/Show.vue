@@ -111,9 +111,17 @@ const visibleEntries = computed(() => {
     return list;
 });
 
+// Recalcular tarda unos segundos para toda la plantilla: el botón y el banner
+// muestran "calculando…" mientras corre y el toast global avisa al terminar.
+const calculating = ref(false);
+
 const calculatePayroll = () => {
     if (confirm('¿Calcular/recalcular la nomina para este periodo? Esto actualizara todos los registros.')) {
-        router.post(route('payroll.calculate', props.period.id));
+        router.post(route('payroll.calculate', props.period.id), {}, {
+            preserveScroll: true,
+            onStart: () => { calculating.value = true; },
+            onFinish: () => { calculating.value = false; },
+        });
     }
 };
 
@@ -159,6 +167,21 @@ const closeCash = () => {
             </Link>
         </div>
 
+        <!-- Aviso mientras corre el recálculo: sin esto el usuario no sabe que
+             el sistema está trabajando y busca resultados antes de tiempo. -->
+        <div
+            v-if="calculating"
+            class="mb-6 flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-blue-800"
+        >
+            <svg class="h-5 w-5 shrink-0 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+            </svg>
+            <p class="text-sm font-medium">
+                Recalculando la nómina de todos los empleados del periodo… los totales y conceptos se actualizarán solos al terminar.
+            </p>
+        </div>
+
         <!-- Period Header -->
         <div class="bg-white rounded-lg shadow p-6 mb-6">
             <div class="flex flex-wrap items-start justify-between gap-4">
@@ -192,12 +215,17 @@ const closeCash = () => {
                     <button
                         v-if="can?.calculate && (period.status === 'draft' || period.status === 'review')"
                         @click="calculatePayroll"
-                        class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                        :disabled="calculating"
+                        class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-60 disabled:cursor-wait"
                     >
-                        <svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <svg v-if="calculating" class="w-4 h-4 inline mr-1 animate-spin" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                        </svg>
+                        <svg v-else class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
                         </svg>
-                        Calcular Nomina
+                        {{ calculating ? 'Calculando nómina…' : 'Calcular Nomina' }}
                     </button>
                     <button
                         v-if="can?.approve && period.status === 'review'"

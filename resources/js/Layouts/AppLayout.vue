@@ -3,6 +3,7 @@ import { ref, computed } from 'vue';
 import { Link, usePage } from '@inertiajs/vue3';
 import Dropdown from '@/Components/Dropdown.vue';
 import DropdownLink from '@/Components/DropdownLink.vue';
+import FlashToast from '@/Components/FlashToast.vue';
 
 const showingSidebar = ref(true);
 const page = usePage();
@@ -315,5 +316,7 @@ const hasRoute = (routeName) => {
                 <slot />
             </main>
         </div>
+
+        <FlashToast />
     </div>
 </template>
