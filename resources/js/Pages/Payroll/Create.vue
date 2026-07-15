@@ -62,17 +62,14 @@ const periodDays = computed(() => {
     return Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
 });
 
-// Semanal SIEMPRE lunes→domingo: el inicio se ajusta al lunes de su semana y el
-// fin se calcula solo (lunes + 6 = domingo). Ajustar el inicio re-dispara el
-// watch, que en la segunda pasada ya no cambia nada (idempotente).
+// Semanal SIEMPRE termina en domingo: el fin se ancla solo al domingo de la
+// semana del inicio. El inicio NO se fuerza al lunes: una semana corta de
+// transición (p. ej. la anterior terminó lunes 6 jul → esta va 7–12) es
+// válida; el cálculo ya paga la base completa sin doble pago y a la semana
+// siguiente todo vuelve a lunes→domingo.
 watch([() => form.start_date, () => form.type], () => {
     if (form.type === 'weekly' && form.start_date) {
-        const monday = mondayOf(form.start_date);
-        if (monday !== form.start_date) {
-            form.start_date = monday;
-            return;
-        }
-        form.end_date = addDaysToDate(form.start_date, 6);
+        form.end_date = addDaysToDate(mondayOf(form.start_date), 6);
     }
 });
 
@@ -209,7 +206,7 @@ const submit = () => {
                     </svg>
                     <span class="text-sm text-gray-600">
                         Este periodo abarca <span class="font-medium text-gray-900">{{ periodDays }} dias</span>
-                        <span v-if="form.type === 'weekly'" class="text-gray-500"> — el sueldo base corre de <span class="font-medium">lunes a domingo</span></span>
+                        <span v-if="form.type === 'weekly'" class="text-gray-500"> — la semana termina en <span class="font-medium">domingo</span> (el fin se ajusta solo); puede iniciar a media semana si la anterior terminó después del domingo</span>
                     </span>
                 </div>
 
