@@ -147,15 +147,18 @@ const collectable = (p) => Math.max(0, Number(p.total_due) - Number(p.amount_pai
 // transferencia y sin extras no se listan ni se cobran con PIN).
 const cashPayouts = computed(() => props.payouts.filter((p) => Number(p.total_due) > 0));
 
-// --- Impresión del conteo de billetes ---
-// window.print() sobre una hoja print-only (la app se oculta con print:hidden)
-// con el conteo global de billetes y el desglose por empleado para los sobres.
+// --- Impresión ---
+// Dos hojas print-only distintas (la app se oculta con print:hidden):
+// 'bills'     → conteo global de billetes a retirar (Paso 1, para el banco).
+// 'envelopes' → desglose por empleado para armar los sobres (Paso 2, cobro).
+const printMode = ref('bills');
 const printedAt = ref(null);
 const printedAtLabel = computed(() => (printedAt.value
     ? printedAt.value.toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' })
     : ''));
 
-const printCash = () => {
+const printCash = (mode) => {
+    printMode.value = mode;
     printedAt.value = new Date();
     nextTick(() => window.print());
 };
@@ -244,7 +247,7 @@ const submitCollect = () => {
                 </div>
                 <button
                     type="button"
-                    @click="printCash"
+                    @click="printCash('bills')"
                     class="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-medium"
                 >
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -465,9 +468,21 @@ const submitCollect = () => {
 
             <!-- Efectivo por empleado -->
             <div class="bg-white rounded-lg shadow overflow-hidden">
-                <div class="px-4 py-3 border-b border-gray-100">
-                    <h2 class="text-lg font-semibold text-gray-800">Efectivo por empleado</h2>
-                    <p class="text-xs text-gray-500">Cobro con la contraseña del empleado. Solo aparece quien recibe efectivo.</p>
+                <div class="px-4 py-3 border-b border-gray-100 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <h2 class="text-lg font-semibold text-gray-800">Efectivo por empleado</h2>
+                        <p class="text-xs text-gray-500">Cobro con la contraseña del empleado. Solo aparece quien recibe efectivo.</p>
+                    </div>
+                    <button
+                        type="button"
+                        @click="printCash('envelopes')"
+                        class="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-medium"
+                    >
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4H7v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                        </svg>
+                        Imprimir sobres
+                    </button>
                 </div>
                 <table class="min-w-full text-sm">
                     <thead class="bg-gray-50">
@@ -581,6 +596,7 @@ const submitCollect = () => {
                 <p>Empleados por cobrar: <span class="font-bold">{{ pendingPayouts.length }}</span></p>
             </div>
 
+            <template v-if="printMode === 'bills'">
             <h2 class="text-base font-bold mb-2">Billetes y monedas a retirar</h2>
             <table class="w-full text-sm mb-2">
                 <thead>
@@ -609,7 +625,9 @@ const submitCollect = () => {
                 &#9888; Faltan {{ formatCurrency(globalCalc.leftover) }} que no se pueden formar con las denominaciones elegidas.
             </p>
             <p class="text-xs mb-6">Denominaciones usadas: {{ activeDenoms.map((d) => `$${d}`).join(', ') }}</p>
+            </template>
 
+            <template v-if="printMode === 'envelopes'">
             <h2 class="text-base font-bold mb-2">Sobres por empleado (pendientes de cobro)</h2>
             <table class="w-full text-sm">
                 <thead>
@@ -634,6 +652,7 @@ const submitCollect = () => {
                     </tr>
                 </tfoot>
             </table>
+            </template>
 
             <div class="mt-12 flex gap-16 text-sm">
                 <div class="flex-1 border-t border-black pt-1">Preparó — nombre y firma</div>
