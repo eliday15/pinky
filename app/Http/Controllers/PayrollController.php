@@ -348,21 +348,22 @@ class PayrollController extends Controller
                     ->where('employee_id', $entry->employee_id)
                     ->first();
 
-                // Re-sincroniza el reparto efectivo/transferencia con la regla
-                // vigente y los flags ACTUALES del empleado (periodo de prueba /
-                // IMSS), sin recalcular la nómina: usa el neto ya aprobado y solo
-                // re-parte base→banco vs efectivo. Así "Recalcular efectivo"
-                // aplica cambios de flags sin reabrir la nómina aprobada.
-                if ($entry->employee) {
-                    $netPay = (float) $entry->net_pay;
-                    if ($entry->employee->paysBaseInCash()) {
-                        $cashAmount = round($netPay, 2);
-                        $bankAmount = 0.0;
-                    } else {
-                        $bankAmount = max(0.0, round((float) $entry->regular_pay - (float) $entry->deductions, 2));
-                        $cashAmount = round($netPay - $bankAmount, 2);
-                    }
-                    $entry->update(['cash_amount' => $cashAmount, 'bank_amount' => $bankAmount]);
+                // El reparto efectivo/banco AUTORITATIVO lo escribe el cálculo
+                // de nómina (incluye retenciones ISR/IMSS/Infonavit, extras por
+                // transferencia y ajuste al neto). Aquí SOLO se re-aplica el
+                // caso "ahora cobra base en efectivo" (flag de prueba/IMSS
+                // cambiado después de calcular): todo su neto pasa a efectivo.
+                // NUNCA re-derivar el reparto del formalizado con una fórmula
+                // local: la versión anterior (banco = base − faltas, sin
+                // retenciones) infló el banco y dejó efectivos NEGATIVOS en
+                // toda la nómina (bug 2026-07-15). Si un empleado se formalizó
+                // después de calcular, eso requiere recalcular la nómina (el
+                // banco necesita sus retenciones), no un re-parte aquí.
+                if ($entry->employee && $entry->employee->paysBaseInCash() && (float) $entry->bank_amount > 0) {
+                    $entry->update([
+                        'cash_amount' => round((float) $entry->net_pay, 2),
+                        'bank_amount' => 0.0,
+                    ]);
                 }
 
                 // Lo ya cobrado no se descobra. Si un recálculo SUBIÓ el efectivo
