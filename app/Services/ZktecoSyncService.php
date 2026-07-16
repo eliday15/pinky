@@ -517,14 +517,19 @@ class ZktecoSyncService
             return false;
         }
 
-        // Reconstruct prior punches from the stored HH:MM:SS payload and merge with incoming.
+        // Reconstruct prior punches from the stored payload and merge with incoming.
+        // La checada guarda su FECHA propia porque una velada arrastra la madrugada
+        // del día siguiente a este registro: sin la fecha, al re-sincronizar se
+        // reinterpretaba como del mismo día y se colaba una checada fantasma que
+        // dejaba check_in = check_out (Dani 2026-07-15). Los registros viejos no
+        // traen 'date': para ellos se conserva el comportamiento anterior.
         foreach (($attendance->raw_punches ?? []) as $rp) {
             $time = $rp['time'] ?? null;
             if (! $time) {
                 continue;
             }
             $punches[] = [
-                'timestamp' => $date.' '.$time,
+                'timestamp' => ($rp['date'] ?? $date).' '.$time,
                 'device_id' => $rp['device'] ?? null,
                 'status' => match ($rp['method'] ?? 'fingerprint') {
                     'fingerprint' => 0,
@@ -558,6 +563,13 @@ class ZktecoSyncService
         $firstCheckIn = Carbon::parse($firstPunch['timestamp'])->format('H:i:s');
         $lastCheckOut = null;
 
+        // Se identifican por INSTANTE completo, no por hora: en una velada la
+        // entrada (22:00 del día D) y la salida (02:00 del día D+1) conviven en
+        // el mismo registro, y comparar sólo 'H:i:s' etiquetaba como "in" a dos
+        // checadas distintas con el mismo reloj (Dani 2026-07-15).
+        $firstStamp = Carbon::parse($firstPunch['timestamp'])->format('Y-m-d H:i:s');
+        $lastStamp = null;
+
         // Only set check_out if it's a different punch and at least 10 minutes after check_in
         // (to avoid treating quick duplicate punches as entry/exit)
         if ($lastPunch) {
@@ -567,6 +579,7 @@ class ZktecoSyncService
 
             if ($diffMinutes >= 10) {
                 $lastCheckOut = $lastTime->format('H:i:s');
+                $lastStamp = $lastTime->format('Y-m-d H:i:s');
             }
         }
 
@@ -598,11 +611,14 @@ class ZktecoSyncService
         // ($attendance + $wasCreated were resolved at the top of this method, before merging)
         $rawPunches = [];
         foreach ($punches as $punch) {
-            $time = Carbon::parse($punch['timestamp'])->format('H:i:s');
+            $stamp = Carbon::parse($punch['timestamp']);
+            $time = $stamp->format('H:i:s');
+            $fullStamp = $stamp->format('Y-m-d H:i:s');
+
             $type = 'punch';
-            if ($time === $firstCheckIn) {
+            if ($fullStamp === $firstStamp) {
                 $type = 'in';
-            } elseif ($time === $lastCheckOut) {
+            } elseif ($lastStamp !== null && $fullStamp === $lastStamp) {
                 $type = 'out';
             } elseif ($time === $lunchOut) {
                 $type = 'lunch_out';
@@ -612,6 +628,10 @@ class ZktecoSyncService
 
             $rawPunches[] = [
                 'time' => $time,
+                // Fecha real de la checada: puede NO ser la del registro cuando la
+                // velada arrastra la madrugada del día siguiente. Sin ella, el
+                // siguiente sync la reinterpreta y corrompe el registro.
+                'date' => $stamp->toDateString(),
                 'type' => $type,
                 'device' => $punch['device_id'] ?? null,
                 'method' => $this->getAuthMethod($punch['status'] ?? 0),
@@ -936,8 +956,9 @@ class ZktecoSyncService
 
     /**
      * Si hay una omisión de checada APROBADA para el día, devuelve el status que
-     * debe forzarse: 'present' para "entrega de mercancía" (paga completo) y
-     * 'late' para "otro" (retardo). Devuelve null si no hay omisión aprobada.
+     * debe forzarse: 'present' para los motivos que pagan el día completo
+     * ("entrega de mercancía" / "trabajo foráneo") y 'late' para "otro"
+     * (retardo). Devuelve null si no hay omisión aprobada.
      */
     private function approvedOmissionStatus(AttendanceRecord $attendance): ?string
     {
@@ -952,7 +973,7 @@ class ZktecoSyncService
             return null;
         }
 
-        return $omission->isDelivery() ? 'present' : 'late';
+        return $omission->paysFullDay() ? 'present' : 'late';
     }
 
     /**
@@ -1185,11 +1206,13 @@ class ZktecoSyncService
     {
         $employee = $record->employee;
 
-        // Convert raw_punches format to the format expected by processEmployeeDayRecords
+        // Convert raw_punches format to the format expected by processEmployeeDayRecords.
+        // Se honra la fecha propia de la checada cuando existe (velada que cruza
+        // medianoche); los registros viejos sin 'date' caen al día del registro.
         $punches = [];
         foreach ($rawPunches as $punch) {
             $punches[] = [
-                'timestamp' => $record->work_date->toDateString().' '.($punch['time'] ?? '00:00:00'),
+                'timestamp' => ($punch['date'] ?? $record->work_date->toDateString()).' '.($punch['time'] ?? '00:00:00'),
                 'device_id' => $punch['device'] ?? null,
                 'status' => match ($punch['method'] ?? 'fingerprint') {
                     'fingerprint' => 0,

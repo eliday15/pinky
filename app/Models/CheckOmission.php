@@ -24,11 +24,15 @@ class CheckOmission extends Model
     protected string $auditModule = 'check_omissions';
 
     /**
-     * Motivos de omisión (catálogo cerrado — Dani 2026-07-09: solo estos 2).
+     * Motivos de omisión (catálogo cerrado).
      */
     // "Entrega de mercancía" → al aprobarse NO se aplica la falta; el día se paga
     // completo (día trabajado normal).
     public const REASON_DELIVERY = 'entrega_mercancia';
+
+    // "Trabajo foráneo" → mismo efecto que la entrega de mercancía: el día se
+    // paga completo (Dani 2026-07-15).
+    public const REASON_FOREIGN_WORK = 'trabajo_foraneo';
 
     // "Otro (especificar)" → al aprobarse el día se convierte en un RETARDO, que
     // sí cuenta para el acumulado mensual de retardos → falta.
@@ -76,8 +80,26 @@ class CheckOmission extends Model
     {
         return [
             self::REASON_DELIVERY => 'Entrega de mercancía',
+            self::REASON_FOREIGN_WORK => 'Trabajo foráneo',
             self::REASON_OTHER => 'Otro (especificar)',
         ];
+    }
+
+    /**
+     * Motivos que, al aprobarse, pagan el día COMPLETO (no aplican la falta ni
+     * la convierten en retardo).
+     *
+     * @return array<int, string>
+     */
+    public static function fullDayReasons(): array
+    {
+        return [self::REASON_DELIVERY, self::REASON_FOREIGN_WORK];
+    }
+
+    /** ¿El motivo paga el día completo (entrega de mercancía / trabajo foráneo)? */
+    public function paysFullDay(): bool
+    {
+        return in_array($this->reason, self::fullDayReasons(), true);
     }
 
     /** Etiqueta legible del motivo. */

@@ -102,6 +102,7 @@ class CheckOmissionController extends Controller
                 ->with('department:id,name')
                 ->get(['id', 'full_name', 'department_id']),
             'reasonOptions' => CheckOmission::reasonOptions(),
+            'fullDayReasons' => CheckOmission::fullDayReasons(),
             'prefill' => [
                 'employee_id' => $request->integer('employee_id') ?: null,
                 'work_date' => $request->date('work_date')?->toDateString(),

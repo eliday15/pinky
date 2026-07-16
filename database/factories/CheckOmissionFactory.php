@@ -45,6 +45,12 @@ class CheckOmissionFactory extends Factory
         return $this->state(fn () => ['reason' => CheckOmission::REASON_DELIVERY]);
     }
 
+    /** Motivo "Trabajo foráneo" (paga completo, sin falta). */
+    public function foreignWork(): static
+    {
+        return $this->state(fn () => ['reason' => CheckOmission::REASON_FOREIGN_WORK]);
+    }
+
     /** Motivo "Otro (especificar)" (se convierte en retardo). */
     public function other(): static
     {

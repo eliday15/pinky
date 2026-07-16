@@ -117,12 +117,14 @@ class IncidentTypeController extends Controller
         ]);
 
         $incidentType = IncidentType::create(
-            collect($validated)->only([
-                'name', 'code', 'description', 'category',
-                'is_paid', 'deducts_vacation', 'requires_approval',
-                'requires_document', 'affects_attendance', 'has_time_range',
-                'uses_vacation_hours', 'color', 'is_active', 'priority',
-            ])->toArray()
+            $this->forcePaidWhenVacationHours(
+                collect($validated)->only([
+                    'name', 'code', 'description', 'category',
+                    'is_paid', 'deducts_vacation', 'requires_approval',
+                    'requires_document', 'affects_attendance', 'has_time_range',
+                    'uses_vacation_hours', 'color', 'is_active', 'priority',
+                ])->toArray()
+            )
         );
 
         $this->syncPositions($incidentType, $request);
@@ -196,12 +198,14 @@ class IncidentTypeController extends Controller
         ]);
 
         $incidentType->update(
-            collect($validated)->only([
-                'name', 'code', 'description', 'category',
-                'is_paid', 'deducts_vacation', 'requires_approval',
-                'requires_document', 'affects_attendance', 'has_time_range',
-                'uses_vacation_hours', 'color', 'is_active', 'priority',
-            ])->toArray()
+            $this->forcePaidWhenVacationHours(
+                collect($validated)->only([
+                    'name', 'code', 'description', 'category',
+                    'is_paid', 'deducts_vacation', 'requires_approval',
+                    'requires_document', 'affects_attendance', 'has_time_range',
+                    'uses_vacation_hours', 'color', 'is_active', 'priority',
+                ])->toArray()
+            )
         );
 
         $this->syncPositions($incidentType, $request);
@@ -209,6 +213,26 @@ class IncidentTypeController extends Controller
 
         return redirect()->route('incident-types.index')
             ->with('success', 'Tipo de incidencia actualizado exitosamente.');
+    }
+
+    /**
+     * Un tipo que gasta la bolsa de horas SIEMPRE es con goce de sueldo.
+     *
+     * Las horas salen del saldo de vacaciones, que ya es tiempo pagado; dejarlo
+     * "sin goce" descontaba además el día COMPLETO del sueldo (el permiso de 3 h
+     * costaba 1 día + 3 h de vacaciones). Se fuerza aquí para que la mala
+     * configuración no pueda volver a entrar por la UI (Dani 2026-07-15).
+     *
+     * @param  array<string, mixed>  $attributes
+     * @return array<string, mixed>
+     */
+    private function forcePaidWhenVacationHours(array $attributes): array
+    {
+        if (! empty($attributes['uses_vacation_hours'])) {
+            $attributes['is_paid'] = true;
+        }
+
+        return $attributes;
     }
 
     /**

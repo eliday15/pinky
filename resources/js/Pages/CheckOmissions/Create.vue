@@ -6,6 +6,7 @@ import { computed } from 'vue';
 const props = defineProps({
     employees: Array,
     reasonOptions: Object,
+    fullDayReasons: { type: Array, default: () => [] },
     prefill: Object,
 });
 
@@ -120,7 +121,7 @@ const submit = () => {
 
                 <!-- Reason hint -->
                 <div v-if="form.reason" class="bg-gray-50 rounded-lg p-3 -mt-2">
-                    <p v-if="form.reason === 'entrega_mercancia'" class="text-sm text-green-700">
+                    <p v-if="fullDayReasons.includes(form.reason)" class="text-sm text-green-700">
                         Este motivo <strong>no genera falta</strong>: el día se paga completo.
                     </p>
                     <p v-else class="text-sm text-amber-700">

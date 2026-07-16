@@ -15,8 +15,8 @@ use Tests\FeatureTestCase;
  * - Falta automática por checada incompleta (entrada o salida) en día
  *   obligatorio (excluyendo turnos nocturnos/velada).
  * - Flujo de 2 pasos: el jefe autoriza (create), el admin aprueba (approve).
- * - Efecto al aprobar: "entrega de mercancía" → present (paga completo);
- *   "otro" → late (retardo que cuenta al acumulado mensual).
+ * - Efecto al aprobar: "entrega de mercancía" y "trabajo foráneo" → present
+ *   (pagan completo); "otro" → late (retardo que cuenta al acumulado mensual).
  */
 class CheckOmissionTest extends FeatureTestCase
 {
@@ -85,6 +85,41 @@ class CheckOmissionTest extends FeatureTestCase
         app(ZktecoSyncService::class)->recalculateAttendanceRecord($rec);
 
         $this->assertSame('present', $rec->fresh()->status, 'entrega de mercancía paga el día completo');
+    }
+
+    public function test_approved_foreign_work_omission_pays_the_day_as_present(): void
+    {
+        $e = $this->dayEmployee();
+        $rec = $this->missingCheckoutRecord($e);
+        app(ZktecoSyncService::class)->recalculateAttendanceRecord($rec);
+        $this->assertSame('absent', $rec->fresh()->status);
+
+        CheckOmission::factory()->for($e)->foreignWork()->approved()->create([
+            'work_date' => self::WEDNESDAY,
+            'attendance_record_id' => $rec->id,
+        ]);
+
+        app(ZktecoSyncService::class)->recalculateAttendanceRecord($rec);
+
+        $this->assertSame('present', $rec->fresh()->status, 'trabajo foráneo paga el día completo');
+    }
+
+    public function test_foreign_work_is_an_available_reason_and_needs_no_comment(): void
+    {
+        $this->actingAsAdmin();
+        $e = $this->dayEmployee();
+
+        $this->post(route('check-omissions.store'), [
+            'employee_id' => $e->id,
+            'work_date' => self::WEDNESDAY,
+            'reason' => CheckOmission::REASON_FOREIGN_WORK,
+            'comments' => '',
+        ])->assertRedirect(route('check-omissions.index'));
+
+        $this->assertDatabaseHas('check_omissions', [
+            'employee_id' => $e->id,
+            'reason' => CheckOmission::REASON_FOREIGN_WORK,
+        ]);
     }
 
     public function test_approved_other_omission_becomes_a_retardo(): void
