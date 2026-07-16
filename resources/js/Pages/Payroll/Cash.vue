@@ -582,15 +582,25 @@ const submitCollect = () => {
                                 </span>
                             </td>
                             <td class="px-4 py-3 text-right">
-                                <button
-                                    v-if="can?.collectCash && payout.status !== 'paid'"
-                                    :disabled="!payout.has_cash_pin || !deliveryConfirmed"
-                                    :title="!deliveryConfirmed ? 'Primero confirma la preparación del efectivo (Paso 1)' : (payout.has_cash_pin ? '' : 'El empleado no tiene contraseña de cobro configurada')"
-                                    @click="openCollect(payout)"
-                                    class="px-3 py-1.5 bg-pink-600 text-white rounded-lg hover:bg-pink-700 disabled:opacity-40 disabled:cursor-not-allowed"
-                                >
-                                    Cobrar
-                                </button>
+                                <template v-if="can?.collectCash && payout.status !== 'paid'">
+                                    <button
+                                        :disabled="!payout.has_cash_pin || !deliveryConfirmed"
+                                        :title="!deliveryConfirmed ? 'Primero confirma la preparación del efectivo (Paso 1)' : (payout.has_cash_pin ? '' : 'El empleado no tiene contraseña de cobro configurada')"
+                                        @click="openCollect(payout)"
+                                        class="px-3 py-1.5 bg-pink-600 text-white rounded-lg hover:bg-pink-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                                    >
+                                        Cobrar
+                                    </button>
+                                    <!-- Leyenda del porqué el botón está deshabilitado: el
+                                         empleado no tiene contraseña de cobro. Solo el admin
+                                         (can.payCash) la puede configurar. -->
+                                    <div v-if="deliveryConfirmed && !payout.has_cash_pin" class="mt-1 text-xs text-amber-600">
+                                        Sin contraseña de cobro
+                                        <Link v-if="can?.payCash" :href="route('employees.edit', payout.employee_id)" class="underline hover:text-amber-700">
+                                            &middot; Configurar
+                                        </Link>
+                                    </div>
+                                </template>
                                 <span v-else-if="payout.status === 'paid'" class="text-xs text-gray-400">
                                     {{ payout.collected_at ? new Date(payout.collected_at).toLocaleDateString('es-MX') : '' }}
                                 </span>

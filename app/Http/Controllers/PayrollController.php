@@ -596,6 +596,7 @@ class PayrollController extends Controller
             ->values()
             ->map(fn (CashPayout $p) => [
                 'id' => $p->id,
+                'employee_id' => $p->employee_id,
                 'employee_name' => $p->employee?->full_name,
                 'employee_number' => $p->employee?->employee_number,
                 'has_cash_pin' => (bool) $p->employee?->hasCashPin(),
