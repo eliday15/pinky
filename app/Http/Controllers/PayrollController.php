@@ -14,6 +14,7 @@ use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 use Inertia\Response;
 use Maatwebsite\Excel\Excel;
@@ -458,6 +459,38 @@ class PayrollController extends Controller
     }
 
     /**
+     * Guardar las denominaciones habilitadas del periodo (Paso 1).
+     *
+     * El custodio desmarca las denominaciones que no tenga; la elección se
+     * persiste por periodo para que el desglose de billetes sea idéntico en el
+     * Paso 1 (custodio) y en el Paso 2 (cobrador), aunque estén en máquinas
+     * distintas. Antes vivía sólo en el localStorage del custodio (Luis
+     * 2026-07-16).
+     */
+    public function saveCashDenominations(Request $request, PayrollPeriod $payroll): RedirectResponse
+    {
+        // Sólo el custodio prepara la entrega (define las denominaciones).
+        if (! auth()->user()->hasPermissionTo('payroll.cash.deliver')) {
+            abort(403);
+        }
+
+        $validated = $request->validate([
+            'denominations' => ['required', 'array', 'min:1'],
+            'denominations.*' => ['integer', Rule::in(CashDenominationService::DENOMINATIONS)],
+        ]);
+
+        // Normaliza: enteros únicos, de mayor a menor, en el orden del catálogo.
+        $picked = array_values(array_filter(
+            CashDenominationService::DENOMINATIONS,
+            fn (int $d) => in_array($d, array_map('intval', $validated['denominations']), true),
+        ));
+
+        $payroll->update(['cash_enabled_denominations' => $picked]);
+
+        return redirect()->back()->with('success', 'Denominaciones actualizadas.');
+    }
+
+    /**
      * Desglose del efectivo de un empleado, concepto por concepto y solo lo que
      * tuvo (montos > 0). Reemplaza el agrupado "Otros conceptos": itemiza cada
      * concepto de compensación (Cena, Puntualidad, etc.) y los extras estándar.
@@ -605,6 +638,10 @@ class PayrollController extends Controller
             'cashStale' => $cashStale,
             'globalBreakdown' => $this->denominations->breakdownGlobal($pendingAmounts),
             'denominations' => CashDenominationService::DENOMINATIONS,
+            // Denominaciones habilitadas del periodo (custodio desmarcó las que no
+            // tiene). NULL = todas. Persistido por periodo para que el custodio y
+            // el cobrador —en distintas máquinas— vean el MISMO desglose.
+            'enabledDenominations' => $payroll->cash_enabled_denominations,
             'summary' => [
                 'total_due' => $totalCash,
                 'total_paid' => (float) $payouts->sum('amount_paid'),

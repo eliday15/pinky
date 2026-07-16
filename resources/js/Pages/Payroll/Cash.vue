@@ -1,7 +1,7 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { Head, Link, useForm } from '@inertiajs/vue3';
-import { ref, computed, watch, nextTick } from 'vue';
+import { Head, Link, router, useForm } from '@inertiajs/vue3';
+import { ref, computed, nextTick } from 'vue';
 
 const props = defineProps({
     period: Object,
@@ -9,6 +9,8 @@ const props = defineProps({
     cashStale: { type: Boolean, default: false },
     globalBreakdown: Object,
     denominations: Array,
+    // Denominaciones habilitadas guardadas en el periodo (null = todas).
+    enabledDenominations: { type: Array, default: null },
     summary: Object,
     collection: Object,
     returnBreakdown: Object,
@@ -78,38 +80,47 @@ const submitReopen = () => {
 };
 
 // --- Denominaciones disponibles (flexible) ---
-// Muchas veces no hay billetes de cierta denominación (p. ej. $1000). El cajero
-// puede desmarcar las que no tenga y el desglose (global + por empleado) se
+// Muchas veces no hay billetes de cierta denominación (p. ej. $1000). El
+// custodio desmarca las que no tenga y el desglose (global + por empleado) se
 // recalcula al vuelo con greedy sobre las denominaciones habilitadas. La
-// elección se recuerda en el navegador (localStorage).
-const STORAGE_KEY = 'cash_enabled_denominations';
-
+// elección se guarda POR PERIODO en el servidor: antes vivía en el localStorage
+// del custodio, así que el cobrador —en otra máquina— seguía viendo billetes de
+// $1000 (Luis 2026-07-16). El servidor es la fuente de verdad y ambos pasos
+// muestran el mismo desglose.
 const loadEnabled = () => {
-    try {
-        const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
-        if (Array.isArray(saved) && saved.length) {
-            const allowed = new Set(props.denominations.map(Number));
-            const picked = saved.map(Number).filter((d) => allowed.has(d));
-            if (picked.length) return new Set(picked);
-        }
-    } catch (e) { /* ignore */ }
-    return new Set(props.denominations.map(Number));
+    const allowed = new Set(props.denominations.map(Number));
+    const saved = Array.isArray(props.enabledDenominations)
+        ? props.enabledDenominations.map(Number).filter((d) => allowed.has(d))
+        : [];
+    // null / vacío = todas habilitadas (comportamiento por defecto).
+    return saved.length ? new Set(saved) : new Set(props.denominations.map(Number));
 };
 
 const enabledDenoms = ref(loadEnabled());
 
 const isEnabled = (d) => enabledDenoms.value.has(Number(d));
 
+// Sólo el custodio (Paso 1) puede cambiar las denominaciones; el cobrador las ve.
+const canEditDenoms = computed(() => !!props.can?.deliverCash);
+
+const persistDenoms = () => {
+    router.post(
+        route('payroll.cashDenominations', props.period.id),
+        { denominations: [...enabledDenoms.value] },
+        { preserveScroll: true, preserveState: true, only: ['enabledDenominations'] },
+    );
+};
+
 const toggleDenom = (d) => {
+    if (!canEditDenoms.value) return;
     const n = Number(d);
     const next = new Set(enabledDenoms.value);
     next.has(n) ? next.delete(n) : next.add(n);
+    // Nunca dejar la lista vacía: al menos una denominación debe quedar.
+    if (next.size === 0) return;
     enabledDenoms.value = next;
+    persistDenoms();
 };
-
-watch(enabledDenoms, (v) => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify([...v])); } catch (e) { /* ignore */ }
-});
 
 // Habilitadas, de mayor a menor (orden del greedy).
 const activeDenoms = computed(() =>
@@ -146,6 +157,27 @@ const collectable = (p) => Math.max(0, Number(p.total_due) - Number(p.amount_pai
 // Solo los cobros en efectivo con monto > 0 (los $0 de quien cobra base por
 // transferencia y sin extras no se listan ni se cobran con PIN).
 const cashPayouts = computed(() => props.payouts.filter((p) => Number(p.total_due) > 0));
+
+// --- Buscador de empleado (Paso 2) ---
+// La lista puede tener decenas de empleados; el cobrador escribe el nombre y la
+// tabla se filtra al vuelo. Se ignoran acentos y mayúsculas (Luis 2026-07-16).
+const search = ref('');
+const normalize = (s) => (s ?? '')
+    .toString()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '');
+
+const filteredCashPayouts = computed(() => {
+    const q = normalize(search.value).trim();
+    if (!q) return cashPayouts.value;
+    return cashPayouts.value.filter((p) =>
+        normalize(p.employee_name).includes(q) || normalize(p.employee_number).includes(q));
+});
+
+// Nombres para el autocomplete nativo (<datalist>).
+const employeeNameOptions = computed(() =>
+    cashPayouts.value.map((p) => p.employee_name).filter(Boolean));
 
 // --- Impresión ---
 // Dos hojas print-only distintas (la app se oculta con print:hidden):
@@ -484,6 +516,26 @@ const submitCollect = () => {
                         Imprimir sobres
                     </button>
                 </div>
+
+                <!-- Buscador de empleado (autocomplete nativo por nombre) -->
+                <div class="px-4 py-3 border-b border-gray-100">
+                    <div class="relative max-w-sm">
+                        <svg class="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z" />
+                        </svg>
+                        <input
+                            v-model="search"
+                            type="search"
+                            list="cash-employee-names"
+                            placeholder="Buscar empleado por nombre o número…"
+                            class="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-pink-500 focus:ring-pink-500"
+                        />
+                        <datalist id="cash-employee-names">
+                            <option v-for="name in employeeNameOptions" :key="name" :value="name" />
+                        </datalist>
+                    </div>
+                </div>
+
                 <table class="min-w-full text-sm">
                     <thead class="bg-gray-50">
                         <tr class="text-left text-gray-500">
@@ -497,7 +549,7 @@ const submitCollect = () => {
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-100">
-                        <tr v-for="payout in cashPayouts" :key="payout.id">
+                        <tr v-for="payout in filteredCashPayouts" :key="payout.id">
                             <td class="px-4 py-3">
                                 <div class="font-medium text-gray-800">{{ payout.employee_name }}</div>
                                 <div class="text-xs text-gray-400">{{ payout.employee_number }}</div>
@@ -550,6 +602,11 @@ const submitCollect = () => {
                         <tr v-if="!cashPayouts.length">
                             <td colspan="7" class="px-4 py-6 text-center text-gray-400">
                                 No hay cobros en efectivo para este periodo.
+                            </td>
+                        </tr>
+                        <tr v-else-if="!filteredCashPayouts.length">
+                            <td colspan="7" class="px-4 py-6 text-center text-gray-400">
+                                Ningún empleado coincide con &laquo;{{ search }}&raquo;.
                             </td>
                         </tr>
                     </tbody>
