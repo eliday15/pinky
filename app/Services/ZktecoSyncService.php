@@ -26,6 +26,14 @@ use Illuminate\Support\Facades\Log;
 class ZktecoSyncService
 {
     /**
+     * Horas de holgura antes del inicio del turno dentro de las cuales una
+     * checada sí cuenta como entrada. Una checada anterior a (inicio − estas
+     * horas) es de madrugada y NO cuenta como entrada del turno (Dani
+     * 2026-07-17).
+     */
+    private const MADRUGADA_ENTRY_GAP_HOURS = 3;
+
+    /**
      * Sync employees from the users table.
      *
      * Imports new employees and updates existing ones based on attendance activity.
@@ -556,9 +564,19 @@ class ZktecoSyncService
         $daySchedule = $employee->getEffectiveScheduleForDay($dayName);
         $isNightShift = $this->isNightShiftSchedule($daySchedule);
 
-        // Simple logic: first = in, last = out
-        $firstPunch = $punches[0];
-        $lastPunch = count($punches) > 1 ? end($punches) : null;
+        // Regla de madrugada (Dani 2026-07-17): una checada de madrugada NO cuenta
+        // como entrada del turno si éste empieza 3 h o más después. Evita que un
+        // badge de madrugada (trabajo foráneo / entrega autorizada) se tome como la
+        // entrada y oculte el retardo: p. ej. turno 10:00 con checada 02:12 → la
+        // entrada real es la de las 11:32 (retardo), no las 02:12 (presente). Las
+        // checadas previas quedan en raw_punches como badges, no como la entrada.
+        // No aplica a turnos nocturnos/velada (su entrada ES de madrugada).
+        $entryIndex = $this->resolveEntryIndex($punches, $date, $daySchedule, $isNightShift);
+
+        // Simple logic: first = in, last = out (arrancando en la entrada resuelta).
+        $firstPunch = $punches[$entryIndex];
+        $lastIndex = count($punches) - 1;
+        $lastPunch = $lastIndex > $entryIndex ? $punches[$lastIndex] : null;
 
         $firstCheckIn = Carbon::parse($firstPunch['timestamp'])->format('H:i:s');
         $lastCheckOut = null;
@@ -588,9 +606,11 @@ class ZktecoSyncService
         $lunchIn = null;
         $actualBreakMinutes = 0;
 
-        if (count($punches) >= 4) {
+        // Se cuentan las checadas EFECTIVAS del turno (desde la entrada resuelta),
+        // para que los badges de madrugada previos no alteren la detección.
+        if (($lastIndex - $entryIndex + 1) >= 4) {
             // With 4+ punches, look for lunch pattern in the middle
-            $middlePunches = array_slice($punches, 1, -1);
+            $middlePunches = array_slice($punches, $entryIndex + 1, -1);
             $lunchPunches = [];
 
             foreach ($middlePunches as $punch) {
@@ -1151,6 +1171,41 @@ class ZktecoSyncService
         }
 
         return end($group);  // LAST for exit
+    }
+
+    /**
+     * Índice de la checada que cuenta como ENTRADA del turno.
+     *
+     * Regla de madrugada (Dani 2026-07-17): las checadas anteriores a
+     * (inicio de turno − MADRUGADA_ENTRY_GAP_HOURS) no cuentan como entrada; son
+     * badges de madrugada (trabajo foráneo/entrega autorizada). La entrada es la
+     * primera checada dentro de esa ventana o posterior. Si TODAS quedan antes
+     * del corte (o el turno es nocturno / no hay horario), se conserva la primera
+     * checada (comportamiento anterior).
+     *
+     * @param  array  $punches  Checadas ordenadas cronológicamente
+     * @param  string  $date  Fecha del registro (Y-m-d)
+     * @param  object|null  $daySchedule  Horario efectivo del día
+     * @param  bool  $isNightShift  Si el turno es nocturno/velada
+     */
+    private function resolveEntryIndex(array $punches, string $date, ?object $daySchedule, bool $isNightShift): int
+    {
+        if ($isNightShift || ! $daySchedule || empty($daySchedule->entry_time)) {
+            return 0;
+        }
+
+        $shiftStart = Carbon::parse($date.' '.Carbon::parse($daySchedule->entry_time)->format('H:i:s'));
+        $cutoff = $shiftStart->copy()->subHours(self::MADRUGADA_ENTRY_GAP_HOURS);
+
+        foreach ($punches as $i => $punch) {
+            // "3 horas o más" antes del turno NO cuenta: la entrada válida es la
+            // primera checada estrictamente después del corte.
+            if (Carbon::parse($punch['timestamp'])->gt($cutoff)) {
+                return $i;
+            }
+        }
+
+        return 0;
     }
 
     /**
