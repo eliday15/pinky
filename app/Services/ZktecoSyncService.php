@@ -1197,10 +1197,20 @@ class ZktecoSyncService
         $shiftStart = Carbon::parse($date.' '.Carbon::parse($daySchedule->entry_time)->format('H:i:s'));
         $cutoff = $shiftStart->copy()->subHours(self::MADRUGADA_ENTRY_GAP_HOURS);
 
+        // Cota superior: la entrada no puede ser una checada POSTERIOR al fin del
+        // turno (esa es una salida). Sin esta cota, un día con solo checada de
+        // madrugada + una de la tarde tomaría la de la tarde como entrada y
+        // volvería falta a quien sí trabajó (p. ej. Martha Flores 03:02 y 19:40).
+        $shiftEnd = ! empty($daySchedule->exit_time)
+            ? Carbon::parse($date.' '.Carbon::parse($daySchedule->exit_time)->format('H:i:s'))
+            : null;
+
         foreach ($punches as $i => $punch) {
-            // "3 horas o más" antes del turno NO cuenta: la entrada válida es la
-            // primera checada estrictamente después del corte.
-            if (Carbon::parse($punch['timestamp'])->gt($cutoff)) {
+            // "3 horas o más" antes del turno NO cuenta como entrada: la entrada
+            // válida es la primera checada después del corte y dentro del turno
+            // (no posterior a su fin).
+            $stamp = Carbon::parse($punch['timestamp']);
+            if ($stamp->gt($cutoff) && ($shiftEnd === null || $stamp->lte($shiftEnd))) {
                 return $i;
             }
         }

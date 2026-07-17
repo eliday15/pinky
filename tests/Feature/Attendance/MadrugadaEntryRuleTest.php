@@ -130,4 +130,17 @@ class MadrugadaEntryRuleTest extends FeatureTestCase
 
         $this->assertSame('02:12:00', $rec->check_in, 'sin checada de turno, se conserva la primera (fallback)');
     }
+
+    public function test_madrugada_plus_evening_punch_does_not_pick_the_evening_as_entry(): void
+    {
+        // Caso Martha Flores (EMP-0047): turno 08:00-17:30, solo checa 03:02
+        // (madrugada) y 19:40 (noche). La de la noche es POSTERIOR al fin del
+        // turno → no es una entrada válida. Se conserva la primera para no
+        // volverla falta indebidamente.
+        $e = $this->dayEmployee(entry: '08:00', exit: '17:30');
+        $rec = $this->reprocess($e, [['03:02:00'], ['19:40:00']]);
+
+        $this->assertSame('03:02:00', $rec->check_in, 'la checada de la noche no puede ser la entrada del turno');
+        $this->assertNotSame('absent', $rec->status, 'no debe volverse falta por la regla de madrugada');
+    }
 }
