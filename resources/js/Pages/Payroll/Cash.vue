@@ -774,17 +774,28 @@ const submitCollect = () => {
                         </div>
                     </div>
 
-                    <form @submit.prevent="submitCollect">
+                    <!-- autocomplete="off" en el form: esta contraseña de cobro NO es
+                         una credencial de login; evita que el navegador la guarde. -->
+                    <form @submit.prevent="submitCollect" autocomplete="off">
                         <div class="px-6 py-4">
                             <p class="text-sm text-gray-600 mb-4">
                                 El empleado ingresa su contraseña de cobro para confirmar que recibio su efectivo.
                             </p>
                             <label for="cash_pin" class="block text-sm font-medium text-gray-700 mb-1">Contraseña de cobro</label>
+                            <!-- Se marca como "one-time-code" (PIN de un solo uso) y con un
+                                 name genérico + banderas de los gestores de contraseñas para que
+                                 el navegador NO la autocomplete con la contraseña del sitio ni
+                                 ofrezca guardarla (Luis 2026-07-16). -->
                             <input
                                 id="cash_pin"
                                 v-model="form.pin"
                                 type="password"
-                                autocomplete="off"
+                                name="cobro-otp"
+                                autocomplete="one-time-code"
+                                data-lpignore="true"
+                                data-1p-ignore="true"
+                                data-bwignore="true"
+                                data-form-type="other"
                                 autofocus
                                 class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
                                 :class="{ 'border-red-500': form.errors.pin }"
