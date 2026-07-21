@@ -19,6 +19,22 @@ class AuthorizationPolicy
     use HandlesAuthorization;
 
     /**
+     * Resultados del candado de aprobadores por concepto.
+     *
+     * GATE_OPEN  = el concepto no restringe (lista vacía o sin concepto):
+     *              se aplican las reglas de siempre (permiso + equipo).
+     * GATE_NAMED = el usuario fue nombrado aprobador del concepto (o es
+     *              superadmin): queda facultado aunque no tenga el permiso
+     *              general ni sea el supervisor del equipo.
+     * GATE_DENIED = el concepto restringe y este usuario no está en la lista.
+     */
+    private const GATE_OPEN = 'open';
+
+    private const GATE_NAMED = 'named';
+
+    private const GATE_DENIED = 'denied';
+
+    /**
      * Determine whether the user can view any authorizations.
      */
     public function viewAny(User $user): bool
@@ -100,7 +116,15 @@ class AuthorizationPolicy
      */
     public function approve(User $user, Authorization $authorization): bool
     {
-        if (! $user->hasPermissionTo('authorizations.approve')) {
+        $gate = $this->conceptApproverGate($user, $authorization);
+
+        if ($gate === self::GATE_DENIED) {
+            return false;
+        }
+
+        // Un aprobador NOMBRADO en el concepto no necesita el permiso general:
+        // el superadmin lo facultó explícitamente para este concepto.
+        if ($gate === self::GATE_OPEN && ! $user->hasPermissionTo('authorizations.approve')) {
             return false;
         }
 
@@ -109,8 +133,10 @@ class AuthorizationPolicy
             return false;
         }
 
-        // Supervisors can only approve team authorizations
-        if ($user->hasRole('supervisor') && ! $this->isInUserTeam($user, $authorization)) {
+        // Supervisors can only approve team authorizations — salvo que hayan
+        // sido nombrados aprobadores del concepto, en cuyo caso aprueban el
+        // concepto completo, no sólo el de su equipo.
+        if ($gate === self::GATE_OPEN && $user->hasRole('supervisor') && ! $this->isInUserTeam($user, $authorization)) {
             return false;
         }
 
@@ -129,7 +155,15 @@ class AuthorizationPolicy
      */
     public function reject(User $user, Authorization $authorization): bool
     {
-        if (! $user->hasPermissionTo('authorizations.reject')) {
+        // El candado de aprobadores aplica igual al rechazo: quien no puede
+        // aprobar un concepto restringido tampoco decide rechazarlo.
+        $gate = $this->conceptApproverGate($user, $authorization);
+
+        if ($gate === self::GATE_DENIED) {
+            return false;
+        }
+
+        if ($gate === self::GATE_OPEN && ! $user->hasPermissionTo('authorizations.reject')) {
             return false;
         }
 
@@ -138,8 +172,9 @@ class AuthorizationPolicy
             return false;
         }
 
-        // Supervisors can only reject team authorizations
-        if ($user->hasRole('supervisor') && ! $this->isInUserTeam($user, $authorization)) {
+        // Supervisors can only reject team authorizations — salvo aprobador
+        // nombrado del concepto.
+        if ($gate === self::GATE_OPEN && $user->hasRole('supervisor') && ! $this->isInUserTeam($user, $authorization)) {
             return false;
         }
 
@@ -151,6 +186,34 @@ class AuthorizationPolicy
         }
 
         return $authorization->isPending();
+    }
+
+    /**
+     * Resolve the concept-level approver gate for this user/authorization.
+     *
+     * El superadmin nunca se queda fuera: si el aprobador nombrado se va de
+     * vacaciones o lo dan de baja, el concepto no queda bloqueado.
+     *
+     * Args:
+     *     user: The user attempting to approve or reject
+     *     authorization: The authorization whose concept carries the list
+     *
+     * Returns:
+     *     One of GATE_OPEN, GATE_NAMED or GATE_DENIED
+     */
+    private function conceptApproverGate(User $user, Authorization $authorization): string
+    {
+        $concept = $authorization->compensationType;
+
+        if (! $concept || ! $concept->hasRestrictedApprovers()) {
+            return self::GATE_OPEN;
+        }
+
+        if ($user->hasRole('superadmin') || $concept->allowsApprover($user)) {
+            return self::GATE_NAMED;
+        }
+
+        return self::GATE_DENIED;
     }
 
     /**

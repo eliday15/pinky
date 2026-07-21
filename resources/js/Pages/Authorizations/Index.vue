@@ -537,7 +537,7 @@ const typeLabels = {
                                     Aprobar
                                 </button>
                                 <button
-                                    v-if="can.reject"
+                                    v-if="auth.can_reject"
                                     @click="openRejectModal(auth)"
                                     class="text-red-600 hover:text-red-900"
                                 >

@@ -195,6 +195,47 @@ class CompensationType extends Model
     }
 
     /**
+     * Usuarios facultados para aprobar autorizaciones de este concepto.
+     *
+     * Lista VACÍA = sin restricción (aprueba quien ya podía). Sólo el
+     * superadmin edita esta lista.
+     */
+    public function approvers(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'compensation_type_approver')
+            ->withTimestamps();
+    }
+
+    /**
+     * Whether this concept restricts who may approve its authorizations.
+     *
+     * Returns:
+     *     True when at least one approver was named for this concept.
+     */
+    public function hasRestrictedApprovers(): bool
+    {
+        return $this->relationLoaded('approvers')
+            ? $this->approvers->isNotEmpty()
+            : $this->approvers()->exists();
+    }
+
+    /**
+     * Whether the given user was named an approver of this concept.
+     *
+     * Args:
+     *     user: The user to check against the named approver list
+     *
+     * Returns:
+     *     True when the user appears in this concept's approver list
+     */
+    public function allowsApprover(User $user): bool
+    {
+        return $this->relationLoaded('approvers')
+            ? $this->approvers->contains('id', $user->id)
+            : $this->approvers()->whereKey($user->id)->exists();
+    }
+
+    /**
      * Scope for active compensation types.
      */
     public function scopeActive($query)

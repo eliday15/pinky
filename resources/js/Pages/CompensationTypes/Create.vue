@@ -8,6 +8,9 @@ const props = defineProps({
     positions: Array,
     departments: Array,
     employees: Array,
+    // Sólo el superadmin ve y edita la lista de aprobadores del concepto.
+    approverCandidates: { type: Array, default: () => [] },
+    canManageApprovers: { type: Boolean, default: false },
 });
 
 const form = useForm({
@@ -29,6 +32,8 @@ const form = useForm({
     employee_ids: [],
     employee_percentages: {},
     employee_fixed_amounts: {},
+    // Sólo se manda si el usuario es superadmin.
+    ...(props.canManageApprovers ? { approver_ids: [] } : {}),
 });
 
 const applicationModeOptions = [
@@ -119,6 +124,40 @@ const clearAllEmployees = () => {
     form.employee_ids = [];
     form.employee_percentages = {};
     form.employee_fixed_amounts = {};
+};
+
+/* ---- Aprobadores del concepto (sólo superadmin) ---- */
+const approverSearch = ref('');
+
+const filteredApprovers = computed(() => {
+    let list = props.approverCandidates || [];
+    if (approverSearch.value) {
+        const q = approverSearch.value.toLowerCase();
+        list = list.filter(u =>
+            (u.name || '').toLowerCase().includes(q) ||
+            (u.email || '').toLowerCase().includes(q)
+        );
+    }
+    // Los ya seleccionados arriba, para que el superadmin vea sus picks.
+    const selected = new Set(form.approver_ids || []);
+    return [...list].sort((a, b) => {
+        const sA = selected.has(a.id) ? 0 : 1;
+        const sB = selected.has(b.id) ? 0 : 1;
+        if (sA !== sB) return sA - sB;
+        return (a.name || '').localeCompare(b.name || '');
+    });
+});
+
+const toggleApprover = (userId) => {
+    if (form.approver_ids.includes(userId)) {
+        form.approver_ids = form.approver_ids.filter(id => id !== userId);
+    } else {
+        form.approver_ids = [...form.approver_ids, userId];
+    }
+};
+
+const clearAllApprovers = () => {
+    form.approver_ids = [];
 };
 
 const submit = () => {
@@ -438,6 +477,100 @@ const submit = () => {
                             </p>
                         </div>
                     </div>
+                </div>
+
+                <!-- Quien puede aprobar (exclusivo del superadmin) -->
+                <div v-if="canManageApprovers" class="bg-white rounded-lg shadow p-6">
+                    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-2 gap-3">
+                        <div>
+                            <h3 class="text-lg font-semibold text-gray-800">
+                                Quien puede aprobar este concepto
+                                <span class="text-sm font-normal text-gray-500 ml-2">
+                                    ({{ form.approver_ids.length }} seleccionado{{ form.approver_ids.length === 1 ? '' : 's' }})
+                                </span>
+                            </h3>
+                            <p class="text-sm text-gray-500 mt-1">
+                                Solo el superadmin puede cambiar esta lista.
+                            </p>
+                        </div>
+                        <button
+                            v-if="form.approver_ids.length > 0"
+                            type="button"
+                            @click="clearAllApprovers"
+                            class="px-3 py-2 text-xs border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 whitespace-nowrap"
+                        >
+                            Quitar todos
+                        </button>
+                    </div>
+
+                    <div
+                        class="mb-4 rounded-lg px-4 py-3 text-sm"
+                        :class="form.approver_ids.length === 0
+                            ? 'bg-gray-50 text-gray-600 border border-gray-200'
+                            : 'bg-pink-50 text-pink-900 border border-pink-200'"
+                    >
+                        <template v-if="form.approver_ids.length === 0">
+                            <span class="font-medium">Sin restriccion.</span>
+                            Podra aprobar este concepto cualquier usuario que ya tenga permiso de aprobar
+                            (admin, RRHH, o el supervisor de su equipo). Selecciona usuarios abajo para poner el candado.
+                        </template>
+                        <template v-else>
+                            <span class="font-medium">Restringido.</span>
+                            Solo los usuarios seleccionados —y el superadmin, que nunca se queda fuera— podran
+                            aprobar o rechazar autorizaciones de este concepto. Nadie mas podra, aunque tenga permiso
+                            de aprobar. Estar en la lista faculta al usuario para este concepto aunque no tenga el
+                            permiso general.
+                        </template>
+                    </div>
+
+                    <div class="mb-4">
+                        <input
+                            v-model="approverSearch"
+                            type="text"
+                            placeholder="Buscar usuario..."
+                            class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 text-sm"
+                        />
+                    </div>
+
+                    <div v-if="(approverCandidates || []).length === 0" class="text-center py-6 text-gray-500">
+                        No hay usuarios registrados
+                    </div>
+
+                    <div v-else class="border rounded-lg overflow-hidden">
+                        <div class="max-h-80 overflow-y-auto divide-y divide-gray-100">
+                            <div
+                                v-for="user in filteredApprovers"
+                                :key="user.id"
+                                class="px-4 py-3 flex items-center hover:bg-gray-50 cursor-pointer"
+                                :class="{ 'bg-pink-50': form.approver_ids.includes(user.id) }"
+                                @click="toggleApprover(user.id)"
+                            >
+                                <input
+                                    type="checkbox"
+                                    :checked="form.approver_ids.includes(user.id)"
+                                    class="rounded border-gray-300 text-pink-600 focus:ring-pink-500"
+                                    @click.stop
+                                    @change="toggleApprover(user.id)"
+                                />
+                                <div class="ml-3 min-w-0">
+                                    <p class="text-sm font-medium text-gray-900 truncate">{{ user.name }}</p>
+                                    <p class="text-xs text-gray-500 truncate">
+                                        {{ user.email }}
+                                        <span v-if="user.roles && user.roles.length" class="ml-1">
+                                            - {{ user.roles.join(', ') }}
+                                        </span>
+                                    </p>
+                                </div>
+                            </div>
+                            <div v-if="filteredApprovers.length === 0" class="px-4 py-8 text-center text-gray-500 text-sm">
+                                No hay usuarios que coincidan con el filtro.
+                            </div>
+                        </div>
+                    </div>
+
+                    <p v-if="form.errors.approver_ids" class="mt-2 text-sm text-red-600">
+                        {{ form.errors.approver_ids }}
+                    </p>
                 </div>
 
                 <!-- Employee Assignments -->

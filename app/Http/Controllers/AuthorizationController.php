@@ -44,7 +44,9 @@ class AuthorizationController extends Controller
         $this->authorize('viewAny', Authorization::class);
 
         $user = Auth::user();
-        $query = Authorization::with(['employee.department', 'requestedBy', 'approvedBy', 'compensationType']);
+        // `compensationType.approvers` va eager para que el candado por concepto
+        // no dispare una consulta por fila al resolver can_approve/can_reject.
+        $query = Authorization::with(['employee.department', 'requestedBy', 'approvedBy', 'compensationType.approvers']);
 
         // Apply permission-based filtering
         if (! $user->hasPermissionTo('authorizations.view_all')) {
@@ -106,6 +108,10 @@ class AuthorizationController extends Controller
         // paid lock, so the frontend doesn't have to duplicate that logic.
         $authorizations->through(function ($authorization) use ($user) {
             $authorization->can_approve = $user->can('approve', $authorization);
+            // Per-row también para rechazar: un concepto con aprobadores
+            // nombrados restringe ambas acciones, así que el botón global de
+            // permiso ya no alcanza.
+            $authorization->can_reject = $user->can('reject', $authorization);
 
             return $authorization;
         });

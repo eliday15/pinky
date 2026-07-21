@@ -6,8 +6,10 @@ use App\Models\CompensationType;
 use App\Models\Department;
 use App\Models\Employee;
 use App\Models\Position;
+use App\Models\User;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
@@ -70,6 +72,8 @@ class CompensationTypeController extends Controller
             'employees' => Employee::active()
                 ->orderBy('full_name')
                 ->get(['id', 'full_name', 'employee_number', 'department_id', 'position_id']),
+            'approverCandidates' => $this->approverCandidates(),
+            'canManageApprovers' => $user->hasRole('superadmin'),
         ]);
     }
 
@@ -113,6 +117,8 @@ class CompensationTypeController extends Controller
             'employee_ids.*' => ['exists:employees,id'],
             'employee_percentages' => ['nullable', 'array'],
             'employee_fixed_amounts' => ['nullable', 'array'],
+            'approver_ids' => ['nullable', 'array'],
+            'approver_ids.*' => ['exists:app_users,id'],
         ]);
 
         $compensationType = CompensationType::create(
@@ -127,6 +133,7 @@ class CompensationTypeController extends Controller
         $this->syncPositions($compensationType, $request);
         $this->syncDepartments($compensationType, $request);
         $this->syncEmployees($compensationType, $request);
+        $this->syncApprovers($compensationType, $request);
 
         return redirect()->route('compensation-types.index')
             ->with('success', 'Concepto de compensacion creado exitosamente.');
@@ -142,7 +149,7 @@ class CompensationTypeController extends Controller
             abort(403);
         }
 
-        $compensationType->load(['positions', 'departments', 'employees']);
+        $compensationType->load(['positions', 'departments', 'employees', 'approvers']);
 
         return Inertia::render('CompensationTypes/Edit', [
             'compensationType' => $compensationType,
@@ -151,6 +158,8 @@ class CompensationTypeController extends Controller
             'employees' => Employee::active()
                 ->orderBy('full_name')
                 ->get(['id', 'full_name', 'employee_number', 'department_id', 'position_id']),
+            'approverCandidates' => $this->approverCandidates(),
+            'canManageApprovers' => $user->hasRole('superadmin'),
         ]);
     }
 
@@ -194,6 +203,8 @@ class CompensationTypeController extends Controller
             'employee_ids.*' => ['exists:employees,id'],
             'employee_percentages' => ['nullable', 'array'],
             'employee_fixed_amounts' => ['nullable', 'array'],
+            'approver_ids' => ['nullable', 'array'],
+            'approver_ids.*' => ['exists:app_users,id'],
         ]);
 
         $compensationType->update(
@@ -208,6 +219,7 @@ class CompensationTypeController extends Controller
         $this->syncPositions($compensationType, $request);
         $this->syncDepartments($compensationType, $request);
         $this->syncEmployees($compensationType, $request);
+        $this->syncApprovers($compensationType, $request);
 
         return redirect()->route('compensation-types.index')
             ->with('success', 'Concepto de compensacion actualizado exitosamente.');
@@ -227,6 +239,46 @@ class CompensationTypeController extends Controller
 
         return redirect()->route('compensation-types.index')
             ->with('success', 'Concepto de compensacion desactivado exitosamente.');
+    }
+
+    /**
+     * Usuarios que el superadmin puede nombrar aprobadores de un concepto.
+     *
+     * Es cualquier usuario del sistema: nombrar a alguien le OTORGA la
+     * facultad de aprobar ESE concepto, aunque no tenga el permiso general.
+     *
+     * Returns:
+     *     Users with their role names, ordered by name
+     */
+    private function approverCandidates(): Collection
+    {
+        return User::with('roles:id,name')
+            ->orderBy('name')
+            ->get(['id', 'name', 'email'])
+            ->map(fn ($user) => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'roles' => $user->roles->pluck('name')->all(),
+            ]);
+    }
+
+    /**
+     * Sync the named approver list — SÓLO el superadmin puede tocarla.
+     *
+     * Quien no sea superadmin nunca modifica la lista, aunque mande
+     * `approver_ids` a mano en el request: la petición se ignora en silencio
+     * para no romper el guardado del resto del formulario.
+     */
+    private function syncApprovers(CompensationType $compensationType, Request $request): void
+    {
+        if (! $request->has('approver_ids') || ! Auth::user()->hasRole('superadmin')) {
+            return;
+        }
+
+        $approverIds = array_map('intval', (array) $request->input('approver_ids', []));
+
+        $compensationType->approvers()->sync($approverIds);
     }
 
     /**
