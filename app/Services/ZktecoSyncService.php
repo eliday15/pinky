@@ -12,6 +12,7 @@ use App\Models\Position;
 use App\Models\Schedule;
 use App\Models\SyncLog;
 use App\Models\SystemSetting;
+use App\Support\AuditContext;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -272,6 +273,14 @@ class ZktecoSyncService
             ]);
         }
 
+        // Everything this sync touches is attributed to the clock sync rather
+        // than to a bare "Sistema", so the audit trail distinguishes an
+        // automatic import from a person editing attendance by hand.
+        AuditContext::setActor(
+            $triggeredBy ? 'Sincronizacion de relojes (manual)' : 'Sincronizacion de relojes',
+            AuditContext::CONTEXT_SYNC,
+        );
+
         try {
             // Bound every DB operation in this sync so a blocked query or a
             // metadata-lock wait can NEVER hang the process indefinitely. This is
@@ -318,6 +327,8 @@ class ZktecoSyncService
             ]);
 
             throw $e;
+        } finally {
+            AuditContext::clear();
         }
 
         return $log;

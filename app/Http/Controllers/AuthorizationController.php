@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Traits\VerifiesTwoFactor;
 use App\Models\AttendanceAnomaly;
 use App\Models\AttendanceRecord;
+use App\Models\AuditLog;
 use App\Models\Authorization;
 use App\Models\CompensationType;
 use App\Models\Department;
@@ -474,6 +475,7 @@ class AuthorizationController extends Controller
         $count = 0;
         $autoApprovedCount = 0;
         $duplicateCount = 0;
+        $createdEmployeeIds = [];
 
         $rounder = new OvertimeRoundingService;
 
@@ -586,6 +588,7 @@ class AuthorizationController extends Controller
                 if ($auth->fresh()->status === Authorization::STATUS_APPROVED) {
                     $autoApprovedCount++;
                 }
+                $createdEmployeeIds[] = $auth->employee_id;
                 $count++;
             }
         } else {
@@ -624,6 +627,7 @@ class AuthorizationController extends Controller
                 if ($auth->fresh()->status === Authorization::STATUS_APPROVED) {
                     $autoApprovedCount++;
                 }
+                $createdEmployeeIds[] = $auth->employee_id;
                 $count++;
             }
         }
@@ -633,6 +637,29 @@ class AuthorizationController extends Controller
             : "Se crearon {$count} autorizaciones exitosamente.";
         if ($duplicateCount > 0) {
             $msg .= " {$duplicateCount} omitidas por duplicado (ya existe una autorización viva del mismo tipo para ese empleado y fecha).";
+        }
+
+        // Resumen de alta masiva: un solo evento describe cuántas autorizaciones
+        // se crearon y para cuántos empleados distintos (los eventos individuales
+        // CREATE los genera el trait Auditable en cada Authorization::create).
+        if ($count > 0) {
+            $uniqueEmpCount = count(array_unique($createdEmployeeIds));
+            $typeName = $bulkCompType?->name ?? ucfirst($validated['type']);
+            AuditLog::record(
+                module: AuditLog::MODULE_AUTHORIZATIONS,
+                action: AuditLog::ACTION_CREATE,
+                model: null,
+                description: "Creo {$count} autorizaciones de {$typeName} para {$uniqueEmpCount} empleado(s) en alta masiva",
+                metadata: [
+                    'tipo' => $validated['type'],
+                    'concepto' => $typeName,
+                    'total_creadas' => $count,
+                    'empleados_distintos' => $uniqueEmpCount,
+                    'auto_aprobadas' => $autoApprovedCount,
+                    'omitidas_duplicado' => $duplicateCount,
+                    'bulk_group_id' => $bulkGroupId,
+                ],
+            );
         }
 
         return redirect()->route('authorizations.index')->with('success', $msg);
@@ -888,7 +915,27 @@ class AuthorizationController extends Controller
             }
         }
 
+        $oldStatus = $authorization->status;
         $authorization->approve($user, $overrideHours);
+
+        $authorization->loadMissing(['employee', 'compensationType']);
+        $empName = $authorization->employee?->full_name ?? 'empleado desconocido';
+        $typeName = $authorization->compensationType?->name ?? ucfirst($authorization->type);
+        $dateFormatted = Carbon::parse($authorization->date)->format('d/m/Y');
+        $hoursApproved = $authorization->hours !== null
+            ? number_format((float) $authorization->hours, 2).' h'
+            : null;
+        $authorization->recordAuditEvent(
+            action: AuditLog::ACTION_APPROVE,
+            description: 'Aprobo '.$typeName.' de '.$empName.($hoursApproved ? ': '.$hoursApproved : '').' del '.$dateFormatted,
+            metadata: array_filter([
+                'horas_aprobadas' => $authorization->hours,
+                'horas_ajustadas' => $overrideHours,
+                'tope_aplicado' => $capMessage !== '' ? true : null,
+            ], fn ($v) => $v !== null),
+            oldValues: ['status' => $oldStatus],
+            newValues: ['status' => $authorization->status],
+        );
 
         $this->applyApprovalEffects($authorization, $syncService);
 
@@ -1137,8 +1184,21 @@ class AuthorizationController extends Controller
         ]);
 
         $wasApproved = $authorization->isApproved();
+        $oldStatus = $authorization->status;
 
         $authorization->reject(Auth::user(), $validated['rejection_reason']);
+
+        $authorization->loadMissing(['employee', 'compensationType']);
+        $empName = $authorization->employee?->full_name ?? 'empleado desconocido';
+        $typeName = $authorization->compensationType?->name ?? ucfirst($authorization->type);
+        $dateFormatted = Carbon::parse($authorization->date)->format('d/m/Y');
+        $authorization->recordAuditEvent(
+            action: AuditLog::ACTION_REJECT,
+            description: 'Rechazo '.$typeName.' de '.$empName.' del '.$dateFormatted.'. Motivo: '.$validated['rejection_reason'],
+            metadata: ['motivo' => $validated['rejection_reason'], 'estatus_anterior' => $oldStatus],
+            oldValues: ['status' => $oldStatus],
+            newValues: ['status' => $authorization->status],
+        );
 
         // Revertir los efectos de una aprobación previa: reabrir las anomalías
         // que se vincularon, recalcular la asistencia (las horas autorizadas
@@ -1170,7 +1230,9 @@ class AuthorizationController extends Controller
         $skipped = 0;
         $capped = 0;
         $user = Auth::user();
-        $authorizations = Authorization::whereIn('id', $validated['ids'])->get();
+        $authorizations = Authorization::with(['employee', 'compensationType'])
+            ->whereIn('id', $validated['ids'])
+            ->get();
 
         foreach ($authorizations as $authorization) {
             if (! $user->can('approve', $authorization) || ! $authorization->isPending()) {
@@ -1196,6 +1258,23 @@ class AuthorizationController extends Controller
             }
 
             $authorization->approve($user, $overrideHours);
+
+            $empName = $authorization->employee?->full_name ?? 'empleado desconocido';
+            $typeName = $authorization->compensationType?->name ?? ucfirst($authorization->type);
+            $dateFormatted = Carbon::parse($authorization->date)->format('d/m/Y');
+            $hoursApproved = $authorization->hours !== null
+                ? number_format((float) $authorization->hours, 2).' h'
+                : null;
+            $authorization->recordAuditEvent(
+                action: AuditLog::ACTION_APPROVE,
+                description: 'Aprobo '.$typeName.' de '.$empName.($hoursApproved ? ': '.$hoursApproved : '').' del '.$dateFormatted,
+                metadata: array_filter([
+                    'horas_aprobadas' => $authorization->hours,
+                    'horas_ajustadas' => $overrideHours,
+                ], fn ($v) => $v !== null),
+                oldValues: ['status' => Authorization::STATUS_PENDING],
+                newValues: ['status' => $authorization->status],
+            );
 
             $this->applyApprovalEffects($authorization, $syncService);
 
@@ -1230,7 +1309,9 @@ class AuthorizationController extends Controller
         $rejected = 0;
         $skipped = 0;
         $user = Auth::user();
-        $authorizations = Authorization::whereIn('id', $validated['ids'])->get();
+        $authorizations = Authorization::with(['employee', 'compensationType'])
+            ->whereIn('id', $validated['ids'])
+            ->get();
 
         foreach ($authorizations as $authorization) {
             if (! $user->can('reject', $authorization) || ! $authorization->isPending()) {
@@ -1239,6 +1320,18 @@ class AuthorizationController extends Controller
                 continue;
             }
             $authorization->reject($user, $validated['rejection_reason']);
+
+            $empName = $authorization->employee?->full_name ?? 'empleado desconocido';
+            $typeName = $authorization->compensationType?->name ?? ucfirst($authorization->type);
+            $dateFormatted = Carbon::parse($authorization->date)->format('d/m/Y');
+            $authorization->recordAuditEvent(
+                action: AuditLog::ACTION_REJECT,
+                description: 'Rechazo '.$typeName.' de '.$empName.' del '.$dateFormatted.'. Motivo: '.$validated['rejection_reason'],
+                metadata: ['motivo' => $validated['rejection_reason']],
+                oldValues: ['status' => Authorization::STATUS_PENDING],
+                newValues: ['status' => $authorization->status],
+            );
+
             $rejected++;
         }
 
@@ -1295,6 +1388,17 @@ class AuthorizationController extends Controller
         }
 
         $authorization->update(['date' => $newDate]);
+
+        $authorization->loadMissing(['employee', 'compensationType']);
+        $empName = $authorization->employee?->full_name ?? 'empleado desconocido';
+        $typeName = $authorization->compensationType?->name ?? ucfirst($authorization->type);
+        $authorization->recordAuditEvent(
+            action: AuditLog::ACTION_UPDATE,
+            description: 'Cambio la fecha de '.$typeName.' de '.$empName.' del '.Carbon::parse($oldDate)->format('d/m/Y').' al '.Carbon::parse($newDate)->format('d/m/Y'),
+            metadata: ['fecha_anterior' => $oldDate, 'fecha_nueva' => $newDate],
+            oldValues: ['date' => $oldDate],
+            newValues: ['date' => $newDate],
+        );
 
         // Fecha NUEVA: recalcula asistencia, cierra anomalías e invalida nómina.
         $this->applyApprovalEffects($authorization, $syncService);

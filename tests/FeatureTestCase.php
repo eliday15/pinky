@@ -27,6 +27,11 @@ abstract class FeatureTestCase extends TestCase
         // sin esta limpieza un test heredaría valores del anterior.
         \App\Models\SystemSetting::forgetMemo();
 
+        // Igual que el memo de settings: el actor y el registro de entradas
+        // automáticas de auditoría son estáticos y sobreviven entre tests.
+        \App\Support\AuditContext::clear();
+        \App\Support\AuditEntryRegistry::flush();
+
         $this->seed(RolesPermissionsSeeder::class);
     }
 }

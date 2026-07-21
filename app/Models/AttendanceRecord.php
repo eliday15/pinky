@@ -25,6 +25,19 @@ class AttendanceRecord extends Model
      */
     protected array $auditExcluded = ['created_at', 'updated_at', 'raw_punches'];
 
+    /**
+     * Human readable name of this attendance record for the audit trail.
+     */
+    public function auditSubjectLabel(): string
+    {
+        $employee = $this->employee?->full_name;
+        $date = $this->auditDate($this->work_date);
+
+        return trim('Asistencia'
+            . ($employee ? " de {$employee}" : '')
+            . ($date ? " ({$date})" : ''));
+    }
+
     protected $fillable = [
         'employee_id',
         'work_date',

@@ -64,8 +64,14 @@ class AuditLogControllerTest extends FeatureTestCase
     public function test_audit_logs_user_filter_is_applied(): void
     {
         $admin = $this->actingAsAdmin();
+        $other = $this->rrhhUser();
+
+        // Creating those accounts is itself an audited event now; start from a
+        // clean slate so the filter assertion stays about the seeded entries.
+        AuditLog::query()->delete();
+
         $mine = AuditLog::factory()->create(['user_id' => $admin->id]);
-        AuditLog::factory()->create(['user_id' => $this->rrhhUser()->id]);
+        AuditLog::factory()->create(['user_id' => $other->id]);
 
         $this->get(route('audit-logs.index', ['user_id' => $admin->id]))
             ->assertOk()
@@ -73,6 +79,91 @@ class AuditLogControllerTest extends FeatureTestCase
                 ->where('filters.user_id', (string) $admin->id)
                 ->has('logs.data', 1)
                 ->where('logs.data.0.id', $mine->id));
+    }
+
+    public function test_audit_logs_employee_filter_is_applied(): void
+    {
+        $this->actingAsAdmin();
+        $employee = \App\Models\Employee::factory()->create();
+
+        AuditLog::query()->delete();
+
+        $match = AuditLog::factory()->create(['employee_id' => $employee->id]);
+        AuditLog::factory()->create(['employee_id' => null]);
+
+        $this->get(route('audit-logs.index', ['employee_id' => $employee->id]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->has('logs.data', 1)
+                ->where('logs.data.0.id', $match->id));
+    }
+
+    public function test_audit_logs_context_filter_is_applied(): void
+    {
+        $this->actingAsAdmin();
+        AuditLog::query()->delete();
+
+        $match = AuditLog::factory()->create(['context' => \App\Support\AuditContext::CONTEXT_SYNC]);
+        AuditLog::factory()->create(['context' => \App\Support\AuditContext::CONTEXT_WEB]);
+
+        $this->get(route('audit-logs.index', ['context' => \App\Support\AuditContext::CONTEXT_SYNC]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->has('logs.data', 1)
+                ->where('logs.data.0.id', $match->id));
+    }
+
+    public function test_audit_logs_entity_filter_is_applied(): void
+    {
+        $this->actingAsAdmin();
+        AuditLog::query()->delete();
+
+        $match = AuditLog::factory()->create(['auditable_type' => \App\Models\Employee::class]);
+        AuditLog::factory()->create(['auditable_type' => \App\Models\Authorization::class]);
+
+        $this->get(route('audit-logs.index', ['entity' => \App\Models\Employee::class]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->has('logs.data', 1)
+                ->where('logs.data.0.id', $match->id));
+    }
+
+    public function test_audit_logs_actor_role_filter_is_applied(): void
+    {
+        $this->actingAsAdmin();
+        AuditLog::query()->delete();
+
+        $match = AuditLog::factory()->create(['actor_role' => 'rrhh']);
+        AuditLog::factory()->create(['actor_role' => 'supervisor']);
+
+        $this->get(route('audit-logs.index', ['actor_role' => 'rrhh']))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->has('logs.data', 1)
+                ->where('logs.data.0.id', $match->id));
+    }
+
+    public function test_audit_logs_search_matches_subject_and_actor(): void
+    {
+        $this->actingAsAdmin();
+        AuditLog::query()->delete();
+
+        $bySubject = AuditLog::factory()->create([
+            'description' => null,
+            'subject_label' => 'Vacaciones de Zxqwerty Perez',
+        ]);
+        $byActor = AuditLog::factory()->create([
+            'description' => null,
+            'subject_label' => 'Otro registro',
+            'actor_name' => 'Zxqwerty Ramirez',
+        ]);
+        AuditLog::factory()->create(['description' => 'Nada que ver', 'subject_label' => 'Otro']);
+
+        $this->get(route('audit-logs.index', ['search' => 'Zxqwerty']))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page->has('logs.data', 2));
+
+        $this->assertNotSame($bySubject->id, $byActor->id);
     }
 
     public function test_audit_logs_search_filter_matches_description(): void
@@ -104,17 +195,39 @@ class AuditLogControllerTest extends FeatureTestCase
                 ->where('logs.data.0.id', $inRange->id));
     }
 
-    public function test_audit_logs_index_exposes_module_and_action_options(): void
+    public function test_audit_logs_index_exposes_every_filter_option_set(): void
     {
         $this->actingAsAdmin();
 
         $this->get(route('audit-logs.index'))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
-                ->has('modules', 7)
-                ->has('actions', 9)
-                ->where('modules.0.value', AuditLog::MODULE_EMPLOYEES)
-                ->where('actions.0.value', AuditLog::ACTION_CREATE));
+                ->has('modules', count(AuditLog::moduleLabels()))
+                ->has('actions', count(AuditLog::actionLabels()))
+                ->has('entities', count(AuditLog::entityLabels()))
+                ->has('contexts', 5)
+                ->has('roles')
+                ->has('employees'));
+    }
+
+    public function test_audit_logs_index_offers_the_new_business_actions(): void
+    {
+        $this->actingAsAdmin();
+
+        $response = $this->get(route('audit-logs.index'))->assertOk();
+
+        $actions = collect($response->viewData('page')['props']['actions'])->pluck('value');
+
+        foreach ([
+            AuditLog::ACTION_APPROVE,
+            AuditLog::ACTION_REJECT,
+            AuditLog::ACTION_CLOSE,
+            AuditLog::ACTION_REOPEN,
+            AuditLog::ACTION_RECALCULATE,
+            AuditLog::ACTION_LOGIN_FAILED,
+        ] as $action) {
+            $this->assertContains($action, $actions, "La accion {$action} debe poder filtrarse.");
+        }
     }
 
     public function test_rrhh_cannot_view_audit_logs(): void

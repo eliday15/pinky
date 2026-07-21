@@ -14,8 +14,21 @@ class AttendanceAnomaly extends Model
 {
     use HasFactory, Auditable;
 
-    protected string $auditModule = 'attendance';
+    protected string $auditModule = 'anomalies';
     protected array $auditExcluded = ['created_at', 'updated_at'];
+
+    /**
+     * Human readable name of this anomaly for the audit trail.
+     */
+    public function auditSubjectLabel(): string
+    {
+        $employee = $this->employee?->full_name;
+        $date = $this->auditDate($this->work_date);
+
+        return trim('Anomalia ' . ($this->anomaly_type ?? '')
+            . ($employee ? " de {$employee}" : '')
+            . ($date ? " ({$date})" : ''));
+    }
 
     // Anomaly types
     public const TYPE_MISSING_CHECKOUT = 'missing_checkout';

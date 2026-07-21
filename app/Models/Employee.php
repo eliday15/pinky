@@ -45,6 +45,23 @@ class Employee extends Model
      */
     protected array $auditExcluded = ['created_at', 'updated_at', 'deleted_at'];
 
+    /**
+     * Human readable name of this employee for the audit trail.
+     */
+    public function auditSubjectLabel(): string
+    {
+        return trim(($this->employee_number ? "{$this->employee_number} - " : '') . ($this->full_name ?? ''))
+            ?: 'Empleado #' . $this->getKey();
+    }
+
+    /**
+     * An employee record is about itself.
+     */
+    public function auditEmployeeId(): ?int
+    {
+        return $this->getKey();
+    }
+
     protected $fillable = [
         'employee_number',
         'contpaqi_code',

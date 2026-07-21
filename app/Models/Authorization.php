@@ -29,6 +29,20 @@ class Authorization extends Model
     protected array $auditExcluded = ['created_at', 'updated_at'];
 
     /**
+     * Human readable name of this authorization for the audit trail.
+     */
+    public function auditSubjectLabel(): string
+    {
+        $concept = $this->compensationType?->name ?? $this->type ?? 'Autorizacion';
+        $employee = $this->employee?->full_name;
+        $date = $this->auditDate($this->date);
+
+        return trim($concept
+            . ($employee ? " de {$employee}" : '')
+            . ($date ? " ({$date})" : ''));
+    }
+
+    /**
      * Authorization types.
      */
     public const TYPE_OVERTIME = 'overtime';

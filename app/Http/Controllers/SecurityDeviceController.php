@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AuditLog;
 use App\Models\TwoFactorDevice;
 use App\Services\TwoFactorService;
 use Illuminate\Http\RedirectResponse;
@@ -61,6 +62,14 @@ class SecurityDeviceController extends Controller
         $device = $this->twoFactorService->createDevice($user, $request->name);
         $secret = $this->twoFactorService->getDeviceSecret($device);
         $qrCodeUri = $this->twoFactorService->generateQrCodeUri($user, $secret, $device->name);
+
+        AuditLog::record(
+            module: AuditLog::MODULE_AUTH,
+            action: AuditLog::ACTION_CREATE,
+            description: "Inicio el registro del autenticador \"{$device->name}\"",
+            subjectLabel: $device->name,
+            metadata: ['device_id' => $device->id],
+        );
 
         return redirect()->back()->with([
             'pendingDevice' => [
@@ -154,7 +163,15 @@ class SecurityDeviceController extends Controller
             }
         }
 
+        $deviceName = $device->name;
         $device->delete();
+
+        AuditLog::record(
+            module: AuditLog::MODULE_AUTH,
+            action: AuditLog::ACTION_DELETE,
+            description: "Elimino el autenticador \"{$deviceName}\"",
+            subjectLabel: $deviceName,
+        );
 
         return redirect()->back()->with('success', 'Dispositivo de autenticacion eliminado.');
     }

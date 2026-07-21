@@ -24,6 +24,19 @@ class PayrollEntry extends Model
      */
     protected array $auditExcluded = ['created_at', 'updated_at', 'calculation_breakdown'];
 
+    /**
+     * Human readable name of this payroll entry for the audit trail.
+     */
+    public function auditSubjectLabel(): string
+    {
+        $employee = $this->employee?->full_name;
+        $period = $this->payrollPeriod?->name;
+
+        return trim('Recibo'
+            . ($employee ? " de {$employee}" : '')
+            . ($period ? " ({$period})" : ''));
+    }
+
     protected $fillable = [
         'payroll_period_id',
         'employee_id',

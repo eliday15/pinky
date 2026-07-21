@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AuditLog;
 use App\Models\PayrollCfdi;
 use App\Models\PayrollEntry;
 use App\Models\PayrollPeriod;
@@ -55,6 +56,15 @@ class PayrollCfdiController extends Controller
         }
 
         $canceled = $this->cfdi->cancelPeriod($payroll);
+
+        AuditLog::record(
+            module: AuditLog::MODULE_PAYROLL,
+            action: AuditLog::ACTION_CANCEL,
+            model: $payroll,
+            description: "Cancelo {$canceled} CFDI(s) de la nomina {$payroll->name}",
+            subjectLabel: $payroll->name,
+            metadata: ['cfdi_canceled' => $canceled],
+        );
 
         return redirect()->route('payroll.show', $payroll)
             ->with('success', "Se cancelaron {$canceled} CFDI(s). Ya puedes recalcular y re-timbrar.");

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AuditLog;
 use App\Models\Department;
 use App\Models\IncidentType;
 use App\Models\Position;
@@ -130,6 +131,14 @@ class IncidentTypeController extends Controller
         $this->syncPositions($incidentType, $request);
         $this->syncDepartments($incidentType, $request);
 
+        AuditLog::record(
+            module: AuditLog::MODULE_CATALOGS,
+            action: AuditLog::ACTION_CREATE,
+            model: $incidentType,
+            description: "Creo el tipo de incidencia {$incidentType->name} ({$incidentType->code})",
+            subjectLabel: $incidentType->name,
+        );
+
         return redirect()->route('incident-types.index')
             ->with('success', 'Tipo de incidencia creado exitosamente.');
     }
@@ -211,6 +220,14 @@ class IncidentTypeController extends Controller
         $this->syncPositions($incidentType, $request);
         $this->syncDepartments($incidentType, $request);
 
+        AuditLog::record(
+            module: AuditLog::MODULE_CATALOGS,
+            action: AuditLog::ACTION_UPDATE,
+            model: $incidentType,
+            description: "Actualizo el tipo de incidencia {$incidentType->name} ({$incidentType->code})",
+            subjectLabel: $incidentType->name,
+        );
+
         return redirect()->route('incident-types.index')
             ->with('success', 'Tipo de incidencia actualizado exitosamente.');
     }
@@ -252,6 +269,14 @@ class IncidentTypeController extends Controller
         }
 
         $incidentType->update(['is_active' => false]);
+
+        AuditLog::record(
+            module: AuditLog::MODULE_CATALOGS,
+            action: AuditLog::ACTION_DELETE,
+            model: $incidentType,
+            description: "Desactivo el tipo de incidencia {$incidentType->name} ({$incidentType->code})",
+            subjectLabel: $incidentType->name,
+        );
 
         return redirect()->route('incident-types.index')
             ->with('success', 'Tipo de incidencia desactivado exitosamente.');

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\AttendanceRecord;
+use App\Models\AuditLog;
 use App\Models\CheckOmission;
 use App\Models\Department;
 use App\Models\Employee;
@@ -186,6 +187,12 @@ class CheckOmissionController extends Controller
         $checkOmission->approve($user);
         $this->applyEffect($checkOmission);
 
+        $checkOmission->recordAuditEvent(
+            action: AuditLog::ACTION_APPROVE,
+            description: 'Aprobo la omision de checada de ' . ($checkOmission->employee?->full_name ?? 'empleado') . ' del ' . Carbon::parse($checkOmission->work_date)->format('d/m/Y') . ' (' . $checkOmission->reasonLabel() . ')',
+            metadata: ['motivo' => $checkOmission->reason],
+        );
+
         return back()->with('success', 'Omisión aprobada. El día se ajustó en la asistencia y la nómina.');
     }
 
@@ -216,6 +223,16 @@ class CheckOmissionController extends Controller
         if ($wasApproved) {
             $this->applyEffect($checkOmission);
         }
+
+        $desc = 'Rechazo la omision de checada de ' . ($checkOmission->employee?->full_name ?? 'empleado') . ' del ' . Carbon::parse($checkOmission->work_date)->format('d/m/Y');
+        if ($validated['rejection_reason'] ?? null) {
+            $desc .= '. Motivo: ' . $validated['rejection_reason'];
+        }
+        $checkOmission->recordAuditEvent(
+            action: AuditLog::ACTION_REJECT,
+            description: $desc,
+            metadata: ['motivo' => $validated['rejection_reason'] ?? null, 'revertio_aprobacion' => $wasApproved],
+        );
 
         return back()->with('success', 'Omisión rechazada.');
     }
@@ -280,6 +297,18 @@ class CheckOmissionController extends Controller
         ];
 
         $filename = 'omisiones_checada_'.now()->format('Y-m-d').'.csv';
+
+        $exportDesc = 'Exporto reporte de omisiones de checada';
+        if ($request->from_date || $request->to_date) {
+            $exportDesc .= ' del ' . ($request->from_date ? Carbon::parse($request->from_date)->format('d/m/Y') : '?') . ' al ' . ($request->to_date ? Carbon::parse($request->to_date)->format('d/m/Y') : '?');
+        }
+        AuditLog::record(
+            module: AuditLog::MODULE_OMISSIONS,
+            action: AuditLog::ACTION_EXPORT,
+            model: null,
+            description: $exportDesc . ' (' . $omissions->count() . ' registros)',
+            metadata: $request->only(['status', 'reason', 'employee', 'department', 'from_date', 'to_date']),
+        );
 
         return response()->streamDownload(function () use ($omissions, $statusLabels) {
             $out = fopen('php://output', 'w');

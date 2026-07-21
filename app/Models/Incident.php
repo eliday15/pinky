@@ -26,6 +26,23 @@ class Incident extends Model
      */
     protected array $auditExcluded = ['created_at', 'updated_at', 'deleted_at'];
 
+    /**
+     * Human readable name of this incident for the audit trail.
+     */
+    public function auditSubjectLabel(): string
+    {
+        $type = $this->incidentType?->name ?? 'Incidencia';
+        $employee = $this->employee?->full_name;
+        $start = $this->auditDate($this->start_date);
+        $end = $this->auditDate($this->end_date);
+
+        $range = $start && $end && $start !== $end ? "{$start} al {$end}" : ($start ?? '');
+
+        return trim($type
+            . ($employee ? " de {$employee}" : '')
+            . ($range ? " ({$range})" : ''));
+    }
+
     protected $fillable = [
         'employee_id',
         'incident_type_id',

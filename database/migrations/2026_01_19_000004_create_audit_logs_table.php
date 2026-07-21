@@ -18,7 +18,7 @@ return new class extends Migration
             $table->foreignId('user_id')->nullable()->constrained('app_users')->nullOnDelete();
             $table->string('module'); // employees, attendance, payroll, incidents, authorizations, settings
             $table->string('action'); // create, update, delete, approve, reject, login, logout
-            $table->string('auditable_type'); // Model class name
+            $table->string('auditable_type')->nullable(); // Model class name (null for model-less events like login)
             $table->unsignedBigInteger('auditable_id')->nullable();
             $table->json('old_values')->nullable();
             $table->json('new_values')->nullable();

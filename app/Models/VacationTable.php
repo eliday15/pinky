@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Traits\Auditable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
@@ -12,12 +13,38 @@ use Illuminate\Database\Eloquent\Model;
  */
 class VacationTable extends Model
 {
-    use HasFactory;
+    use Auditable, HasFactory;
+
+    /**
+     * Module name for audit logging.
+     */
+    protected string $auditModule = 'vacations';
+
+    /**
+     * Fields to exclude from audit logs.
+     */
+    protected array $auditExcluded = ['created_at', 'updated_at'];
 
     protected $fillable = [
         'years_of_service',
         'vacation_days',
     ];
+
+    /**
+     * Human readable name of this table row for the audit trail.
+     */
+    public function auditSubjectLabel(): string
+    {
+        return "Tabla de vacaciones: {$this->years_of_service} anos de servicio";
+    }
+
+    /**
+     * A table row is not tied to an employee.
+     */
+    public function auditEmployeeId(): ?int
+    {
+        return null;
+    }
 
     protected $casts = [
         'years_of_service' => 'integer',

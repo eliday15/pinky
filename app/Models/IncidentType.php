@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Traits\Auditable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
@@ -12,7 +13,33 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  */
 class IncidentType extends Model
 {
-    use HasFactory;
+    use Auditable, HasFactory;
+
+    /**
+     * Module name for audit logging.
+     */
+    protected string $auditModule = 'catalogs';
+
+    /**
+     * Fields to exclude from audit logs.
+     */
+    protected array $auditExcluded = ['created_at', 'updated_at'];
+
+    /**
+     * Human readable name of this incident type for the audit trail.
+     */
+    public function auditSubjectLabel(): string
+    {
+        return trim('Tipo de incidencia ' . ($this->code ? "{$this->code} - " : '') . ($this->name ?? ''));
+    }
+
+    /**
+     * A catalog entry is not tied to an employee.
+     */
+    public function auditEmployeeId(): ?int
+    {
+        return null;
+    }
 
     /**
      * Modos de conteo de días (DECISIONES_NEGOCIO §6): hábiles excluye

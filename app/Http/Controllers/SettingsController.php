@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AuditLog;
 use App\Models\Employee;
 use App\Models\SystemSetting;
 use App\Services\TwoFactorService;
@@ -139,12 +140,25 @@ class SettingsController extends Controller
             'settings.*.value' => ['required'],
         ]);
 
+        $oldValues = [];
+        $newValues = [];
+
         foreach ($validated['settings'] as $setting) {
+            $oldValues[$setting['key']] = SystemSetting::get($setting['key']);
             SystemSetting::set($setting['key'], $setting['value']);
+            $newValues[$setting['key']] = $setting['value'];
         }
 
         // Clear cache after updating
         SystemSetting::clearCache();
+
+        AuditLog::record(
+            module: AuditLog::MODULE_SETTINGS,
+            action: AuditLog::ACTION_UPDATE,
+            description: 'Actualizo la configuracion: ' . implode(', ', array_keys($newValues)),
+            oldValues: $oldValues,
+            newValues: $newValues,
+        );
 
         return redirect()->back()->with('success', 'Configuracion actualizada exitosamente.');
     }
@@ -165,7 +179,16 @@ class SettingsController extends Controller
             'value' => ['required'],
         ]);
 
+        $oldValue = SystemSetting::get($validated['key']);
         SystemSetting::set($validated['key'], $validated['value']);
+
+        AuditLog::record(
+            module: AuditLog::MODULE_SETTINGS,
+            action: AuditLog::ACTION_UPDATE,
+            description: "Actualizo la configuracion: {$validated['key']}",
+            oldValues: [$validated['key'] => $oldValue],
+            newValues: [$validated['key'] => $validated['value']],
+        );
 
         return redirect()->back()->with('success', 'Configuracion actualizada.');
     }

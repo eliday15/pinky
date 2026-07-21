@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AuditLog;
 use App\Models\VacationTable;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -56,6 +57,13 @@ class VacationTableController extends Controller
                 VacationTable::create($entry);
             }
         });
+
+        AuditLog::record(
+            module: AuditLog::MODULE_VACATIONS,
+            action: AuditLog::ACTION_UPDATE,
+            description: 'Actualizo la tabla de vacaciones (' . count($validated['entries']) . ' filas)',
+            metadata: ['entradas' => $validated['entries']],
+        );
 
         return redirect()->route('settings.vacation-table')
             ->with('success', 'Tabla de vacaciones actualizada exitosamente.');

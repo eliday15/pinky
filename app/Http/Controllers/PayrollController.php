@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Exports\ContpaqiPrenominaExport;
 use App\Http\Traits\VerifiesTwoFactor;
+use App\Models\AuditLog;
 use App\Models\CashPayout;
 use App\Models\Department;
 use App\Models\PayrollEntry;
@@ -132,13 +133,23 @@ class PayrollController extends Controller
                 continue;
             }
 
-            $created->push(PayrollPeriod::create([
+            $period = PayrollPeriod::create([
                 ...$validated,
                 'name' => $scope['id'] ? $validated['name'].' - '.$scope['name'] : $validated['name'],
                 'department_id' => $scope['id'],
                 'status' => 'draft',
                 'created_by' => auth()->id(),
-            ]));
+            ]);
+            $created->push($period);
+
+            AuditLog::record(
+                module: AuditLog::MODULE_PAYROLL,
+                action: AuditLog::ACTION_CREATE,
+                model: $period,
+                description: "Creo la nomina {$period->name} ({$validated['type']}, {$validated['start_date']} al {$validated['end_date']})",
+                subjectLabel: $period->name,
+                metadata: ['type' => $validated['type'], 'start_date' => $validated['start_date'], 'end_date' => $validated['end_date'], 'scope' => $scope['name']],
+            );
         }
 
         if ($created->isEmpty()) {
@@ -248,6 +259,16 @@ class PayrollController extends Controller
 
         $this->calculator->calculatePeriod($payroll);
 
+        $entryCount = $payroll->entries()->count();
+        AuditLog::record(
+            module: AuditLog::MODULE_PAYROLL,
+            action: AuditLog::ACTION_RECALCULATE,
+            model: $payroll,
+            description: "Recalculo la nomina {$payroll->name} ({$entryCount} recibos)",
+            subjectLabel: $payroll->name,
+            metadata: ['entry_count' => $entryCount],
+        );
+
         return redirect()->route('payroll.show', $payroll)
             ->with('success', 'Nomina calculada exitosamente.');
     }
@@ -272,6 +293,17 @@ class PayrollController extends Controller
             'status' => 'approved',
             'approved_by' => auth()->id(),
         ]);
+
+        $totalEmpleados = $payroll->entries()->count();
+        $totalNeto = (float) $payroll->entries()->sum('net_pay');
+        AuditLog::record(
+            module: AuditLog::MODULE_PAYROLL,
+            action: AuditLog::ACTION_APPROVE,
+            model: $payroll,
+            description: "Aprobo la nomina {$payroll->name} ({$totalEmpleados} empleados, neto $".number_format($totalNeto, 2).')',
+            subjectLabel: $payroll->name,
+            metadata: ['total_neto' => round($totalNeto, 2), 'empleados' => $totalEmpleados],
+        );
 
         // Acumulados anuales (ISR retenido, gravado, días): se reconstruyen
         // desde cero para el año del periodo — idempotente, re-aprobar no
@@ -309,6 +341,14 @@ class PayrollController extends Controller
         }
 
         $payroll->update(['status' => 'paid']);
+
+        AuditLog::record(
+            module: AuditLog::MODULE_PAYROLL,
+            action: AuditLog::ACTION_PAY,
+            model: $payroll,
+            description: "Marco como pagada la nomina {$payroll->name}",
+            subjectLabel: $payroll->name,
+        );
 
         return redirect()->route('payroll.show', $payroll)
             ->with('success', 'Nomina marcada como pagada.');
@@ -429,6 +469,15 @@ class PayrollController extends Controller
                 'cash_closed_at' => now(),
                 'cash_delivery_confirmed_at' => null,
             ]);
+
+            AuditLog::record(
+                module: AuditLog::MODULE_CASH,
+                action: AuditLog::ACTION_CLOSE,
+                model: $payroll,
+                description: "Preparo el efectivo de la nomina {$payroll->name} ({$entries->count()} empleados)",
+                subjectLabel: $payroll->name,
+                metadata: ['empleados' => $entries->count()],
+            );
         });
 
         return redirect()->route('payroll.cash', $payroll)
@@ -453,6 +502,14 @@ class PayrollController extends Controller
         }
 
         $payroll->update(['cash_delivery_confirmed_at' => now()]);
+
+        AuditLog::record(
+            module: AuditLog::MODULE_CASH,
+            action: AuditLog::ACTION_APPROVE,
+            model: $payroll,
+            description: "Confirmo la entrega del efectivo de la nomina {$payroll->name}",
+            subjectLabel: $payroll->name,
+        );
 
         return redirect()->route('payroll.cash', $payroll)
             ->with('success', 'Entrega del efectivo confirmada. Ya puedes cobrar.');
@@ -792,6 +849,16 @@ class PayrollController extends Controller
                 'collected_by' => auth()->id(),
             ]);
 
+            AuditLog::record(
+                module: AuditLog::MODULE_CASH,
+                action: AuditLog::ACTION_PAY,
+                model: $payroll,
+                description: "Registro el cobro en efectivo de {$payout->employee->full_name} en la nomina {$payroll->name} (\$".number_format((float) $payout->total_due, 2).')',
+                employeeId: $payout->employee_id,
+                subjectLabel: $payroll->name,
+                metadata: ['amount_paid' => (float) $payout->total_due, 'employee_name' => $payout->employee->full_name],
+            );
+
             // El total cobrado ya incluía el acumulado de periodos previos: saldar
             // esos cobros pendientes para que no reaparezcan en el siguiente cierre.
             CashPayout::where('employee_id', $payout->employee_id)
@@ -853,6 +920,15 @@ class PayrollController extends Controller
             'cash_return_amount' => $returnAmount,
         ]);
 
+        AuditLog::record(
+            module: AuditLog::MODULE_CASH,
+            action: AuditLog::ACTION_CLOSE,
+            model: $payroll,
+            description: "Cerro el cobro en efectivo de la nomina {$payroll->name}. Efectivo devuelto: $".number_format($returnAmount, 2),
+            subjectLabel: $payroll->name,
+            metadata: ['cash_return_amount' => $returnAmount],
+        );
+
         $formatted = number_format($returnAmount, 2);
 
         return redirect()->route('payroll.cash', $payroll)
@@ -887,6 +963,16 @@ class PayrollController extends Controller
             'cash_return_received_by' => auth()->id(),
         ]);
 
+        $returnAmount = (float) $payroll->cash_return_amount;
+        AuditLog::record(
+            module: AuditLog::MODULE_CASH,
+            action: AuditLog::ACTION_CLOSE,
+            model: $payroll,
+            description: "Confirmo la recepcion del efectivo devuelto de la nomina {$payroll->name}. Monto: $".number_format($returnAmount, 2),
+            subjectLabel: $payroll->name,
+            metadata: ['cash_return_amount' => $returnAmount],
+        );
+
         return redirect()->route('payroll.cash', $payroll)
             ->with('success', 'Efectivo devuelto recibido. Ciclo de efectivo del periodo completado.');
     }
@@ -917,6 +1003,14 @@ class PayrollController extends Controller
             'cash_collection_closed_by' => null,
             'cash_return_amount' => null,
         ]);
+
+        AuditLog::record(
+            module: AuditLog::MODULE_CASH,
+            action: AuditLog::ACTION_REOPEN,
+            model: $payroll,
+            description: "Reabrio el cobro en efectivo de la nomina {$payroll->name}",
+            subjectLabel: $payroll->name,
+        );
 
         return redirect()->route('payroll.cash', $payroll)
             ->with('success', 'Cobro reabierto. Ya se puede volver a cobrar en este periodo.');
@@ -1079,8 +1173,20 @@ class PayrollController extends Controller
                 ->with('error', 'Solo se pueden eliminar periodos en borrador.');
         }
 
+        $periodName = $payroll->name;
+        $periodStatus = $payroll->status;
+
         $payroll->entries()->delete();
         $payroll->delete();
+
+        AuditLog::record(
+            module: AuditLog::MODULE_PAYROLL,
+            action: AuditLog::ACTION_DELETE,
+            model: null,
+            description: "Elimino la nomina {$periodName} (estatus: {$periodStatus})",
+            subjectLabel: $periodName,
+            metadata: ['status' => $periodStatus],
+        );
 
         return redirect()->route('payroll.index')
             ->with('success', 'Periodo de nomina eliminado.');
@@ -1109,6 +1215,15 @@ class PayrollController extends Controller
         $periodName = preg_replace('/[^a-zA-Z0-9_-]/', '_', $payroll->name);
         $typeTag = ['weekly' => 'semanal', 'monthly' => 'mensual', 'biweekly' => 'quincenal'][$payroll->type] ?? $payroll->type;
         $filename = "prenomina_{$typeTag}_{$periodName}_{$payroll->start_date->format('Y-m-d')}.{$format}";
+
+        AuditLog::record(
+            module: AuditLog::MODULE_PAYROLL,
+            action: AuditLog::ACTION_EXPORT,
+            model: $payroll,
+            description: "Exporto la nomina {$payroll->name} a CONTPAQi (formato: {$format})",
+            subjectLabel: $payroll->name,
+            metadata: ['format' => $format, 'filename' => $filename],
+        );
 
         return (new ContpaqiPrenominaExport($payroll))->download($filename, $writerType);
     }

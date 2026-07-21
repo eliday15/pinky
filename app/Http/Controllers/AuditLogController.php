@@ -3,7 +3,10 @@
 namespace App\Http\Controllers;
 
 use App\Models\AuditLog;
+use App\Models\Employee;
 use App\Models\User;
+use App\Support\AuditContext;
+use App\Support\AuditFieldLabels;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Inertia\Inertia;
@@ -19,45 +22,45 @@ class AuditLogController extends Controller
      */
     public function index(Request $request): Response
     {
-        $user = Auth::user();
+        $this->authorizeAccess();
 
-        if (! $user->hasPermissionTo('logs.view')) {
-            abort(403, 'No tienes permiso para ver los logs de auditoria.');
-        }
-
-        $query = AuditLog::with('user')
-            ->when($request->module, function ($q, $module) {
-                $q->where('module', $module);
-            })
-            ->when($request->action, function ($q, $action) {
-                $q->where('action', $action);
-            })
-            ->when($request->user_id, function ($q, $userId) {
-                $q->where('user_id', $userId);
-            })
-            ->when($request->from_date, function ($q, $fromDate) {
-                $q->whereDate('created_at', '>=', $fromDate);
-            })
-            ->when($request->to_date, function ($q, $toDate) {
-                $q->whereDate('created_at', '<=', $toDate);
-            })
+        $query = AuditLog::with(['user:id,name', 'employee:id,full_name,employee_number'])
+            ->when($request->module, fn ($q, $module) => $q->where('module', $module))
+            ->when($request->action, fn ($q, $action) => $q->where('action', $action))
+            ->when($request->user_id, fn ($q, $userId) => $q->where('user_id', $userId))
+            ->when($request->employee_id, fn ($q, $employeeId) => $q->where('employee_id', $employeeId))
+            ->when($request->context, fn ($q, $context) => $q->where('context', $context))
+            ->when($request->entity, fn ($q, $entity) => $q->where('auditable_type', $entity))
+            ->when($request->actor_role, fn ($q, $role) => $q->where('actor_role', $role))
+            ->when($request->from_date, fn ($q, $fromDate) => $q->whereDate('created_at', '>=', $fromDate))
+            ->when($request->to_date, fn ($q, $toDate) => $q->whereDate('created_at', '<=', $toDate))
             ->when($request->search, function ($q, $search) {
                 $q->where(function ($query) use ($search) {
                     $query->where('description', 'like', "%{$search}%")
-                        ->orWhereHas('user', function ($u) use ($search) {
-                            $u->where('name', 'like', "%{$search}%");
-                        });
+                        ->orWhere('subject_label', 'like', "%{$search}%")
+                        ->orWhere('actor_name', 'like', "%{$search}%")
+                        ->orWhereHas('user', fn ($u) => $u->where('name', 'like', "%{$search}%"))
+                        ->orWhereHas('employee', fn ($e) => $e->where('full_name', 'like', "%{$search}%"));
                 });
             });
 
-        $logs = $query->orderBy('created_at', 'desc')->paginate(50)->withQueryString();
+        $logs = $query->orderByDesc('created_at')->orderByDesc('id')
+            ->paginate((int) $request->input('per_page', 50))
+            ->withQueryString();
 
         return Inertia::render('AuditLogs/Index', [
             'logs' => $logs,
             'users' => User::orderBy('name')->get(['id', 'name']),
-            'filters' => $request->only(['module', 'action', 'user_id', 'from_date', 'to_date', 'search']),
-            'modules' => $this->getModules(),
-            'actions' => $this->getActions(),
+            'employees' => Employee::orderBy('full_name')->get(['id', 'full_name', 'employee_number']),
+            'filters' => $request->only([
+                'module', 'action', 'user_id', 'employee_id', 'context',
+                'entity', 'actor_role', 'from_date', 'to_date', 'search',
+            ]),
+            'modules' => $this->asOptions(AuditLog::moduleLabels()),
+            'actions' => $this->asOptions(AuditLog::actionLabels()),
+            'contexts' => $this->contextOptions(),
+            'entities' => $this->asOptions(AuditLog::entityLabels()),
+            'roles' => $this->roleOptions(),
         ]);
     }
 
@@ -66,50 +69,110 @@ class AuditLogController extends Controller
      */
     public function show(AuditLog $auditLog): Response
     {
-        $user = Auth::user();
+        $this->authorizeAccess();
 
-        if (! $user->hasPermissionTo('logs.view')) {
-            abort(403, 'No tienes permiso para ver los logs de auditoria.');
-        }
-
-        $auditLog->load('user');
+        $auditLog->load(['user:id,name', 'employee:id,full_name,employee_number']);
 
         return Inertia::render('AuditLogs/Show', [
             'log' => $auditLog,
+            'changes' => AuditFieldLabels::diff($auditLog->old_values, $auditLog->new_values),
+            'metadata' => $this->labelledMetadata($auditLog->metadata),
+            // Nearby activity on the same record, so an approval can be read in
+            // the context of what happened to that record before and after.
+            'related' => $auditLog->auditable_type
+                ? AuditLog::with('user:id,name')
+                    ->where('auditable_type', $auditLog->auditable_type)
+                    ->where('auditable_id', $auditLog->auditable_id)
+                    ->where('id', '!=', $auditLog->id)
+                    ->orderByDesc('created_at')
+                    ->limit(15)
+                    ->get()
+                : [],
         ]);
     }
 
     /**
-     * Get available modules.
+     * Guard the whole controller behind the logs permission.
      */
-    private function getModules(): array
+    private function authorizeAccess(): void
     {
-        return [
-            ['value' => AuditLog::MODULE_EMPLOYEES, 'label' => 'Empleados'],
-            ['value' => AuditLog::MODULE_ATTENDANCE, 'label' => 'Asistencia'],
-            ['value' => AuditLog::MODULE_PAYROLL, 'label' => 'Nomina'],
-            ['value' => AuditLog::MODULE_INCIDENTS, 'label' => 'Incidencias'],
-            ['value' => AuditLog::MODULE_AUTHORIZATIONS, 'label' => 'Autorizaciones'],
-            ['value' => AuditLog::MODULE_SETTINGS, 'label' => 'Configuracion'],
-            ['value' => AuditLog::MODULE_AUTH, 'label' => 'Autenticacion'],
-        ];
+        if (! Auth::user()?->hasPermissionTo('logs.view')) {
+            abort(403, 'No tienes permiso para ver los logs de auditoria.');
+        }
     }
 
     /**
-     * Get available actions.
+     * Turn a value => label map into the {value, label} list the UI expects.
+     *
+     * @param  array<string, string>  $map
+     * @return array<int, array{value: string, label: string}>
      */
-    private function getActions(): array
+    private function asOptions(array $map): array
     {
-        return [
-            ['value' => AuditLog::ACTION_CREATE, 'label' => 'Crear'],
-            ['value' => AuditLog::ACTION_UPDATE, 'label' => 'Actualizar'],
-            ['value' => AuditLog::ACTION_DELETE, 'label' => 'Eliminar'],
-            ['value' => AuditLog::ACTION_APPROVE, 'label' => 'Aprobar'],
-            ['value' => AuditLog::ACTION_REJECT, 'label' => 'Rechazar'],
-            ['value' => AuditLog::ACTION_LOGIN, 'label' => 'Iniciar sesion'],
-            ['value' => AuditLog::ACTION_LOGOUT, 'label' => 'Cerrar sesion'],
-            ['value' => AuditLog::ACTION_SYNC, 'label' => 'Sincronizar'],
-            ['value' => AuditLog::ACTION_EXPORT, 'label' => 'Exportar'],
-        ];
+        $options = [];
+
+        foreach ($map as $value => $label) {
+            $options[] = ['value' => $value, 'label' => $label];
+        }
+
+        usort($options, fn ($a, $b) => strcmp($a['label'], $b['label']));
+
+        return $options;
+    }
+
+    /**
+     * Execution-origin filter options.
+     *
+     * @return array<int, array{value: string, label: string}>
+     */
+    private function contextOptions(): array
+    {
+        return $this->asOptions([
+            AuditContext::CONTEXT_WEB => AuditContext::contextLabel(AuditContext::CONTEXT_WEB),
+            AuditContext::CONTEXT_CONSOLE => AuditContext::contextLabel(AuditContext::CONTEXT_CONSOLE),
+            AuditContext::CONTEXT_SYNC => AuditContext::contextLabel(AuditContext::CONTEXT_SYNC),
+            AuditContext::CONTEXT_KIOSK => AuditContext::contextLabel(AuditContext::CONTEXT_KIOSK),
+            AuditContext::CONTEXT_SYSTEM => AuditContext::contextLabel(AuditContext::CONTEXT_SYSTEM),
+        ]);
+    }
+
+    /**
+     * Roles available as an actor filter.
+     *
+     * @return array<int, array{value: string, label: string}>
+     */
+    private function roleOptions(): array
+    {
+        try {
+            $roles = \Spatie\Permission\Models\Role::orderBy('name')->pluck('name');
+        } catch (\Throwable) {
+            return [];
+        }
+
+        return $roles->map(fn ($name) => ['value' => $name, 'label' => $name])->all();
+    }
+
+    /**
+     * Present metadata with readable keys.
+     *
+     * @param  array<string, mixed>|null  $metadata
+     * @return array<int, array{label: string, value: mixed}>
+     */
+    private function labelledMetadata(?array $metadata): array
+    {
+        if (empty($metadata)) {
+            return [];
+        }
+
+        $rows = [];
+
+        foreach ($metadata as $key => $value) {
+            $rows[] = [
+                'label' => AuditFieldLabels::label((string) $key),
+                'value' => $value,
+            ];
+        }
+
+        return $rows;
     }
 }

@@ -7,6 +7,7 @@ use App\Models\AttendanceRecord;
 use App\Models\Employee;
 use App\Models\Holiday;
 use App\Models\Incident;
+use App\Models\AuditLog;
 use App\Models\IncidentType;
 use App\Services\PayrollInvalidationService;
 use App\Services\ZktecoSyncService;
@@ -470,6 +471,14 @@ class IncidentController extends Controller
             $count++;
         }
 
+        AuditLog::record(
+            module: AuditLog::MODULE_INCIDENTS,
+            action: AuditLog::ACTION_CREATE,
+            model: null,
+            description: 'Creo ' . $count . ' incidencias de tipo ' . ($incidentType->name ?? 'incidencia') . ' del ' . Carbon::parse($validated['start_date'])->format('d/m/Y') . ' al ' . Carbon::parse($validated['end_date'])->format('d/m/Y'),
+            metadata: ['total' => $count, 'omitidos' => count($skipped), 'tipo' => $incidentType->name ?? null],
+        );
+
         $msg = "Se crearon {$count} incidencias exitosamente.";
         if (! empty($skipped)) {
             $msg .= ' Omitidos: '.implode(', ', $skipped);
@@ -582,6 +591,18 @@ class IncidentController extends Controller
             $this->recalculateAttendanceForIncident($incident);
         }
 
+        // El trait auto-registra el deleted; aquí capturamos el contexto de negocio
+        // adicional (devolución de saldo) que no queda en el evento del modelo.
+        $desc = 'Elimino ' . ($incidentType?->name ?? 'incidencia') . ' de ' . ($incident->employee?->full_name ?? 'empleado') . ' del ' . Carbon::parse($incident->start_date)->format('d/m/Y') . ' al ' . Carbon::parse($incident->end_date)->format('d/m/Y');
+        if ($wasApproved && $incidentType?->deducts_vacation) {
+            $desc .= ' (devolvio ' . $incident->days_count . ' dias de vacaciones)';
+        }
+        $incident->recordAuditEvent(
+            action: AuditLog::ACTION_DELETE,
+            description: $desc,
+            metadata: ['era_aprobada' => $wasApproved, 'dias' => $incident->days_count],
+        );
+
         return redirect()->route('incidents.index')
             ->with('success', 'Incidencia eliminada.');
     }
@@ -637,6 +658,12 @@ class IncidentController extends Controller
         // un permiso aprobado tarde revierte la falta/retardo ya marcada.
         $this->recalculateAttendanceForIncident($incident);
 
+        $incident->recordAuditEvent(
+            action: AuditLog::ACTION_APPROVE,
+            description: 'Aprobo ' . ($incidentType->name ?? 'incidencia') . ' de ' . ($employee->full_name ?? 'empleado') . ': ' . $incident->days_count . ' dias del ' . Carbon::parse($incident->start_date)->format('d/m/Y') . ' al ' . Carbon::parse($incident->end_date)->format('d/m/Y'),
+            metadata: ['dias' => $incident->days_count, 'tipo' => $incidentType->name ?? null],
+        );
+
         return redirect()->back()->with('success', 'Incidencia aprobada.');
     }
 
@@ -657,6 +684,13 @@ class IncidentController extends Controller
         ]);
 
         $incident->reject(auth()->user(), $validated['rejection_reason']);
+
+        $incident->load(['employee', 'incidentType']);
+        $incident->recordAuditEvent(
+            action: AuditLog::ACTION_REJECT,
+            description: 'Rechazo ' . ($incident->incidentType?->name ?? 'incidencia') . ' de ' . ($incident->employee?->full_name ?? 'empleado') . ' del ' . Carbon::parse($incident->start_date)->format('d/m/Y') . ' al ' . Carbon::parse($incident->end_date)->format('d/m/Y') . '. Motivo: ' . $validated['rejection_reason'],
+            metadata: ['motivo' => $validated['rejection_reason']],
+        );
 
         return redirect()->back()->with('success', 'Incidencia rechazada.');
     }

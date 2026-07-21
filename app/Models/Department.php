@@ -26,6 +26,14 @@ class Department extends Model
      */
     protected array $auditExcluded = ['created_at', 'updated_at'];
 
+    /**
+     * Human readable name of this department for the audit trail.
+     */
+    public function auditSubjectLabel(): string
+    {
+        return 'Departamento ' . ($this->name ?? '#' . $this->getKey());
+    }
+
     protected $fillable = [
         'name',
         'code',

@@ -30,6 +30,14 @@ class Position extends Model
      */
     protected array $auditExcluded = ['created_at', 'updated_at'];
 
+    /**
+     * Human readable name of this position for the audit trail.
+     */
+    public function auditSubjectLabel(): string
+    {
+        return 'Puesto ' . ($this->name ?? '#' . $this->getKey());
+    }
+
     protected $fillable = [
         'name',
         'code',

@@ -30,6 +30,19 @@ class BreakfastClaim extends Model
      */
     protected array $auditExcluded = ['created_at', 'updated_at'];
 
+    /**
+     * Human readable name of this breakfast claim for the audit trail.
+     */
+    public function auditSubjectLabel(): string
+    {
+        $employee = $this->employee?->full_name;
+        $date = $this->auditDate($this->claim_date);
+
+        return trim('Desayuno'
+            . ($employee ? " de {$employee}" : '')
+            . ($date ? " ({$date})" : ''));
+    }
+
     protected $fillable = [
         'employee_id',
         'claim_date',

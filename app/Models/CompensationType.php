@@ -71,6 +71,14 @@ class CompensationType extends Model
      */
     protected array $auditExcluded = ['created_at', 'updated_at'];
 
+    /**
+     * Human readable name of this compensation type for the audit trail.
+     */
+    public function auditSubjectLabel(): string
+    {
+        return trim('Concepto ' . ($this->code ? "{$this->code} - " : '') . ($this->name ?? ''));
+    }
+
     protected $fillable = [
         'name',
         'code',

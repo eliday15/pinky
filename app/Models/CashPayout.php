@@ -27,7 +27,20 @@ class CashPayout extends Model
     /**
      * Module name for audit logging.
      */
-    protected string $auditModule = 'payroll';
+    protected string $auditModule = 'cash';
+
+    /**
+     * Human readable name of this cash payout for the audit trail.
+     */
+    public function auditSubjectLabel(): string
+    {
+        $employee = $this->employee?->full_name;
+        $period = $this->payrollPeriod?->name;
+
+        return trim('Cobro en efectivo'
+            . ($employee ? " de {$employee}" : '')
+            . ($period ? " ({$period})" : ''));
+    }
 
     /**
      * Fields to exclude from audit logs.

@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Http\Traits\VerifiesTwoFactor;
 use App\Models\AttendanceAnomaly;
+use App\Models\AuditLog;
 use App\Models\Authorization;
 use App\Models\Employee;
 use App\Models\Incident;
@@ -183,6 +184,12 @@ class AnomalyResolutionController extends Controller
 
         // Update attendance record anomaly count
         $this->updateRecordAnomalyCount($anomaly->attendance_record_id);
+
+        $anomaly->recordAuditEvent(
+            action: AuditLog::ACTION_RESOLVE,
+            description: 'Resolvio la anomalia de ' . $anomaly->type_name . ' de ' . ($anomaly->employee?->full_name ?? 'empleado') . ' del ' . Carbon::parse($anomaly->work_date)->format('d/m/Y'),
+            metadata: ['metodo' => $validated['resolution_method'], 'notas' => $validated['resolution_notes']],
+        );
 
         return redirect()->back()->with('success', 'Anomalia resuelta.');
     }
@@ -396,10 +403,16 @@ class AnomalyResolutionController extends Controller
                 : [];
         }
 
+        // Eager-load employee to avoid N+1 inside the loop.
+        $anomalyMap = AttendanceAnomaly::with('employee')
+            ->whereIn('id', $validated['anomaly_ids'])
+            ->get()
+            ->keyBy('id');
+
         $recordIds = [];
         $resolved = 0;
         foreach ($validated['anomaly_ids'] as $id) {
-            $anomaly = AttendanceAnomaly::find($id);
+            $anomaly = $anomalyMap->get($id);
             if (!$anomaly || $anomaly->status !== 'open') {
                 continue;
             }
@@ -409,6 +422,11 @@ class AnomalyResolutionController extends Controller
             $anomaly->resolve($user, $validated['resolution_notes'] ?? null, AttendanceAnomaly::METHOD_JUSTIFIED);
             $recordIds[] = $anomaly->attendance_record_id;
             $resolved++;
+            $anomaly->recordAuditEvent(
+                action: AuditLog::ACTION_RESOLVE,
+                description: 'Resolvio la anomalia de ' . $anomaly->type_name . ' de ' . ($anomaly->employee?->full_name ?? 'empleado') . ' del ' . Carbon::parse($anomaly->work_date)->format('d/m/Y'),
+                metadata: ['notas' => $validated['resolution_notes'] ?? null],
+            );
         }
 
         foreach (array_unique(array_filter($recordIds)) as $recordId) {
@@ -445,10 +463,16 @@ class AnomalyResolutionController extends Controller
                 : [];
         }
 
+        // Eager-load employee to avoid N+1 inside the loop.
+        $anomalyMap = AttendanceAnomaly::with('employee')
+            ->whereIn('id', $validated['anomaly_ids'])
+            ->get()
+            ->keyBy('id');
+
         $recordIds = [];
         $dismissed = 0;
         foreach ($validated['anomaly_ids'] as $id) {
-            $anomaly = AttendanceAnomaly::find($id);
+            $anomaly = $anomalyMap->get($id);
             if (!$anomaly || $anomaly->status !== 'open') {
                 continue;
             }
@@ -458,6 +482,11 @@ class AnomalyResolutionController extends Controller
             $anomaly->dismiss($user, $validated['resolution_notes'] ?? null, AttendanceAnomaly::METHOD_FALSE_POSITIVE);
             $recordIds[] = $anomaly->attendance_record_id;
             $dismissed++;
+            $anomaly->recordAuditEvent(
+                action: AuditLog::ACTION_RESOLVE,
+                description: 'Descarto la anomalia de ' . $anomaly->type_name . ' de ' . ($anomaly->employee?->full_name ?? 'empleado') . ' del ' . Carbon::parse($anomaly->work_date)->format('d/m/Y') . ' (falso positivo)',
+                metadata: ['notas' => $validated['resolution_notes'] ?? null],
+            );
         }
 
         foreach (array_unique(array_filter($recordIds)) as $recordId) {

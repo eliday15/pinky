@@ -4,18 +4,52 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use App\Traits\Auditable;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Spatie\Permission\Traits\HasRoles;
 
 class User extends Authenticatable
 {
-    use HasFactory, Notifiable, HasRoles;
+    use Auditable, HasFactory, HasRoles, Notifiable;
 
     /**
      * The table associated with the model.
      */
     protected $table = 'app_users';
+
+    /**
+     * Module name for audit logging.
+     */
+    protected string $auditModule = 'users';
+
+    /**
+     * Credentials and secrets must never reach the audit trail.
+     */
+    protected array $auditExcluded = [
+        'password',
+        'remember_token',
+        'two_factor_recovery_codes',
+        'two_factor_secret',
+        'created_at',
+        'updated_at',
+    ];
+
+    /**
+     * Human readable name of this user for the audit trail.
+     */
+    public function auditSubjectLabel(): string
+    {
+        return trim('Usuario ' . ($this->name ?? '') . ($this->email ? " ({$this->email})" : ''));
+    }
+
+    /**
+     * A user account is not tied to an employee record.
+     */
+    public function auditEmployeeId(): ?int
+    {
+        return null;
+    }
 
     /**
      * The attributes that are mass assignable.

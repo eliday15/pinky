@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Traits\Auditable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -9,7 +10,36 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class PayrollPeriod extends Model
 {
-    use HasFactory;
+    use Auditable, HasFactory;
+
+    /**
+     * Module name for audit logging.
+     */
+    protected string $auditModule = 'payroll';
+
+    /**
+     * Fields to exclude from audit logs.
+     */
+    protected array $auditExcluded = ['created_at', 'updated_at'];
+
+    /**
+     * Human readable name of this payroll period for the audit trail.
+     */
+    public function auditSubjectLabel(): string
+    {
+        $name = $this->name ?? 'Nomina #' . $this->getKey();
+        $scope = $this->department?->name;
+
+        return trim("Nomina {$name}" . ($scope ? " ({$scope})" : ''));
+    }
+
+    /**
+     * A payroll period spans many employees, so it is not tied to one.
+     */
+    public function auditEmployeeId(): ?int
+    {
+        return null;
+    }
 
     protected $fillable = [
         'name',

@@ -24,6 +24,19 @@ class CheckOmission extends Model
     protected string $auditModule = 'check_omissions';
 
     /**
+     * Human readable name of this omission for the audit trail.
+     */
+    public function auditSubjectLabel(): string
+    {
+        $employee = $this->employee?->full_name;
+        $date = $this->auditDate($this->work_date);
+
+        return trim('Omision de checada'
+            . ($employee ? " de {$employee}" : '')
+            . ($date ? " ({$date})" : ''));
+    }
+
+    /**
      * Motivos de omisión (catálogo cerrado).
      */
     // "Entrega de mercancía" → al aprobarse NO se aplica la falta; el día se paga

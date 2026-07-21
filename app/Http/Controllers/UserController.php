@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AuditLog;
 use App\Models\Employee;
 use App\Models\User;
 use Illuminate\Http\RedirectResponse;
@@ -141,6 +142,15 @@ class UserController extends Controller
             Employee::where('id', $validated['employee_id'])->update(['user_id' => $user->id]);
         }
 
+        AuditLog::record(
+            module: AuditLog::MODULE_USERS,
+            action: AuditLog::ACTION_CREATE,
+            model: $user,
+            description: "Creo el usuario {$user->name} ({$user->email}) con rol {$validated['role']}",
+            subjectLabel: $user->name,
+            metadata: ['rol' => $validated['role']],
+        );
+
         return redirect()->route('users.index')
             ->with('success', 'Usuario creado exitosamente.');
     }
@@ -206,6 +216,9 @@ class UserController extends Controller
             }
         }
 
+        // Capture roles before sync for audit trail
+        $rolesBefore = $user->roles->pluck('name')->sort()->values()->toArray();
+
         $user->update([
             'name' => $validated['name'],
             'email' => $validated['email'],
@@ -213,6 +226,24 @@ class UserController extends Controller
 
         // Sync role
         $user->syncRoles([$validated['role']]);
+
+        $rolesAfter = [$validated['role']];
+        $roleChanged = $rolesBefore !== $rolesAfter;
+        $auditDescription = $roleChanged
+            ? "Cambio los roles de {$validated['name']}: de " . implode(', ', $rolesBefore ?: ['ninguno']) . " a {$validated['role']}"
+            : "Actualizo el usuario {$validated['name']} ({$validated['email']})";
+
+        AuditLog::record(
+            module: AuditLog::MODULE_USERS,
+            action: AuditLog::ACTION_UPDATE,
+            model: $user,
+            description: $auditDescription,
+            subjectLabel: $validated['name'],
+            metadata: [
+                'roles_antes' => $rolesBefore,
+                'roles_despues' => $rolesAfter,
+            ],
+        );
 
         // Handle employee link change
         $currentEmployeeId = $user->employee?->id;
@@ -240,12 +271,28 @@ class UserController extends Controller
     {
         $this->authorize('delete', $user);
 
+        // Snapshot identity before deletion
+        $nameSnap = $user->name;
+        $emailSnap = $user->email;
+        $rolesSnap = $user->roles->pluck('name')->values()->toArray();
+
         // Unlink employee before deleting
         if ($user->employee) {
             Employee::where('user_id', $user->id)->update(['user_id' => null]);
         }
 
         $user->delete();
+
+        AuditLog::record(
+            module: AuditLog::MODULE_USERS,
+            action: AuditLog::ACTION_DELETE,
+            description: "Elimino el usuario {$nameSnap} ({$emailSnap})",
+            subjectLabel: $nameSnap,
+            metadata: [
+                'email' => $emailSnap,
+                'roles' => $rolesSnap,
+            ],
+        );
 
         return redirect()->route('users.index')
             ->with('success', 'Usuario eliminado exitosamente.');
@@ -262,6 +309,14 @@ class UserController extends Controller
         $user->update([
             'two_factor_recovery_codes' => null,
         ]);
+
+        AuditLog::record(
+            module: AuditLog::MODULE_USERS,
+            action: AuditLog::ACTION_UPDATE,
+            model: $user,
+            description: "Reseteo el 2FA del usuario {$user->name} ({$user->email})",
+            subjectLabel: $user->name,
+        );
 
         return back()->with('success', 'Autenticacion de dos pasos reseteada. El usuario debera reconfigurar 2FA en su proximo inicio de sesion.');
     }
@@ -286,6 +341,14 @@ class UserController extends Controller
             'must_change_password' => true,
             'two_factor_recovery_codes' => null,
         ]);
+
+        AuditLog::record(
+            module: AuditLog::MODULE_USERS,
+            action: AuditLog::ACTION_UPDATE,
+            model: $user,
+            description: "Reseteo la contrasena y 2FA del usuario {$user->name} ({$user->email})",
+            subjectLabel: $user->name,
+        );
 
         return back()->with('success', 'Contraseña y 2FA reseteados. El usuario debera cambiar su contraseña y reconfigurar 2FA en su proximo inicio de sesion.');
     }
