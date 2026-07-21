@@ -10,6 +10,7 @@ use App\Http\Controllers\VacationHoursBankController;
 use App\Http\Controllers\BreakfastController;
 use App\Http\Controllers\CompensationTypeController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\DecemberVacationController;
 use App\Http\Controllers\DepartmentController;
 use App\Http\Controllers\EmployeeBulkController;
 use App\Http\Controllers\EmployeeController;
@@ -55,6 +56,12 @@ Route::middleware(['auth', 'password-changed', 'two-factor-setup'])->group(funct
     Route::resource('incident-types', IncidentTypeController::class)->except(['show']);
 
     // Vacation Table
+    // Cierre obligatorio de diciembre: dias apartados a toda la empresa.
+    Route::get('/settings/december-vacation', [DecemberVacationController::class, 'index'])->name('settings.december-vacation');
+    Route::post('/settings/december-vacation/apply', [DecemberVacationController::class, 'apply'])->name('settings.december-vacation.apply');
+    Route::post('/settings/december-vacation/clear', [DecemberVacationController::class, 'clear'])->name('settings.december-vacation.clear');
+    Route::post('/settings/december-vacation/settle', [DecemberVacationController::class, 'settle'])->name('settings.december-vacation.settle');
+
     Route::get('/settings/vacation-table', [VacationTableController::class, 'index'])->name('settings.vacation-table');
     Route::put('/settings/vacation-table', [VacationTableController::class, 'update'])->name('settings.vacation-table.update');
 

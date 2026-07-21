@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { Link, usePage } from '@inertiajs/vue3';
 import Dropdown from '@/Components/Dropdown.vue';
 import DropdownLink from '@/Components/DropdownLink.vue';
@@ -37,58 +37,77 @@ const hasRole = (role) => {
 // módulo (sus roles no tienen más permisos).
 const isCobrador = computed(() => hasRole('cobrador_general') || hasRole('cobrador_taller'));
 
+// El menu se agrupa por tema para que la barra no crezca sin control: los
+// items sueltos (group: null) van arriba y el resto vive dentro de secciones
+// colapsables.
 const navigation = computed(() => [
     {
         name: 'Dashboard',
         href: 'dashboard',
+        group: null,
         icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6',
         show: !hasRole('supervisor') && !isCobrador.value, // Dashboard hidden for supervisors and cobradores
     },
     {
         name: 'Empleados',
         href: 'employees.index',
+        group: 'Personal',
         icon: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z',
         show: canAny(['employees.view_all', 'employees.view_team', 'employees.view_own']),
     },
     {
+        name: 'Horarios',
+        href: 'schedules.index',
+        group: 'Personal',
+        icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z',
+        show: can('schedules.manage'),
+    },
+    {
         name: 'Asistencia',
         href: 'attendance.index',
+        group: 'Asistencia',
         icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z',
         show: canAny(['attendance.view_all', 'attendance.view_team', 'attendance.view_own']),
     },
     {
         name: 'Anomalias',
         href: 'anomalies.index',
+        group: 'Asistencia',
         icon: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z',
         show: canAny(['anomalies.view_all', 'anomalies.view_team']),
     },
     {
+        name: 'Omisiones',
+        href: 'check-omissions.index',
+        group: 'Asistencia',
+        icon: 'M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z',
+        show: canAny(['check_omissions.view_all', 'check_omissions.view_team']),
+    },
+    {
         name: 'Incidencias',
         href: 'incidents.index',
+        group: 'Solicitudes',
         icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z',
         show: canAny(['incidents.view_all', 'incidents.view_team', 'incidents.view_own']),
     },
     {
         name: 'Autorizaciones',
         href: 'authorizations.index',
+        group: 'Solicitudes',
         icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z',
         show: canAny(['authorizations.view_all', 'authorizations.view_team', 'authorizations.view_own']),
     },
     {
-        name: 'Omisiones',
-        href: 'check-omissions.index',
-        icon: 'M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z',
-        show: canAny(['check_omissions.view_all', 'check_omissions.view_team']),
-    },
-    {
         name: 'Bolsa de Horas',
         href: 'vacation-hours.index',
+        group: 'Solicitudes',
         icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z',
         show: can('vacation_hours.manage'),
     },
     {
         name: 'Nomina',
         href: 'payroll.index',
+        group: 'Nomina',
         icon: 'M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z',
         show: canAny(['payroll.view_basic', 'payroll.view_complete']),
     },
@@ -97,6 +116,7 @@ const navigation = computed(() => [
         // admins entran al efectivo desde Nomina, no necesitan este item.
         name: 'Cobro de efectivo',
         href: 'payroll.cashCollection',
+        group: 'Nomina',
         icon: 'M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z',
         show: can('payroll.cash.collect') && !canAny(['payroll.view_basic', 'payroll.view_complete']),
     },
@@ -105,66 +125,67 @@ const navigation = computed(() => [
         // Quien solo registra (usuario del kiosco/vendedor) entra directo al
         // kiosco; quien puede consultar entra al listado.
         href: can('breakfasts.view') ? 'breakfasts.index' : 'breakfasts.kiosk',
+        group: 'Nomina',
         icon: 'M12 8.25v-1.5m0 1.5c-1.355 0-2.697.056-4.024.166C6.845 8.51 6 9.473 6 10.608v2.513m6-4.871c1.355 0 2.697.056 4.024.166C17.155 8.51 18 9.473 18 10.608v2.513M15 8.25v-1.5m-6 1.5v-1.5m12 9.75-1.5.75a3.354 3.354 0 0 1-3 0 3.354 3.354 0 0 0-3 0 3.354 3.354 0 0 1-3 0 3.354 3.354 0 0 0-3 0 3.354 3.354 0 0 1-3 0L3 16.5m15-3.379a48.474 48.474 0 0 0-6-.371c-2.032 0-4.034.126-6 .371m12 0c.39.049.777.102 1.163.16 1.07.16 1.837 1.094 1.837 2.175v5.169c0 .621-.504 1.125-1.125 1.125H4.125A1.125 1.125 0 0 1 3 20.625v-5.17c0-1.08.768-2.014 1.837-2.174A47.78 47.78 0 0 1 6 13.12',
         show: canAny(['breakfasts.view', 'breakfasts.register']),
     },
     {
         name: 'Reportes',
         href: 'reports.index',
+        group: null,
         icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z',
         show: canAny(['reports.view_all', 'reports.view_team', 'reports.view_own']),
     },
     {
-        name: 'Horarios',
-        href: 'schedules.index',
-        icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z',
-        show: can('schedules.manage'),
-    },
-    {
         name: 'Departamentos',
         href: 'departments.index',
+        group: 'Catalogos',
         icon: 'M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4',
         show: can('departments.manage'),
     },
     {
         name: 'Puestos',
         href: 'positions.index',
+        group: 'Catalogos',
         icon: 'M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z',
         show: can('positions.manage'),
     },
     {
         name: 'Compensaciones',
         href: 'compensation-types.index',
+        group: 'Catalogos',
         icon: 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
         show: can('compensation_types.manage'),
     },
     {
         name: 'Tipos de Incidencia',
         href: 'incident-types.index',
+        group: 'Catalogos',
         icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01',
         show: can('incident_types.manage'),
     },
     {
         name: 'Usuarios',
         href: 'users.index',
+        group: 'Administracion',
         icon: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z',
         show: can('users.view'),
     },
     {
         name: 'Configuracion',
         href: 'settings.index',
+        group: 'Administracion',
         icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z',
         show: can('settings.view'),
     },
     {
         name: 'Auditoria',
         href: 'audit-logs.index',
+        group: 'Administracion',
         icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01',
         show: can('logs.view'),
     },
 ]);
-
-const visibleNavigation = computed(() => navigation.value.filter(item => item.show));
 
 const isActiveRoute = (routeName) => {
     try {
@@ -182,6 +203,68 @@ const hasRoute = (routeName) => {
         return false;
     }
 };
+
+const visibleNavigation = computed(() => navigation.value.filter(item => item.show));
+
+// Items sueltos (sin grupo) para la parte alta del menu.
+const topLevelItems = computed(() => visibleNavigation.value.filter(item => !item.group));
+
+// Grupos en el orden en que aparecen en `navigation`, ya sin los vacios.
+const navigationGroups = computed(() => {
+    const groups = [];
+
+    for (const item of visibleNavigation.value) {
+        if (!item.group) continue;
+
+        let group = groups.find(g => g.name === item.group);
+
+        if (!group) {
+            group = { name: item.group, items: [] };
+            groups.push(group);
+        }
+
+        group.items.push(item);
+    }
+
+    return groups;
+});
+
+const STORAGE_KEY = 'pinky.sidebar.openGroups';
+
+const readOpenGroups = () => {
+    try {
+        const stored = JSON.parse(window.localStorage.getItem(STORAGE_KEY));
+        return Array.isArray(stored) ? stored : [];
+    } catch {
+        return [];
+    }
+};
+
+const openGroups = ref(readOpenGroups());
+
+const isGroupOpen = (group) => openGroups.value.includes(group.name);
+
+const toggleGroup = (group) => {
+    openGroups.value = isGroupOpen(group)
+        ? openGroups.value.filter(name => name !== group.name)
+        : [...openGroups.value, group.name];
+
+    try {
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(openGroups.value));
+    } catch {
+        // localStorage bloqueado: el menu sigue funcionando, solo no recuerda.
+    }
+};
+
+// El grupo de la pantalla actual siempre se abre, aunque el usuario lo haya
+// cerrado antes: si no, el item activo quedaria escondido.
+watch(navigationGroups, (groups) => {
+    const active = groups.find(g => g.items.some(item => isActiveRoute(item.href)));
+
+    if (active && !openGroups.value.includes(active.name)) {
+        openGroups.value = [...openGroups.value, active.name];
+    }
+}, { immediate: true });
 </script>
 
 <template>
@@ -205,33 +288,82 @@ const hasRoute = (routeName) => {
             </div>
 
             <!-- Navigation -->
-            <nav class="flex-1 overflow-y-auto mt-6 px-4 pb-4">
-                <template v-for="item in visibleNavigation" :key="item.name">
+            <nav class="flex-1 overflow-y-auto mt-4 px-4 pb-4">
+                <!-- Items sueltos: siempre visibles arriba -->
+                <template v-for="item in topLevelItems" :key="item.name">
                     <Link
                         v-if="hasRoute(item.href)"
                         :href="route(item.href)"
                         :class="[
-                            'flex items-center px-4 py-3 mt-2 rounded-lg transition-colors duration-200',
+                            'flex items-center px-4 py-2.5 mt-1 rounded-lg transition-colors duration-200',
                             isActiveRoute(item.href)
                                 ? 'bg-pink-50 text-pink-600'
                                 : 'text-gray-600 hover:bg-gray-100'
                         ]"
                     >
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" :d="item.icon" />
                         </svg>
                         <span class="mx-3">{{ item.name }}</span>
                     </Link>
                     <div
                         v-else
-                        class="flex items-center px-4 py-3 mt-2 rounded-lg text-gray-400 cursor-not-allowed"
+                        class="flex items-center px-4 py-2.5 mt-1 rounded-lg text-gray-400 cursor-not-allowed"
                     >
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" :d="item.icon" />
                         </svg>
                         <span class="mx-3">{{ item.name }}</span>
                     </div>
                 </template>
+
+                <!-- Secciones colapsables -->
+                <div v-for="group in navigationGroups" :key="group.name" class="mt-2">
+                    <button
+                        type="button"
+                        @click="toggleGroup(group)"
+                        class="w-full flex items-center px-4 py-2 rounded-lg text-xs font-semibold uppercase tracking-wide text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors duration-200"
+                    >
+                        <span class="flex-1 text-left">{{ group.name }}</span>
+                        <svg
+                            :class="['w-4 h-4 transition-transform duration-200', isGroupOpen(group) ? 'rotate-180' : '']"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                        >
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                        </svg>
+                    </button>
+
+                    <div v-show="isGroupOpen(group)" class="mt-1">
+                        <template v-for="item in group.items" :key="item.name">
+                            <Link
+                                v-if="hasRoute(item.href)"
+                                :href="route(item.href)"
+                                :class="[
+                                    'flex items-center px-4 py-2.5 mt-0.5 rounded-lg transition-colors duration-200',
+                                    isActiveRoute(item.href)
+                                        ? 'bg-pink-50 text-pink-600'
+                                        : 'text-gray-600 hover:bg-gray-100'
+                                ]"
+                            >
+                                <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" :d="item.icon" />
+                                </svg>
+                                <span class="mx-3 text-sm">{{ item.name }}</span>
+                            </Link>
+                            <div
+                                v-else
+                                class="flex items-center px-4 py-2.5 mt-0.5 rounded-lg text-gray-400 cursor-not-allowed"
+                            >
+                                <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" :d="item.icon" />
+                                </svg>
+                                <span class="mx-3 text-sm">{{ item.name }}</span>
+                            </div>
+                        </template>
+                    </div>
+                </div>
             </nav>
 
             <!-- User Info at Bottom -->

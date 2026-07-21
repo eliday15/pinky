@@ -147,13 +147,18 @@ class IncidentController extends Controller
         return Inertia::render('Incidents/Create', [
             'incidentTypes' => IncidentType::active()->get(),
             'employees' => $employeesQuery
-                ->get(['id', 'full_name', 'employee_number', 'vacation_days_entitled', 'vacation_days_used', 'vacation_hours_used', 'vacation_hours_credited'])
+                ->get(['id', 'full_name', 'employee_number', 'vacation_days_entitled', 'vacation_days_used', 'vacation_days_reserved', 'vacation_days_advanced', 'vacation_hours_used', 'vacation_hours_credited'])
                 ->map(fn (Employee $e) => [
                     'id' => $e->id,
                     'full_name' => $e->full_name,
                     'employee_number' => $e->employee_number,
                     'vacation_days_entitled' => $e->vacation_days_entitled,
                     'vacation_days_used' => $e->vacation_days_used,
+                    // Cierre obligatorio de diciembre (Dani 2026-07-17): los
+                    // apartados no se pueden solicitar; los adelantados son deuda.
+                    'vacation_days_reserved' => (int) $e->vacation_days_reserved,
+                    'vacation_days_advanced' => (int) $e->vacation_days_advanced,
+                    'vacation_days_for_enjoyment' => $e->vacation_days_for_enjoyment,
                     // Bolsa de horas a cuenta de vacaciones (Dani 2026-07-09).
                     'vacation_hours_bank_remaining' => round($e->vacation_hours_bank_remaining, 2),
                     'uses_vacation_hours_bank' => $e->usesVacationHoursBank(),

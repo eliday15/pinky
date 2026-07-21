@@ -3,7 +3,7 @@ import AppLayout from '@/Layouts/AppLayout.vue';
 import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import SearchableSelect from '@/Components/SearchableSelect.vue';
 import SecuritySettings from './Partials/SecuritySettings.vue';
-import { Head, useForm } from '@inertiajs/vue3';
+import { Head, Link, useForm } from '@inertiajs/vue3';
 import { ref, computed } from 'vue';
 
 const props = defineProps({
@@ -125,6 +125,29 @@ const updateVendor = (index, value) => {
                             </button>
                         </li>
                     </ul>
+
+                    <!-- Pantallas de configuracion propias (fuera del key-value) -->
+                    <div class="mt-4 pt-4 border-t border-gray-100">
+                        <p class="px-4 pb-2 text-xs font-medium uppercase tracking-wide text-gray-400">Vacaciones</p>
+                        <ul class="space-y-1">
+                            <li>
+                                <Link
+                                    :href="route('settings.december-vacation')"
+                                    class="block w-full text-left px-4 py-2 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
+                                >
+                                    Cierre de diciembre
+                                </Link>
+                            </li>
+                            <li>
+                                <Link
+                                    :href="route('settings.vacation-table')"
+                                    class="block w-full text-left px-4 py-2 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
+                                >
+                                    Tabla de antiguedad
+                                </Link>
+                            </li>
+                        </ul>
+                    </div>
                 </nav>
             </div>
 

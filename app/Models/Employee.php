@@ -117,6 +117,7 @@ class Employee extends Model
         'vacation_hours_used',
         'vacation_hours_credited',
         'vacation_days_reserved',
+        'vacation_days_advanced',
         'vacation_premium_percentage',
         'status',
     ];
@@ -592,6 +593,65 @@ class Employee extends Model
         return max(0, $this->vacation_days_entitled - $this->vacation_days_used - ($this->vacation_days_reserved ?? 0));
     }
 
+    /**
+     * Días "para disfrutar": el derecho menos los apartados como obligatorios de
+     * diciembre. Es el techo de lo que el colaborador puede llegar a pedir en el
+     * año (antes de restarle lo ya usado) — Dani 2026-07-17.
+     */
+    public function getVacationDaysForEnjoymentAttribute(): int
+    {
+        return max(0, $this->vacation_days_entitled - ($this->vacation_days_reserved ?? 0));
+    }
+
+    /**
+     * ¿Es de nuevo ingreso? (menos de un año de antigüedad).
+     *
+     * A éstos se les ADELANTAN los días obligatorios de diciembre aunque aún no
+     * generen derecho, para que no se queden sin sueldo en el cierre.
+     */
+    public function isNewHire(): bool
+    {
+        if (! $this->hire_date) {
+            return false;
+        }
+
+        return $this->hire_date->gt(now()->subYear());
+    }
+
+    /**
+     * Saldar la deuda de días adelantados con el derecho ya generado.
+     *
+     * "Cuando generen su derecho, esos días se descuentan automáticamente de su
+     * saldo hasta cubrir los días que se les prestaron" (Dani 2026-07-17). El
+     * abono es PARCIAL: si generó menos de lo que debe, se salda lo que alcance
+     * y el resto sigue pendiente. Los días saldados pasan a `used` (que es lo
+     * que realmente ocurrió: los disfrutó en diciembre).
+     *
+     * @return int Días saldados en esta pasada.
+     */
+    public function settleVacationAdvance(): int
+    {
+        $debt = (int) ($this->vacation_days_advanced ?? 0);
+
+        if ($debt <= 0) {
+            return 0;
+        }
+
+        // Lo que su derecho alcanza a cubrir hoy, sin contar lo ya usado.
+        $coverable = max(0, $this->vacation_days_entitled - $this->vacation_days_used);
+        $settled = min($debt, $coverable);
+
+        if ($settled <= 0) {
+            return 0;
+        }
+
+        $this->vacation_days_used += $settled;
+        $this->vacation_days_advanced = $debt - $settled;
+        $this->save();
+
+        return $settled;
+    }
+
     /** 1 día de vacaciones = 8 horas de crédito (Dani 2026-07-01). */
     public const VACATION_HOURS_PER_DAY = 8;
 
@@ -629,11 +689,15 @@ class Employee extends Model
     }
 
     /**
-     * Días de vacaciones disponibles para una solicitud de días completos,
-     * descontando de forma PROPORCIONAL las horas ya gastadas de la bolsa
-     * (8 h = 1 día). Evita el doble gasto: tomar días como vacación y como horas.
-     * Mantiene la misma base que el gate histórico (derecho − usados) y solo
-     * agrega el término proporcional de horas.
+     * Días de vacaciones disponibles para una solicitud de días completos.
+     *
+     * Descuenta:
+     *  - lo ya usado;
+     *  - los APARTADOS como obligatorios de diciembre (no se pueden solicitar —
+     *    Dani 2026-07-17);
+     *  - los ADELANTADOS pendientes de saldar (ya se disfrutaron, son deuda);
+     *  - de forma PROPORCIONAL las horas gastadas de la bolsa (8 h = 1 día),
+     *    para evitar el doble gasto: tomar días como vacación y como horas.
      */
     public function getVacationDaysAvailableForRequestAttribute(): float
     {
@@ -641,7 +705,11 @@ class Employee extends Model
 
         return max(
             0.0,
-            $this->vacation_days_entitled - $this->vacation_days_used - $usedHoursAsDays,
+            $this->vacation_days_entitled
+                - $this->vacation_days_used
+                - (int) ($this->vacation_days_reserved ?? 0)
+                - (int) ($this->vacation_days_advanced ?? 0)
+                - $usedHoursAsDays,
         );
     }
 

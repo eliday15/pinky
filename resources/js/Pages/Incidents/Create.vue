@@ -161,14 +161,25 @@ const calendarDaysCount = computed(() => {
     return diff > 0 ? diff : 0;
 });
 
+// Saldo de vacaciones. Los dias APARTADOS para el cierre de diciembre y los
+// ADELANTADOS (deuda de nuevo ingreso) NO se pueden solicitar, asi que se restan
+// de lo disponible — mismo criterio que el backend (Dani 2026-07-17).
 const vacationBalance = computed(() => {
-    if (!selectedEmployeeData.value) return { entitled: 0, used: 0, available: 0 };
-    const entitled = selectedEmployeeData.value.vacation_days_entitled || 0;
-    const used = selectedEmployeeData.value.vacation_days_used || 0;
+    if (!selectedEmployeeData.value) {
+        return { entitled: 0, used: 0, reserved: 0, advanced: 0, forEnjoyment: 0, available: 0 };
+    }
+    const e = selectedEmployeeData.value;
+    const entitled = e.vacation_days_entitled || 0;
+    const used = e.vacation_days_used || 0;
+    const reserved = e.vacation_days_reserved || 0;
+    const advanced = e.vacation_days_advanced || 0;
     return {
         entitled,
         used,
-        available: entitled - used,
+        reserved,
+        advanced,
+        forEnjoyment: e.vacation_days_for_enjoyment ?? Math.max(0, entitled - reserved),
+        available: Math.max(0, entitled - used - reserved - advanced),
     };
 });
 
@@ -267,15 +278,36 @@ const submit = () => {
                             <span class="text-gray-500">Derecho:</span>
                             <span class="ml-2 font-medium">{{ vacationBalance.entitled }} dias</span>
                         </div>
+                        <!-- Cierre obligatorio de diciembre: apartados y "para disfrutar" -->
+                        <template v-if="vacationBalance.reserved > 0">
+                            <div>
+                                <span class="text-gray-500">Obligatorios diciembre:</span>
+                                <span class="ml-2 font-medium text-amber-600">{{ vacationBalance.reserved }} dias</span>
+                            </div>
+                            <div>
+                                <span class="text-gray-500">Para disfrutar:</span>
+                                <span class="ml-2 font-medium">{{ vacationBalance.forEnjoyment }} dias</span>
+                            </div>
+                        </template>
                         <div>
                             <span class="text-gray-500">Usados:</span>
                             <span class="ml-2 font-medium">{{ vacationBalance.used }} dias</span>
+                        </div>
+                        <div v-if="vacationBalance.advanced > 0">
+                            <span class="text-gray-500">Adelantados:</span>
+                            <span class="ml-2 font-medium text-amber-600">{{ vacationBalance.advanced }} dias</span>
                         </div>
                         <div>
                             <span class="text-gray-500">Disponibles:</span>
                             <span class="ml-2 font-medium text-green-600">{{ vacationBalance.available }} dias</span>
                         </div>
                     </div>
+                    <p v-if="vacationBalance.reserved > 0" class="mt-2 text-xs text-amber-700">
+                        Los {{ vacationBalance.reserved }} dias obligatorios de diciembre estan apartados y no se pueden solicitar en otra fecha.
+                    </p>
+                    <p v-if="vacationBalance.advanced > 0" class="mt-1 text-xs text-amber-700">
+                        Tiene {{ vacationBalance.advanced }} dias adelantados pendientes de saldar con su derecho.
+                    </p>
                 </div>
 
                 <!-- Vacation Hours Bank Info -->
