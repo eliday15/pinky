@@ -114,6 +114,41 @@ return [
             // 'trust_server_certificate' => env('DB_TRUST_SERVER_CERTIFICATE', 'false'),
         ],
 
+        /*
+        | On-prem SQL Servers (read-only), used to derive payroll bonuses from
+        | the Contpaqi / production databases instead of capturing them by hand.
+        |
+        | Reached through the Cloudflare Tunnel: start.sh runs two
+        | `cloudflared access tcp` clients that expose them on 127.0.0.1. The
+        | real PDO driver is dblib (FreeTDS) — Laravel's SqlServerConnector
+        | falls back to it automatically when the Microsoft sqlsrv extension is
+        | absent. `host` is a freetds.conf section name (with an empty port) so
+        | FreeTDS applies the correct per-server TDS version:
+        |   - compaq      -> SQL Server 2022, TDS 7.4
+        |   - basemaquila -> SQL Server 2014, TDS 7.0 (legacy, required)
+        */
+        'compaq' => [
+            'driver' => 'sqlsrv',
+            'host' => env('COMPAQ_DB_HOST', 'compaq'),
+            'port' => env('COMPAQ_DB_PORT', ''),
+            'database' => env('COMPAQ_DB_DATABASE', 'ComercialSPno'),
+            'username' => env('COMPAQ_DB_USERNAME', 'pinky_remote'),
+            'password' => env('COMPAQ_DB_PASSWORD', ''),
+            'prefix' => '',
+            'prefix_indexes' => true,
+        ],
+
+        'basemaquila' => [
+            'driver' => 'sqlsrv',
+            'host' => env('BASEMAQUILA_DB_HOST', 'basemaquila'),
+            'port' => env('BASEMAQUILA_DB_PORT', ''),
+            'database' => env('BASEMAQUILA_DB_DATABASE', 'basemaquila'),
+            'username' => env('BASEMAQUILA_DB_USERNAME', 'pinky_remote2'),
+            'password' => env('BASEMAQUILA_DB_PASSWORD', ''),
+            'prefix' => '',
+            'prefix_indexes' => true,
+        ],
+
     ],
 
     /*

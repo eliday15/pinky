@@ -20,7 +20,10 @@ RUN npm run build
 # Stage 3: PHP application
 FROM php:8.4-apache
 
-# Install system dependencies
+# Install system dependencies.
+# freetds-dev + pdo_dblib give Laravel a SQL Server driver (FreeTDS) able to
+# speak legacy TDS 7.0, which the on-prem SQL Server 2014 (basemaquila)
+# requires and the Microsoft sqlsrv driver cannot negotiate.
 RUN apt-get update && apt-get install -y \
     git \
     curl \
@@ -31,9 +34,22 @@ RUN apt-get update && apt-get install -y \
     libxml2-dev \
     libonig-dev \
     unzip \
+    freetds-dev \
+    freetds-bin \
     && docker-php-ext-configure gd --with-freetype --with-jpeg \
-    && docker-php-ext-install pdo_mysql mbstring exif pcntl bcmath gd zip xml \
+    && docker-php-ext-configure pdo_dblib --with-libdir=lib/$(gcc -dumpmachine) \
+    && docker-php-ext-install pdo_mysql mbstring exif pcntl bcmath gd zip xml pdo_dblib \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Cloudflared: opens the TCP tunnels to the on-prem SQL Servers (started in
+# start.sh as `cloudflared access tcp`). Static binary matched to the arch.
+RUN ARCH="$(dpkg --print-architecture)" \
+    && curl -fL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${ARCH}" \
+       -o /usr/local/bin/cloudflared \
+    && chmod +x /usr/local/bin/cloudflared
+
+# FreeTDS server definitions (per-server TDS version: compaq 7.4, basemaquila 7.0)
+COPY docker/freetds.conf /etc/freetds/freetds.conf
 
 # Enable Apache mod_rewrite
 RUN a2enmod rewrite

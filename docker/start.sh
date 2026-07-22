@@ -50,6 +50,24 @@ run_as_web "php artisan route:cache"
 run_as_web "php artisan view:cache"
 run_as_web "php artisan permission:cache-reset" 2>/dev/null || true
 
+echo "=== Starting SQL Server tunnels (cloudflared) ==="
+# The on-prem SQL Servers (Contpaqi/ComercialSPno and basemaquila) are only
+# reachable through the Cloudflare Tunnel. Two `cloudflared access tcp` clients
+# expose them on 127.0.0.1:14333 / :14334 so Laravel's dblib connections
+# (config/database.php -> compaq/basemaquila) can reach them via freetds.conf.
+# Restart loop mirrors the queue worker: if a tunnel dies, relaunch in 5s.
+start_sql_tunnel() {
+    local name="$1" hostname="$2" port="$3"
+    while true; do
+        cloudflared access tcp --hostname "$hostname" --url "127.0.0.1:${port}" \
+            >> storage/logs/tunnel-${name}.log 2>&1
+        echo "[start.sh] cloudflared ${name} exited; restarting in 5s" >> storage/logs/tunnel-${name}.log
+        sleep 5
+    done
+}
+start_sql_tunnel compaq sql1.josemasri.com 14333 &
+start_sql_tunnel basemaquila sql2.josemasri.com 14334 &
+
 echo "=== Starting scheduler ==="
 # Scheduler MUST run as www-data; otherwise it writes cache files as root and
 # Apache workers (www-data) get "Permission denied" when they later try to
