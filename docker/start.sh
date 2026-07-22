@@ -68,6 +68,19 @@ start_sql_tunnel() {
 start_sql_tunnel compaq sql1.josemasri.com 14333 &
 start_sql_tunnel basemaquila sql2.josemasri.com 14334 &
 
+# One-shot boot health check: wait for both tunnels to accept connections, then
+# ping the external SQL Servers once. Output goes to the container stdout so it
+# shows up in Coolify's log viewer. Runs in the background to avoid delaying
+# Apache startup if the on-prem servers are momentarily unreachable.
+(
+    for _ in $(seq 1 20); do
+        if (exec 3<>/dev/tcp/127.0.0.1/14333) 2>/dev/null \
+        && (exec 4<>/dev/tcp/127.0.0.1/14334) 2>/dev/null; then break; fi
+        sleep 2
+    done
+    su -s /bin/bash www-data -c "php artisan sqlserver:ping" 2>&1 | sed 's/^/[sqlserver:ping] /'
+) &
+
 echo "=== Starting scheduler ==="
 # Scheduler MUST run as www-data; otherwise it writes cache files as root and
 # Apache workers (www-data) get "Permission denied" when they later try to
