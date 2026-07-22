@@ -33,6 +33,8 @@ class MaquilaBonusMetricsService
 
     public const CODE_ORDENES_BANDERAS = 'ORD_BANDERAS';
 
+    public const CODE_ORDENES_CORTADAS = 'ORD_CORTADAS';
+
     /**
      * Human labels + descriptions for each bonus code (used by the seeder and UI).
      *
@@ -61,6 +63,10 @@ class MaquilaBonusMetricsService
                 'name' => 'Órdenes de banderas',
                 'description' => 'Número de órdenes de banderas del mes (COUNT corte_alta, sin canceladas).',
             ],
+            self::CODE_ORDENES_CORTADAS => [
+                'name' => 'Órdenes cortadas',
+                'description' => 'Número de órdenes de corte del mes con cortador2 asignado (COUNT corte_alta, sin canceladas).',
+            ],
         ];
     }
 
@@ -86,6 +92,7 @@ class MaquilaBonusMetricsService
             self::CODE_ORDENES_CORTE => $this->ordenesCorte($year, $month),
             self::CODE_ORDENES_FUSION => $this->ordenesFusion($year, $month),
             self::CODE_ORDENES_BANDERAS => $this->ordenesBanderas($year, $month),
+            self::CODE_ORDENES_CORTADAS => $this->ordenesCortadas($year, $month),
         ];
     }
 
@@ -100,6 +107,7 @@ class MaquilaBonusMetricsService
             self::CODE_ORDENES_CORTE => $this->ordenesCorte($year, $month),
             self::CODE_ORDENES_FUSION => $this->ordenesFusion($year, $month),
             self::CODE_ORDENES_BANDERAS => $this->ordenesBanderas($year, $month),
+            self::CODE_ORDENES_CORTADAS => $this->ordenesCortadas($year, $month),
             default => 0,
         };
     }
@@ -156,6 +164,23 @@ class MaquilaBonusMetricsService
     private function ordenesBanderas(int $year, int $month): int
     {
         return $this->ordenesCorte($year, $month);
+    }
+
+    /**
+     * Órdenes cortadas: como Órdenes de corte pero sólo las que tienen `cortador2`
+     * con nombre ("esos son los que se pagan"). El conteo lo cobran los empleados
+     * que el admin asigne al concepto.
+     */
+    private function ordenesCortadas(int $year, int $month): int
+    {
+        return (int) $this->scalar(
+            "SELECT COUNT(*) AS n
+             FROM corte_alta
+             WHERE tipo <> ?
+               AND cortador2 IS NOT NULL AND LTRIM(RTRIM(cortador2)) <> ''
+               AND YEAR(fecha_alta) = ? AND MONTH(fecha_alta) = ?",
+            ['CANCELADO', $year, $month],
+        );
     }
 
     /**
