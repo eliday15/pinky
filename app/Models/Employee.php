@@ -714,6 +714,27 @@ class Employee extends Model
     }
 
     /**
+     * Días disponibles INCLUYENDO los apartados de diciembre.
+     *
+     * Sólo el Administrador puede "jalar" de la reserva de diciembre en
+     * emergencias (Dani 2026-07-22): este techo permite aprobar una vacación que
+     * dipa en esos días, respetando aún la deuda de adelanto y las horas
+     * gastadas de la bolsa.
+     */
+    public function getVacationDaysAvailableWithReserveAttribute(): float
+    {
+        $usedHoursAsDays = (float) ($this->vacation_hours_used ?? 0) / self::VACATION_HOURS_PER_DAY;
+
+        return max(
+            0.0,
+            $this->vacation_days_entitled
+                - $this->vacation_days_used
+                - (int) ($this->vacation_days_advanced ?? 0)
+                - $usedHoursAsDays,
+        );
+    }
+
+    /**
      * Get vacation days available (alias for remaining, accounts for reserved days).
      */
     public function getVacationDaysAvailableAttribute(): int

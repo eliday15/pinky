@@ -49,6 +49,7 @@ class Incident extends Model
         'start_date',
         'end_date',
         'days_count',
+        'reserved_days_taken',
         'reason',
         'late_month',
         'document_path',
@@ -68,6 +69,7 @@ class Incident extends Model
         'end_date' => 'date:Y-m-d',
         'approved_at' => 'datetime',
         'pay_worked_days' => 'boolean',
+        'reserved_days_taken' => 'integer',
     ];
 
     /**

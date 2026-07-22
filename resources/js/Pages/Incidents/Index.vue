@@ -37,8 +37,20 @@ watch([status, type, employee, search], applyFilters);
 const hasTwoFactor = computed(() => usePage().props.auth.has_two_factor);
 const showApproveModal = ref(false);
 const approveIncidentId = ref(null);
+const approvingIncident = ref(null);
 const showRejectModal = ref(false);
 const selectedIncident = ref(null);
+
+// Emergencia (Dani 2026-07-22): solo el Administrador puede "jalar" días de los
+// obligatorios de diciembre. El checkbox se ofrece solo a admin y solo cuando la
+// incidencia es de vacaciones y el colaborador tiene días apartados.
+const isAdmin = computed(() =>
+    (usePage().props.auth?.roles || []).some((r) => ['admin', 'superadmin'].includes(r)));
+const approveExtra = ref({ use_reserved_days: false });
+const canPullReserve = computed(() =>
+    isAdmin.value
+    && approvingIncident.value?.incident_type?.deducts_vacation
+    && Number(approvingIncident.value?.employee?.vacation_days_reserved || 0) > 0);
 
 const rejectForm = useForm({
     rejection_reason: '',
@@ -62,6 +74,8 @@ const formatDate = (date) => fmtDate(date);
 const approveIncident = (incident) => {
     if (hasTwoFactor.value) {
         approveIncidentId.value = incident.id;
+        approvingIncident.value = incident;
+        approveExtra.value = { use_reserved_days: false };
         showApproveModal.value = true;
     } else if (confirm('¿Aprobar esta incidencia?')) {
         router.post(route('incidents.approve', incident.id));
@@ -306,8 +320,26 @@ const deleteIncident = (incident) => {
             method="post"
             title="Aprobar Incidencia"
             message="Ingresa tu codigo de verificacion para aprobar esta incidencia."
-            @close="showApproveModal = false; approveIncidentId = null;"
-        />
+            :extra-data="approveExtra"
+            @close="showApproveModal = false; approveIncidentId = null; approvingIncident = null;"
+        >
+            <template #extra>
+                <div v-if="canPullReserve" class="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                    <label class="flex items-start gap-2 cursor-pointer">
+                        <input
+                            type="checkbox"
+                            v-model="approveExtra.use_reserved_days"
+                            class="mt-0.5 rounded border-gray-300 text-amber-600 focus:ring-amber-500"
+                        />
+                        <span class="text-sm text-amber-800">
+                            <span class="font-medium">Emergencia:</span> tomar de los
+                            {{ approvingIncident?.employee?.vacation_days_reserved }} días obligatorios de diciembre
+                            si el saldo normal no alcanza.
+                        </span>
+                    </label>
+                </div>
+            </template>
+        </TwoFactorModal>
 
         <!-- Reject Modal -->
         <div v-if="showRejectModal" class="fixed inset-0 z-50 overflow-y-auto">

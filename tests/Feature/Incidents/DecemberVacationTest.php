@@ -271,6 +271,93 @@ class DecemberVacationTest extends FeatureTestCase
         $this->assertSame(16, $e->vacation_days_remaining);
     }
 
+    // ---- Emergencia: jalar de la reserva (solo Administrador) -------------
+
+    public function test_admin_can_pull_from_the_december_reserve_in_an_emergency(): void
+    {
+        // Derecho 16, obligatorios 10 -> normal solo puede 6. En emergencia el
+        // admin aprueba 8: 6 del saldo normal + 2 de la reserva de diciembre.
+        $e = $this->employee(entitled: 16);
+        $this->service()->apply(10);
+
+        $incident = $this->pendingVacation($e, 8);
+
+        $admin = $this->actingAsAdmin();
+        $code = $this->attachRealTwoFactor($admin);
+
+        $this->post(route('incidents.approve', $incident), [
+            'two_factor_code' => $code,
+            'use_reserved_days' => true,
+        ])->assertSessionHasNoErrors();
+
+        $e->refresh();
+        $this->assertSame('approved', $incident->fresh()->status);
+        $this->assertSame(8, (int) $e->vacation_days_used, 'se cargan los 8 días tomados');
+        $this->assertSame(8, (int) $e->vacation_days_reserved, 'la reserva baja de 10 a 8');
+        $this->assertSame(2, (int) $incident->fresh()->reserved_days_taken, 'se registran 2 días jalados');
+    }
+
+    public function test_pulling_from_reserve_only_takes_the_overflow_not_the_whole_request(): void
+    {
+        // Pide exactamente los 6 disponibles: no debe tocar la reserva aunque se
+        // marque la emergencia.
+        $e = $this->employee(entitled: 16);
+        $this->service()->apply(10);
+
+        $incident = $this->pendingVacation($e, 6);
+
+        $admin = $this->actingAsAdmin();
+        $code = $this->attachRealTwoFactor($admin);
+
+        $this->post(route('incidents.approve', $incident), [
+            'two_factor_code' => $code,
+            'use_reserved_days' => true,
+        ])->assertSessionHasNoErrors();
+
+        $e->refresh();
+        $this->assertSame(10, (int) $e->vacation_days_reserved, 'la reserva no se toca si el saldo normal alcanza');
+        $this->assertSame(0, (int) $incident->fresh()->reserved_days_taken);
+    }
+
+    public function test_non_admin_cannot_approve_so_the_reserve_stays_safe(): void
+    {
+        // Solo admin/superadmin tienen incidents.approve: un no-admin (RRHH) ni
+        // siquiera puede aprobar, así que no hay forma de que jale la reserva.
+        $e = $this->employee(entitled: 16);
+        $this->service()->apply(10);
+
+        $incident = $this->pendingVacation($e, 8);
+
+        $rrhh = $this->actingAsRrhh();
+        $code = $this->attachRealTwoFactor($rrhh);
+
+        $this->post(route('incidents.approve', $incident), [
+            'two_factor_code' => $code,
+            'use_reserved_days' => true,
+        ])->assertForbidden();
+
+        $this->assertSame('pending', $incident->fresh()->status);
+        $this->assertSame(10, (int) $e->fresh()->vacation_days_reserved);
+    }
+
+    public function test_emergency_cannot_exceed_entitlement_even_with_reserve(): void
+    {
+        // Derecho 16, ya usó 2 -> con reserva incluida el techo es 14. Pedir 15
+        // debe fallar aun con la emergencia.
+        $e = $this->employee(entitled: 16, used: 2);
+        $this->service()->apply(10);
+
+        $incident = $this->pendingVacation($e, 15);
+
+        $admin = $this->actingAsAdmin();
+        $code = $this->attachRealTwoFactor($admin);
+
+        $this->post(route('incidents.approve', $incident), [
+            'two_factor_code' => $code,
+            'use_reserved_days' => true,
+        ])->assertSessionHasErrors('saldo');
+    }
+
     // ---- Pantalla de configuracion ---------------------------------------
 
     public function test_settings_page_renders_with_the_preview(): void

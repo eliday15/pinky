@@ -583,6 +583,12 @@ class IncidentController extends Controller
         $wasApproved = $incident->status === 'approved';
         if ($wasApproved && $incidentType?->deducts_vacation) {
             $incident->employee?->decrement('vacation_days_used', $incident->days_count);
+
+            // Restaurar los días apartados de diciembre que la emergencia jaló,
+            // si no se devuelven, la reserva se pierde en silencio.
+            if ((int) $incident->reserved_days_taken > 0) {
+                $incident->employee?->increment('vacation_days_reserved', (int) $incident->reserved_days_taken);
+            }
         }
         if ($wasApproved && $incidentType?->uses_vacation_hours) {
             $incident->employee?->decrement('vacation_hours_used', (float) $incident->hours);
@@ -613,6 +619,30 @@ class IncidentController extends Controller
     }
 
     /**
+     * Cargar los días de vacaciones al saldo del empleado.
+     *
+     * En modo normal sólo incrementa los usados. En emergencia (override del
+     * Administrador) lo que el saldo normal no alcanza se toma de los días
+     * apartados de diciembre: se reduce la reserva y se guarda en la incidencia
+     * cuántos se jalaron, para poder devolverlos exactos si se elimina.
+     */
+    private function chargeVacationDays(Employee $employee, Incident $incident, bool $useReserved): void
+    {
+        if ($useReserved) {
+            $normalAvailable = $employee->vacation_days_available_for_request;
+            $overflow = max(0.0, $incident->days_count - $normalAvailable);
+            $pulled = min((int) ($employee->vacation_days_reserved ?? 0), (int) ceil($overflow));
+
+            if ($pulled > 0) {
+                $employee->decrement('vacation_days_reserved', $pulled);
+                $incident->forceFill(['reserved_days_taken' => $pulled])->save();
+            }
+        }
+
+        $employee->increment('vacation_days_used', $incident->days_count);
+    }
+
+    /**
      * Approve an incident.
      */
     public function approve(Request $request, Incident $incident): RedirectResponse
@@ -627,15 +657,30 @@ class IncidentController extends Controller
         $incidentType = $incident->incidentType;
         $employee = $incident->employee;
 
+        // Emergencia: sólo el Administrador puede "jalar" días de los apartados
+        // de diciembre cuando el saldo normal no alcanza (Dani 2026-07-22).
+        $useReserved = $request->boolean('use_reserved_days');
+
         // FASE 2.1: Validate vacation balance before approving
         if ($incidentType->deducts_vacation) {
-            $availableVacationDays = $employee->vacation_days_available_for_request;
+            if ($useReserved && ! auth()->user()->hasAnyRole(['superadmin', 'admin'])) {
+                return redirect()->back()->withErrors([
+                    'saldo' => 'Solo el Administrador puede tomar de los dias obligatorios de diciembre.',
+                ]);
+            }
+
+            $availableVacationDays = $useReserved
+                ? $employee->vacation_days_available_with_reserve
+                : $employee->vacation_days_available_for_request;
 
             if ($incident->days_count > $availableVacationDays) {
                 $availableLabel = rtrim(rtrim(number_format($availableVacationDays, 2), '0'), '.');
+                $hint = ($useReserved || (int) ($employee->vacation_days_reserved ?? 0) === 0)
+                    ? ''
+                    : ' Tiene '.(int) $employee->vacation_days_reserved.' dias apartados de diciembre; solo el Administrador puede tomarlos en emergencia.';
 
                 return redirect()->back()->withErrors([
-                    'saldo' => "Saldo insuficiente de vacaciones. Disponibles: {$availableLabel} dias, solicitados: {$incident->days_count} dias.",
+                    'saldo' => "Saldo insuficiente de vacaciones. Disponibles: {$availableLabel} dias, solicitados: {$incident->days_count} dias.{$hint}",
                 ]);
             }
         }
@@ -652,7 +697,7 @@ class IncidentController extends Controller
 
         // If it deducts vacation, update employee vacation days
         if ($incidentType->deducts_vacation) {
-            $employee->increment('vacation_days_used', $incident->days_count);
+            $this->chargeVacationDays($employee, $incident, $useReserved);
         }
         if ($incidentType->uses_vacation_hours) {
             $employee->increment('vacation_hours_used', (float) $incident->hours);

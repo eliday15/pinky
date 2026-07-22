@@ -96,6 +96,13 @@ const submit = () => {
                         <p v-if="form.errors.two_factor_code" class="mt-2 text-sm text-red-600">
                             {{ form.errors.two_factor_code }}
                         </p>
+                        <!-- Otros errores de la acción (p. ej. saldo de vacaciones). -->
+                        <p v-if="form.errors.saldo" class="mt-2 text-sm text-red-600">
+                            {{ form.errors.saldo }}
+                        </p>
+
+                        <!-- Controles extra opcionales que inyecta quien usa el modal. -->
+                        <slot name="extra" />
                     </div>
 
                     <!-- Footer -->
