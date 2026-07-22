@@ -55,7 +55,7 @@ class MaquilaBonusMetricsService
             ],
             self::CODE_ORDENES_FUSION => [
                 'name' => 'Órdenes de fusión',
-                'description' => 'Número de órdenes de fusión del mes (COUNT combinacion_alta con folio F, sin canceladas).',
+                'description' => 'Número de órdenes de fusión del mes (COUNT combinacion_alta con folio F y cortador2 asignado, sin canceladas).',
             ],
             self::CODE_ORDENES_BANDERAS => [
                 'name' => 'Órdenes de banderas',
@@ -136,10 +136,15 @@ class MaquilaBonusMetricsService
 
     private function ordenesFusion(int $year, int $month): int
     {
+        // Sólo cuentan las órdenes de fusión que tienen `cortador2` con nombre
+        // ("esos son los que se pagan"); el conteo lo cobran los empleados que
+        // el admin asigne al concepto.
         return (int) $this->scalar(
             "SELECT COUNT(*) AS n
              FROM combinacion_alta
-             WHERE noorden LIKE 'F%' AND tipo <> ? AND YEAR(fecha_alta) = ? AND MONTH(fecha_alta) = ?",
+             WHERE noorden LIKE 'F%' AND tipo <> ?
+               AND cortador2 IS NOT NULL AND LTRIM(RTRIM(cortador2)) <> ''
+               AND YEAR(fecha_alta) = ? AND MONTH(fecha_alta) = ?",
             ['CANCELADO', $year, $month],
         );
     }
