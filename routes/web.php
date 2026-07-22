@@ -6,6 +6,7 @@ use App\Http\Controllers\AttendanceReportController;
 use App\Http\Controllers\AuditLogController;
 use App\Http\Controllers\AuthorizationController;
 use App\Http\Controllers\CheckOmissionController;
+use App\Http\Controllers\MaquilaBonusController;
 use App\Http\Controllers\VacationHoursBankController;
 use App\Http\Controllers\BreakfastController;
 use App\Http\Controllers\CompensationTypeController;
@@ -51,6 +52,10 @@ Route::middleware(['auth', 'password-changed', 'two-factor-setup'])->group(funct
 
     // Compensation Types
     Route::resource('compensation-types', CompensationTypeController::class)->except(['show']);
+
+    // Bonos de maquila (cantidad auto desde basemaquila; costo/aprobación del superadmin)
+    Route::get('/maquila-bonuses', [MaquilaBonusController::class, 'index'])->name('maquila-bonuses.index');
+    Route::post('/maquila-bonuses/generate', [MaquilaBonusController::class, 'generate'])->name('maquila-bonuses.generate');
 
     // Incident Types
     Route::resource('incident-types', IncidentTypeController::class)->except(['show']);

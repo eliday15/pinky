@@ -45,6 +45,9 @@ run_as_web "php artisan db:seed --class=FiscalSettingsSeeder --force" 2>&1 || ec
 # Concepto Aguinaldo (pagado por transferencia): idempotente (firstOrCreate por
 # código), no pisa el concepto si ya existe.
 run_as_web "php artisan db:seed --class=AguinaldoConceptSeeder --force" 2>&1 || echo "Aguinaldo concept seed failed but continuing..."
+# Conceptos de bono de maquila (Maquila mandada/recibida, Órdenes de corte/fusión/
+# banderas): idempotente (firstOrCreate por código), no pisa el costo por unidad.
+run_as_web "php artisan db:seed --class=MaquilaBonusConceptsSeeder --force" 2>&1 || echo "Maquila bonus concepts seed failed but continuing..."
 run_as_web "php artisan config:cache"
 run_as_web "php artisan route:cache"
 run_as_web "php artisan view:cache"

@@ -52,3 +52,10 @@ Schedule::command('sync:health-check --minutes=20')
 Schedule::command('late-absences:close')
     ->monthlyOn(1, '06:00')
     ->appendOutputTo(storage_path('logs/late-absences.log'));
+
+// Bonos de maquila: genera las autorizaciones PENDIENTES del mes recién cerrado
+// con la cantidad calculada desde basemaquila. Sólo el superadmin las aprueba.
+// Idempotente + también hay botón manual de regeneración en la UI.
+Schedule::command('bonuses:sync-maquila')
+    ->monthlyOn(1, '06:30')
+    ->appendOutputTo(storage_path('logs/maquila-bonuses.log'));
