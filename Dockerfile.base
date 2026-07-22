@@ -1,0 +1,68 @@
+# Pinky base image — dependencias pesadas y de cambio lento, construidas UNA vez
+# y guardadas en el registry local del server. El Dockerfile de la app hace FROM
+# de este tag (ver el ARG BASE_IMAGE ahí).
+#
+# Por qué existe: el stage final del Dockerfile recompilaba TODAS las extensiones
+# de PHP desde fuente (docker-php-ext-install en Debian) y bajaba el binario de
+# cloudflared desde GitHub en CADA deploy. Eso son minutos de trabajo idéntico
+# repetido, a merced de que el cache de BuildKit sobreviva. Bajar esta imagen ya
+# construida del registry local cuesta un par de segundos.
+#
+# El registry es un `registry:2` en 127.0.0.1:5000 con RestartPolicy=always y
+# volumen propio: sobrevive reinicios y sobrevive el `docker image prune` porque
+# los datos viven en un volumen, no en una imagen suelta. Esto es justo lo que le
+# faltaba al viejo intento de `FROM platinum-fleet-base:latest`, que moría con
+# "pull access denied" cuando la imagen local se borraba.
+#
+# Para reconstruirla y publicarla:
+#   ./docker/build-base.sh php8.4-2
+#
+# Después subí el tag en el ARG BASE_IMAGE del Dockerfile y commiteá los dos.
+#
+# Reconstruila SOLO si cambiás: versión de PHP, la lista de extensiones, las
+# libs de sistema (freetds, gd), la config de Apache, o la versión de cloudflared.
+# Los deploys del día a día no la tocan nunca.
+
+FROM php:8.4-apache
+
+# Dependencias de sistema.
+# freetds-dev + pdo_dblib le dan a Laravel un driver de SQL Server (FreeTDS)
+# capaz de hablar TDS 7.0 legacy, que el SQL Server 2014 on-prem (basemaquila)
+# exige y que el driver sqlsrv de Microsoft no puede negociar.
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    libpng-dev \
+    libjpeg-dev \
+    libfreetype6-dev \
+    libzip-dev \
+    libxml2-dev \
+    libonig-dev \
+    unzip \
+    freetds-dev \
+    freetds-bin \
+    && docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-configure pdo_dblib --with-libdir=lib/$(gcc -dumpmachine) \
+    && docker-php-ext-install pdo_mysql mbstring exif pcntl bcmath gd zip xml pdo_dblib \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Cloudflared: abre los túneles TCP a los SQL Server on-prem (se arrancan en
+# start.sh como `cloudflared access tcp`). Binario estático acorde a la arch.
+#
+# Versión FIJADA a propósito (antes era `latest/download`, que en cada build
+# bajaba lo que hubiera y no era reproducible). Para actualizar: cambiá el número
+# de abajo, reconstruí la base con un tag nuevo, y probá que los túneles levanten.
+# Última en producción cuando se fijó: 2026.7.2.
+ARG CLOUDFLARED_VERSION=2026.7.2
+RUN ARCH="$(dpkg --print-architecture)" \
+    && curl -fL "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-${ARCH}" \
+       -o /usr/local/bin/cloudflared \
+    && chmod +x /usr/local/bin/cloudflared
+
+# Apache: mod_rewrite + document root en /public + permitir .htaccess. Todo esto
+# es setup estático del server web, no depende del código de la app.
+RUN a2enmod rewrite
+ENV APACHE_DOCUMENT_ROOT=/var/www/html/public
+RUN sed -ri -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/sites-available/*.conf \
+    && sed -ri -e 's!/var/www/!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/apache2.conf /etc/apache2/conf-available/*.conf \
+    && sed -i '/<Directory \/var\/www\/>/,/<\/Directory>/ s/AllowOverride None/AllowOverride All/' /etc/apache2/apache2.conf

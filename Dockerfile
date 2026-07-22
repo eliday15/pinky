@@ -1,3 +1,10 @@
+# El stage final (la app PHP) sale de una imagen base pre-construida que vive en
+# el registry local del server (localhost:5000/pinky-base). Esa base trae las
+# extensiones de PHP ya compiladas, freetds, cloudflared y la config de Apache —
+# todo lo que antes se rehacía en CADA deploy. La receta está en Dockerfile.base;
+# para reconstruirla: ./docker/build-base.sh <version>.
+ARG BASE_IMAGE=localhost:5000/pinky-base:php8.4-1
+
 # Stage 1: Install PHP dependencies (needed for Ziggy during Vite build)
 FROM php:8.4-cli AS composer
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
@@ -17,52 +24,18 @@ COPY public/ public/
 COPY --from=composer /app/vendor vendor/
 RUN npm run build
 
-# Stage 3: PHP application
-FROM php:8.4-apache
-
-# Install system dependencies.
-# freetds-dev + pdo_dblib give Laravel a SQL Server driver (FreeTDS) able to
-# speak legacy TDS 7.0, which the on-prem SQL Server 2014 (basemaquila)
-# requires and the Microsoft sqlsrv driver cannot negotiate.
-RUN apt-get update && apt-get install -y \
-    git \
-    curl \
-    libpng-dev \
-    libjpeg-dev \
-    libfreetype6-dev \
-    libzip-dev \
-    libxml2-dev \
-    libonig-dev \
-    unzip \
-    freetds-dev \
-    freetds-bin \
-    && docker-php-ext-configure gd --with-freetype --with-jpeg \
-    && docker-php-ext-configure pdo_dblib --with-libdir=lib/$(gcc -dumpmachine) \
-    && docker-php-ext-install pdo_mysql mbstring exif pcntl bcmath gd zip xml pdo_dblib \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# Cloudflared: opens the TCP tunnels to the on-prem SQL Servers (started in
-# start.sh as `cloudflared access tcp`). Static binary matched to the arch.
-RUN ARCH="$(dpkg --print-architecture)" \
-    && curl -fL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${ARCH}" \
-       -o /usr/local/bin/cloudflared \
-    && chmod +x /usr/local/bin/cloudflared
+# Stage 3: PHP application.
+# Sale de la base pre-construida (extensiones PHP, freetds, cloudflared y la
+# config de Apache ya vienen adentro). Acá solo va lo que cambia por deploy.
+FROM ${BASE_IMAGE} AS app
 
 # FreeTDS server definitions (per-server TDS version: compaq 7.4, basemaquila 7.0)
+# Se copia acá (y no en la base) para poder ajustar servidores/versiones TDS sin
+# reconstruir la imagen base.
 COPY docker/freetds.conf /etc/freetds/freetds.conf
 
-# Enable Apache mod_rewrite
-RUN a2enmod rewrite
-
-# Configure Apache to serve from /public
-ENV APACHE_DOCUMENT_ROOT=/var/www/html/public
-RUN sed -ri -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/sites-available/*.conf \
-    && sed -ri -e 's!/var/www/!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/apache2.conf /etc/apache2/conf-available/*.conf
-
-# Allow .htaccess overrides
-RUN sed -i '/<Directory \/var\/www\/>/,/<\/Directory>/ s/AllowOverride None/AllowOverride All/' /etc/apache2/apache2.conf
-
-# Custom PHP settings (memory limit, upload size, etc.)
+# Custom PHP settings (memory limit, upload size, etc.) — también acá para tocar
+# límites sin rebuildear la base.
 COPY docker/php.ini /usr/local/etc/php/conf.d/99-custom.ini
 
 WORKDIR /var/www/html
