@@ -75,7 +75,9 @@ class AuditLogController extends Controller
 
         return Inertia::render('AuditLogs/Show', [
             'log' => $auditLog,
-            'changes' => AuditFieldLabels::diff($auditLog->old_values, $auditLog->new_values),
+            'changes' => $this->resolveReferenceNames(
+                AuditFieldLabels::diff($auditLog->old_values, $auditLog->new_values)
+            ),
             'metadata' => $this->labelledMetadata($auditLog->metadata),
             // Nearby activity on the same record, so an approval can be read in
             // the context of what happened to that record before and after.
@@ -89,6 +91,73 @@ class AuditLogController extends Controller
                     ->get()
                 : [],
         ]);
+    }
+
+    /**
+     * User-reference columns whose stored value is an app_users id.
+     */
+    private const USER_REF_FIELDS = [
+        'approved_by', 'authorized_by', 'rejected_by', 'created_by', 'reviewed_by',
+        'resolved_by', 'requested_by', 'collected_by', 'cash_collection_closed_by',
+        'cash_return_received_by', 'manually_edited_by', 'department_head_id', 'user_id',
+    ];
+
+    /**
+     * Columns whose stored value is an employees id.
+     */
+    private const EMPLOYEE_REF_FIELDS = ['employee_id'];
+
+    /**
+     * Replace raw foreign-key ids in the diff with the person's name, so
+     * "Aprobado por: 1" reads "Aprobado por: Administrador" — for historical
+     * rows too, resolved at display time.
+     *
+     * @param  array<int, array{field: string, label: string, old: mixed, new: mixed}>  $changes
+     * @return array<int, array{field: string, label: string, old: mixed, new: mixed}>
+     */
+    private function resolveReferenceNames(array $changes): array
+    {
+        $userIds = [];
+        $employeeIds = [];
+
+        foreach ($changes as $change) {
+            foreach (['old', 'new'] as $key) {
+                $value = $change[$key];
+                if (! is_numeric($value)) {
+                    continue;
+                }
+                if (in_array($change['field'], self::USER_REF_FIELDS, true)) {
+                    $userIds[] = (int) $value;
+                } elseif (in_array($change['field'], self::EMPLOYEE_REF_FIELDS, true)) {
+                    $employeeIds[] = (int) $value;
+                }
+            }
+        }
+
+        $users = $userIds
+            ? User::whereIn('id', array_unique($userIds))->pluck('name', 'id')
+            : collect();
+        $employees = $employeeIds
+            ? Employee::whereIn('id', array_unique($employeeIds))->pluck('full_name', 'id')
+            : collect();
+
+        return array_map(function ($change) use ($users, $employees) {
+            $map = match (true) {
+                in_array($change['field'], self::USER_REF_FIELDS, true) => $users,
+                in_array($change['field'], self::EMPLOYEE_REF_FIELDS, true) => $employees,
+                default => null,
+            };
+
+            if ($map) {
+                foreach (['old', 'new'] as $key) {
+                    if (is_numeric($change[$key]) && $map->has((int) $change[$key])) {
+                        $change[$key] = $map[(int) $change[$key]];
+                    }
+                }
+            }
+
+            return $change;
+        }, $changes);
     }
 
     /**

@@ -125,7 +125,6 @@ const initials = (name) => (name || '?')
                             <p class="mt-2 text-gray-800">{{ log.summary }}</p>
                             <p class="mt-2 text-sm text-gray-500">
                                 {{ formatDateTime(log.created_at) }} &middot; {{ log.context_label }}
-                                <span v-if="log.ip_address"> &middot; IP {{ log.ip_address }}</span>
                             </p>
                         </div>
                     </div>
@@ -238,20 +237,6 @@ const initials = (name) => (name || '?')
                     </ul>
                 </div>
 
-                <!-- Technical Details -->
-                <div class="bg-white rounded-lg shadow p-6">
-                    <h3 class="text-lg font-semibold text-gray-800 mb-4">Detalles Tecnicos</h3>
-                    <dl class="space-y-3">
-                        <div>
-                            <dt class="text-sm font-medium text-gray-500">Direccion IP</dt>
-                            <dd class="mt-1 text-sm text-gray-900">{{ log.ip_address || '-' }}</dd>
-                        </div>
-                        <div>
-                            <dt class="text-sm font-medium text-gray-500">User Agent</dt>
-                            <dd class="mt-1 text-xs text-gray-600 font-mono break-all">{{ log.user_agent || '-' }}</dd>
-                        </div>
-                    </dl>
-                </div>
             </div>
         </div>
     </AppLayout>

@@ -190,6 +190,61 @@ class AuditTrailTest extends FeatureTestCase
         $this->assertSame('Empleado', $entry->entity_label);
     }
 
+    /** Legacy "update" rows that flipped status read as the real action. */
+    public function test_summary_infers_approval_from_status_transition(): void
+    {
+        $this->actingAsAdmin();
+
+        $entry = AuditLog::factory()->create([
+            'action' => AuditLog::ACTION_UPDATE,
+            'description' => null,
+            'subject_label' => 'Tiempo Extra de Juan Perez',
+            'old_values' => ['status' => 'pending'],
+            'new_values' => ['status' => 'approved'],
+        ]);
+
+        $this->assertStringStartsWith('Aprobo', $entry->summary);
+        $this->assertStringContainsString('Tiempo Extra de Juan Perez', $entry->summary);
+    }
+
+    /** Raw device data and secrets never reach the change view. */
+    public function test_hidden_fields_never_appear_in_the_diff(): void
+    {
+        $changes = \App\Support\AuditFieldLabels::diff(
+            ['check_in' => '08:00', 'raw_punches' => '[...]', 'password' => 'x'],
+            ['check_in' => '08:15', 'raw_punches' => '[...changed...]', 'password' => 'y'],
+        );
+
+        $fields = array_column($changes, 'field');
+
+        $this->assertContains('check_in', $fields, 'La entrada modificada debe verse.');
+        $this->assertNotContains('raw_punches', $fields);
+        $this->assertNotContains('password', $fields);
+    }
+
+    /** The change view shows names, not raw foreign-key ids. */
+    public function test_show_resolves_reference_ids_to_names(): void
+    {
+        $admin = $this->actingAsAdmin(['name' => 'Dani Ramirez']);
+        $employee = Employee::factory()->create(['full_name' => 'Juan Perez']);
+
+        $log = AuditLog::factory()->create([
+            'auditable_type' => \App\Models\Authorization::class,
+            'auditable_id' => 999,
+            'action' => AuditLog::ACTION_UPDATE,
+            'old_values' => ['status' => 'pending', 'approved_by' => null, 'employee_id' => null],
+            'new_values' => ['status' => 'approved', 'approved_by' => $admin->id, 'employee_id' => $employee->id],
+        ]);
+
+        $response = $this->get(route('audit-logs.show', $log))->assertOk();
+
+        $changes = collect($response->viewData('page')['props']['changes'])->keyBy('field');
+
+        // approved_by resolved to the admin's name, not the raw id "1".
+        $this->assertSame('Dani Ramirez', $changes['approved_by']['new']);
+        $this->assertSame($employee->full_name, $changes['employee_id']['new']);
+    }
+
     /** Compensation type changes land in their own filterable module. */
     public function test_compensation_type_changes_are_audited(): void
     {

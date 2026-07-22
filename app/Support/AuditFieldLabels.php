@@ -132,6 +132,26 @@ class AuditFieldLabels
     }
 
     /**
+     * Columns that are never useful in the change view: raw device data,
+     * pre-computed breakdowns and any credential material. Hidden even if an
+     * older entry happened to store them.
+     *
+     * @var array<int, string>
+     */
+    private const HIDDEN_FIELDS = [
+        'raw_punches',
+        'calculation_breakdown',
+        'denomination_breakdown',
+        'password',
+        'remember_token',
+        'two_factor_secret',
+        'two_factor_recovery_codes',
+        'created_at',
+        'updated_at',
+        'deleted_at',
+    ];
+
+    /**
      * Build a field-by-field diff from an audit entry's stored values.
      *
      * @param  array<string, mixed>|null  $old
@@ -143,7 +163,7 @@ class AuditFieldLabels
         $old ??= [];
         $new ??= [];
 
-        $fields = array_keys($old + $new);
+        $fields = array_diff(array_keys($old + $new), self::HIDDEN_FIELDS);
         sort($fields);
 
         $diff = [];

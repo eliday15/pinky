@@ -286,8 +286,7 @@ const initials = (name) => (name || '?')
                         </td>
 
                         <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
-                            <div>{{ log.context_label }}</div>
-                            <div v-if="log.ip_address" class="text-xs text-gray-400">{{ log.ip_address }}</div>
+                            {{ log.context_label }}
                         </td>
 
                         <td class="px-4 py-4 whitespace-nowrap text-sm font-medium">

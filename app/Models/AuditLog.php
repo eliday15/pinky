@@ -413,7 +413,7 @@ class AuditLog extends Model
 
         $verb = match ($this->action) {
             self::ACTION_CREATE => 'Creo',
-            self::ACTION_UPDATE => 'Modifico',
+            self::ACTION_UPDATE => $this->inferredUpdateVerb(),
             self::ACTION_DELETE => 'Elimino',
             self::ACTION_APPROVE => 'Aprobo',
             self::ACTION_REJECT => 'Rechazo',
@@ -440,6 +440,26 @@ class AuditLog extends Model
             ?: trim($this->entity_label . ($this->auditable_id ? " #{$this->auditable_id}" : ''));
 
         return trim("{$verb} {$subject}");
+    }
+
+    /**
+     * Legacy rows recorded an approval/rejection as a plain "update" (the
+     * status field flipped). Read that transition so the trail says what
+     * actually happened — "Aprobo ..." instead of a vague "Modifico ...".
+     */
+    private function inferredUpdateVerb(): string
+    {
+        $newStatus = is_array($this->new_values) ? ($this->new_values['status'] ?? null) : null;
+
+        return match ($newStatus) {
+            'approved' => 'Aprobo',
+            'rejected' => 'Rechazo',
+            'cancelled', 'canceled' => 'Cancelo',
+            'resolved' => 'Resolvio',
+            'paid' => 'Pago',
+            'closed' => 'Cerro',
+            default => 'Modifico',
+        };
     }
 
     /**
