@@ -1,7 +1,7 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
-import { computed, ref } from 'vue';
+import { computed, reactive, ref } from 'vue';
 
 const props = defineProps({
     month: String,          // YYYY-MM
@@ -27,6 +27,23 @@ const generar = () => {
     router.post(route('maquila-bonuses.generate'), { month: props.month }, {
         preserveScroll: true,
         onFinish: () => { processing.value = false; },
+    });
+};
+
+// Filtro por cortador2 (nombre exacto configurable por concepto).
+const cortador2Concepts = computed(() => props.concepts.filter((c) => c.supports_cortador2_filter));
+const filterNames = reactive(
+    Object.fromEntries(
+        props.concepts.filter((c) => c.supports_cortador2_filter).map((c) => [c.code, c.cortador2_name || '']),
+    ),
+);
+const savingFilter = ref(null);
+
+const guardarFiltro = (code) => {
+    savingFilter.value = code;
+    router.post(route('maquila-bonuses.save-filter'), { code, name: filterNames[code], month: props.month }, {
+        preserveScroll: true,
+        onFinish: () => { savingFilter.value = null; },
     });
 };
 
@@ -123,6 +140,37 @@ const anyConfigPending = computed(() =>
             <div v-if="anyConfigPending" class="mb-6 rounded-lg bg-yellow-50 border border-yellow-200 p-4 text-sm text-yellow-800">
                 Hay conceptos sin costo por unidad o sin empleados asignados: no generarán autorización hasta configurarlos en
                 <Link :href="route('compensation-types.index')" class="underline">Conceptos</Link>.
+            </div>
+
+            <!-- Filtro por cortador2 -->
+            <div v-if="cortador2Concepts.length" class="bg-white rounded-lg shadow p-6 mb-6">
+                <h3 class="text-lg font-semibold text-gray-800 mb-1">Filtro por cortador2</h3>
+                <p class="text-sm text-gray-500 mb-4">
+                    Para estos bonos se cuentan sólo las órdenes cuyo <code>cortador2</code> coincida con el nombre
+                    que pongas (ej. CARLOS). Déjalo vacío para contar todas las que tengan cualquier cortador2 con nombre.
+                </p>
+                <div v-for="c in cortador2Concepts" :key="c.code" class="flex flex-wrap items-end gap-3 mb-3">
+                    <div class="min-w-[200px]">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">{{ c.name }}</label>
+                        <input
+                            v-model="filterNames[c.code]"
+                            type="text"
+                            placeholder="cualquier nombre"
+                            class="w-full rounded-md border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                        />
+                    </div>
+                    <button
+                        type="button"
+                        :disabled="savingFilter === c.code"
+                        class="inline-flex items-center rounded-md bg-gray-800 px-3 py-2 text-sm font-medium text-white hover:bg-gray-900 disabled:opacity-50"
+                        @click="guardarFiltro(c.code)"
+                    >
+                        {{ savingFilter === c.code ? 'Guardando…' : 'Guardar' }}
+                    </button>
+                    <span class="pb-2 text-xs text-gray-500">
+                        actual: <strong>{{ c.cortador2_name || 'todas con cortador2' }}</strong>
+                    </span>
+                </div>
             </div>
 
             <!-- Tabla de conceptos -->

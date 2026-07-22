@@ -3,6 +3,7 @@
 namespace Database\Seeders;
 
 use App\Models\CompensationType;
+use App\Models\SystemSetting;
 use App\Services\MaquilaBonusMetricsService;
 use Illuminate\Database\Seeder;
 
@@ -41,6 +42,27 @@ class MaquilaBonusConceptsSeeder extends Seeder
             );
 
             $priority++;
+        }
+
+        // Filtro de nombre en cortador2 (editable en la UI). Órdenes cortadas
+        // arranca en CARLOS (el único con ese bono); fusión arranca vacío
+        // (cualquier cortador2 con nombre). firstOrCreate no pisa si ya se cambió.
+        $cortador2Defaults = [
+            MaquilaBonusMetricsService::CODE_ORDENES_CORTADAS => 'CARLOS',
+            MaquilaBonusMetricsService::CODE_ORDENES_FUSION => '',
+        ];
+
+        foreach ($cortador2Defaults as $code => $default) {
+            SystemSetting::firstOrCreate(
+                ['key' => MaquilaBonusMetricsService::cortador2SettingKey($code)],
+                [
+                    'value' => $default,
+                    'type' => 'string',
+                    'group' => SystemSetting::GROUP_PAYROLL,
+                    'label' => "Nombre de cortador2 para {$code}",
+                    'description' => 'Filtro de nombre exacto en cortador2 para el bono; vacío = cualquier cortador2 con nombre.',
+                ],
+            );
         }
     }
 }

@@ -10,6 +10,7 @@ use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -78,6 +79,27 @@ class MaquilaBonusController extends Controller
         );
     }
 
+    /** Guarda el nombre exacto de cortador2 (filtro) de un concepto. */
+    public function saveFilter(Request $request): RedirectResponse
+    {
+        $this->authorizeAccess();
+
+        $validated = $request->validate([
+            'code' => ['required', Rule::in(MaquilaBonusMetricsService::cortador2FilteredCodes())],
+            'name' => ['nullable', 'string', 'max:300'],
+            'month' => ['nullable', 'regex:/^\d{4}-\d{2}$/'],
+        ]);
+
+        $this->metrics->setCortador2NameFor($validated['code'], (string) ($validated['name'] ?? ''));
+
+        $name = trim((string) ($validated['name'] ?? ''));
+
+        return redirect()->route('maquila-bonuses.index', array_filter(['month' => $validated['month'] ?? null]))
+            ->with('success', $name !== ''
+                ? "Filtro actualizado: sólo se cuentan las órdenes con cortador2 = «{$name}»."
+                : 'Filtro actualizado: se cuentan todas las órdenes con cortador2 con nombre.');
+    }
+
     private ?string $metricsError = null;
 
     /**
@@ -112,10 +134,13 @@ class MaquilaBonusController extends Controller
             ->get()
             ->groupBy('compensation_type_id');
 
+        $cortador2Codes = MaquilaBonusMetricsService::cortador2FilteredCodes();
+
         $rows = [];
         foreach (MaquilaBonusMetricsService::catalog() as $code => $meta) {
             $concept = $concepts->get($code);
             $counts = $concept ? ($statusCounts->get($concept->id) ?? collect()) : collect();
+            $supportsCortador2 = in_array($code, $cortador2Codes, true);
 
             $rows[] = [
                 'code' => $code,
@@ -127,6 +152,8 @@ class MaquilaBonusController extends Controller
                 'assigned_count' => $concept->assigned_count ?? 0,
                 'approver_restricted' => ($concept->approvers_count ?? 0) > 0,
                 'quantity' => $quantities[$code] ?? null,
+                'supports_cortador2_filter' => $supportsCortador2,
+                'cortador2_name' => $supportsCortador2 ? $this->metrics->cortador2NameFor($code) : null,
                 'authorizations' => [
                     'pending' => (int) $counts->firstWhere('status', Authorization::STATUS_PENDING)?->n,
                     'approved' => (int) $counts->firstWhere('status', Authorization::STATUS_APPROVED)?->n,

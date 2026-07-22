@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\SystemSetting;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -144,17 +145,17 @@ class MaquilaBonusMetricsService
 
     private function ordenesFusion(int $year, int $month): int
     {
-        // Sólo cuentan las órdenes de fusión que tienen `cortador2` con nombre
+        // Sólo cuentan las órdenes de fusión que pasan el filtro de cortador2
         // ("esos son los que se pagan"); el conteo lo cobran los empleados que
         // el admin asigne al concepto.
-        return (int) $this->scalar(
-            "SELECT COUNT(*) AS n
-             FROM combinacion_alta
-             WHERE noorden LIKE 'F%' AND tipo <> ?
-               AND cortador2 IS NOT NULL AND LTRIM(RTRIM(cortador2)) <> ''
-               AND YEAR(fecha_alta) = ? AND MONTH(fecha_alta) = ?",
-            ['CANCELADO', $year, $month],
-        );
+        $sql = "SELECT COUNT(*) AS n FROM combinacion_alta WHERE noorden LIKE 'F%' AND tipo <> ?";
+        $bindings = ['CANCELADO'];
+        $this->appendCortador2Filter(self::CODE_ORDENES_FUSION, $sql, $bindings);
+        $sql .= ' AND YEAR(fecha_alta) = ? AND MONTH(fecha_alta) = ?';
+        $bindings[] = $year;
+        $bindings[] = $month;
+
+        return (int) $this->scalar($sql, $bindings);
     }
 
     /**
@@ -173,14 +174,79 @@ class MaquilaBonusMetricsService
      */
     private function ordenesCortadas(int $year, int $month): int
     {
-        return (int) $this->scalar(
-            "SELECT COUNT(*) AS n
-             FROM corte_alta
-             WHERE tipo <> ?
-               AND cortador2 IS NOT NULL AND LTRIM(RTRIM(cortador2)) <> ''
-               AND YEAR(fecha_alta) = ? AND MONTH(fecha_alta) = ?",
-            ['CANCELADO', $year, $month],
+        $sql = 'SELECT COUNT(*) AS n FROM corte_alta WHERE tipo <> ?';
+        $bindings = ['CANCELADO'];
+        $this->appendCortador2Filter(self::CODE_ORDENES_CORTADAS, $sql, $bindings);
+        $sql .= ' AND YEAR(fecha_alta) = ? AND MONTH(fecha_alta) = ?';
+        $bindings[] = $year;
+        $bindings[] = $month;
+
+        return (int) $this->scalar($sql, $bindings);
+    }
+
+    /**
+     * Conceptos cuyo conteo se filtra por la columna `cortador2`.
+     *
+     * @return string[]
+     */
+    public static function cortador2FilteredCodes(): array
+    {
+        return [self::CODE_ORDENES_FUSION, self::CODE_ORDENES_CORTADAS];
+    }
+
+    /** Llave de SystemSetting con el nombre exacto de cortador2 para un concepto. */
+    public static function cortador2SettingKey(string $code): string
+    {
+        return 'maquila_bonus_cortador2:' . $code;
+    }
+
+    /**
+     * Nombre configurado en cortador2 para un concepto (vacío = cualquier
+     * cortador2 con nombre).
+     */
+    public function cortador2NameFor(string $code): string
+    {
+        return trim((string) SystemSetting::get(self::cortador2SettingKey($code), ''));
+    }
+
+    /**
+     * Guarda (creando la llave si no existe) el nombre de cortador2 de un
+     * concepto. Vacío = cualquier cortador2 con nombre.
+     */
+    public function setCortador2NameFor(string $code, string $name): void
+    {
+        $key = self::cortador2SettingKey($code);
+
+        SystemSetting::firstOrCreate(
+            ['key' => $key],
+            [
+                'value' => '',
+                'type' => 'string',
+                'group' => SystemSetting::GROUP_PAYROLL,
+                'label' => "Nombre de cortador2 para {$code}",
+                'description' => 'Filtro de nombre exacto en cortador2 para el bono; vacío = cualquier cortador2 con nombre.',
+            ],
         );
+
+        SystemSetting::set($key, trim($name));
+    }
+
+    /**
+     * Agrega al SQL el filtro de cortador2 según la config del concepto: nombre
+     * exacto si está configurado, o "cualquier cortador2 con nombre" si vacío.
+     */
+    private function appendCortador2Filter(string $code, string &$sql, array &$bindings): void
+    {
+        $name = $this->cortador2NameFor($code);
+
+        if ($name !== '') {
+            $sql .= ' AND LTRIM(RTRIM(cortador2)) = ?';
+            $bindings[] = $name;
+
+            return;
+        }
+
+        $sql .= " AND cortador2 IS NOT NULL AND LTRIM(RTRIM(cortador2)) <> ''";
     }
 
     /**
