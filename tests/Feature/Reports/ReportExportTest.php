@@ -527,7 +527,7 @@ class ReportExportTest extends FeatureTestCase
         $this->assertStringContainsString('Minutos Temprano', $body);
     }
 
-    public function test_faltas_export_renders_aggregated_falta_columns(): void
+    public function test_faltas_export_renders_one_row_per_day(): void
     {
         $this->actingAsAdmin();
 
@@ -550,13 +550,14 @@ class ReportExportTest extends FeatureTestCase
         $this->assertCsvDownload($response);
 
         $body = $this->streamedBody($response);
-        $this->assertStringContainsString('Total Faltas', $body); // header column
-        $this->assertStringContainsString('Fausto Falta', $body);
-        // El detalle va en UNA columna "Detalle" (como la web), no en columnas
-        // "Observación N" (Luis 2026-06-25); y se incluye el Horario.
+        // Seccionado por día (Luis 2026-07-22): cada falta es su propia fila
+        // con columna "Fecha" + "Motivo", ya no una celda "Detalle" apilada.
+        $this->assertStringContainsString('Fecha', $body); // header column
+        $this->assertStringContainsString('Motivo', $body);
         $this->assertStringContainsString('Horario', $body);
-        $this->assertStringContainsString('Detalle', $body);
-        $this->assertStringNotContainsString('Observación 1', $body);
+        $this->assertStringContainsString('Fausto Falta', $body);
+        $this->assertStringContainsString('09/03/2026', $body); // self::MONDAY en d/m/Y
+        $this->assertStringNotContainsString('Detalle', $body);
         $this->assertStringContainsString('no se presentó', $body);
     }
 

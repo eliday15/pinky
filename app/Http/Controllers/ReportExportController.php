@@ -493,63 +493,86 @@ class ReportExportController extends Controller implements HasMiddleware
             ->merge(array_keys($retardoFaltas))
             ->unique();
 
-        // Las observaciones (una por fecha) se acumulan por fila y al final se
-        // juntan en una sola columna "Detalle" apilada (ver más abajo).
-        $rows = [];
-        foreach ($allEmployeeIds as $employeeId) {
-            $empNoShow = $noShowRecords->where('employee_id', $employeeId);
-            $empThreshold = $thresholdRecords->where('employee_id', $employeeId);
-            $employee = $empNoShow->first()?->employee ?? $empThreshold->first()?->employee ?? Employee::with(['department', 'schedule'])->find($employeeId);
-            $noShow = $empNoShow->count();
-            $threshold = $empThreshold->count();
-            $retardo = $retardoFaltas[$employeeId] ?? 0;
-
-            // Observaciones por día (inasistencias y umbral juntas, en orden
-            // cronológico) y luego el detalle mensual de faltas por retardos.
-            // Cada texto aclara de qué día es la checada (una salida de
-            // madrugada parece del día siguiente). Mismos textos que el detalle
-            // del reporte web.
-            $observaciones = [];
-            foreach ($empNoShow->merge($empThreshold)->sortBy('work_date') as $r) {
-                $observaciones[] = $this->faltaObservacion($r, $maxLateBeforeAbsence, $earlyDepartureThreshold, $earlyDepartureIsAbsence);
-            }
-            foreach ($retardoDetalles[$employeeId] ?? [] as $detalle) {
-                $observaciones[] = $detalle;
+        // Seccionado POR DÍA (Luis 2026-07-22): antes todo el detalle de un
+        // empleado se apilaba en UNA celda "Detalle" y en Excel salía ilegible.
+        // Ahora cada falta es su propia fila con su Fecha, ordenadas
+        // cronológicamente → cada día queda agrupado y se puede filtrar/ordenar.
+        $empleadoCache = [];
+        $resolveEmpleado = function ($employeeId) use (&$empleadoCache, $noShowRecords, $thresholdRecords) {
+            if (! array_key_exists($employeeId, $empleadoCache)) {
+                $empleadoCache[$employeeId] = $noShowRecords->where('employee_id', $employeeId)->first()?->employee
+                    ?? $thresholdRecords->where('employee_id', $employeeId)->first()?->employee
+                    ?? Employee::with(['department', 'schedule'])->find($employeeId);
             }
 
+            return $empleadoCache[$employeeId];
+        };
+
+        $horarioDe = function ($employee): string {
             $sched = $employee?->getEffectiveSchedule();
-            $horario = $sched && $sched->entry_time
+
+            return $sched && $sched->entry_time
                 ? substr((string) $sched->entry_time, 0, 5).' - '.substr((string) $sched->exit_time, 0, 5)
                 : '-';
+        };
 
-            $rows[] = [
-                'fixed' => [
-                    $employee?->full_name ?? '-',
-                    $employee?->employee_number ?? '-',
-                    $employee?->department?->name ?? '-',
-                    $horario,
-                    $noShow,
-                    $threshold,
-                    $retardo,
-                    $noShow + $threshold + $retardo,
-                ],
-                'observaciones' => $observaciones,
-            ];
+        // 1) Faltas por día (inasistencias + umbral), una fila por fecha.
+        $dayRows = [];
+        foreach ($allEmployeeIds as $employeeId) {
+            $employee = $resolveEmpleado($employeeId);
+            $horario = $horarioDe($employee);
+            foreach ($noShowRecords->where('employee_id', $employeeId)->merge($thresholdRecords->where('employee_id', $employeeId)) as $r) {
+                $dayRows[] = [
+                    'sort' => Carbon::parse($r->work_date)->toDateString(),
+                    'row' => [
+                        Carbon::parse($r->work_date)->format('d/m/Y'),
+                        $employee?->full_name ?? '-',
+                        $employee?->employee_number ?? '-',
+                        $employee?->department?->name ?? '-',
+                        $horario,
+                        $this->faltaObservacion($r, $maxLateBeforeAbsence, $earlyDepartureThreshold, $earlyDepartureIsAbsence, false),
+                    ],
+                ];
+            }
         }
 
-        // El detalle (una línea por día, cronológico) va en UNA sola columna
-        // "Detalle" —como en el reporte web (Luis 2026-06-25)— en vez de
-        // esparcirse en muchas columnas "Observación N", que salían muy
-        // amontonadas en Excel. fputcsv entrecomilla la celda con saltos de
-        // línea, así Excel la muestra apilada igual que la web.
-        $data = array_map(
-            fn ($row) => array_merge($row['fixed'], [implode("\n", $row['observaciones'])]),
-            $rows
-        );
+        // Orden cronológico y, dentro del mismo día, por nombre.
+        usort($dayRows, fn ($a, $b) => [$a['sort'], $a['row'][1]] <=> [$b['sort'], $b['row'][1]]);
+        $data = array_map(fn ($r) => $r['row'], $dayRows);
+
+        // 2) Faltas por retardos: son acumulados MENSUALES (no de un día), así
+        // que van en su propio bloque al final, con el mes en la columna Fecha.
+        $retardoRows = [];
+        foreach ($retardoFaltas as $employeeId => $_faltas) {
+            $employee = $resolveEmpleado($employeeId);
+            $horario = $horarioDe($employee);
+            foreach ($retardoDetalles[$employeeId] ?? [] as $detalle) {
+                $retardoRows[] = [
+                    'nombre' => $employee?->full_name ?? '-',
+                    'row' => [
+                        '',
+                        $employee?->full_name ?? '-',
+                        $employee?->employee_number ?? '-',
+                        $employee?->department?->name ?? '-',
+                        $horario,
+                        $detalle,
+                    ],
+                ];
+            }
+        }
+
+        if ($retardoRows !== []) {
+            usort($retardoRows, fn ($a, $b) => $a['nombre'] <=> $b['nombre']);
+            $data[] = ['', '', '', '', '', ''];
+            $data[] = ['FALTAS POR RETARDOS (acumulado mensual)', '', '', '', '', ''];
+            foreach ($retardoRows as $r) {
+                $data[] = $r['row'];
+            }
+        }
 
         return $this->exportCsv(
             "reporte_faltas_{$startDate}_{$endDate}.csv",
-            ['Empleado', 'No. Empleado', 'Departamento', 'Horario', 'Inasistencias', 'Por Umbral', 'Faltas por Retardos', 'Total Faltas', 'Detalle'],
+            ['Fecha', 'Empleado', 'No. Empleado', 'Departamento', 'Horario', 'Motivo'],
             $data
         );
     }
@@ -775,20 +798,24 @@ class ReportExportController extends Controller implements HasMiddleware
      * day it was, what happened, and which day the punch belongs to. Mirrors
      * the labels of the Faltas web report (AttendanceReportController).
      */
-    private function faltaObservacion(AttendanceRecord $record, int $maxLateBeforeAbsence, int $earlyDepartureThreshold, bool $earlyDepartureIsAbsence): string
+    private function faltaObservacion(AttendanceRecord $record, int $maxLateBeforeAbsence, int $earlyDepartureThreshold, bool $earlyDepartureIsAbsence, bool $withDate = true): string
     {
-        $dia = Carbon::parse($record->work_date)->locale('es')->isoFormat('D MMM');
+        // Con una columna "Fecha" propia (export por día) el prefijo del día
+        // sobra: se omite pasando $withDate = false.
+        $prefijo = $withDate
+            ? Carbon::parse($record->work_date)->locale('es')->isoFormat('D MMM').': '
+            : '';
 
         if (is_null($record->check_in)) {
             $esperada = $this->horaEsperada($record, 'entry_time');
 
-            return "{$dia}: no se presentó".($esperada ? " (entrada esperada {$esperada})" : '');
+            return "{$prefijo}no se presentó".($esperada ? " (entrada esperada {$esperada})" : '');
         }
 
         if (($record->late_minutes ?? 0) >= $maxLateBeforeAbsence) {
             $esperada = $this->horaEsperada($record, 'entry_time');
 
-            return "{$dia}: retardo excesivo — llegó ".$this->hora($record->check_in)
+            return "{$prefijo}retardo excesivo — llegó ".$this->hora($record->check_in)
                 .$this->punchDayHint($record->check_in, false)
                 .($esperada ? " (entrada esperada {$esperada})" : '');
         }
@@ -796,12 +823,12 @@ class ReportExportController extends Controller implements HasMiddleware
         if ($earlyDepartureIsAbsence && ($record->early_departure_minutes ?? 0) >= $earlyDepartureThreshold) {
             $esperada = $this->horaEsperada($record, 'exit_time');
 
-            return "{$dia}: salida temprana — salió ".$this->hora($record->check_out)
+            return "{$prefijo}salida temprana — salió ".$this->hora($record->check_out)
                 .$this->punchDayHint($record->check_out, true)
                 .($esperada ? " (salida esperada {$esperada})" : '');
         }
 
-        return "{$dia}: falta por umbral";
+        return "{$prefijo}falta por umbral";
     }
 
     /**
