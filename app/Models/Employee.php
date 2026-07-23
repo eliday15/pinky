@@ -108,6 +108,7 @@ class Employee extends Model
         'infonavit_credit_type',
         'infonavit_credit_value',
         'is_attendance_exempt',
+        'empresa',
         'cash_pin',
         'daily_salary',
         'monthly_bonus_type',
@@ -151,6 +152,24 @@ class Employee extends Model
     protected $hidden = [
         'cash_pin',
     ];
+
+    /**
+     * Razón social / canal de pago para el "Reporte al contador". VP y AVL son
+     * patrones distintos (nómina formal); POR_FUERA se paga fuera de nómina.
+     *
+     * @var array<string, string>  valor => etiqueta (y nombre de hoja en Excel)
+     */
+    public const EMPRESAS = [
+        'VP' => 'VP',
+        'AVL' => 'AVL',
+        'POR_FUERA' => 'POR FUERA',
+    ];
+
+    /** Etiqueta legible (= nombre de hoja) de la empresa del empleado. */
+    public function empresaLabel(): string
+    {
+        return self::EMPRESAS[$this->empresa] ?? self::EMPRESAS['VP'];
+    }
 
     /**
      * Hash the cash PIN on assignment. An empty value is ignored so the form

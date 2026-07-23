@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Exports\AccountantReport\AccountantReportExport;
 use App\Http\Controllers\Concerns\ScopesReportEmployees;
 use App\Models\AttendanceRecord;
 use App\Models\Department;
@@ -12,12 +13,14 @@ use App\Models\PayrollEntry;
 use App\Models\PayrollPeriod;
 use App\Services\CompensationRateResolverService;
 use App\Services\LateAbsenceService;
+use App\Services\Reports\AccountantReportService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Routing\Controllers\Middleware;
 use Inertia\Inertia;
 use Inertia\Response;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class ReportController extends Controller implements HasMiddleware
 {
@@ -812,5 +815,85 @@ class ReportController extends Controller implements HasMiddleware
             'trendData' => $trendData,
             'summary' => $summary,
         ]);
+    }
+
+    /**
+     * Reporte al contador: resumen semanal por empresa (VP / AVL / POR FUERA)
+     * con vacaciones, prima vacacional, faltas, faltas por retardo,
+     * incapacidades, finiquitos y pagos de día descontado. Vista previa + Excel.
+     */
+    public function accountant(Request $request, AccountantReportService $service): Response
+    {
+        $this->authorizeAccountant($request);
+        [$start, $end] = $this->accountantRange($request);
+
+        return Inertia::render('Reports/Accountant', [
+            'report' => $service->build($start, $end),
+            'sections' => collect(AccountantReportService::SECTIONS)
+                ->map(fn ($meta, $key) => ['key' => $key, 'title' => $meta['title'], 'headers' => $meta['headers']])
+                ->values(),
+            'empresas' => collect(Employee::EMPRESAS)
+                ->map(fn ($label, $key) => ['key' => $key, 'label' => $label])
+                ->values(),
+            'weekLabel' => $this->accountantWeekLabel($start, $end),
+            'filters' => [
+                'start_date' => $start->toDateString(),
+                'end_date' => $end->toDateString(),
+            ],
+        ]);
+    }
+
+    /**
+     * Descarga el reporte al contador como Excel (una hoja por empresa).
+     */
+    public function exportAccountant(Request $request, AccountantReportService $service): BinaryFileResponse
+    {
+        $this->authorizeAccountant($request);
+        [$start, $end] = $this->accountantRange($request);
+
+        $filename = "reporte_contador_{$start->toDateString()}_{$end->toDateString()}.xlsx";
+
+        return (new AccountantReportExport($service->build($start, $end), $this->accountantWeekLabel($start, $end)))
+            ->download($filename);
+    }
+
+    /**
+     * El reporte al contador expone datos de TODA la empresa, así que exige el
+     * permiso amplio de reportes (no el de equipo/propio).
+     */
+    private function authorizeAccountant(Request $request): void
+    {
+        if (! $request->user()?->hasPermissionTo('reports.view_all')) {
+            abort(403);
+        }
+    }
+
+    /**
+     * Rango del reporte: por omisión la semana en curso (lunes a domingo),
+     * sobreescribible con start_date/end_date.
+     *
+     * @return array{0: Carbon, 1: Carbon}
+     */
+    private function accountantRange(Request $request): array
+    {
+        $start = $request->filled('start_date')
+            ? Carbon::parse($request->get('start_date'))
+            : Carbon::now()->startOfWeek();
+        $end = $request->filled('end_date')
+            ? Carbon::parse($request->get('end_date'))
+            : Carbon::now()->endOfWeek();
+
+        return [$start->startOfDay(), $end->startOfDay()];
+    }
+
+    /** "SEMANA DEL 13 AL 21 julio 2026" (o cruzando meses si aplica). */
+    private function accountantWeekLabel(Carbon $start, Carbon $end): string
+    {
+        if ($start->isSameMonth($end)) {
+            return 'SEMANA DEL '.$start->day.' AL '.$end->day.' '.$start->locale('es')->isoFormat('MMMM YYYY');
+        }
+
+        return 'SEMANA DEL '.$start->day.' '.$start->locale('es')->isoFormat('MMMM')
+            .' AL '.$end->day.' '.$end->locale('es')->isoFormat('MMMM YYYY');
     }
 }

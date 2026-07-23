@@ -169,6 +169,7 @@ class EmployeeController extends Controller
             'bank_code' => ['nullable', 'string', 'max:3'],
             'is_imss_enrolled' => ['boolean'],
             'is_attendance_exempt' => ['boolean'],
+            'empresa' => ['nullable', Rule::in(array_keys(Employee::EMPRESAS))],
             'cash_pin' => ['nullable', 'string', 'min:4', 'confirmed'],
             'daily_salary' => ['required', 'numeric', 'min:0'],
             'monthly_bonus_type' => ['nullable', 'string', Rule::in(['none', 'fixed', 'variable'])],
@@ -233,6 +234,7 @@ class EmployeeController extends Controller
         $validated['is_minimum_wage'] = $validated['is_minimum_wage'] ?? false;
         $validated['is_trial_period'] = $validated['is_trial_period'] ?? false;
         $validated['is_attendance_exempt'] = $validated['is_attendance_exempt'] ?? false;
+        $validated['empresa'] = $validated['empresa'] ?? 'VP';
         $validated['monthly_bonus_type'] = $validated['monthly_bonus_type'] ?? 'none';
         $validated['monthly_bonus_amount'] = $validated['monthly_bonus_amount'] ?? 0;
 
@@ -488,6 +490,7 @@ class EmployeeController extends Controller
             'bank_code' => ['nullable', 'string', 'max:3'],
             'is_imss_enrolled' => ['boolean'],
             'is_attendance_exempt' => ['boolean'],
+            'empresa' => ['nullable', Rule::in(array_keys(Employee::EMPRESAS))],
             'cash_pin' => ['nullable', 'string', 'min:4', 'confirmed'],
             'daily_salary' => ['required', 'numeric', 'min:0'],
             'monthly_bonus_type' => ['nullable', 'string', Rule::in(['none', 'fixed', 'variable'])],
@@ -574,6 +577,7 @@ class EmployeeController extends Controller
         $validated['is_minimum_wage'] = $validated['is_minimum_wage'] ?? false;
         $validated['is_trial_period'] = $validated['is_trial_period'] ?? false;
         $validated['is_attendance_exempt'] = $validated['is_attendance_exempt'] ?? false;
+        $validated['empresa'] = $validated['empresa'] ?? 'VP';
         $validated['monthly_bonus_type'] = $validated['monthly_bonus_type'] ?? 'none';
         $validated['monthly_bonus_amount'] = $validated['monthly_bonus_amount'] ?? 0;
         $validated['vacation_days_reserved'] = $validated['vacation_days_reserved'] ?? 0;

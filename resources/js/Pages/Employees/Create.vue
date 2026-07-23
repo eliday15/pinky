@@ -55,6 +55,7 @@ const form = useForm({
     bank_code: '',
     is_imss_enrolled: false,
     is_attendance_exempt: false,
+    empresa: 'VP',
     cash_pin: '',
     cash_pin_confirmation: '',
     daily_salary: '',
@@ -857,6 +858,15 @@ watch(() => form.hire_date, onHireDateChange);
                                 <span class="ml-2 text-sm font-medium text-gray-700">No checa (sin checador / ZKTeco)</span>
                             </label>
                             <p class="mt-1 text-sm text-gray-500">El empleado no marca en el checador y no requiere ID ZKTeco. Cobra su sueldo completo; sus faltas y autorizaciones se capturan manualmente.</p>
+                        </div>
+                        <div v-if="canEditAll">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Empresa (Reporte al contador)</label>
+                            <select v-model="form.empresa" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500">
+                                <option value="VP">VP</option>
+                                <option value="AVL">AVL</option>
+                                <option value="POR_FUERA">Por fuera</option>
+                            </select>
+                            <p class="mt-1 text-sm text-gray-500">Razón social / hoja en la que aparece este empleado en el Reporte al contador.</p>
                         </div>
                     </div>
 

@@ -163,6 +163,10 @@ Route::middleware(['auth', 'password-changed', 'two-factor-setup'])->group(funct
     Route::get('/reports/productivity', [ReportController::class, 'productivity'])->name('reports.productivity');
     Route::get('/reports/payroll-trends', [ReportController::class, 'payrollTrends'])->name('reports.payrollTrends');
 
+    // Reporte al contador (resumen semanal por empresa) + su Excel
+    Route::get('/reports/accountant', [ReportController::class, 'accountant'])->name('reports.accountant');
+    Route::get('/reports/accountant/export', [ReportController::class, 'exportAccountant'])->name('reports.accountant.export');
+
     // Weekly overtime report (Formato de Tiempo Extra) per department
     Route::prefix('reports/overtime-weekly')->name('reports.overtime-weekly.')->group(function () {
         Route::get('/', [OvertimeReportController::class, 'index'])->name('index');

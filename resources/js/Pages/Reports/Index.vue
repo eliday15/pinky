@@ -61,6 +61,7 @@ const allReports = [
         items: [
             { name: 'Nomina', description: 'Detalle por periodo', route: 'reports.payroll', icon: 'payroll' },
             { name: 'Tendencias', description: 'Historico de pago', route: 'reports.payrollTrends', icon: 'trends' },
+            { name: 'Al Contador', description: 'Resumen semanal por empresa', route: 'reports.accountant', icon: 'payroll' },
         ],
     },
     {
