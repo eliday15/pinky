@@ -24,6 +24,15 @@ class Employee extends Model
      */
     protected static function booted(): void
     {
+        // La empresa (razón social / canal de pago del "Reporte al contador") se
+        // deriva SIEMPRE de la regla del negocio (Elias 2026-07-23): Taller = AVL;
+        // del resto, los de prueba se pagan POR FUERA y los demás son VP. Se
+        // recalcula en cada guardado para que siga al departamento / periodo de
+        // prueba automáticamente.
+        static::saving(function (Employee $employee) {
+            $employee->empresa = $employee->resolveEmpresa();
+        });
+
         static::softDeleted(function (Employee $employee) {
             $suffix = '_deleted_'.$employee->id;
             // Also flip status away from "active" so withTrashed-aware reports
@@ -169,6 +178,28 @@ class Employee extends Model
     public function empresaLabel(): string
     {
         return self::EMPRESAS[$this->empresa] ?? self::EMPRESAS['VP'];
+    }
+
+    /**
+     * Empresa que le corresponde según la regla del negocio (Elias 2026-07-23):
+     *   - Departamento Taller           → AVL (tenga o no periodo de prueba)
+     *   - Del resto, en periodo de prueba → POR FUERA (fuera de nómina)
+     *   - Los demás                      → VP
+     *
+     * Taller manda sobre "prueba": todo el personal del taller es AVL. Se usa en
+     * el saving hook para mantener `empresa` en sincronía automáticamente.
+     */
+    public function resolveEmpresa(): string
+    {
+        $deptName = $this->relationLoaded('department')
+            ? $this->department?->name
+            : Department::whereKey($this->department_id)->value('name');
+
+        if ($deptName !== null && str_starts_with(mb_strtolower(trim($deptName)), 'taller')) {
+            return 'AVL';
+        }
+
+        return $this->is_trial_period ? 'POR_FUERA' : 'VP';
     }
 
     /**

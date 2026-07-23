@@ -3,6 +3,7 @@
 namespace Tests\Feature\Reports;
 
 use App\Models\AttendanceRecord;
+use App\Models\Department;
 use App\Models\Employee;
 use App\Models\Incident;
 use App\Models\IncidentType;
@@ -56,11 +57,41 @@ class AccountantReportTest extends FeatureTestCase
         );
     }
 
+    /** VP = fuera de taller y ya formalizado; la empresa se deriva sola. */
+    private function vpEmployee(): Employee
+    {
+        return Employee::factory()->create([
+            'status' => 'active',
+            'department_id' => Department::factory()->create(['name' => 'Corte'])->id,
+            'is_trial_period' => false,
+        ]);
+    }
+
+    /** AVL = departamento Taller (la empresa se deriva a AVL). */
+    private function avlEmployee(): Employee
+    {
+        return Employee::factory()->create([
+            'status' => 'active',
+            'department_id' => Department::factory()->create(['name' => 'Taller Adriana'])->id,
+            'is_trial_period' => false,
+        ]);
+    }
+
+    /** POR FUERA = fuera de taller y en periodo de prueba. */
+    private function porFueraEmployee(): Employee
+    {
+        return Employee::factory()->create([
+            'status' => 'active',
+            'department_id' => Department::factory()->create(['name' => 'Corte'])->id,
+            'is_trial_period' => true,
+        ]);
+    }
+
     public function test_service_splits_sections_by_empresa(): void
     {
-        $vp = Employee::factory()->create(['status' => 'active', 'empresa' => 'VP']);
-        $avl = Employee::factory()->create(['status' => 'active', 'empresa' => 'AVL']);
-        $fuera = Employee::factory()->create(['status' => 'active', 'empresa' => 'POR_FUERA']);
+        $vp = $this->vpEmployee();
+        $avl = $this->avlEmployee();
+        $fuera = $this->porFueraEmployee();
 
         // VP: una falta (martes 14) + vacaciones 15-16.
         AttendanceRecord::factory()->for($vp)->create([
@@ -120,7 +151,7 @@ class AccountantReportTest extends FeatureTestCase
 
     public function test_service_reports_charged_faltas_por_retardo(): void
     {
-        $vp = Employee::factory()->create(['status' => 'active', 'empresa' => 'VP']);
+        $vp = $this->vpEmployee();
 
         Incident::factory()->approved()->create([
             'employee_id' => $vp->id,
