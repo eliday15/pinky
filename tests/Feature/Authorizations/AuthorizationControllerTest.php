@@ -2435,20 +2435,13 @@ class AuthorizationControllerTest extends FeatureTestCase
             ->assertJsonValidationErrors(['end_date']);
     }
 
-    public function test_suggest_bulk_excludes_employee_outside_supervisor_team(): void
+    public function test_suggest_bulk_forbidden_for_supervisor(): void
     {
-        // suggestBulk scopes by team: a stranger employee yields no rows and
-        // is counted as skipped, never leaking their attendance segments.
+        // "Cargar desde checadas" ya no está permitido al supervisor: captura a
+        // mano (Elias 2026-07-23). Le falta authorizations.suggest_from_checadas.
         $supUser = $this->supervisorUser();
         $this->attachEmployee($supUser);
         $stranger = Employee::factory()->create();
-        AttendanceRecord::factory()->create([
-            'employee_id' => $stranger->id,
-            'work_date' => '2026-06-08',
-            'check_in' => '08:00:00',
-            'check_out' => '19:00:00',
-            'overtime_hours' => 2,
-        ]);
 
         $this->actingAs($supUser)
             ->getJson(route('authorizations.suggestBulk', [
@@ -2457,8 +2450,7 @@ class AuthorizationControllerTest extends FeatureTestCase
                 'end_date' => '2026-06-08',
                 'type' => Authorization::TYPE_OVERTIME,
             ]))
-            ->assertOk()
-            ->assertJson(['eligible_count' => 0, 'eligible_employee_count' => 0]);
+            ->assertStatus(403);
     }
 
     public function test_suggest_bulk_redirects_guest_to_login(): void

@@ -1436,6 +1436,12 @@ class AuthorizationController extends Controller
     {
         $this->authorize('create', Authorization::class);
 
+        // "Cargar desde checadas" no está permitido al supervisor: captura a mano
+        // (Elias 2026-07-23). El permiso lo tienen admin/superadmin, no supervisor.
+        if (! Auth::user()->hasPermissionTo('authorizations.suggest_from_checadas')) {
+            return response()->json(['found' => false, 'message' => 'No autorizado para cargar desde checadas.'], 403);
+        }
+
         $validated = $request->validate([
             'employee_id' => ['required', 'exists:employees,id'],
             'date' => ['required', 'date'],
@@ -1483,6 +1489,11 @@ class AuthorizationController extends Controller
     public function suggestBulk(Request $request): \Illuminate\Http\JsonResponse
     {
         $this->authorize('create', Authorization::class);
+
+        // "Cargar desde checadas" no está permitido al supervisor (Elias 2026-07-23).
+        if (! Auth::user()->hasPermissionTo('authorizations.suggest_from_checadas')) {
+            return response()->json(['suggestions' => [], 'message' => 'No autorizado para cargar desde checadas.'], 403);
+        }
 
         $validated = $request->validate([
             'employee_ids' => ['required', 'array', 'min:1'],

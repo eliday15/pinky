@@ -2,7 +2,7 @@
 import AppLayout from '@/Layouts/AppLayout.vue';
 import FormErrorBanner from '@/Components/FormErrorBanner.vue';
 import SearchableSelect from '@/Components/SearchableSelect.vue';
-import { Head, Link, useForm } from '@inertiajs/vue3';
+import { Head, Link, useForm, usePage } from '@inertiajs/vue3';
 import { ref, computed, watch } from 'vue';
 import axios from 'axios';
 import { todayLocal } from '@/utils/date';
@@ -200,6 +200,12 @@ watch(startDate, (val) => {
 });
 
 /* ----- Suggestion state for per_hour multi-day mode ----- */
+// "Cargar desde checadas": el supervisor NO lo tiene (captura a mano). El resto
+// (admin/superadmin) sí. Se gatea por permiso (Elias 2026-07-23).
+const canSuggestFromChecadas = computed(
+    () => (usePage().props.auth?.permissions || []).includes('authorizations.suggest_from_checadas'),
+);
+
 const suggestions = ref([]);
 const suggestionsLoading = ref(false);
 const suggestionsApplied = ref(false);
@@ -620,7 +626,7 @@ const submitCount = computed(() => {
                             </p>
                         </div>
                         <div class="flex flex-col items-end gap-2 flex-shrink-0">
-                            <div class="flex items-center gap-2">
+                            <div v-if="canSuggestFromChecadas" class="flex items-center gap-2">
                                 <label class="text-xs text-gray-600">Desde:</label>
                                 <input type="date" v-model="rangeStart"
                                     class="text-xs rounded border-gray-300 focus:border-pink-500 focus:ring-pink-500 py-1" />
@@ -629,7 +635,7 @@ const submitCount = computed(() => {
                                     class="text-xs rounded border-gray-300 focus:border-pink-500 focus:ring-pink-500 py-1" />
                             </div>
                             <div class="flex gap-2">
-                                <button type="button" @click="fetchSuggestions"
+                                <button v-if="canSuggestFromChecadas" type="button" @click="fetchSuggestions"
                                     :disabled="suggestionsLoading || !canFetchSuggestions"
                                     class="px-3 py-1.5 bg-amber-600 text-white text-xs rounded hover:bg-amber-700 disabled:opacity-50">
                                     {{ suggestionsLoading ? 'Calculando...' : 'Cargar desde checadas' }}
@@ -734,7 +740,7 @@ const submitCount = computed(() => {
                             </p>
                         </div>
                         <div class="flex flex-col items-end gap-2 flex-shrink-0">
-                            <div class="flex items-center gap-2">
+                            <div v-if="canSuggestFromChecadas" class="flex items-center gap-2">
                                 <label class="text-xs text-gray-600">Desde:</label>
                                 <input type="date" v-model="rangeStart"
                                     class="text-xs rounded border-gray-300 focus:border-pink-500 focus:ring-pink-500 py-1" />
@@ -743,7 +749,7 @@ const submitCount = computed(() => {
                                     class="text-xs rounded border-gray-300 focus:border-pink-500 focus:ring-pink-500 py-1" />
                             </div>
                             <div class="flex gap-2">
-                                <button type="button" @click="fetchSuggestions"
+                                <button v-if="canSuggestFromChecadas" type="button" @click="fetchSuggestions"
                                     :disabled="suggestionsLoading || !canFetchSuggestions"
                                     class="px-3 py-1.5 bg-amber-600 text-white text-xs rounded hover:bg-amber-700 disabled:opacity-50">
                                     {{ suggestionsLoading ? 'Calculando...' : 'Cargar desde checadas' }}

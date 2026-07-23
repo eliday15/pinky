@@ -61,6 +61,9 @@ class RolesPermissionsSeeder extends Seeder
             'authorizations.view_team',
             'authorizations.view_own',
             'authorizations.create',
+            // "Cargar desde checadas": prellenar horas/segmentos desde las marcas.
+            // El supervisor NO lo tiene (captura a mano); admin/superadmin sí.
+            'authorizations.suggest_from_checadas',
             'authorizations.approve',
             'authorizations.reject',
 
