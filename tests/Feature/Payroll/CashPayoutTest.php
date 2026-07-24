@@ -95,10 +95,11 @@ class CashPayoutTest extends FeatureTestCase
             ->where('employee_id', $employee->id)
             ->firstOrFail();
 
-        // 1247.40 redondea a 1247.
-        $this->assertEqualsWithDelta(1247.00, (float) $payout->period_amount, 0.01);
+        // El monto se guarda EXACTO con centavos (Luis 2026-07-24); el desglose
+        // de billetes redondea a pesos enteros (1247) porque no hay moneda <$1.
+        $this->assertEqualsWithDelta(1247.40, (float) $payout->period_amount, 0.01);
         $this->assertEqualsWithDelta(0.00, (float) $payout->opening_balance, 0.01);
-        $this->assertEqualsWithDelta(1247.00, (float) $payout->total_due, 0.01);
+        $this->assertEqualsWithDelta(1247.40, (float) $payout->total_due, 0.01);
         $this->assertSame('pending', $payout->status);
         $this->assertSame(
             ['1000' => 1, '200' => 1, '20' => 2, '5' => 1, '2' => 1],

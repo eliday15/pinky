@@ -168,11 +168,21 @@ const normalize = (s) => (s ?? '')
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '');
 
+// Filtro por departamento (Luis 2026-07-24): Karina cobra por área, así que
+// puede acotar la lista a un departamento. '' = todos.
+const selectedDepartment = ref('');
+const departmentOptions = computed(() => [...new Set(
+    cashPayouts.value.map((p) => p.employee_department).filter(Boolean)
+)].sort((a, b) => a.localeCompare(b)));
+
 const filteredCashPayouts = computed(() => {
     const q = normalize(search.value).trim();
-    if (!q) return cashPayouts.value;
-    return cashPayouts.value.filter((p) =>
-        normalize(p.employee_name).includes(q) || normalize(p.employee_number).includes(q));
+    const dept = selectedDepartment.value;
+    return cashPayouts.value.filter((p) => {
+        if (dept && p.employee_department !== dept) return false;
+        if (!q) return true;
+        return normalize(p.employee_name).includes(q) || normalize(p.employee_number).includes(q);
+    });
 });
 
 // Nombres para el autocomplete nativo (<datalist>).
@@ -517,9 +527,9 @@ const submitCollect = () => {
                     </button>
                 </div>
 
-                <!-- Buscador de empleado (autocomplete nativo por nombre) -->
-                <div class="px-4 py-3 border-b border-gray-100">
-                    <div class="relative max-w-sm">
+                <!-- Buscador de empleado (autocomplete nativo por nombre) + filtro por departamento -->
+                <div class="px-4 py-3 border-b border-gray-100 flex flex-wrap items-center gap-3">
+                    <div class="relative max-w-sm flex-1 min-w-[16rem]">
                         <svg class="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z" />
                         </svg>
@@ -534,6 +544,14 @@ const submitCollect = () => {
                             <option v-for="name in employeeNameOptions" :key="name" :value="name" />
                         </datalist>
                     </div>
+                    <select
+                        v-if="departmentOptions.length"
+                        v-model="selectedDepartment"
+                        class="py-2 pl-3 pr-8 border border-gray-300 rounded-lg text-sm focus:border-pink-500 focus:ring-pink-500"
+                    >
+                        <option value="">Todos los departamentos</option>
+                        <option v-for="dept in departmentOptions" :key="dept" :value="dept">{{ dept }}</option>
+                    </select>
                 </div>
 
                 <table class="min-w-full text-sm">
@@ -552,7 +570,9 @@ const submitCollect = () => {
                         <tr v-for="payout in filteredCashPayouts" :key="payout.id">
                             <td class="px-4 py-3">
                                 <div class="font-medium text-gray-800">{{ payout.employee_name }}</div>
-                                <div class="text-xs text-gray-400">{{ payout.employee_number }}</div>
+                                <div class="text-xs text-gray-400">
+                                    {{ payout.employee_number }}<span v-if="payout.employee_department"> · {{ payout.employee_department }}</span>
+                                </div>
                             </td>
                             <td class="px-4 py-3 text-right">{{ formatCurrency(payout.period_amount) }}</td>
                             <td class="px-4 py-3 text-right" :class="payout.opening_balance > 0 ? 'text-amber-600' : 'text-gray-400'">
@@ -736,7 +756,9 @@ const submitCollect = () => {
                     <div class="px-6 py-4 border-b border-gray-200">
                         <h3 class="text-lg font-semibold text-gray-900">Cobrar efectivo</h3>
                         <p class="text-sm text-gray-500 mt-1" v-if="activePayout">
-                            {{ activePayout.employee_name }} &mdash;
+                            {{ activePayout.employee_name }}
+                            <span v-if="activePayout.employee_department" class="text-gray-400">({{ activePayout.employee_department }})</span>
+                            &mdash;
                             <span class="font-medium text-gray-800">{{ formatCurrency(collectable(activePayout)) }}</span>
                             <span v-if="activePayout.amount_paid > 0" class="text-xs text-gray-400">
                                 (ya cobró {{ formatCurrency(activePayout.amount_paid) }})

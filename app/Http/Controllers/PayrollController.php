@@ -434,7 +434,11 @@ class PayrollController extends Controller
                 // Nunca guardar montos negativos en el ledger (defensa: el
                 // cálculo ya no produce cash negativo, pero un dato corrupto
                 // no debe propagarse a los cobros).
-                $periodAmount = max(0.0, $this->denominations->roundToPeso((float) $entry->cash_amount));
+                // Monto EXACTO con centavos (Luis 2026-07-24): antes se redondeaba
+                // al peso y el total salía inflado (20,399.50 → 20,400.00). El
+                // desglose de billetes sigue en pesos enteros (no hay moneda <$1),
+                // pero la cuenta refleja el neto real.
+                $periodAmount = max(0.0, round((float) $entry->cash_amount, 2));
                 $totalDue = $periodAmount + $openingBalance;
                 $outstanding = round($totalDue - $alreadyPaid, 2);
 
@@ -648,7 +652,7 @@ class PayrollController extends Controller
         $entriesByEmployee = $payroll->entries()->with('employee')->get()->keyBy('employee_id');
 
         $payouts = $payroll->cashPayouts()
-            ->with('employee:id,full_name,employee_number,cash_pin')
+            ->with(['employee:id,full_name,employee_number,cash_pin,department_id', 'employee.department:id,name'])
             ->get()
             ->sortBy(fn (CashPayout $p) => $p->employee?->full_name)
             ->values()
@@ -657,6 +661,7 @@ class PayrollController extends Controller
                 'employee_id' => $p->employee_id,
                 'employee_name' => $p->employee?->full_name,
                 'employee_number' => $p->employee?->employee_number,
+                'employee_department' => $p->employee?->department?->name,
                 'has_cash_pin' => (bool) $p->employee?->hasCashPin(),
                 'period_amount' => (float) $p->period_amount,
                 'opening_balance' => (float) $p->opening_balance,
@@ -683,10 +688,10 @@ class PayrollController extends Controller
         // el efectivo del periodo ya congelado (period_amount) contra el actual
         // de los asientos. Si no cuadran, hay que aprobar y re-cerrar el efectivo.
         // Las transferencias (banco) viven en su propia pantalla (payroll.transfers).
-        $entriesCashRounded = $entriesByEmployee->sum(
-            fn (PayrollEntry $e) => $this->denominations->roundToPeso((float) $e->cash_amount)
+        $entriesCashCurrent = $entriesByEmployee->sum(
+            fn (PayrollEntry $e) => round((float) $e->cash_amount, 2)
         );
-        $cashStale = abs($entriesCashRounded - (float) $payouts->sum('period_amount')) > 0.5;
+        $cashStale = abs($entriesCashCurrent - (float) $payouts->sum('period_amount')) > 0.01;
 
         $collectionClosed = $payroll->isCashCollectionClosed();
         $payroll->loadMissing(['cashCollectionClosedBy:id,name', 'cashReturnReceivedBy:id,name']);
@@ -908,11 +913,13 @@ class PayrollController extends Controller
         }
 
         // Efectivo a regresar = suma de los saldos aún no cobrados (incluye
-        // pagos parciales por su outstanding). Se maneja en pesos enteros
-        // porque los payouts se congelan redondeados al peso.
-        $returnAmount = $this->denominations->roundToPeso(
+        // pagos parciales por su outstanding). Se guarda EXACTO con centavos para
+        // que cuadre con los montos por empleado (que ya no se redondean al peso);
+        // el desglose físico de billetes se redondea aparte al mostrarse.
+        $returnAmount = round(
             (float) $payroll->cashPayouts()->pending()->get()
-                ->sum(fn (CashPayout $p) => max(0.0, $p->outstanding()))
+                ->sum(fn (CashPayout $p) => max(0.0, $p->outstanding())),
+            2
         );
 
         $payroll->update([
@@ -1142,7 +1149,7 @@ class PayrollController extends Controller
             ->first();
 
         $openingBalance = $priorPending ? round($priorPending->outstanding(), 2) : 0.0;
-        $periodAmount = $this->denominations->roundToPeso((float) $entry->cash_amount);
+        $periodAmount = round((float) $entry->cash_amount, 2);
         $totalDue = round($periodAmount + $openingBalance, 2);
 
         return [
