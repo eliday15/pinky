@@ -317,9 +317,15 @@ const closeCash = () => {
                             </a>
                             <a
                                 :href="route('payroll.export.contpaqi', { payroll: period.id, format: 'csv' })"
-                                class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-b-lg"
+                                class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
                             >
                                 CSV
+                            </a>
+                            <a
+                                :href="route('payroll.export.contpaqi-import', { payroll: period.id })"
+                                class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-b-lg border-t border-gray-100"
+                            >
+                                Importación (movimientos)
                             </a>
                         </div>
                     </div>

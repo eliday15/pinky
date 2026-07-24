@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Exports\Contpaqi\ContpaqiImportExport;
 use App\Exports\ContpaqiPrenominaExport;
 use App\Http\Traits\VerifiesTwoFactor;
 use App\Models\AuditLog;
@@ -1226,5 +1227,37 @@ class PayrollController extends Controller
         );
 
         return (new ContpaqiPrenominaExport($payroll))->download($filename, $writerType);
+    }
+
+    /**
+     * Genera el archivo de importación a CONTPAQi Nóminas (plantilla de Luis):
+     * una hoja "Movimientos" con los movimientos variables de la semana por
+     * empleado, más las hojas Catalogo e Instrucciones. Luis lo carga con el
+     * Importador de movimientos de CONTPAQi.
+     */
+    public function exportContpaqiImport(Request $request, PayrollPeriod $payroll): BinaryFileResponse|RedirectResponse
+    {
+        if (! auth()->user()->hasPermissionTo('payroll.export')) {
+            abort(403);
+        }
+
+        if ($payroll->entries()->count() === 0) {
+            return redirect()->back()
+                ->with('error', 'No hay registros de nomina para exportar. Calcula la nomina primero.');
+        }
+
+        $periodName = preg_replace('/[^a-zA-Z0-9_-]/', '_', $payroll->name);
+        $filename = "importacion_contpaqi_{$periodName}_{$payroll->start_date->format('Y-m-d')}.xlsx";
+
+        AuditLog::record(
+            module: AuditLog::MODULE_PAYROLL,
+            action: AuditLog::ACTION_EXPORT,
+            model: $payroll,
+            description: "Genero el archivo de importacion a CONTPAQi de la nomina {$payroll->name}",
+            subjectLabel: $payroll->name,
+            metadata: ['filename' => $filename],
+        );
+
+        return (new ContpaqiImportExport($payroll))->download($filename);
     }
 }

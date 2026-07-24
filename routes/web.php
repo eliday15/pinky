@@ -139,6 +139,7 @@ Route::middleware(['auth', 'password-changed', 'two-factor-setup'])->group(funct
     Route::post('/payroll/{payroll}/reopen-collection', [PayrollController::class, 'reopenCashCollection'])->name('payroll.reopenCollection');
     Route::delete('/payroll/{payroll}', [PayrollController::class, 'destroy'])->name('payroll.destroy');
     Route::get('/payroll/{payroll}/export/contpaqi', [PayrollController::class, 'exportContpaqi'])->name('payroll.export.contpaqi');
+    Route::get('/payroll/{payroll}/export/contpaqi-import', [PayrollController::class, 'exportContpaqiImport'])->name('payroll.export.contpaqi-import');
     Route::get('/payroll/entry/{entry}', [PayrollController::class, 'entryDetail'])->name('payroll.entry');
 
     // Desayunos: kiosco de cobro (NIP + rostro) y consulta de desayunos entregados.
