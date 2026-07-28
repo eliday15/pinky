@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\AttendanceRecord;
 use App\Models\Authorization;
+use App\Models\DeliveryWeek;
 use App\Models\Employee;
 use App\Models\Schedule;
 use App\Models\SystemSetting;
@@ -36,12 +37,18 @@ class VeladaCalculatorService
      */
     public function calculate(AttendanceRecord $record, Employee $employee): array
     {
+        // Personal de entregas marcado en la semana (Dani 2026-07-28): la velada
+        // AUTORIZADA se paga completa aunque la checada no la capture — andan en
+        // la calle repartiendo y no alcanzan a checar la noche. null = no marcado
+        // (comportamiento normal, topado contra lo checado).
+        $veladaOverride = $this->deliveryWeekVeladaOverride($record);
+
         if (!$employee->schedule || !$record->check_in || !$record->check_out) {
             return [
                 'overtime_hours' => 0,
-                'velada_hours' => 0,
+                'velada_hours' => $veladaOverride ?? 0,
                 'overtime_authorized' => 0,
-                'velada_authorized' => 0,
+                'velada_authorized' => $veladaOverride ?? 0,
             ];
         }
 
@@ -104,9 +111,9 @@ class VeladaCalculatorService
         if ($extraHours <= 0) {
             return [
                 'overtime_hours' => 0,
-                'velada_hours' => 0,
+                'velada_hours' => $veladaOverride ?? 0,
                 'overtime_authorized' => 0,
-                'velada_authorized' => 0,
+                'velada_authorized' => $veladaOverride ?? 0,
             ];
         }
 
@@ -167,10 +174,36 @@ class VeladaCalculatorService
 
         return [
             'overtime_hours' => round($overtimeHours, 2),
-            'velada_hours' => round($veladaHours, 2),
+            // En día con omisión aprobada la velada NO se topa contra lo checado:
+            // se paga/reporta la autorizada completa (misma cifra en velada_hours
+            // y velada_authorized para que reporte y recibo coincidan).
+            'velada_hours' => $veladaOverride ?? round($veladaHours, 2),
             'overtime_authorized' => round(min($overtimePayable, $overtimeAuthorized), 2),
-            'velada_authorized' => round(min($veladaHours, $veladaAuthorized), 2),
+            'velada_authorized' => $veladaOverride ?? round(min($veladaHours, $veladaAuthorized), 2),
         ];
+    }
+
+    /**
+     * Velada autorizada a pagar completa cuando el colaborador está marcado como
+     * PERSONAL DE ENTREGAS en la semana del registro (Dani 2026-07-28).
+     *
+     * Devuelve la suma de las horas de velada autorizadas (sin topar por la
+     * checada) o null si no está marcado — en cuyo caso rige el tope normal.
+     */
+    private function deliveryWeekVeladaOverride(AttendanceRecord $record): ?float
+    {
+        $dateStr = $record->work_date->toDateString();
+
+        $onDelivery = DeliveryWeek::query()
+            ->where('employee_id', $record->employee_id)
+            ->whereDate('week_start', DeliveryWeek::weekStartFor($dateStr))
+            ->exists();
+
+        if (! $onDelivery) {
+            return null;
+        }
+
+        return round($this->getAuthorizedHours($record->employee_id, $dateStr, Authorization::TYPE_NIGHT_SHIFT), 2);
     }
 
     /**

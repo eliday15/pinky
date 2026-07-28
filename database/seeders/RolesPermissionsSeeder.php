@@ -55,6 +55,8 @@ class RolesPermissionsSeeder extends Seeder
             'incidents.reject',
             // Bolsa de horas a cuenta de vacaciones (RRHH convierte días → horas)
             'vacation_hours.manage',
+            // Personal de entregas por semana (velada/TE completos esa semana)
+            'deliveries.manage',
 
             // Autorizaciones (Horas Extra, Veladas, Permisos)
             'authorizations.view_all',
@@ -171,6 +173,8 @@ class RolesPermissionsSeeder extends Seeder
             'check_omissions.create',
             // Bolsa de horas a cuenta de vacaciones - RRHH la administra
             'vacation_hours.manage',
+            // Personal de entregas por semana - RRHH lo administra
+            'deliveries.manage',
             // Desayunos - kiosco y consulta
             'breakfasts.register',
             'breakfasts.view',

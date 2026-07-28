@@ -107,6 +107,21 @@ class WeeklyOvertimeReportService
             ->get()
             ->groupBy('employee_id');
 
+        // Semanas de PERSONAL DE ENTREGAS (Dani 2026-07-28): en esas semanas la
+        // velada y el tiempo extra autorizados se muestran COMPLETOS, sin topar
+        // al timecard, porque el colaborador andaba en la calle y su checada no
+        // lo refleja — misma cifra que paga la nómina. Se traen las semanas
+        // marcadas que tocan el rango del reporte, por empleado.
+        $deliveryWeekStarts = \App\Models\DeliveryWeek::query()
+            ->whereIn('employee_id', $employeeIds)
+            ->whereBetween('week_start', [
+                \App\Models\DeliveryWeek::weekStartFor($start),
+                \App\Models\DeliveryWeek::weekStartFor($end),
+            ])
+            ->get(['employee_id', 'week_start'])
+            ->groupBy('employee_id')
+            ->map(fn ($rows) => $rows->map(fn ($d) => Carbon::parse($d->week_start)->toDateString())->all());
+
         // Departamentos como Almacén PT cuentan el fin de semana por unidades de
         // N horas trabajadas (weekend_unit_hours) en vez de por día. NULL =
         // comportamiento normal (se muestran las horas/conteo de siempre).
@@ -118,6 +133,7 @@ class WeeklyOvertimeReportService
             $records->get($employee->id, collect()),
             $authorizations->get($employee->id, collect()),
             $weekendUnitHours,
+            $deliveryWeekStarts->get($employee->id, []),
         ))->values()->all();
 
         $totals = $this->buildGrandTotals($rows, $weekendUnitHours);
@@ -146,6 +162,7 @@ class WeeklyOvertimeReportService
         Collection $records,
         Collection $authorizations,
         ?int $weekendUnitHours = null,
+        array $deliveryWeekStarts = [],
     ): array {
         $recordsByDate = $records->keyBy(fn (AttendanceRecord $r) => $r->work_date->toDateString());
         $authsByDate = $authorizations->groupBy(fn (Authorization $a) => $a->date->toDateString());
@@ -166,7 +183,8 @@ class WeeklyOvertimeReportService
             $record = $recordsByDate->get($date);
             $dayAuths = $authsByDate->get($date, collect());
 
-            $day = $this->buildDay($employee, $date, $record, $dayAuths);
+            $isDeliveryDay = in_array(\App\Models\DeliveryWeek::weekStartFor($date), $deliveryWeekStarts, true);
+            $day = $this->buildDay($employee, $date, $record, $dayAuths, $isDeliveryDay);
 
             $days[$date] = $day;
             $weeklyExtra += $day['overtime_hours'];
@@ -233,6 +251,7 @@ class WeeklyOvertimeReportService
         string $date,
         ?AttendanceRecord $record,
         Collection $dayAuthorizations,
+        bool $isDeliveryDay = false,
     ): array {
         $dateObj = Carbon::parse($date);
         $isWeekendDate = $dateObj->isWeekend();
@@ -311,8 +330,11 @@ class WeeklyOvertimeReportService
         // checadas — el mismo tope que aplica la nómina al pagar. Si se
         // aprobaron más horas de las trabajadas, el reporte muestra lo
         // pagable, no la autorización inflada.
-        $overtimeHours = min($authorizedOvertimeRaw, $detectedHours);
-        $veladaHours = min($authorizedVeladaRaw, (float) ($record->velada_hours ?? 0));
+        // En semana de personal de entregas, lo autorizado NO se topa al
+        // timecard: se muestra completo (Dani 2026-07-28), igual que la nómina.
+        // Fuera de eso rige el tope al timecard (auditoría #20).
+        $overtimeHours = $isDeliveryDay ? $authorizedOvertimeRaw : min($authorizedOvertimeRaw, $detectedHours);
+        $veladaHours = $isDeliveryDay ? $authorizedVeladaRaw : min($authorizedVeladaRaw, (float) ($record->velada_hours ?? 0));
 
         $mHours = $isNightShift ? 0.0 : $overtimeHours;
         $vHours = $isNightShift ? $overtimeHours : 0.0;

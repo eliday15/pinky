@@ -12,6 +12,7 @@ use App\Http\Controllers\BreakfastController;
 use App\Http\Controllers\CompensationTypeController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DecemberVacationController;
+use App\Http\Controllers\DeliveryWeekController;
 use App\Http\Controllers\DepartmentController;
 use App\Http\Controllers\EmployeeBulkController;
 use App\Http\Controllers\EmployeeController;
@@ -241,6 +242,10 @@ Route::middleware(['auth', 'password-changed', 'two-factor-setup'])->group(funct
     Route::get('/vacation-hours', [VacationHoursBankController::class, 'index'])->name('vacation-hours.index');
     Route::post('/vacation-hours/convert', [VacationHoursBankController::class, 'convert'])->name('vacation-hours.convert');
     Route::post('/vacation-hours/revert', [VacationHoursBankController::class, 'revert'])->name('vacation-hours.revert');
+
+    // Personal de entregas por semana: velada/TE autorizados completos esa semana.
+    Route::get('/deliveries', [DeliveryWeekController::class, 'index'])->name('deliveries.index');
+    Route::post('/deliveries', [DeliveryWeekController::class, 'store'])->name('deliveries.store');
 
     // Users
     Route::resource('users', UserController::class)->except(['show']);

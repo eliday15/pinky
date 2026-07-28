@@ -407,8 +407,27 @@ class PayrollCalculatorService
         // attendance_records; aquí solo se suman las fechas sin timecard
         // medible. Se excluye el FIN (weekend pull rule), que paga por
         // unidades en su propio camino.
+        // Semanas en las que el colaborador está marcado como PERSONAL DE
+        // ENTREGAS (Dani 2026-07-28): aunque tenga checada completa, su tiempo
+        // extra se cuenta a la AUTORIZACIÓN (no se topa al timecard) porque
+        // andaba en la calle y su checada no refleja lo trabajado — mismo
+        // criterio que la velada. Los días de esas semanas se excluyen de las
+        // fechas "medidas" para que caigan en la suma de OT sin timecard (una
+        // sola vía, sin doble conteo).
+        $deliveryWeekStarts = \App\Models\DeliveryWeek::query()
+            ->where('employee_id', $employee->id)
+            ->pluck('week_start')
+            ->map(fn ($d) => Carbon::parse($d)->toDateString())
+            ->all();
+
+        $isDeliveryDate = fn ($date) => in_array(
+            \App\Models\DeliveryWeek::weekStartFor($date),
+            $deliveryWeekStarts,
+            true,
+        );
+
         $measuredOtDates = $attendance
-            ->filter(fn ($r) => $r->check_in && $r->check_out)
+            ->filter(fn ($r) => $r->check_in && $r->check_out && ! $isDeliveryDate($r->work_date))
             ->map(fn ($r) => Carbon::parse($r->work_date)->toDateString())
             ->all();
         $unbackedOvertimeHours = (float) $approvedAuthorizations
