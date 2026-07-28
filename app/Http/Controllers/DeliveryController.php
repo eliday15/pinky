@@ -2,8 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AttendanceRecord;
 use App\Models\Department;
-use App\Models\DeliveryWeek;
+use App\Models\DeliveryPeriod;
 use App\Models\Employee;
 use App\Services\PayrollInvalidationService;
 use App\Services\ZktecoSyncService;
@@ -16,28 +17,29 @@ use Inertia\Inertia;
 use Inertia\Response;
 
 /**
- * "Personal de entregas por semana" (Dani 2026-07-28).
+ * "Personal de entregas" por rango de fechas (Dani 2026-07-28).
  *
- * Los que salen a entregas se van turnando; cada semana RRHH selecciona quiénes
- * salieron. A los marcados, su velada y tiempo extra AUTORIZADOS se pagan/
- * reflejan completos esa semana (sin topar contra la checada).
+ * RRHH elige un rango (de qué fecha a qué fecha) y marca quiénes salieron a
+ * entregas. A los marcados, su velada y tiempo extra AUTORIZADOS se pagan/
+ * reflejan completos en esas fechas (sin topar contra la checada).
  */
-class DeliveryWeekController extends Controller
+class DeliveryController extends Controller
 {
     public function __construct(
         private ZktecoSyncService $sync,
         private PayrollInvalidationService $invalidation,
     ) {}
 
-    /** Pantalla: elige una semana y marca a quiénes salieron a entregas. */
+    /** Pantalla: elige un rango y marca a quiénes salieron a entregas. */
     public function index(Request $request): Response
     {
         $this->authorizeAccess();
 
-        $weekStart = DeliveryWeek::weekStartFor($request->input('week') ?: now());
-        $weekEnd = Carbon::parse($weekStart)->endOfWeek()->toDateString();
+        [$from, $to] = $this->resolveRange($request);
 
-        $marked = DeliveryWeek::where('week_start', $weekStart)
+        // Marcados para ESTE rango exacto (misma base que el guardado por rango).
+        $marked = DeliveryPeriod::where('start_date', $from)
+            ->where('end_date', $to)
             ->pluck('employee_id')
             ->all();
 
@@ -56,8 +58,8 @@ class DeliveryWeekController extends Controller
             ]);
 
         return Inertia::render('Deliveries/Index', [
-            'weekStart' => $weekStart,
-            'weekEnd' => $weekEnd,
+            'from' => $from,
+            'to' => $to,
             'employees' => $employees,
             'departments' => Department::active()->orderBy('name')->get(['id', 'name']),
             'filters' => [
@@ -69,68 +71,91 @@ class DeliveryWeekController extends Controller
     }
 
     /**
-     * Guardar la selección de una semana (sincroniza: agrega los nuevos, quita
-     * los desmarcados) y recalcula la asistencia de esos colaboradores para que
-     * la velada/tiempo extra se destope de inmediato.
+     * Guardar la selección de un rango (sincroniza para ese rango exacto:
+     * agrega los nuevos, quita los desmarcados) y recalcula la asistencia de los
+     * afectados para que la velada/tiempo extra se destope al vuelo.
      */
     public function store(Request $request): RedirectResponse
     {
         $this->authorizeAccess();
 
         $validated = $request->validate([
-            'week_start' => ['required', 'date'],
+            'start_date' => ['required', 'date'],
+            'end_date' => ['required', 'date', 'after_or_equal:start_date'],
             'employee_ids' => ['array'],
             'employee_ids.*' => ['integer', 'exists:employees,id'],
         ]);
 
-        $weekStart = DeliveryWeek::weekStartFor($validated['week_start']);
+        $from = Carbon::parse($validated['start_date'])->toDateString();
+        $to = Carbon::parse($validated['end_date'])->toDateString();
         $wanted = collect($validated['employee_ids'] ?? [])->unique()->values();
 
-        $current = DeliveryWeek::where('week_start', $weekStart)->pluck('employee_id');
+        $current = DeliveryPeriod::where('start_date', $from)->where('end_date', $to)->pluck('employee_id');
         $toAdd = $wanted->diff($current);
         $toRemove = $current->diff($wanted);
 
-        DB::transaction(function () use ($weekStart, $toAdd, $toRemove) {
+        DB::transaction(function () use ($from, $to, $toAdd, $toRemove) {
             if ($toRemove->isNotEmpty()) {
-                DeliveryWeek::where('week_start', $weekStart)
+                DeliveryPeriod::where('start_date', $from)->where('end_date', $to)
                     ->whereIn('employee_id', $toRemove)
                     ->delete();
             }
             foreach ($toAdd as $employeeId) {
-                DeliveryWeek::create([
+                DeliveryPeriod::create([
                     'employee_id' => $employeeId,
-                    'week_start' => $weekStart,
+                    'start_date' => $from,
+                    'end_date' => $to,
                     'created_by' => Auth::id(),
                 ]);
             }
         });
 
-        // Recalcular la asistencia de los afectados (agregados y quitados) en la
-        // semana, para que velada/tiempo extra se destope o se retope al vuelo.
-        $affected = $toAdd->merge($toRemove)->unique();
-        $this->recalculateWeek($affected, $weekStart);
+        // Recalcular la asistencia de los afectados en el rango, para que la
+        // velada/tiempo extra se destope o se retope al vuelo.
+        $this->recalculateRange($toAdd->merge($toRemove)->unique(), $from, $to);
 
-        return redirect()->route('deliveries.index', ['week' => $weekStart])
-            ->with('success', "Se guardó el personal de entregas de la semana del {$weekStart} ({$wanted->count()} colaborador(es)).");
+        return redirect()->route('deliveries.index', ['from' => $from, 'to' => $to])
+            ->with('success', "Se guardó el personal de entregas del {$from} al {$to} ({$wanted->count()} colaborador(es)).");
     }
 
     /**
-     * Recalcula la asistencia de la semana para los empleados dados y marca la
+     * Rango a mostrar: el que venga por query, o por defecto la semana actual
+     * (lunes a domingo).
+     *
+     * @return array{0: string, 1: string}
+     */
+    private function resolveRange(Request $request): array
+    {
+        $from = $request->input('from')
+            ? Carbon::parse($request->input('from'))->toDateString()
+            : Carbon::now()->startOfWeek()->toDateString();
+
+        $to = $request->input('to')
+            ? Carbon::parse($request->input('to'))->toDateString()
+            : Carbon::now()->endOfWeek()->toDateString();
+
+        // Nunca un rango invertido.
+        if ($to < $from) {
+            $to = $from;
+        }
+
+        return [$from, $to];
+    }
+
+    /**
+     * Recalcula la asistencia del rango para los empleados dados y marca la
      * nómina de esas fechas para recálculo.
      *
      * @param  \Illuminate\Support\Collection<int, int>  $employeeIds
      */
-    private function recalculateWeek($employeeIds, string $weekStart): void
+    private function recalculateRange($employeeIds, string $from, string $to): void
     {
         if ($employeeIds->isEmpty()) {
             return;
         }
 
-        $start = Carbon::parse($weekStart);
-        $end = $start->copy()->endOfWeek();
-
-        $records = \App\Models\AttendanceRecord::whereIn('employee_id', $employeeIds)
-            ->whereBetween('work_date', [$start->toDateString(), $end->toDateString()])
+        $records = AttendanceRecord::whereIn('employee_id', $employeeIds)
+            ->whereBetween('work_date', [$from, $to])
             ->get();
 
         foreach ($records as $record) {

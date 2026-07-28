@@ -414,17 +414,22 @@ class PayrollCalculatorService
         // criterio que la velada. Los días de esas semanas se excluyen de las
         // fechas "medidas" para que caigan en la suma de OT sin timecard (una
         // sola vía, sin doble conteo).
-        $deliveryWeekStarts = \App\Models\DeliveryWeek::query()
+        $deliveryPeriods = \App\Models\DeliveryPeriod::query()
             ->where('employee_id', $employee->id)
-            ->pluck('week_start')
-            ->map(fn ($d) => Carbon::parse($d)->toDateString())
+            ->get(['start_date', 'end_date'])
+            ->map(fn ($p) => [$p->start_date->toDateString(), $p->end_date->toDateString()])
             ->all();
 
-        $isDeliveryDate = fn ($date) => in_array(
-            \App\Models\DeliveryWeek::weekStartFor($date),
-            $deliveryWeekStarts,
-            true,
-        );
+        $isDeliveryDate = function ($date) use ($deliveryPeriods) {
+            $d = Carbon::parse($date)->toDateString();
+            foreach ($deliveryPeriods as [$from, $to]) {
+                if ($d >= $from && $d <= $to) {
+                    return true;
+                }
+            }
+
+            return false;
+        };
 
         $measuredOtDates = $attendance
             ->filter(fn ($r) => $r->check_in && $r->check_out && ! $isDeliveryDate($r->work_date))

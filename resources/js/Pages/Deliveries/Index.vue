@@ -5,8 +5,8 @@ import { ref, computed, watch } from 'vue';
 import debounce from 'lodash/debounce';
 
 const props = defineProps({
-    weekStart: String,
-    weekEnd: String,
+    from: String,
+    to: String,
     employees: Array,
     departments: Array,
     filters: Object,
@@ -16,54 +16,59 @@ const props = defineProps({
 const page = usePage();
 const flash = computed(() => page.props.flash ?? {});
 
-// Local filter state
+// Local filter + range state
 const search = ref(props.filters.search || '');
 const departmentFilter = ref(props.filters.department_id || '');
-const weekInput = ref(props.weekStart);
+const fromInput = ref(props.from);
+const toInput = ref(props.to);
 
-// Track previous weekStart to detect week-vs-filter navigation
-const prevWeekStart = ref(props.weekStart);
+// Track previous range to distinguish range-vs-filter navigation.
+const prevRange = ref(`${props.from}|${props.to}`);
 
-// Marked employees — a Set of IDs. Kept in memory across filter changes.
+// Marked employees — a Set of IDs. Kept in memory across filter changes so no
+// hidden mark is lost when the user filters.
 const marked = ref(new Set(
     props.employees.filter(e => e.on_delivery).map(e => e.id)
 ));
 
-// Keep date input in sync when Inertia delivers new props
-watch(() => props.weekStart, (newVal) => {
-    weekInput.value = newVal;
+// Keep the date inputs in sync when Inertia delivers new props.
+watch(() => [props.from, props.to], ([f, t]) => {
+    fromInput.value = f;
+    toInput.value = t;
 });
 
-// Sync marked set when employees prop changes (filter OR week navigation)
+// Sync the marked set when the employees prop changes (filter OR range nav).
 watch(() => props.employees, (newEmployees) => {
     const newOnDelivery = new Set(newEmployees.filter(e => e.on_delivery).map(e => e.id));
-    if (props.weekStart !== prevWeekStart.value) {
-        // Week changed — reinit from fresh on_delivery data
+    const currentRange = `${props.from}|${props.to}`;
+
+    if (currentRange !== prevRange.value) {
+        // Range changed — reinit from the fresh data of the new range.
         marked.value = new Set(newOnDelivery);
-        prevWeekStart.value = props.weekStart;
+        prevRange.value = currentRange;
     } else {
-        // Same week, only filters changed — MERGE to preserve hidden marks
+        // Same range, only filters changed — MERGE to preserve hidden marks.
         const merged = new Set(marked.value);
-        for (const id of newOnDelivery) {
-            merged.add(id);
-        }
+        for (const id of newOnDelivery) merged.add(id);
         marked.value = merged;
     }
 });
 
-// Navigate with current filters when the week date input changes
-const changeWeek = () => {
+// Navigate to a new range (keeps current filters).
+const changeRange = () => {
     router.get(route('deliveries.index'), {
-        week: weekInput.value,
+        from: fromInput.value || undefined,
+        to: toInput.value || undefined,
         search: search.value || undefined,
         department_id: departmentFilter.value || undefined,
     }, { preserveState: true, preserveScroll: true });
 };
 
-// Navigate with current week when filters change
+// Navigate with the current range when filters change.
 const applyFilters = debounce(() => {
     router.get(route('deliveries.index'), {
-        week: props.weekStart,
+        from: props.from,
+        to: props.to,
         search: search.value || undefined,
         department_id: departmentFilter.value || undefined,
     }, { preserveState: true, preserveScroll: true });
@@ -72,24 +77,19 @@ const applyFilters = debounce(() => {
 watch(search, applyFilters);
 watch(departmentFilter, applyFilters);
 
-// Toggle a single employee in the marked set
 const toggle = (id) => {
     const next = new Set(marked.value);
-    if (next.has(id)) {
-        next.delete(id);
-    } else {
-        next.add(id);
-    }
+    next.has(id) ? next.delete(id) : next.add(id);
     marked.value = next;
 };
 
-// Save — sends ALL marked IDs (not just currently visible rows)
+// Save — sends ALL marked IDs (not just currently visible rows) for this range.
 const saving = ref(false);
-
 const save = () => {
     saving.value = true;
     router.post(route('deliveries.store'), {
-        week_start: props.weekStart,
+        start_date: props.from,
+        end_date: props.to,
         employee_ids: [...marked.value],
     }, {
         preserveScroll: true,
@@ -97,7 +97,7 @@ const save = () => {
     });
 };
 
-// Format 'YYYY-MM-DD' → 'dd/mm/yyyy' without external libs
+// 'YYYY-MM-DD' → 'dd/mm/yyyy' without external libs.
 const formatDateMX = (dateStr) => {
     if (!dateStr) return '';
     const [y, m, d] = dateStr.split('-');
@@ -118,17 +118,17 @@ const formatDateMX = (dateStr) => {
         <!-- Page heading -->
         <div class="flex flex-wrap items-start justify-between gap-4 mb-6">
             <div>
-                <h1 class="text-2xl font-bold text-gray-800">Personal de entregas por semana</h1>
+                <h1 class="text-2xl font-bold text-gray-800">Personal de entregas</h1>
                 <p class="mt-1 text-sm text-gray-600 max-w-2xl">
-                    Marca a quiénes salieron a entregas esta semana. A los marcados, su
-                    <strong>velada y tiempo extra autorizados</strong> se pagan y reflejan completos esa semana,
+                    Elige de qué fecha a qué fecha y marca a quiénes salieron a entregas. A los marcados, su
+                    <strong>velada y tiempo extra autorizados</strong> se pagan y reflejan completos esas fechas,
                     porque andan en la calle repartiendo y su checada no los alcanza a registrar.
-                    Es por semana porque se van turnando.
+                    Como se van turnando, lo marcas por el rango que necesites.
                 </p>
             </div>
             <div class="flex items-center gap-3 flex-shrink-0">
                 <span class="text-sm text-gray-600 bg-gray-100 px-3 py-1.5 rounded-full font-medium">
-                    {{ marked.size }} marcados esta semana
+                    {{ marked.size }} marcados
                 </span>
                 <button
                     type="button"
@@ -149,21 +149,31 @@ const formatDateMX = (dateStr) => {
             {{ flash.error }}
         </div>
 
-        <!-- Week selector + filters -->
+        <!-- Range selector + filters -->
         <div class="bg-white rounded-lg shadow p-4 mb-6">
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <!-- Week picker -->
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <!-- From -->
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Semana</label>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Desde</label>
                     <input
-                        v-model="weekInput"
+                        v-model="fromInput"
                         type="date"
+                        :max="toInput"
                         class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                        @change="changeWeek"
+                        @change="changeRange"
                     />
-                    <p class="mt-1 text-xs text-gray-500">
-                        Semana del {{ formatDateMX(weekStart) }} al {{ formatDateMX(weekEnd) }}
-                    </p>
+                </div>
+
+                <!-- To -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Hasta</label>
+                    <input
+                        v-model="toInput"
+                        type="date"
+                        :min="fromInput"
+                        class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                        @change="changeRange"
+                    />
                 </div>
 
                 <!-- Name search -->
@@ -194,6 +204,9 @@ const formatDateMX = (dateStr) => {
                     </select>
                 </div>
             </div>
+            <p class="mt-2 text-xs text-gray-500">
+                Del {{ formatDateMX(from) }} al {{ formatDateMX(to) }}
+            </p>
         </div>
 
         <!-- Employee table -->

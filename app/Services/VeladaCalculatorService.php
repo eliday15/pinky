@@ -4,7 +4,7 @@ namespace App\Services;
 
 use App\Models\AttendanceRecord;
 use App\Models\Authorization;
-use App\Models\DeliveryWeek;
+use App\Models\DeliveryPeriod;
 use App\Models\Employee;
 use App\Models\Schedule;
 use App\Models\SystemSetting;
@@ -184,8 +184,8 @@ class VeladaCalculatorService
     }
 
     /**
-     * Velada autorizada a pagar completa cuando el colaborador está marcado como
-     * PERSONAL DE ENTREGAS en la semana del registro (Dani 2026-07-28).
+     * Velada autorizada a pagar completa cuando la fecha del registro cae en un
+     * rango de PERSONAL DE ENTREGAS del colaborador (Dani 2026-07-28).
      *
      * Devuelve la suma de las horas de velada autorizadas (sin topar por la
      * checada) o null si no está marcado — en cuyo caso rige el tope normal.
@@ -194,9 +194,9 @@ class VeladaCalculatorService
     {
         $dateStr = $record->work_date->toDateString();
 
-        $onDelivery = DeliveryWeek::query()
+        $onDelivery = DeliveryPeriod::query()
             ->where('employee_id', $record->employee_id)
-            ->whereDate('week_start', DeliveryWeek::weekStartFor($dateStr))
+            ->coveringDate($dateStr)
             ->exists();
 
         if (! $onDelivery) {

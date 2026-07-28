@@ -107,20 +107,17 @@ class WeeklyOvertimeReportService
             ->get()
             ->groupBy('employee_id');
 
-        // Semanas de PERSONAL DE ENTREGAS (Dani 2026-07-28): en esas semanas la
+        // Rangos de PERSONAL DE ENTREGAS (Dani 2026-07-28): en esas fechas la
         // velada y el tiempo extra autorizados se muestran COMPLETOS, sin topar
         // al timecard, porque el colaborador andaba en la calle y su checada no
-        // lo refleja — misma cifra que paga la nómina. Se traen las semanas
-        // marcadas que tocan el rango del reporte, por empleado.
-        $deliveryWeekStarts = \App\Models\DeliveryWeek::query()
+        // lo refleja — misma cifra que paga la nómina. Se traen los rangos que
+        // tocan el rango del reporte, por empleado, como pares [start, end].
+        $deliveryPeriods = \App\Models\DeliveryPeriod::query()
             ->whereIn('employee_id', $employeeIds)
-            ->whereBetween('week_start', [
-                \App\Models\DeliveryWeek::weekStartFor($start),
-                \App\Models\DeliveryWeek::weekStartFor($end),
-            ])
-            ->get(['employee_id', 'week_start'])
+            ->overlapping($start->toDateString(), $end->toDateString())
+            ->get(['employee_id', 'start_date', 'end_date'])
             ->groupBy('employee_id')
-            ->map(fn ($rows) => $rows->map(fn ($d) => Carbon::parse($d->week_start)->toDateString())->all());
+            ->map(fn ($rows) => $rows->map(fn ($p) => [$p->start_date->toDateString(), $p->end_date->toDateString()])->all());
 
         // Departamentos como Almacén PT cuentan el fin de semana por unidades de
         // N horas trabajadas (weekend_unit_hours) en vez de por día. NULL =
@@ -133,7 +130,7 @@ class WeeklyOvertimeReportService
             $records->get($employee->id, collect()),
             $authorizations->get($employee->id, collect()),
             $weekendUnitHours,
-            $deliveryWeekStarts->get($employee->id, []),
+            $deliveryPeriods->get($employee->id, []),
         ))->values()->all();
 
         $totals = $this->buildGrandTotals($rows, $weekendUnitHours);
@@ -162,7 +159,7 @@ class WeeklyOvertimeReportService
         Collection $records,
         Collection $authorizations,
         ?int $weekendUnitHours = null,
-        array $deliveryWeekStarts = [],
+        array $deliveryPeriods = [],
     ): array {
         $recordsByDate = $records->keyBy(fn (AttendanceRecord $r) => $r->work_date->toDateString());
         $authsByDate = $authorizations->groupBy(fn (Authorization $a) => $a->date->toDateString());
@@ -183,7 +180,13 @@ class WeeklyOvertimeReportService
             $record = $recordsByDate->get($date);
             $dayAuths = $authsByDate->get($date, collect());
 
-            $isDeliveryDay = in_array(\App\Models\DeliveryWeek::weekStartFor($date), $deliveryWeekStarts, true);
+            $isDeliveryDay = false;
+            foreach ($deliveryPeriods as [$from, $to]) {
+                if ($date >= $from && $date <= $to) {
+                    $isDeliveryDay = true;
+                    break;
+                }
+            }
             $day = $this->buildDay($employee, $date, $record, $dayAuths, $isDeliveryDay);
 
             $days[$date] = $day;
