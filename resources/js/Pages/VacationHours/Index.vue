@@ -1,7 +1,7 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head, router, usePage } from '@inertiajs/vue3';
-import { ref, computed, reactive, watch } from 'vue';
+import { ref, computed, watch } from 'vue';
 import debounce from 'lodash/debounce';
 
 const props = defineProps({
@@ -12,8 +12,6 @@ const props = defineProps({
 
 const page = usePage();
 const flash = computed(() => page.props.flash ?? {});
-const errors = computed(() => page.props.errors ?? {});
-const hasErrors = computed(() => Object.keys(errors.value).length > 0);
 
 const search = ref(props.filters.search || '');
 const enrolledOnly = ref(!!props.filters.enrolled_only);
@@ -29,22 +27,6 @@ const applyFilters = debounce(() => {
 }, 300);
 
 watch([search, enrolledOnly], applyFilters);
-
-// Per-row input state keyed by employee id
-const convertDays = reactive({});
-const revertHours = reactive({});
-
-const convert = (empId) => {
-    const days = convertDays[empId];
-    if (!days || days < 1) return;
-    router.post(route('vacation-hours.convert'), { employee_id: empId, days }, { preserveScroll: true });
-};
-
-const revert = (empId) => {
-    const hours = revertHours[empId];
-    if (!hours || hours < 0.5) return;
-    router.post(route('vacation-hours.revert'), { employee_id: empId, hours }, { preserveScroll: true });
-};
 </script>
 
 <template>
@@ -60,10 +42,12 @@ const revert = (empId) => {
         <!-- Page heading + helper text -->
         <div class="mb-6">
             <h1 class="text-2xl font-bold text-gray-800">Bolsa de horas a cuenta de vacaciones</h1>
-            <p class="mt-1 text-gray-600">
-                Convierte días de vacaciones en horas (1 día = {{ hoursPerDay }} h).
-                El colaborador las gasta en permisos de entrada tarde / salida temprano hasta agotarlas.
-                El descuento del saldo es proporcional a lo gastado.
+            <p class="mt-1 text-gray-600 max-w-3xl">
+                Consulta el saldo de horas de cada colaborador (1 día = {{ hoursPerDay }} h).
+                La bolsa se abona <strong>automáticamente</strong> al aprobar una Vacación marcada como
+                <strong>“A cuenta de horas (HxV)”</strong>. El colaborador las gasta en permisos de
+                entrada tarde / salida temprano hasta agotarlas; el descuento del saldo es proporcional
+                a lo gastado. Para corregir una conversión, elimina la incidencia de Vacaciones que la generó.
             </p>
         </div>
 
@@ -75,13 +59,6 @@ const revert = (empId) => {
         <!-- Flash error -->
         <div v-if="flash.error" class="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-800">
             {{ flash.error }}
-        </div>
-
-        <!-- Validation errors from convert / revert -->
-        <div v-if="hasErrors" class="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
-            <ul class="list-disc list-inside space-y-1 text-sm text-red-800">
-                <li v-for="(msg, field) in errors" :key="field">{{ msg }}</li>
-            </ul>
         </div>
 
         <!-- Filters -->
@@ -110,7 +87,7 @@ const revert = (empId) => {
             </div>
         </div>
 
-        <!-- Table -->
+        <!-- Table (solo consulta) -->
         <div class="bg-white rounded-lg shadow overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-200">
                 <thead class="bg-gray-50">
@@ -132,9 +109,6 @@ const revert = (empId) => {
                         </th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                             Disponibles en bolsa
-                        </th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Acciones
                         </th>
                     </tr>
                 </thead>
@@ -173,50 +147,9 @@ const revert = (empId) => {
                                 {{ emp.hours_remaining }} h
                             </span>
                         </td>
-                        <td class="px-6 py-4">
-                            <div class="flex flex-wrap gap-2 items-center">
-                                <!-- Convertir -->
-                                <div class="flex items-center gap-1">
-                                    <input
-                                        v-model.number="convertDays[emp.id]"
-                                        type="number"
-                                        min="1"
-                                        placeholder="días"
-                                        class="w-16 text-sm rounded border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                                    />
-                                    <button
-                                        type="button"
-                                        @click="convert(emp.id)"
-                                        :disabled="!convertDays[emp.id] || convertDays[emp.id] < 1"
-                                        class="px-2 py-1 text-xs bg-pink-600 text-white rounded hover:bg-pink-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                                    >
-                                        Convertir
-                                    </button>
-                                </div>
-                                <!-- Revertir -->
-                                <div class="flex items-center gap-1">
-                                    <input
-                                        v-model.number="revertHours[emp.id]"
-                                        type="number"
-                                        min="0.5"
-                                        step="0.5"
-                                        placeholder="horas"
-                                        class="w-16 text-sm rounded border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                                    />
-                                    <button
-                                        type="button"
-                                        @click="revert(emp.id)"
-                                        :disabled="!revertHours[emp.id] || revertHours[emp.id] < 0.5"
-                                        class="px-2 py-1 text-xs bg-gray-600 text-white rounded hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                                    >
-                                        Revertir
-                                    </button>
-                                </div>
-                            </div>
-                        </td>
                     </tr>
                     <tr v-if="employees.length === 0">
-                        <td colspan="7" class="px-6 py-12 text-center text-gray-500">
+                        <td colspan="6" class="px-6 py-12 text-center text-gray-500">
                             No se encontraron empleados
                         </td>
                     </tr>

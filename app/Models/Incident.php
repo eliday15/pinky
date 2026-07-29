@@ -61,6 +61,7 @@ class Incident extends Model
         'approved_at',
         'rejection_reason',
         'pay_worked_days',
+        'converts_to_vacation_hours',
         'migrated_from_authorization_id',
     ];
 
@@ -69,6 +70,7 @@ class Incident extends Model
         'end_date' => 'date:Y-m-d',
         'approved_at' => 'datetime',
         'pay_worked_days' => 'boolean',
+        'converts_to_vacation_hours' => 'boolean',
         'reserved_days_taken' => 'integer',
     ];
 

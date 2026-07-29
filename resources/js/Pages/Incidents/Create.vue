@@ -20,6 +20,7 @@ const form = useForm({
     end_time: '',
     hours: '',
     reason: '',
+    converts_to_vacation_hours: false,
     document: null,
 });
 
@@ -143,6 +144,8 @@ const saturdayVacationBonus = (startDate, endDate) => {
 /** Días sábado sumados por la regla (solo para tipos que descuentan vacaciones). */
 const saturdayBonusDays = computed(() => {
     if (!selectedIncidentType.value?.deducts_vacation) return 0;
+    // Un vale de conversión a horas (HxV) no toma la semana → sin regla del sábado.
+    if (form.converts_to_vacation_hours) return 0;
     if (!form.start_date || !form.end_date) return 0;
     return saturdayVacationBonus(form.start_date, form.end_date);
 });
@@ -186,6 +189,15 @@ const vacationBalance = computed(() => {
 const isVacationType = computed(() => {
     return selectedIncidentType.value?.deducts_vacation === true;
 });
+
+// La casilla "a cuenta de horas" solo aplica a Vacaciones; al cambiar a otro
+// tipo se limpia para no mandar un flag colgado.
+watch(isVacationType, (isVac) => {
+    if (!isVac) form.converts_to_vacation_hours = false;
+});
+
+/** Horas que se acreditarán a la bolsa si se marca HxV (1 día = 8 h). */
+const convertedHours = computed(() => daysCount.value * 8);
 
 const usesVacationHours = computed(() => {
     return selectedIncidentType.value?.uses_vacation_hours === true;
@@ -375,6 +387,31 @@ const submit = () => {
                     >
                         Requiere aprobacion
                     </span>
+                </div>
+
+                <!-- HxV: convertir la vacacion a la bolsa de horas en vez de tomar los dias -->
+                <div v-if="isVacationType" class="rounded-lg border border-pink-200 bg-pink-50 p-4">
+                    <label class="flex items-start gap-3 cursor-pointer">
+                        <input
+                            type="checkbox"
+                            v-model="form.converts_to_vacation_hours"
+                            class="mt-0.5 w-5 h-5 rounded border-gray-300 text-pink-600 focus:ring-pink-500"
+                        />
+                        <span class="text-sm">
+                            <span class="font-medium text-gray-800">A cuenta de horas (HxV)</span>
+                            <span class="block text-gray-600 mt-0.5">
+                                En vez de tomar los dias como vacacion, se convierten a la bolsa de
+                                horas (1 dia = 8 h) para usarse despues como permisos de
+                                entrada/salida. Al aprobar la hoja, la bolsa se abona automaticamente.
+                            </span>
+                            <span
+                                v-if="form.converts_to_vacation_hours && daysCount > 0"
+                                class="block mt-1 font-medium text-pink-700"
+                            >
+                                Se acreditaran {{ convertedHours }} h ({{ daysCount }} x 8) a la bolsa.
+                            </span>
+                        </span>
+                    </label>
                 </div>
 
                 <!-- Vacation hours type: single date + hours input -->

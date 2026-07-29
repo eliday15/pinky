@@ -153,6 +153,9 @@ class PayrollCalculatorService
 
         $incidentsByEmployee = Incident::whereIn('employee_id', $employeeIds)
             ->where('status', 'approved')
+            // Las incidencias "a cuenta de horas" (HxV) son vales de conversión a
+            // la bolsa: no representan días tomados → invisibles para la nómina.
+            ->where('converts_to_vacation_hours', false)
             ->where(function ($q) use ($startDateStr, $endDateStr) {
                 $q->whereBetween('start_date', [$startDateStr, $endDateStr])
                     ->orWhereBetween('end_date', [$startDateStr, $endDateStr])
@@ -234,6 +237,8 @@ class PayrollCalculatorService
             // Get approved incidents for the period
             $incidents = Incident::where('employee_id', $employee->id)
                 ->where('status', 'approved')
+                // HxV (vale de conversión a la bolsa): invisible para la nómina.
+                ->where('converts_to_vacation_hours', false)
                 ->where(function ($q) use ($startDateStr, $endDateStr) {
                     $q->whereBetween('start_date', [$startDateStr, $endDateStr])
                         ->orWhereBetween('end_date', [$startDateStr, $endDateStr])

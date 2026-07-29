@@ -188,6 +188,7 @@ class IncidentController extends Controller
             'end_time' => ['nullable', 'date_format:H:i'],
             'hours' => ['nullable', 'numeric', 'min:0', 'max:24'],
             'reason' => ['nullable', 'string', 'max:500'],
+            'converts_to_vacation_hours' => ['nullable', 'boolean'],
             'document' => [
                 Rule::requiredIf(fn () => $incidentType && $incidentType->requires_document),
                 'nullable',
@@ -207,22 +208,33 @@ class IncidentController extends Controller
         // Get employee and their schedule for working days calculation
         $employee = Employee::with('schedule')->find($validated['employee_id']);
 
+        // "A cuenta de horas" (HxV): solo aplica a Vacaciones; en otros tipos se
+        // ignora. Un vale de conversión NO toma los días (no aplica la regla del
+        // sábado) y es invisible para la nómina/asistencia y para el traslape.
+        $convertsToHours = $incidentType->deducts_vacation && $request->boolean('converts_to_vacation_hours');
+        $validated['converts_to_vacation_hours'] = $convertsToHours;
+
         // Días contados según el count_mode del tipo (DECISIONES §6):
         // hábiles para vacaciones/permisos, calendario para incapacidades.
         $startDate = Carbon::parse($validated['start_date']);
         $endDate = Carbon::parse($validated['end_date']);
-        $validated['days_count'] = $this->calculateDaysCount($incidentType, $startDate, $endDate, $employee);
+        $validated['days_count'] = $this->calculateDaysCount($incidentType, $startDate, $endDate, $employee, $convertsToHours);
 
-        // Reject overlapping incidents for the same employee (any non-rejected status).
-        $overlapExists = Incident::where('employee_id', $validated['employee_id'])
-            ->whereIn('status', ['pending', 'approved'])
-            ->where('start_date', '<=', $validated['end_date'])
-            ->where('end_date', '>=', $validated['start_date'])
-            ->exists();
-        if ($overlapExists) {
-            return redirect()->back()->withErrors([
-                'dates' => 'Ya existe una incidencia activa para este empleado en el rango de fechas seleccionado.',
-            ])->withInput();
+        // Reject overlapping incidents for the same employee (any non-rejected
+        // status). Los vales de conversión HxV no ocupan el día (no son tiempo
+        // tomado), así que ni bloquean ni son bloqueados por el traslape.
+        if (! $convertsToHours) {
+            $overlapExists = Incident::where('employee_id', $validated['employee_id'])
+                ->whereIn('status', ['pending', 'approved'])
+                ->where('converts_to_vacation_hours', false)
+                ->where('start_date', '<=', $validated['end_date'])
+                ->where('end_date', '>=', $validated['start_date'])
+                ->exists();
+            if ($overlapExists) {
+                return redirect()->back()->withErrors([
+                    'dates' => 'Ya existe una incidencia activa para este empleado en el rango de fechas seleccionado.',
+                ])->withInput();
+            }
         }
 
         // Check if incident type requires approval
@@ -231,7 +243,9 @@ class IncidentController extends Controller
             // Validate vacation balance before auto-approving a deducts_vacation type.
             // Descuenta de forma proporcional las horas ya gastadas de la bolsa.
             if ($incidentType->deducts_vacation) {
-                $available = $employee->vacation_days_available_for_request;
+                $available = $convertsToHours
+                    ? $this->convertibleDays($employee)
+                    : $employee->vacation_days_available_for_request;
                 if ($validated['days_count'] > $available) {
                     $availableLabel = rtrim(rtrim(number_format($available, 2), '0'), '.');
 
@@ -268,15 +282,20 @@ class IncidentController extends Controller
         // Auto-approved + deducts_vacation must charge the balance immediately
         // (the explicit approve() flow handles this when approval is required).
         if ($autoApproved && $incidentType->deducts_vacation) {
-            $employee->increment('vacation_days_used', $incident->days_count);
+            if ($convertsToHours) {
+                $this->creditVacationHours($employee, $incident);
+            } else {
+                $employee->increment('vacation_days_used', $incident->days_count);
+            }
         }
         if ($autoApproved && $incidentType->uses_vacation_hours) {
             $employee->increment('vacation_hours_used', (float) $incident->hours);
         }
 
         // Una incidencia auto-aprobada surte efecto de inmediato sobre la
-        // asistencia (PSA/PEN cambian status y permission_hours).
-        if ($autoApproved) {
+        // asistencia (PSA/PEN cambian status y permission_hours). Un vale de
+        // conversión HxV no toca la asistencia.
+        if ($autoApproved && ! $convertsToHours) {
             $this->recalculateAttendanceForIncident($incident);
         }
 
@@ -288,7 +307,7 @@ class IncidentController extends Controller
      * Días de la incidencia según el count_mode del tipo (DECISIONES §6).
      * El MISMO conteo aplica en captura, saldo de vacaciones y nómina.
      */
-    private function calculateDaysCount(IncidentType $incidentType, Carbon $startDate, Carbon $endDate, Employee $employee): int
+    private function calculateDaysCount(IncidentType $incidentType, Carbon $startDate, Carbon $endDate, Employee $employee, bool $convertsToHours = false): int
     {
         if (($incidentType->count_mode ?? IncidentType::COUNT_WORKING_DAYS) === IncidentType::COUNT_CALENDAR_DAYS) {
             return max(1, (int) $startDate->diffInDays($endDate) + 1);
@@ -303,8 +322,9 @@ class IncidentController extends Controller
         // Regla de vacaciones (Dani, 2026-06-24): en una semana con 3+ días de
         // vacaciones, el sábado de esa semana también cuenta. Mismo cálculo que
         // la nómina (Incident::saturdayVacationBonusDays) para que captura, saldo
-        // y nómina coincidan.
-        if ($incidentType->deducts_vacation) {
+        // y nómina coincidan. NO aplica a los vales de conversión a horas (HxV):
+        // no se está tomando la semana, solo se banca cada día como 8 h.
+        if ($incidentType->deducts_vacation && ! $convertsToHours) {
             $holidayDates = Holiday::whereBetween('date', [$startDate->toDateString(), $endDate->toDateString()])
                 ->pluck('date')
                 ->map(fn ($date) => $date->toDateString())
@@ -582,12 +602,27 @@ class IncidentController extends Controller
         $incidentType = $incident->incidentType;
         $wasApproved = $incident->status === 'approved';
         if ($wasApproved && $incidentType?->deducts_vacation) {
-            $incident->employee?->decrement('vacation_days_used', $incident->days_count);
+            if ($incident->converts_to_vacation_hours) {
+                // Vale de conversión: devolver las horas acreditadas a la bolsa,
+                // nunca por debajo de lo ya gastado (defensivo).
+                $employee = $incident->employee;
+                if ($employee) {
+                    $refund = min(
+                        (float) $incident->days_count * Employee::VACATION_HOURS_PER_DAY,
+                        max(0.0, (float) $employee->vacation_hours_credited - (float) $employee->vacation_hours_used),
+                    );
+                    if ($refund > 0) {
+                        $employee->decrement('vacation_hours_credited', $refund);
+                    }
+                }
+            } else {
+                $incident->employee?->decrement('vacation_days_used', $incident->days_count);
 
-            // Restaurar los días apartados de diciembre que la emergencia jaló,
-            // si no se devuelven, la reserva se pierde en silencio.
-            if ((int) $incident->reserved_days_taken > 0) {
-                $incident->employee?->increment('vacation_days_reserved', (int) $incident->reserved_days_taken);
+                // Restaurar los días apartados de diciembre que la emergencia jaló,
+                // si no se devuelven, la reserva se pierde en silencio.
+                if ((int) $incident->reserved_days_taken > 0) {
+                    $incident->employee?->increment('vacation_days_reserved', (int) $incident->reserved_days_taken);
+                }
             }
         }
         if ($wasApproved && $incidentType?->uses_vacation_hours) {
@@ -643,6 +678,34 @@ class IncidentController extends Controller
     }
 
     /**
+     * Días de vacaciones que el saldo respalda para convertir a la bolsa de
+     * horas, descontando lo ya comprometido en la bolsa sin gastar (mismo
+     * criterio que VacationHoursBankController::convert, para no doble-gastar).
+     */
+    private function convertibleDays(Employee $employee): float
+    {
+        $committedUnspentDays = max(
+            0.0,
+            ((float) $employee->vacation_hours_credited - (float) $employee->vacation_hours_used) / Employee::VACATION_HOURS_PER_DAY,
+        );
+
+        return floor($employee->vacation_days_available_for_request - $committedUnspentDays);
+    }
+
+    /**
+     * Acreditar a la bolsa de horas los días de un vale de conversión HxV
+     * (1 día = 8 h). No consume el día como vacación: el saldo se cobra de forma
+     * proporcional conforme se gastan las horas en permisos.
+     */
+    private function creditVacationHours(Employee $employee, Incident $incident): void
+    {
+        $employee->increment(
+            'vacation_hours_credited',
+            (float) $incident->days_count * Employee::VACATION_HOURS_PER_DAY,
+        );
+    }
+
+    /**
      * Approve an incident.
      */
     public function approve(Request $request, Incident $incident): RedirectResponse
@@ -663,25 +726,38 @@ class IncidentController extends Controller
 
         // FASE 2.1: Validate vacation balance before approving
         if ($incidentType->deducts_vacation) {
-            if ($useReserved && ! auth()->user()->hasAnyRole(['superadmin', 'admin'])) {
-                return redirect()->back()->withErrors([
-                    'saldo' => 'Solo el Administrador puede tomar de los dias obligatorios de diciembre.',
-                ]);
-            }
+            if ($incident->converts_to_vacation_hours) {
+                // Vale de conversión a horas: solo puede convertir días que el
+                // saldo respalde (descontando lo ya comprometido en la bolsa).
+                $convertible = $this->convertibleDays($employee);
+                if ($incident->days_count > $convertible) {
+                    $label = rtrim(rtrim(number_format($convertible, 2), '0'), '.');
 
-            $availableVacationDays = $useReserved
-                ? $employee->vacation_days_available_with_reserve
-                : $employee->vacation_days_available_for_request;
+                    return redirect()->back()->withErrors([
+                        'saldo' => "Saldo insuficiente de vacaciones para convertir a horas. Disponibles: {$label} dias, solicitados: {$incident->days_count} dias.",
+                    ]);
+                }
+            } else {
+                if ($useReserved && ! auth()->user()->hasAnyRole(['superadmin', 'admin'])) {
+                    return redirect()->back()->withErrors([
+                        'saldo' => 'Solo el Administrador puede tomar de los dias obligatorios de diciembre.',
+                    ]);
+                }
 
-            if ($incident->days_count > $availableVacationDays) {
-                $availableLabel = rtrim(rtrim(number_format($availableVacationDays, 2), '0'), '.');
-                $hint = ($useReserved || (int) ($employee->vacation_days_reserved ?? 0) === 0)
-                    ? ''
-                    : ' Tiene '.(int) $employee->vacation_days_reserved.' dias apartados de diciembre; solo el Administrador puede tomarlos en emergencia.';
+                $availableVacationDays = $useReserved
+                    ? $employee->vacation_days_available_with_reserve
+                    : $employee->vacation_days_available_for_request;
 
-                return redirect()->back()->withErrors([
-                    'saldo' => "Saldo insuficiente de vacaciones. Disponibles: {$availableLabel} dias, solicitados: {$incident->days_count} dias.{$hint}",
-                ]);
+                if ($incident->days_count > $availableVacationDays) {
+                    $availableLabel = rtrim(rtrim(number_format($availableVacationDays, 2), '0'), '.');
+                    $hint = ($useReserved || (int) ($employee->vacation_days_reserved ?? 0) === 0)
+                        ? ''
+                        : ' Tiene '.(int) $employee->vacation_days_reserved.' dias apartados de diciembre; solo el Administrador puede tomarlos en emergencia.';
+
+                    return redirect()->back()->withErrors([
+                        'saldo' => "Saldo insuficiente de vacaciones. Disponibles: {$availableLabel} dias, solicitados: {$incident->days_count} dias.{$hint}",
+                    ]);
+                }
             }
         }
         if ($incidentType->uses_vacation_hours) {
@@ -695,9 +771,15 @@ class IncidentController extends Controller
 
         $incident->approve(auth()->user());
 
-        // If it deducts vacation, update employee vacation days
+        // If it deducts vacation, update employee vacation days — salvo que sea
+        // un vale de conversión HxV: entonces el día NO se consume como vacación,
+        // se acredita a la bolsa de horas (días × 8) para gastarse por horas.
         if ($incidentType->deducts_vacation) {
-            $this->chargeVacationDays($employee, $incident, $useReserved);
+            if ($incident->converts_to_vacation_hours) {
+                $this->creditVacationHours($employee, $incident);
+            } else {
+                $this->chargeVacationDays($employee, $incident, $useReserved);
+            }
         }
         if ($incidentType->uses_vacation_hours) {
             $employee->increment('vacation_hours_used', (float) $incident->hours);
@@ -705,8 +787,11 @@ class IncidentController extends Controller
 
         // La aprobación surte efecto de inmediato sobre la asistencia, igual
         // que AuthorizationController::approve (auditoría C2 / DECISIONES §8):
-        // un permiso aprobado tarde revierte la falta/retardo ya marcada.
-        $this->recalculateAttendanceForIncident($incident);
+        // un permiso aprobado tarde revierte la falta/retardo ya marcada. Un
+        // vale de conversión HxV no toca la asistencia (no es tiempo tomado).
+        if (! $incident->converts_to_vacation_hours) {
+            $this->recalculateAttendanceForIncident($incident);
+        }
 
         $incident->recordAuditEvent(
             action: AuditLog::ACTION_APPROVE,

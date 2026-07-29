@@ -86,7 +86,11 @@ class IncidentPolicy
      */
     public function delete(User $user, Incident $incident): bool
     {
-        if ($incident->status !== 'pending') {
+        // Los vales de conversión "a cuenta de horas" (HxV) sí pueden borrarse
+        // aunque estén aprobados: el borrado devuelve las horas no gastadas a la
+        // bolsa (IncidentController::destroy) y es la vía de corrección, ya que
+        // la conversión es reversible (a diferencia de una vacación tomada).
+        if ($incident->status !== 'pending' && ! $incident->converts_to_vacation_hours) {
             return false;
         }
 
