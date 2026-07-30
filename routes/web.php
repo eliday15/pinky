@@ -3,6 +3,7 @@
 use App\Http\Controllers\AnomalyResolutionController;
 use App\Http\Controllers\AttendanceController;
 use App\Http\Controllers\AttendanceReportController;
+use App\Http\Controllers\WeeklySummaryReportController;
 use App\Http\Controllers\AuditLogController;
 use App\Http\Controllers\AuthorizationController;
 use App\Http\Controllers\CheckOmissionController;
@@ -176,6 +177,10 @@ Route::middleware(['auth', 'password-changed', 'two-factor-setup'])->group(funct
         Route::get('/export/pdf', [OvertimeReportController::class, 'exportPdf'])->name('export.pdf');
         Route::get('/export/excel', [OvertimeReportController::class, 'exportExcel'])->name('export.excel');
     });
+
+    // Resumen semanal (Vacaciones / Faltas / Retardos / Incapacidades en 1 vista)
+    Route::get('/reports/resumen-semanal', [WeeklySummaryReportController::class, 'index'])->name('reports.resumen');
+    Route::get('/reports/resumen-semanal/export', [WeeklySummaryReportController::class, 'export'])->name('reports.resumen.export');
 
     // Discipline Reports
     Route::get('/reports/faltas', [AttendanceReportController::class, 'faltas'])->name('reports.faltas');
