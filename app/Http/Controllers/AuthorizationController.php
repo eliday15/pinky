@@ -2145,20 +2145,48 @@ class AuthorizationController extends Controller
         // would otherwise bail out at the status guard below.
         $authorization->refresh();
 
-        if ($authorization->status !== Authorization::STATUS_PENDING) {
+        if (! $this->matchesDetectedForAutoApproval($authorization)) {
             return;
         }
+
+        // El MISMO flujo que la aprobación manual (auditoría #78/88):
+        // approve() firma al jefe de departamento, y los efectos recalculan el
+        // attendance, cierran anomalías cubiertas e invalidan la nómina
+        // (DECISIONES §7).
+        $authorization->approve(Auth::user());
+        $this->applyApprovalEffects($authorization, app(ZktecoSyncService::class));
+    }
+
+    /**
+     * ¿Debe auto-aprobarse esta autorización de TE/velada por coincidir con lo
+     * detectado de las checadas? Detección pura, SIN efectos (para el barrido y
+     * el dry-run). Reglas:
+     *  - Coincidencia EXACTA (start, end, horas): la fila se cargó desde checadas
+     *    sin tocar; el sistema ya concuerda consigo mismo.
+     *  - Tiempo extra, además: se aprueba cuando la checada RESPALDA lo autorizado
+     *    (Luis 2026-07-30): la ventana autorizada cae dentro de lo realmente
+     *    trabajado (inicio ≥ inicio detectado, fin ≤ salida real) y las horas no
+     *    exceden las detectadas. Cubre las post-autorizaciones tecleadas en
+     *    números redondos (16:30–19:00 = 2.5h) cuando la salida real es 19:06. Lo
+     *    que reclama MÁS de lo que la checada demuestra se queda pendiente para
+     *    revisión. Seguro para nómina: el pago ya se topa a mín(aut, detectado).
+     */
+    public function matchesDetectedForAutoApproval(Authorization $authorization): bool
+    {
+        if ($authorization->status !== Authorization::STATUS_PENDING) {
+            return false;
+        }
         if (! in_array($authorization->type, [Authorization::TYPE_OVERTIME, Authorization::TYPE_NIGHT_SHIFT], true)) {
-            return;
+            return false;
         }
         // Attendance-pull concepts (Cena, Fin de semana) always stay pending for
         // human review, even if misconfigured onto an overtime/velada type.
         if ($authorization->compensation_type_id
             && optional(CompensationType::find($authorization->compensation_type_id))->pullsFromAttendance()) {
-            return;
+            return false;
         }
         if (! $authorization->start_time || ! $authorization->end_time || ! $authorization->hours) {
-            return;
+            return false;
         }
 
         $dateString = $authorization->date instanceof Carbon
@@ -2169,39 +2197,79 @@ class AuthorizationController extends Controller
             ->where('work_date', $dateString)
             ->first();
         if (! $record || ! $record->check_in || ! $record->check_out) {
-            return;
+            return false;
         }
 
         $employee = $authorization->employee ?? Employee::find($authorization->employee_id);
         if (! $employee) {
-            return;
+            return false;
         }
 
         $segments = $this->buildSuggestionSegments($employee, $dateString, $authorization->type, $record);
         if (empty($segments)) {
-            return;
+            return false;
         }
 
         $authStart = $authorization->start_time->format('H:i');
         $authEnd = $authorization->end_time->format('H:i');
         $authHours = round((float) $authorization->hours, 2);
+        $authStartMin = $this->minutesOfDay($authStart);
+        $authEndMin = $this->minutesOfDay($authEnd);
 
         foreach ($segments as $seg) {
-            if (
-                $seg['start_time'] === $authStart
+            $exact = $seg['start_time'] === $authStart
                 && $seg['end_time'] === $authEnd
-                && abs((float) $seg['hours'] - $authHours) < 0.01
-            ) {
-                // El MISMO flujo que la aprobación manual (auditoría #78/88):
-                // approve() firma al jefe de departamento, y los efectos
-                // recalculan el attendance, cierran anomalías cubiertas e
-                // invalidan la nómina (DECISIONES §7).
-                $authorization->approve(Auth::user());
-                $this->applyApprovalEffects($authorization, app(ZktecoSyncService::class));
+                && abs((float) $seg['hours'] - $authHours) < 0.01;
 
-                return;
+            $backed = false;
+            if ($authorization->type === Authorization::TYPE_OVERTIME) {
+                $segStartMin = $this->minutesOfDay($seg['start_time']);
+                $segEndMin = $this->minutesOfDay($seg['end_time']);
+                // Solo segmentos del mismo día (el TE no cruza medianoche; eso
+                // sería velada). Si cruzara, se queda con el match exacto.
+                if ($segEndMin >= $segStartMin) {
+                    $backed = $segStartMin <= $authStartMin
+                        && $authEndMin <= $segEndMin
+                        && $authHours <= (float) $seg['hours'] + 0.01;
+                }
+            }
+
+            if ($exact || $backed) {
+                return true;
             }
         }
+
+        return false;
+    }
+
+    /**
+     * Barrido retroactivo: si esta autorización de TE ya pendiente coincide con
+     * lo detectado (respaldo por checadas), aprobarla con el MISMO pipeline que
+     * la aprobación manual. Devuelve true si la aprobó. La usa el comando
+     * `authorizations:auto-approve-overtime` (contraparte del alta al vuelo).
+     * Requiere un usuario autenticado que firme (Auth::login en el comando).
+     */
+    public function attemptOvertimeAutoApproval(Authorization $authorization): bool
+    {
+        $authorization->refresh();
+
+        if ($authorization->type !== Authorization::TYPE_OVERTIME
+            || ! $this->matchesDetectedForAutoApproval($authorization)) {
+            return false;
+        }
+
+        $authorization->approve(Auth::user());
+        $this->applyApprovalEffects($authorization, app(ZktecoSyncService::class));
+
+        return true;
+    }
+
+    /** Minutos desde las 00:00 de una hora 'H:i' (para comparar ventanas del mismo día). */
+    private function minutesOfDay(string $hi): int
+    {
+        [$h, $m] = array_map('intval', explode(':', $hi));
+
+        return $h * 60 + $m;
     }
 
     /**
