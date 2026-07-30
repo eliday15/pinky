@@ -7,6 +7,7 @@ use App\Models\AttendanceRecord;
 use App\Models\Employee;
 use App\Models\Holiday;
 use App\Models\Incident;
+use App\Services\LateAbsenceService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -129,29 +130,47 @@ class WeeklySummaryReportController extends Controller
                 'date' => Carbon::parse($r->work_date)->toDateString(),
                 'observaciones' => 'Falta',
             ]))
-            ->sortBy([['name', 'asc'], ['date', 'asc']])->values()->all();
+            ->sortBy(fn ($row) => ($row['name'] ?? '').'|'.($row['date'] ?? ''))
+            ->values()->all();
 
-        // ---- FALTAS POR RETARDO ---- (retardos acumulados en el rango: una fila
-        // por colaborador con el conteo, como el Excel de Luis)
-        $lateRows = AttendanceRecord::whereBetween('work_date', [$fromStr, $toStr])
-            ->whereIn('employee_id', $nonExemptIds)
-            ->where('status', 'late')
-            ->when(! empty($holidayDates), fn ($q) => $q->whereNotIn('work_date', $holidayDates))
-            ->orderBy('work_date')
-            ->get(['employee_id', 'work_date']);
+        // ---- FALTAS POR RETARDO ---- La acumulación de retardos es MENSUAL
+        // (igual que la nómina, DECISIONES §1): N retardos en el mes = 1 falta,
+        // con N = late_to_absence_count. Se cuentan los retardos del/los mes(es)
+        // que toca el rango y se listan solo los colaboradores que alcanzan el
+        // umbral (los que SÍ generan falta), con el conteo y las faltas
+        // proyectadas — como el "Faltas por retardo" del Excel de Luis.
+        $threshold = app(LateAbsenceService::class)->threshold();
+        $months = [];
+        for ($c = $from->copy()->startOfMonth(); $c->lte($to); $c->addMonthNoOverflow()) {
+            $months[$c->format('Y-m')] = [$c->copy()->startOfMonth(), $c->copy()->endOfMonth()];
+        }
 
-        $retardos = $lateRows
-            ->groupBy('employee_id')
-            ->map(function ($rows, $eid) use ($employees, $label) {
-                $dates = $rows->map(fn ($r) => Carbon::parse($r->work_date)->toDateString())->sort()->values();
+        $retardos = [];
+        foreach ($months as $ym => [$mStart, $mEnd]) {
+            $monthHolidays = Holiday::whereBetween('date', [$mStart->toDateString(), $mEnd->toDateString()])
+                ->pluck('date')->map(fn ($d) => Carbon::parse($d)->toDateString())->all();
 
-                return array_merge($label($employees->get($eid)), [
-                    'date' => $dates->last(),
-                    'observaciones' => $dates->count().' '.($dates->count() === 1 ? 'retardo' : 'retardos'),
-                    'count' => $dates->count(),
+            $counts = AttendanceRecord::whereBetween('work_date', [$mStart->toDateString(), $mEnd->toDateString()])
+                ->whereIn('employee_id', $nonExemptIds)
+                ->where('status', 'late')
+                ->when(! empty($monthHolidays), fn ($q) => $q->whereNotIn('work_date', $monthHolidays))
+                ->selectRaw('employee_id, count(*) as n')
+                ->groupBy('employee_id')
+                ->havingRaw('count(*) >= ?', [$threshold])
+                ->pluck('n', 'employee_id');
+
+            $monthLabel = ucfirst($mStart->locale('es')->isoFormat('MMMM YYYY'));
+            foreach ($counts as $eid => $n) {
+                $faltasGeneradas = intdiv((int) $n, $threshold);
+                $retardos[] = array_merge($label($employees->get($eid)), [
+                    'date' => $monthLabel,
+                    'observaciones' => $n.' retardos → '.$faltasGeneradas.' '.($faltasGeneradas === 1 ? 'falta' : 'faltas'),
+                    'count' => (int) $n,
                 ]);
-            })
-            ->sortByDesc('count')->values()->all();
+            }
+        }
+
+        usort($retardos, fn ($a, $b) => $b['count'] <=> $a['count']);
 
         return compact('vacaciones', 'faltas', 'retardos', 'incapacidades');
     }

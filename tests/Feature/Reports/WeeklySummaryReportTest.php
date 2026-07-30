@@ -89,25 +89,51 @@ class WeeklySummaryReportTest extends FeatureTestCase
                 ->where('faltas.0.name', $falton->full_name));
     }
 
-    public function test_late_records_group_into_retardos_with_count(): void
+    public function test_retardos_reaching_the_monthly_threshold_generate_a_falta(): void
     {
+        // El umbral por defecto es 6 retardos/mes = 1 falta. La acumulación es
+        // MENSUAL: 6 retardos en junio califican aunque el rango sea una semana.
         $this->actingAsAdmin();
-        $e = Employee::factory()->create(['status' => 'active', 'is_attendance_exempt' => false]);
+        $conFalta = Employee::factory()->create(['status' => 'active', 'is_attendance_exempt' => false]);
+        $sinFalta = Employee::factory()->create(['status' => 'active', 'is_attendance_exempt' => false]);
 
-        foreach (['2026-06-01', '2026-06-02', '2026-06-03'] as $day) {
-            AttendanceRecord::factory()->create([
-                'employee_id' => $e->id,
-                'work_date' => $day,
-                'status' => 'late',
-            ]);
+        foreach (['2026-06-01', '2026-06-02', '2026-06-03', '2026-06-04', '2026-06-05', '2026-06-08'] as $day) {
+            AttendanceRecord::factory()->create(['employee_id' => $conFalta->id, 'work_date' => $day, 'status' => 'late']);
+        }
+        // Solo 2 retardos: no alcanza el umbral → no aparece.
+        foreach (['2026-06-01', '2026-06-02'] as $day) {
+            AttendanceRecord::factory()->create(['employee_id' => $sinFalta->id, 'work_date' => $day, 'status' => 'late']);
         }
 
         $this->get(route('reports.resumen', ['from' => self::FROM, 'to' => self::TO]))
             ->assertOk()
             ->assertInertia(fn ($page) => $page
                 ->has('retardos', 1)
-                ->where('retardos.0.count', 3)
-                ->where('retardos.0.observaciones', '3 retardos'));
+                ->where('retardos.0.name', $conFalta->full_name)
+                ->where('retardos.0.count', 6)
+                ->where('retardos.0.observaciones', '6 retardos → 1 falta'));
+    }
+
+    public function test_faltas_and_retardos_coexist_without_clobbering(): void
+    {
+        // Guard contra la colisión de variable: con faltas Y retardos-sobre-umbral
+        // a la vez, ambas secciones deben quedar como listas pobladas.
+        $this->actingAsAdmin();
+        $falton = Employee::factory()->create(['status' => 'active', 'is_attendance_exempt' => false]);
+        $retardon = Employee::factory()->create(['status' => 'active', 'is_attendance_exempt' => false]);
+
+        AttendanceRecord::factory()->create(['employee_id' => $falton->id, 'work_date' => '2026-06-03', 'status' => 'absent']);
+        foreach (['2026-06-01', '2026-06-02', '2026-06-03', '2026-06-04', '2026-06-05', '2026-06-08'] as $day) {
+            AttendanceRecord::factory()->create(['employee_id' => $retardon->id, 'work_date' => $day, 'status' => 'late']);
+        }
+
+        $this->get(route('reports.resumen', ['from' => self::FROM, 'to' => self::TO]))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->has('faltas', 1)
+                ->where('faltas.0.name', $falton->full_name)
+                ->has('retardos', 1)
+                ->where('retardos.0.name', $retardon->full_name));
     }
 
     public function test_export_downloads_xlsx(): void
