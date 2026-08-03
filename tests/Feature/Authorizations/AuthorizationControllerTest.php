@@ -100,6 +100,21 @@ class AuthorizationControllerTest extends FeatureTestCase
             ->assertInertia(fn (Assert $page) => $page->where('pendingCount', 2));
     }
 
+    public function test_index_pending_count_respects_active_filters(): void
+    {
+        // El badge de "pendientes" debe cuadrar con lo que se ve: al filtrar por
+        // rango de fechas cuenta solo las pendientes de ese rango, no el total.
+        $this->actingAsAdmin();
+        $this->pendingOvertime(['date' => '2026-07-23']);
+        $this->pendingOvertime(['date' => '2026-07-24']);
+        $this->pendingOvertime(['date' => '2026-06-10']); // fuera del rango
+
+        $this->get(route('authorizations.index', ['from_date' => '2026-07-22', 'to_date' => '2026-07-28']))
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('pendingCount', 2)
+                ->where('authorizations.total', 2));
+    }
+
     public function test_index_status_filter_is_applied(): void
     {
         $this->actingAsAdmin();

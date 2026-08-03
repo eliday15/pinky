@@ -67,38 +67,26 @@ class AuthorizationController extends Controller
             }
         }
 
-        // Apply search filters
-        $query->when($request->status, function ($q, $status) {
-            $q->where('status', $status);
-        })
-            ->when($request->type, function ($q, $type) {
-                $q->where('type', $type);
-            })
-            // El filtro "Tipo" del UI distingue cada concepto (Cena, Comida,
-            // Fin de Semana…) por su compensation_type_id, no por el bucket
-            // base `type` (varios conceptos comparten type='special').
-            ->when($request->compensation_type_id, function ($q, $compensationTypeId) {
-                $q->where('compensation_type_id', $compensationTypeId);
-            })
-            ->when($request->employee, function ($q, $employee) {
-                $q->where('employee_id', $employee);
-            })
-            ->when($request->department, function ($q, $department) {
-                $q->whereHas('employee', function ($e) use ($department) {
-                    $e->where('department_id', $department);
-                });
-            })
-            ->when($request->search, function ($q, $search) {
-                $q->whereHas('employee', function ($e) use ($search) {
-                    $e->where('full_name', 'like', "%{$search}%");
-                });
-            })
-            ->when($request->from_date, function ($q, $fromDate) {
-                $q->where('date', '>=', $fromDate);
-            })
-            ->when($request->to_date, function ($q, $toDate) {
-                $q->where('date', '<=', $toDate);
-            });
+        // Filtros compartidos por la LISTA y el CONTEO de pendientes (todos
+        // menos el estado, que el badge de "pendientes" ya fija a pending). Así
+        // el badge concuerda con lo que se ve: si filtras por semana, el conteo
+        // refleja las pendientes de esa semana, no el total global.
+        $applyFilters = function ($q) use ($request) {
+            $q->when($request->type, fn ($q, $type) => $q->where('type', $type))
+                // El filtro "Tipo" del UI distingue cada concepto (Cena, Comida,
+                // Fin de Semana…) por su compensation_type_id, no por el bucket
+                // base `type` (varios conceptos comparten type='special').
+                ->when($request->compensation_type_id, fn ($q, $id) => $q->where('compensation_type_id', $id))
+                ->when($request->employee, fn ($q, $employee) => $q->where('employee_id', $employee))
+                ->when($request->department, fn ($q, $department) => $q->whereHas('employee', fn ($e) => $e->where('department_id', $department)))
+                ->when($request->search, fn ($q, $search) => $q->whereHas('employee', fn ($e) => $e->where('full_name', 'like', "%{$search}%")))
+                ->when($request->from_date, fn ($q, $fromDate) => $q->where('date', '>=', $fromDate))
+                ->when($request->to_date, fn ($q, $toDate) => $q->where('date', '<=', $toDate));
+        };
+
+        // La lista además filtra por el estado seleccionado.
+        $query->when($request->status, fn ($q, $status) => $q->where('status', $status));
+        $applyFilters($query);
 
         $authorizations = $query->orderBy('created_at', 'desc')->paginate(15)->withQueryString();
 
@@ -131,6 +119,9 @@ class AuthorizationController extends Controller
                 $pendingQuery->where('employee_id', $user->employee?->id);
             }
         }
+        // Mismos filtros que la lista (menos el estado) para que el badge de
+        // "pendientes" cuadre con lo que se está viendo.
+        $applyFilters($pendingQuery);
         $pendingCount = $pendingQuery->count();
 
         // Get employees for filter (scoped) — only those who have at least one

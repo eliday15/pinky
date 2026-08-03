@@ -122,11 +122,19 @@ class PayrollController extends Controller
         $skipped = collect();
 
         foreach ($scopes as $scope) {
+            // El traslape solo cuenta DENTRO de la misma categoría: la nómina
+            // BASE (weekly/biweekly = sueldo − faltas) y la de EXTRAS (monthly =
+            // conceptos del mes) del mismo periodo son independientes por diseño
+            // y deben poder convivir. Dos base que se traslapan sí es error
+            // (doble sueldo), igual dos mensuales. Traslape de intervalos real
+            // (cubre también el periodo que ENGLOBA a otro).
+            $isMonthly = $validated['type'] === 'monthly';
             $overlap = PayrollPeriod::where('department_id', $scope['id'])
-                ->where(function ($q) use ($validated) {
-                    $q->whereBetween('start_date', [$validated['start_date'], $validated['end_date']])
-                        ->orWhereBetween('end_date', [$validated['start_date'], $validated['end_date']]);
-                })->exists();
+                ->when($isMonthly, fn ($q) => $q->where('type', 'monthly'))
+                ->when(! $isMonthly, fn ($q) => $q->where('type', '!=', 'monthly'))
+                ->where('start_date', '<=', $validated['end_date'])
+                ->where('end_date', '>=', $validated['start_date'])
+                ->exists();
 
             if ($overlap) {
                 $skipped->push($scope['name']);

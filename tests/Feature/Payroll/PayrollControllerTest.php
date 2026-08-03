@@ -251,6 +251,55 @@ class PayrollControllerTest extends FeatureTestCase
         $this->assertDatabaseMissing('payroll_periods', ['name' => 'Traslape']);
     }
 
+    public function test_store_allows_monthly_over_existing_weekly_base_period(): void
+    {
+        // La nómina BASE (semanal) y la de EXTRAS (mensual) del mismo mes son
+        // independientes: crear el mensual NO debe chocar con los semanales.
+        $this->actingAsAdmin();
+
+        PayrollPeriod::factory()->weekly()->create([
+            'department_id' => null,
+            'start_date' => '2026-07-01',
+            'end_date' => '2026-07-07',
+        ]);
+
+        $this->post(route('payroll.store'), [
+            'name' => 'Mes julio extras',
+            'type' => 'monthly',
+            'start_date' => '2026-07-01',
+            'end_date' => '2026-07-31',
+            'payment_date' => '2026-08-31',
+        ])->assertSessionHasNoErrors();
+
+        $this->assertDatabaseHas('payroll_periods', [
+            'name' => 'Mes julio extras',
+            'type' => 'monthly',
+        ]);
+    }
+
+    public function test_store_rejects_monthly_over_existing_monthly(): void
+    {
+        // Dos nóminas de EXTRAS que se traslapan sí es error (misma categoría).
+        $this->actingAsAdmin();
+
+        PayrollPeriod::factory()->monthly()->create([
+            'department_id' => null,
+            'start_date' => '2026-07-01',
+            'end_date' => '2026-07-31',
+        ]);
+
+        $this->from(route('payroll.create'))
+            ->post(route('payroll.store'), [
+                'name' => 'Otro mensual',
+                'type' => 'monthly',
+                'start_date' => '2026-07-15',
+                'end_date' => '2026-08-15',
+                'payment_date' => '2026-08-31',
+            ])->assertSessionHasErrors(['start_date']);
+
+        $this->assertDatabaseMissing('payroll_periods', ['name' => 'Otro mensual']);
+    }
+
     public function test_store_forbidden_for_rrhh(): void
     {
         $this->actingAsRrhh();
