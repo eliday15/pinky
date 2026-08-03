@@ -58,6 +58,15 @@ class OvertimeRoundingService
         $checkIn = Carbon::parse($date . ' ' . $record->check_in);
         $checkOut = Carbon::parse($date . ' ' . $record->check_out);
 
+        // Salida que cruza la medianoche (velada / trabajo nocturno sobre un
+        // horario de día): si la salida cae ANTES de la entrada, es del día
+        // siguiente. Sin esto, una salida de madrugada (05:12) se leía como del
+        // mismo día — anterior al horario de salida — y el tiempo extra detectado
+        // salía en 0, bloqueando la aprobación (Elias 2026-08-03, Almacén PT).
+        if ($checkOut->lt($checkIn)) {
+            $checkOut->addDay();
+        }
+
         $scheduledEntry = $schedule->entry_time ?? null;
         $scheduledExit = $schedule->exit_time ?? null;
 

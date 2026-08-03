@@ -789,6 +789,20 @@ class ZktecoSyncService
             $expectedExit = Carbon::parse($dateStr.' '.$exitTime);
             $actualExit = Carbon::parse($dateStr.' '.$checkOutTime);
 
+            // Salida que cruza la medianoche (velada sobre un horario de DÍA: el
+            // mismo colaborador puede tener horas extra y además una velada que
+            // arranca ~10pm y termina de madrugada): si la salida es anterior a la
+            // entrada, fue al día siguiente y NO es salida temprana. Antes esto
+            // solo se contemplaba para horarios nocturnos, así que una salida de
+            // madrugada marcaba "falta" por salir 13h antes de su horario, en un
+            // día que en realidad se trabajó completo (Elias 2026-08-03, Almacén PT).
+            if ($checkInTime) {
+                $actualEntry = Carbon::parse($dateStr.' '.$checkInTime);
+                if ($actualExit->lt($actualEntry)) {
+                    $actualExit->addDay();
+                }
+            }
+
             // Handle night shift exit (next day)
             if ($isNightShift && $actualExit->lt($expectedExit)) {
                 $expectedExit->addDay();
