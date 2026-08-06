@@ -24,7 +24,7 @@ class AnomalyDetectorService
     /**
      * @param  OvertimeRoundingService  $rounder  Shared company rounding rule so
      *                                            anomalies use the SAME standard as
-     *                                            authorizations (<30 min → 0h).
+     *                                            authorizations (<25 min → 0h).
      */
     public function __construct(
         private readonly OvertimeRoundingService $rounder = new OvertimeRoundingService(),
@@ -109,7 +109,7 @@ class AnomalyDetectorService
         }
 
         // Self-heal: close open per-hour anomalies that no longer meet the
-        // authorization standard (e.g. a recalculation left less than 30 min,
+        // authorization standard (e.g. a recalculation left less than 25 min,
         // which rounds to 0h and can never be authorized).
         $this->closeRedundantAnomalies($record, $daySchedule);
 
@@ -194,7 +194,7 @@ class AnomalyDetectorService
      *
      * Uses the SAME standard as the authorization flow ("Cargar desde checadas"
      * and the weekly report): early/late segments measured against the schedule
-     * and rounded with the official company ladder (<30 min → 0h). Time that
+     * and rounded with the official company ladder (<25 min → 0h). Time that
      * rounds to 0h can never be authorized (the create form blocks 0-hour
      * authorizations), so flagging it would only generate unactionable noise.
      *
@@ -256,7 +256,7 @@ class AnomalyDetectorService
             return [];
         }
 
-        // Same standard as authorizations: <30 min rounds to 0h and cannot be
+        // Same standard as authorizations: <25 min rounds to 0h and cannot be
         // authorized, so there is no actionable velada to flag (nor a
         // confirmation punch to demand).
         $authorizableHours = $this->rounder->roundMinutes((int) round($record->velada_hours * 60));
@@ -527,7 +527,7 @@ class AnomalyDetectorService
             AttendanceAnomaly::TYPE_MISSING_CHECKIN => ! $record->check_in && (bool) $record->check_out,
 
             // Per-hour types keep the authorization rounding standard:
-            // <30 min rounds to 0h and is never authorizable.
+            // <25 min rounds to 0h and is never authorizable.
             AttendanceAnomaly::TYPE_UNAUTHORIZED_OVERTIME => $record->overtime_hours > 0
                 && $this->rounder->detectOvertimeHours($record, $schedule, Carbon::parse($record->work_date)->toDateString()) > 0,
 
@@ -553,7 +553,7 @@ class AnomalyDetectorService
      *
      * Two cases, with distinct notes:
      *  1. Per-hour types whose time rounds to 0h under the official ladder
-     *     (<30 min): nothing can ever be authorized, so the anomaly is noise.
+     *     (<25 min): nothing can ever be authorized, so the anomaly is noise.
      *  2. Structural types whose raw condition disappeared (e.g. a manual edit
      *     added the missing check_out): resolved as "record corrected".
      *
@@ -589,7 +589,7 @@ class AnomalyDetectorService
                     'status' => AttendanceAnomaly::STATUS_RESOLVED,
                     'resolution_method' => AttendanceAnomaly::METHOD_RECORD_CORRECTED,
                     'resolved_at' => now(),
-                    'resolution_notes' => 'Auto-resuelto: tiempo menor a 30 minutos se redondea a 0 horas (estandar de autorizaciones).',
+                    'resolution_notes' => 'Auto-resuelto: tiempo menor a 25 minutos se redondea a 0 horas (estandar de autorizaciones).',
                 ]);
         }
 

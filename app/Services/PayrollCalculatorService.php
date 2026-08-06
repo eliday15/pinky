@@ -440,10 +440,18 @@ class PayrollCalculatorService
             ->filter(fn ($r) => $r->check_in && $r->check_out && ! $isDeliveryDate($r->work_date))
             ->map(fn ($r) => Carbon::parse($r->work_date)->toDateString())
             ->all();
+        // Además de los días sin timecard, el excedente aprobado "fuera de
+        // checada" (is_unbacked_extra, el split de Elias 2026-08-05) se paga
+        // por autorización aunque el día SÍ tenga checada completa: aprobarlo
+        // fue la decisión consciente de pagar extra no hecho en el reloj. No se
+        // duplica: VeladaCalculatorService lo excluye del mín(detectado,
+        // autorizado) del timecard, y el || lo cuenta una sola vez cuando el
+        // día tampoco está medido.
         $unbackedOvertimeHours = (float) $approvedAuthorizations
             ->filter(fn (Authorization $a) => $a->type === Authorization::TYPE_OVERTIME
                 && ! ($a->compensationType?->hasWeekendPullRule())
-                && ! in_array(Carbon::parse($a->date)->toDateString(), $measuredOtDates, true))
+                && ($a->is_unbacked_extra
+                    || ! in_array(Carbon::parse($a->date)->toDateString(), $measuredOtDates, true)))
             ->sum('hours');
         if ($unbackedOvertimeHours > 0) {
             $veladaMetrics['overtime_authorized_hours'] = round(

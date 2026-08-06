@@ -16,7 +16,8 @@ use Tests\FeatureTestCase;
 
 /**
  * Fase C (DECISIONES §10): la escalera de redondeo de horas extra
- * (<30min→0, 30-49→0.5h, 50-59→1h) aplica también al PAGO: el split de
+ * (<25min→0, 25-49→0.5h, 50-59→1h — el .5 baja a 25 min, Elias 2026-08-05)
+ * aplica también al PAGO: el split de
  * VeladaCalculatorService redondea las horas extra con la regla de la
  * empresa ANTES de topar a lo autorizado, así nómina y reporte semanal usan
  * la misma cifra. Y el reporte semanal topa lo autorizado al timecard
@@ -65,19 +66,32 @@ class OvertimePaymentRoundingTest extends FeatureTestCase
         ]);
     }
 
-    public function test_under_thirty_minutes_rounds_to_zero_even_if_authorized(): void
+    public function test_under_twentyfive_minutes_rounds_to_zero_even_if_authorized(): void
     {
         $employee = $this->employee();
-        // 08:00-17:25 − 60 break = 8h25m → 25 min extra → escalera: 0.
+        // 08:00-17:24 − 60 break = 8h24m → 24 min extra → escalera: 0.
+        $record = $this->recordWithExit($employee, '17:24:00');
+        $this->approveOvertime($employee, 1.0);
+
+        $split = $this->calculator()->calculate($record, $employee);
+
+        $this->assertEqualsWithDelta(0.0, $split['overtime_authorized'], 0.01, '<25 min no es hora extra aunque esté autorizada');
+    }
+
+    public function test_twentyfive_minutes_already_pays_half_hour(): void
+    {
+        $employee = $this->employee();
+        // 08:00-17:25 − 60 = 8h25m → 25 min extra → escalera: 0.5h (el .5 se
+        // otorga desde el minuto 25, Elias 2026-08-05; antes pedía 30).
         $record = $this->recordWithExit($employee, '17:25:00');
         $this->approveOvertime($employee, 1.0);
 
         $split = $this->calculator()->calculate($record, $employee);
 
-        $this->assertEqualsWithDelta(0.0, $split['overtime_authorized'], 0.01, '<30 min no es hora extra aunque esté autorizada');
+        $this->assertEqualsWithDelta(0.5, $split['overtime_authorized'], 0.01, '25 min ya otorga la media hora');
     }
 
-    public function test_thirty_to_fortynine_minutes_pays_half_hour(): void
+    public function test_twentyfive_to_fortynine_minutes_pays_half_hour(): void
     {
         $employee = $this->employee();
         // 08:00-17:40 − 60 = 8h40m → 40 min extra → escalera: 0.5h.
@@ -86,7 +100,7 @@ class OvertimePaymentRoundingTest extends FeatureTestCase
 
         $split = $this->calculator()->calculate($record, $employee);
 
-        $this->assertEqualsWithDelta(0.5, $split['overtime_authorized'], 0.01, '30-49 min → media hora');
+        $this->assertEqualsWithDelta(0.5, $split['overtime_authorized'], 0.01, '25-49 min → media hora');
     }
 
     public function test_fifty_to_fiftynine_minutes_pays_full_hour(): void

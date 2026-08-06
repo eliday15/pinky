@@ -654,7 +654,7 @@ const submitCount = computed(() => {
 
                     <div v-if="suggestionsApplied" class="mb-3 bg-amber-50 border border-amber-200 rounded-lg p-2 text-xs text-amber-800 space-y-1">
                         <p>Se cargaron <strong>{{ form.entries.length }}</strong> fila(s) con tiempo extra detectado.</p>
-                        <p>Redondeo: &lt;30 min no cuenta · 30–49 min = 0.5h · 50 min en adelante = 1h (y así, sumando 0.5h en :30 y 1h completo en :50).</p>
+                        <p>Redondeo: &lt;25 min no cuenta · 25–49 min = 0.5h · 50 min en adelante = 1h (y así, sumando 0.5h en :25 y 1h completo en :50).</p>
                     </div>
 
                     <div v-if="isHoursType && conflictedEntries.length > 0"
@@ -665,7 +665,7 @@ const submitCount = computed(() => {
 
                     <div v-if="isHoursType && zeroHourEntries.length > 0"
                         class="mb-3 bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
-                        <strong>{{ zeroHourEntries.length }}</strong> fila(s) tienen <strong>0 horas</strong> (rango menor a 30 min se redondea a 0). Amplía el rango o quita esas filas.
+                        <strong>{{ zeroHourEntries.length }}</strong> fila(s) tienen <strong>0 horas</strong> (rango menor a 25 min se redondea a 0). Amplía el rango o quita esas filas.
                     </div>
 
                     <div v-if="form.entries.length === 0" class="border rounded-lg p-6 text-center text-sm text-gray-500">
@@ -717,7 +717,7 @@ const submitCount = computed(() => {
                                 </div>
                                 <div v-else-if="isHoursType && (parseFloat(entry.hours) || 0) <= 0"
                                     class="px-4 pb-2 -mt-1 text-[11px] text-amber-700 bg-amber-50">
-                                    ⚠ Rango menor a 30 min se redondea a 0 horas. Amplía el rango para poder autorizarlo.
+                                    ⚠ Rango menor a 25 min se redondea a 0 horas. Amplía el rango para poder autorizarlo.
                                 </div>
                             </template>
                         </div>

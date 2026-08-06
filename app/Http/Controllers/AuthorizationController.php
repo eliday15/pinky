@@ -20,6 +20,7 @@ use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -320,7 +321,7 @@ class AuthorizationController extends Controller
         $anomalyId = $validated['anomaly_id'] ?? null;
         unset($validated['anomaly_id']);
 
-        // Block per-hour authorizations that are 0h (the company rule rounds <30
+        // Block per-hour authorizations that are 0h (the company rule rounds <25
         // min to 0 — nothing to authorize) or whose range falls inside the
         // employee's regular schedule on a non-holiday.
         if (in_array($validated['type'], [Authorization::TYPE_OVERTIME, Authorization::TYPE_NIGHT_SHIFT], true)) {
@@ -333,7 +334,7 @@ class AuthorizationController extends Controller
             }
             if ((float) $hoursPreview <= 0) {
                 throw \Illuminate\Validation\ValidationException::withMessages([
-                    'hours' => 'No se pueden autorizar 0 horas. El rango es muy corto (menos de 30 min se redondea a 0). Ajusta los tiempos.',
+                    'hours' => 'No se pueden autorizar 0 horas. El rango es muy corto (menos de 25 min se redondea a 0). Ajusta los tiempos.',
                 ]);
             }
             $emp = Employee::with('schedule')->find($validated['employee_id']);
@@ -512,7 +513,7 @@ class AuthorizationController extends Controller
                 }
                 // Trust an explicitly chosen hours value (the user can override the
                 // escalonado ladder in the UI). Only derive from the time range when
-                // no hours were given, so we still catch 0-hour rows from <30 min ranges.
+                // no hours were given, so we still catch 0-hour rows from <25 min ranges.
                 $entryHours = (isset($entry['hours']) && $entry['hours'] !== '' && $entry['hours'] !== null)
                     ? (float) $entry['hours']
                     : null;
@@ -522,7 +523,7 @@ class AuthorizationController extends Controller
                     $entryHours = $rounder->roundMinutes($this->minutesBetweenTimes($entry['start_time'], $entry['end_time']));
                 }
                 if ((float) $entryHours <= 0) {
-                    $conflicts["entries.{$i}"] = "Fila {$emp->full_name} ({$entry['date']}): el rango es menor a 30 min y se redondea a 0 horas. No se puede autorizar.";
+                    $conflicts["entries.{$i}"] = "Fila {$emp->full_name} ({$entry['date']}): el rango es menor a 25 min y se redondea a 0 horas. No se puede autorizar.";
 
                     continue;
                 }
@@ -1711,7 +1712,7 @@ class AuthorizationController extends Controller
     /**
      * Overtime segments: detect early-arrival and late-exit minutes separately,
      * round each one using the company's stepped rule, and emit one segment per
-     * qualifying chunk. A segment is omitted when it rounds to zero (< 30 min).
+     * qualifying chunk. A segment is omitted when it rounds to zero (< 25 min).
      *
      * check_in / check_out are stored as TIME (no date). We anchor them to the
      * record's work_date so comparisons against the schedule's entry/exit don't
@@ -2137,6 +2138,11 @@ class AuthorizationController extends Controller
         $authorization->refresh();
 
         if (! $this->matchesDetectedForAutoApproval($authorization)) {
+            // Reclama MÁS de lo que la checada respalda: partirla — aprobar la
+            // porción respaldada y dejar el excedente pendiente, marcado como
+            // extra fuera de checada (Elias 2026-08-05).
+            $this->attemptOvertimeSplitApproval($authorization);
+
             return;
         }
 
@@ -2165,6 +2171,11 @@ class AuthorizationController extends Controller
     public function matchesDetectedForAutoApproval(Authorization $authorization): bool
     {
         if ($authorization->status !== Authorization::STATUS_PENDING) {
+            return false;
+        }
+        // El excedente de un split (extra fuera de checada) NUNCA se auto-aprueba:
+        // existe precisamente para que un humano decida pagarlo o no.
+        if ($authorization->is_unbacked_extra) {
             return false;
         }
         if (! in_array($authorization->type, [Authorization::TYPE_OVERTIME, Authorization::TYPE_NIGHT_SHIFT], true)) {
@@ -2253,6 +2264,193 @@ class AuthorizationController extends Controller
         $this->applyApprovalEffects($authorization, app(ZktecoSyncService::class));
 
         return true;
+    }
+
+    /**
+     * Detectar la PARTICIÓN de una autorización de TE que reclama más de lo que
+     * la checada respalda (Elias 2026-08-05): la porción que el reloj sí
+     * demuestra se aprueba sola y el excedente queda pendiente, marcado
+     * `is_unbacked_extra`, para que el aprobador decida conscientemente pagar
+     * "extra no hecho en el reloj". Detección pura, SIN efectos (para el
+     * dry-run del barrido).
+     *
+     * Devuelve null cuando no hay nada que partir: sin traslape con lo
+     * detectado, porción respaldada que redondea a 0, o la autorización ya es
+     * un excedente de un split anterior (volver a partirlo entraría en bucle).
+     * Un excess_hours de 0 significa "las horas caben completas en lo
+     * detectado, solo la ventana sobra": se aprueba encogida, sin excedente.
+     *
+     * @return array{backed_start: string, backed_end: string, backed_hours: float,
+     *               excess_start: string, excess_end: string, excess_hours: float}|null
+     */
+    public function detectUnbackedSplit(Authorization $authorization): ?array
+    {
+        if ($authorization->status !== Authorization::STATUS_PENDING) {
+            return null;
+        }
+        // Solo tiempo extra (la velada sigue en match exacto) y nunca un
+        // excedente ya partido.
+        if ($authorization->type !== Authorization::TYPE_OVERTIME || $authorization->is_unbacked_extra) {
+            return null;
+        }
+        // Conceptos que jalan de asistencia (Cena, Fin de semana) siempre quedan
+        // a revisión humana — mismo criterio que la auto-aprobación.
+        if ($authorization->compensation_type_id
+            && optional(CompensationType::find($authorization->compensation_type_id))->pullsFromAttendance()) {
+            return null;
+        }
+        if (! $authorization->start_time || ! $authorization->end_time || ! $authorization->hours) {
+            return null;
+        }
+
+        $dateString = $authorization->date instanceof Carbon
+            ? $authorization->date->toDateString()
+            : (string) $authorization->date;
+
+        $record = AttendanceRecord::where('employee_id', $authorization->employee_id)
+            ->where('work_date', $dateString)
+            ->first();
+        if (! $record || ! $record->check_in || ! $record->check_out) {
+            return null;
+        }
+
+        $employee = $authorization->employee ?? Employee::find($authorization->employee_id);
+        if (! $employee) {
+            return null;
+        }
+
+        $segments = $this->buildSuggestionSegments($employee, $dateString, $authorization->type, $record);
+        if (empty($segments)) {
+            return null;
+        }
+
+        $authStartMin = $this->minutesOfDay($authorization->start_time->format('H:i'));
+        $authEndMin = $this->minutesOfDay($authorization->end_time->format('H:i'));
+        $authHours = round((float) $authorization->hours, 2);
+        if ($authEndMin <= $authStartMin) {
+            return null;
+        }
+
+        // La porción respaldada es el mejor traslape entre la ventana pedida y
+        // un segmento detectado, redondeado con la escalera y topado tanto a
+        // las horas del segmento como a las pedidas.
+        $best = null;
+        foreach ($segments as $seg) {
+            if (! $seg['start_time'] || ! $seg['end_time']) {
+                continue;
+            }
+            $segStartMin = $this->minutesOfDay($seg['start_time']);
+            $segEndMin = $this->minutesOfDay($seg['end_time']);
+            // Solo segmentos del mismo día (el TE no cruza medianoche).
+            if ($segEndMin < $segStartMin) {
+                continue;
+            }
+            $ovStartMin = max($authStartMin, $segStartMin);
+            $ovEndMin = min($authEndMin, $segEndMin);
+            if ($ovEndMin <= $ovStartMin) {
+                continue;
+            }
+            $backedHours = min(
+                $this->roundOvertimeMinutes($ovEndMin - $ovStartMin),
+                (float) $seg['hours'],
+                $authHours,
+            );
+            if ($backedHours <= 0) {
+                continue;
+            }
+            if (! $best || $backedHours > $best['backed_hours']) {
+                $best = [
+                    'backed_hours' => $backedHours,
+                    'ov_start' => $ovStartMin,
+                    'ov_end' => $ovEndMin,
+                ];
+            }
+        }
+        if (! $best) {
+            return null;
+        }
+
+        $excessHours = max(0.0, round($authHours - $best['backed_hours'], 2));
+
+        // Ventana del excedente: la cola pedida que el reloj no cubre. Si la
+        // ventana pedida cabía completa (excedente solo de horas tecleadas de
+        // más), se conserva la ventana original para el registro.
+        if ($authEndMin > $best['ov_end']) {
+            $excessStartMin = $best['ov_end'];
+            $excessEndMin = $authEndMin;
+        } elseif ($authStartMin < $best['ov_start']) {
+            $excessStartMin = $authStartMin;
+            $excessEndMin = $best['ov_start'];
+        } else {
+            $excessStartMin = $authStartMin;
+            $excessEndMin = $authEndMin;
+        }
+
+        $fmt = fn (int $m): string => sprintf('%02d:%02d', intdiv($m, 60), $m % 60);
+
+        return [
+            'backed_start' => $fmt($best['ov_start']),
+            'backed_end' => $fmt($best['ov_end']),
+            'backed_hours' => $best['backed_hours'],
+            'excess_start' => $fmt($excessStartMin),
+            'excess_end' => $fmt($excessEndMin),
+            'excess_hours' => $excessHours,
+        ];
+    }
+
+    /**
+     * Aplicar la partición: encoger la autorización a la porción respaldada y
+     * aprobarla con el MISMO pipeline que la aprobación manual; el excedente
+     * (si lo hay) nace como autorización pendiente marcada `is_unbacked_extra`,
+     * ligada vía generated_from_authorization_id. Corre al capturar (cuando la
+     * auto-aprobación completa no procede) y en el barrido por consola.
+     * Requiere un usuario autenticado que firme. Devuelve la partición aplicada
+     * o null si no aplicaba.
+     */
+    public function attemptOvertimeSplitApproval(Authorization $authorization): ?array
+    {
+        $authorization->refresh();
+
+        $split = $this->detectUnbackedSplit($authorization);
+        if ($split === null) {
+            return null;
+        }
+
+        // Escrituras juntas: si algo truena, no queda ni el excedente duplicando
+        // horas ni la original encogida sin aprobar.
+        DB::transaction(function () use ($authorization, $split) {
+            if ($split['excess_hours'] > 0) {
+                Authorization::create([
+                    'employee_id' => $authorization->employee_id,
+                    'requested_by' => $authorization->requested_by,
+                    'type' => $authorization->type,
+                    'compensation_type_id' => $authorization->compensation_type_id,
+                    'date' => $authorization->date instanceof Carbon
+                        ? $authorization->date->toDateString()
+                        : (string) $authorization->date,
+                    'start_time' => $split['excess_start'],
+                    'end_time' => $split['excess_end'],
+                    'hours' => $split['excess_hours'],
+                    'reason' => $authorization->reason,
+                    'status' => Authorization::STATUS_PENDING,
+                    'is_pre_authorization' => $authorization->is_pre_authorization,
+                    'attendance_record_id' => $authorization->attendance_record_id,
+                    'generated_from_authorization_id' => $authorization->id,
+                    'is_unbacked_extra' => true,
+                ]);
+            }
+
+            $authorization->update([
+                'start_time' => $split['backed_start'],
+                'end_time' => $split['backed_end'],
+                'hours' => $split['backed_hours'],
+            ]);
+            $authorization->approve(Auth::user());
+        });
+
+        $this->applyApprovalEffects($authorization, app(ZktecoSyncService::class));
+
+        return $split;
     }
 
     /** Minutos desde las 00:00 de una hora 'H:i' (para comparar ventanas del mismo día). */

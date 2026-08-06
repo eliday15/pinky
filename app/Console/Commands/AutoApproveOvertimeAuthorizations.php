@@ -11,8 +11,10 @@ use Illuminate\Support\Facades\Auth;
 /**
  * Barre las autorizaciones de TIEMPO EXTRA pendientes y auto-aprueba las que la
  * checada RESPALDA — la contraparte retroactiva de la auto-aprobación que corre
- * al capturarlas (regla de Luis, 2026-07-30). Deja pendientes las que reclaman
- * más de lo que la checada demuestra. Usa --dry-run para previsualizar.
+ * al capturarlas (regla de Luis, 2026-07-30). Las que reclaman MÁS de lo que la
+ * checada demuestra se PARTEN (Elias 2026-08-05): la porción respaldada se
+ * aprueba y el excedente queda pendiente marcado como extra fuera de checada.
+ * Usa --dry-run para previsualizar.
  *
  * Espejo de AutoApproveWeekendAuthorizations para los conceptos por hora.
  */
@@ -47,6 +49,7 @@ class AutoApproveOvertimeAuthorizations extends Command
             ->get();
 
         $count = 0;
+        $splitCount = 0;
         foreach ($pending as $authorization) {
             $label = "#{$authorization->id} (empleado {$authorization->employee_id}, {$authorization->date}, {$authorization->hours}h)";
 
@@ -54,6 +57,16 @@ class AutoApproveOvertimeAuthorizations extends Command
                 if ($controller->matchesDetectedForAutoApproval($authorization)) {
                     $this->line("[dry-run] se aprobaría {$label}");
                     $count++;
+                } elseif ($split = $controller->detectUnbackedSplit($authorization)) {
+                    $this->line(sprintf(
+                        '[dry-run] se partiría %s: %.2fh aprobadas (%s–%s) + %.2fh a revisión como extra fuera de checada',
+                        $label,
+                        $split['backed_hours'],
+                        $split['backed_start'],
+                        $split['backed_end'],
+                        $split['excess_hours'],
+                    ));
+                    $splitCount++;
                 }
 
                 continue;
@@ -62,11 +75,20 @@ class AutoApproveOvertimeAuthorizations extends Command
             if ($controller->attemptOvertimeAutoApproval($authorization)) {
                 $this->info("Aprobada {$label}");
                 $count++;
+            } elseif ($split = $controller->attemptOvertimeSplitApproval($authorization)) {
+                $this->info(sprintf(
+                    'Partida %s: %.2fh aprobadas + %.2fh a revisión (extra fuera de checada)',
+                    $label,
+                    $split['backed_hours'],
+                    $split['excess_hours'],
+                ));
+                $splitCount++;
             }
         }
 
         $this->newLine();
-        $this->info(($dryRun ? 'Calificarían: ' : 'Aprobadas: ').$count);
+        $this->info(($dryRun ? 'Calificarían: ' : 'Aprobadas: ').$count
+            .($dryRun ? ' · Se partirían: ' : ' · Partidas: ').$splitCount);
 
         return self::SUCCESS;
     }

@@ -476,6 +476,15 @@ const typeLabels = {
                             <span class="text-sm text-gray-900">
                                 {{ auth.compensation_type?.name || typeLabels[auth.type] || auth.type }}
                             </span>
+                            <!-- Excedente de un split de TE: horas que la checada NO
+                                 respalda. Aprobarlo = pagar extra no hecho en el reloj. -->
+                            <span
+                                v-if="auth.is_unbacked_extra"
+                                class="ml-2 px-2 py-0.5 text-xs rounded-full bg-orange-100 text-orange-800"
+                                title="Horas que exceden lo registrado en el reloj checador. Aprobarlas paga tiempo extra no respaldado por checada."
+                            >
+                                Extra fuera de checada
+                            </span>
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap">
                             <div class="text-sm text-gray-900">

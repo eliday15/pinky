@@ -82,6 +82,7 @@ class Authorization extends Model
         'is_pre_authorization',
         'attendance_record_id',
         'generated_from_authorization_id',
+        'is_unbacked_extra',
         'department_head_id',
         'department_head_signed_at',
         'is_bulk_generated',
@@ -97,6 +98,10 @@ class Authorization extends Model
         'is_pre_authorization' => 'boolean',
         'department_head_signed_at' => 'datetime',
         'is_bulk_generated' => 'boolean',
+        // Excedente de TE fuera de lo que la checada respalda (split al
+        // capturar/barrer): pendiente para decisión humana; al aprobarse la
+        // nómina lo paga por encima del tope a lo detectado.
+        'is_unbacked_extra' => 'boolean',
     ];
 
     /**

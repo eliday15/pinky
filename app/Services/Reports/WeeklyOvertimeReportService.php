@@ -293,9 +293,20 @@ class WeeklyOvertimeReportService
 
         $byCode = $dayAuthorizations->groupBy(fn (Authorization $a) => $this->normalizeCode($a->compensationType?->code));
 
+        // El excedente aprobado "fuera de checada" (is_unbacked_extra, split de
+        // Elias 2026-08-05) se separa del resto: la nómina lo paga SIN topar al
+        // timecard, así que el reporte lo suma después del tope para que reporte
+        // y recibo coincidan.
         $authorizedOvertimeRaw = 0.0;
+        $unbackedExtraHours = 0.0;
         foreach (self::OVERTIME_CODES as $code) {
-            $authorizedOvertimeRaw += (float) $byCode->get($code, collect())->sum('hours');
+            foreach ($byCode->get($code, collect()) as $auth) {
+                if ($auth->is_unbacked_extra) {
+                    $unbackedExtraHours += (float) $auth->hours;
+                } else {
+                    $authorizedOvertimeRaw += (float) $auth->hours;
+                }
+            }
         }
 
         $weekendHours = (float) $byCode->get(self::WEEKEND_CODE, collect())->sum('hours');
@@ -336,7 +347,8 @@ class WeeklyOvertimeReportService
         // En semana de personal de entregas, lo autorizado NO se topa al
         // timecard: se muestra completo (Dani 2026-07-28), igual que la nómina.
         // Fuera de eso rige el tope al timecard (auditoría #20).
-        $overtimeHours = $isDeliveryDay ? $authorizedOvertimeRaw : min($authorizedOvertimeRaw, $detectedHours);
+        $overtimeHours = ($isDeliveryDay ? $authorizedOvertimeRaw : min($authorizedOvertimeRaw, $detectedHours))
+            + $unbackedExtraHours;
         $veladaHours = $isDeliveryDay ? $authorizedVeladaRaw : min($authorizedVeladaRaw, (float) ($record->velada_hours ?? 0));
 
         $mHours = $isNightShift ? 0.0 : $overtimeHours;

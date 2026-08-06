@@ -166,8 +166,8 @@ class VeladaCalculatorService
         $veladaAuthorized = $this->getAuthorizedHours($record->employee_id, $dateStr, Authorization::TYPE_NIGHT_SHIFT);
 
         // Escalera de redondeo al PAGO (DECISIONES_NEGOCIO §10): las horas
-        // extra se redondean con la regla de la empresa (<30min→0,
-        // 30-49→0.5h, 50-59→1h) ANTES de topar a lo autorizado — la misma
+        // extra se redondean con la regla de la empresa (<25min→0,
+        // 25-49→0.5h, 50-59→1h) ANTES de topar a lo autorizado — la misma
         // escalera del reporte semanal, para que reporte y nómina nunca
         // diverjan. La velada se paga por horas exactas en ventana (VEL).
         $overtimePayable = $this->rounding->roundMinutes((int) round($overtimeHours * 60));
@@ -251,6 +251,10 @@ class VeladaCalculatorService
             ->whereDate('date', Carbon::parse($date)->toDateString())
             ->where('type', $type)
             ->whereIn('status', [Authorization::STATUS_APPROVED, Authorization::STATUS_PAID])
+            // El excedente aprobado "fuera de checada" se paga por su propia vía
+            // en la nómina (sin tope al detectado); aquí se excluye para que el
+            // mín(detectado, autorizado) no lo cuente dos veces.
+            ->where('is_unbacked_extra', false)
             ->sum('hours');
     }
 }

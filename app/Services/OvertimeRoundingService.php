@@ -13,10 +13,14 @@ use Carbon\Carbon;
  * match what gets pre-filled when they authorize.
  *
  * Rounding ladder (minutes worked outside schedule → authorizable hours):
- *   <30     → 0      (not OT)
- *   30–49   → 0.5h
+ *   <25     → 0      (not OT)
+ *   25–49   → 0.5h
  *   50–59   → 1.0h
- *   then repeats every hour: hh:00–29 → hh, hh:30–49 → hh+0.5, hh:50–59 → hh+1
+ *   then repeats every hour: hh:00–24 → hh, hh:25–49 → hh+0.5, hh:50–59 → hh+1
+ *
+ * La media hora se otorga desde el minuto 25 (antes 30) — pedido de Elias
+ * 2026-08-05: "con 25 mins ya se los dé". El umbral de la hora completa (50)
+ * no cambia.
  */
 class OvertimeRoundingService
 {
@@ -25,12 +29,12 @@ class OvertimeRoundingService
      */
     public function roundMinutes(int $minutes): float
     {
-        if ($minutes < 30) {
+        if ($minutes < 25) {
             return 0.0;
         }
         $h = intdiv($minutes, 60);
         $m = $minutes % 60;
-        if ($m < 30) {
+        if ($m < 25) {
             return (float) $h;
         }
         if ($m < 50) {
