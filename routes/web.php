@@ -105,6 +105,7 @@ Route::middleware(['auth', 'password-changed', 'two-factor-setup'])->group(funct
     Route::post('/authorizations/store-bulk', [AuthorizationController::class, 'storeBulk'])->name('authorizations.storeBulk');
     Route::get('/authorizations/suggest', [AuthorizationController::class, 'suggest'])->name('authorizations.suggest');
     Route::get('/authorizations/suggest-bulk', [AuthorizationController::class, 'suggestBulk'])->name('authorizations.suggestBulk');
+    Route::post('/authorizations/auto-approve-pending', [AuthorizationController::class, 'autoApprovePending'])->name('authorizations.autoApprovePending');
     Route::post('/authorizations/bulk-approve', [AuthorizationController::class, 'bulkApprove'])->name('authorizations.bulkApprove');
     Route::post('/authorizations/bulk-reject', [AuthorizationController::class, 'bulkReject'])->name('authorizations.bulkReject');
     Route::resource('authorizations', AuthorizationController::class);

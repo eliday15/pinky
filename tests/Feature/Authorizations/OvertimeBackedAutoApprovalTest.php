@@ -236,4 +236,111 @@ class OvertimeBackedAutoApprovalTest extends FeatureTestCase
         $this->assertSame(Authorization::STATUS_PENDING, $excess->fresh()->status, 'el excedente espera decisión humana');
         $this->assertSame(1, Authorization::where('employee_id', $emp->id)->count(), 'no se re-parte');
     }
+
+    public function test_pm_window_typed_as_am_normalizes_and_approves(): void
+    {
+        // Caso Karla #4158 (Luis 2026-08-06): capturaron "05:30–07:00" en
+        // formato de 12 horas cuando el extra real fue 17:30–19:00 (horario
+        // 08:00–17:30, salida 19:06). La ventana tal cual no toca nada en la
+        // madrugada → se reinterpreta +12 h, se aprueba y los tiempos
+        // guardados quedan normalizados a la tarde.
+        $this->adminUser();
+        $emp = Employee::factory()->create([
+            'schedule_id' => Schedule::factory()->create([
+                'entry_time' => '08:00',
+                'exit_time' => '17:30',
+            ])->id,
+        ]);
+        AttendanceRecord::factory()->create([
+            'employee_id' => $emp->id,
+            'work_date' => '2026-08-04', // martes
+            'check_in' => '08:10:00',
+            'check_out' => '19:06:00',
+            'overtime_hours' => 1.6,
+        ]);
+        $auth = Authorization::factory()->create([
+            'employee_id' => $emp->id,
+            'type' => Authorization::TYPE_OVERTIME,
+            'date' => '2026-08-04',
+            'start_time' => '05:30',
+            'end_time' => '07:00',
+            'hours' => 1.5,
+            'status' => Authorization::STATUS_PENDING,
+        ]);
+
+        $this->artisan('authorizations:auto-approve-overtime')->assertSuccessful();
+
+        $auth->refresh();
+        $this->assertSame(Authorization::STATUS_APPROVED, $auth->status);
+        $this->assertSame('17:30', $auth->start_time->format('H:i'), 'normalizada a la ventana real P.M.');
+        $this->assertSame('19:00', $auth->end_time->format('H:i'));
+        $this->assertEqualsWithDelta(1.5, (float) $auth->hours, 0.01);
+        $this->assertSame(1, Authorization::where('employee_id', $emp->id)->count(), 'sin excedente: las horas caben completas');
+    }
+
+    public function test_genuine_early_morning_claim_is_not_shifted(): void
+    {
+        // Una madrugada real (entrada 05:08 con horario de las 09:00) SÍ
+        // traslapa su segmento detectado tal cual → nunca se reinterpreta
+        // como P.M.; se aprueba con sus tiempos originales.
+        $this->adminUser();
+        $emp = Employee::factory()->create([
+            'schedule_id' => Schedule::factory()->create([
+                'entry_time' => '09:00',
+                'exit_time' => '18:00',
+            ])->id,
+        ]);
+        AttendanceRecord::factory()->create([
+            'employee_id' => $emp->id,
+            'work_date' => '2026-08-04',
+            'check_in' => '05:08:00',
+            'check_out' => '18:05:00',
+            'overtime_hours' => 3.9,
+        ]);
+        $auth = Authorization::factory()->create([
+            'employee_id' => $emp->id,
+            'type' => Authorization::TYPE_OVERTIME,
+            'date' => '2026-08-04',
+            'start_time' => '05:10',
+            'end_time' => '09:00',
+            'hours' => 4.0,
+            'status' => Authorization::STATUS_PENDING,
+        ]);
+
+        $this->artisan('authorizations:auto-approve-overtime')->assertSuccessful();
+
+        $auth->refresh();
+        $this->assertSame(Authorization::STATUS_APPROVED, $auth->status);
+        $this->assertSame('05:10', $auth->start_time->format('H:i'), 'la madrugada real conserva sus tiempos');
+    }
+
+    public function test_recalcular_button_approves_backed_pending(): void
+    {
+        // Botón "Recalcular pendientes" (Luis 2026-08-06): mismo motor que el
+        // barrido, disparado desde la pantalla de autorizaciones.
+        $this->actingAs($this->adminUser());
+        $emp = $this->corteEmployee();
+        $this->recordWithCheckout($emp, '19:06:00', 2.6);
+        $auth = Authorization::factory()->create([
+            'employee_id' => $emp->id,
+            'type' => Authorization::TYPE_OVERTIME,
+            'date' => '2026-06-08',
+            'start_time' => '16:30',
+            'end_time' => '19:00',
+            'hours' => 2.5,
+            'status' => Authorization::STATUS_PENDING,
+        ]);
+
+        $this->post(route('authorizations.autoApprovePending'))
+            ->assertRedirect(route('authorizations.index'));
+
+        $this->assertSame(Authorization::STATUS_APPROVED, $auth->fresh()->status);
+    }
+
+    public function test_recalcular_button_requires_approve_permission(): void
+    {
+        $this->actingAsSupervisor();
+
+        $this->post(route('authorizations.autoApprovePending'))->assertForbidden();
+    }
 }

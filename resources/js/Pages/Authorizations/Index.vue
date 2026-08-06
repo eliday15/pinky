@@ -18,6 +18,17 @@ const props = defineProps({
 
 const hasTwoFactor = computed(() => usePage().props.auth.has_two_factor);
 
+/** Botón "Recalcular pendientes": re-evalúa el TE pendiente contra las
+ *  checadas (mismo motor que la captura) — para lo que llegó de última hora. */
+const recalculating = ref(false);
+const recalcularPendientes = () => {
+    recalculating.value = true;
+    router.post(route('authorizations.autoApprovePending'), {}, {
+        preserveScroll: true,
+        onFinish: () => { recalculating.value = false; },
+    });
+};
+
 const filters = ref({
     status: props.filters.status || '',
     type: props.filters.type || '',
@@ -268,14 +279,26 @@ const typeLabels = {
                 <h1 class="text-2xl font-bold text-gray-800">Gestion de Autorizaciones</h1>
                 <p class="text-gray-600">Horas extra, veladas y conceptos de compensacion</p>
             </div>
-            <div v-if="can.create" class="flex space-x-2">
+            <div class="flex space-x-2">
+                <!-- Re-evalúa las pendientes de TE contra checadas: aprueba lo
+                     respaldado y parte lo que reclama de más (Luis 2026-08-06). -->
+                <button
+                    v-if="can.approve"
+                    @click="recalcularPendientes"
+                    :disabled="recalculating"
+                    class="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                >
+                    {{ recalculating ? 'Recalculando…' : 'Recalcular pendientes' }}
+                </button>
                 <Link
+                    v-if="can.create"
                     :href="route('authorizations.createBulk')"
                     class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
                 >
                     Masiva
                 </Link>
                 <Link
+                    v-if="can.create"
                     :href="route('authorizations.create')"
                     class="inline-flex items-center px-4 py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700"
                 >

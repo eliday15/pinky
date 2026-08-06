@@ -2334,38 +2334,60 @@ class AuthorizationController extends Controller
         // La porción respaldada es el mejor traslape entre la ventana pedida y
         // un segmento detectado, redondeado con la escalera y topado tanto a
         // las horas del segmento como a las pedidas.
-        $best = null;
-        foreach ($segments as $seg) {
-            if (! $seg['start_time'] || ! $seg['end_time']) {
-                continue;
+        $evaluate = function (int $windowStartMin, int $windowEndMin) use ($segments, $authHours): ?array {
+            $best = null;
+            foreach ($segments as $seg) {
+                if (! $seg['start_time'] || ! $seg['end_time']) {
+                    continue;
+                }
+                $segStartMin = $this->minutesOfDay($seg['start_time']);
+                $segEndMin = $this->minutesOfDay($seg['end_time']);
+                // Solo segmentos del mismo día (el TE no cruza medianoche).
+                if ($segEndMin < $segStartMin) {
+                    continue;
+                }
+                $ovStartMin = max($windowStartMin, $segStartMin);
+                $ovEndMin = min($windowEndMin, $segEndMin);
+                if ($ovEndMin <= $ovStartMin) {
+                    continue;
+                }
+                $backedHours = min(
+                    $this->roundOvertimeMinutes($ovEndMin - $ovStartMin),
+                    (float) $seg['hours'],
+                    $authHours,
+                );
+                if ($backedHours <= 0) {
+                    continue;
+                }
+                if (! $best || $backedHours > $best['backed_hours']) {
+                    $best = [
+                        'backed_hours' => $backedHours,
+                        'ov_start' => $ovStartMin,
+                        'ov_end' => $ovEndMin,
+                    ];
+                }
             }
-            $segStartMin = $this->minutesOfDay($seg['start_time']);
-            $segEndMin = $this->minutesOfDay($seg['end_time']);
-            // Solo segmentos del mismo día (el TE no cruza medianoche).
-            if ($segEndMin < $segStartMin) {
-                continue;
-            }
-            $ovStartMin = max($authStartMin, $segStartMin);
-            $ovEndMin = min($authEndMin, $segEndMin);
-            if ($ovEndMin <= $ovStartMin) {
-                continue;
-            }
-            $backedHours = min(
-                $this->roundOvertimeMinutes($ovEndMin - $ovStartMin),
-                (float) $seg['hours'],
-                $authHours,
-            );
-            if ($backedHours <= 0) {
-                continue;
-            }
-            if (! $best || $backedHours > $best['backed_hours']) {
-                $best = [
-                    'backed_hours' => $backedHours,
-                    'ov_start' => $ovStartMin,
-                    'ov_end' => $ovEndMin,
-                ];
+
+            return $best;
+        };
+
+        $best = $evaluate($authStartMin, $authEndMin);
+
+        // Tolerancia AM/PM (caso Karla #4158, Luis 2026-08-06): "05:30–07:00"
+        // tecleado en formato de 12 horas cuando el extra real fue 17:30–19:00.
+        // Solo cuando la ventana TAL CUAL no toca NINGÚN segmento detectado se
+        // reintenta corrida +12 h; una madrugada genuina sí traslapa su
+        // segmento y por eso nunca se reinterpreta. Al aprobarse, los tiempos
+        // guardados se normalizan a la ventana real (P.M.).
+        if (! $best && $authStartMin < 720 && $authEndMin + 720 <= 1440) {
+            $shifted = $evaluate($authStartMin + 720, $authEndMin + 720);
+            if ($shifted) {
+                $best = $shifted;
+                $authStartMin += 720;
+                $authEndMin += 720;
             }
         }
+
         if (! $best) {
             return null;
         }
@@ -2451,6 +2473,47 @@ class AuthorizationController extends Controller
         $this->applyApprovalEffects($authorization, app(ZktecoSyncService::class));
 
         return $split;
+    }
+
+    /**
+     * Botón "Recalcular pendientes" (Luis 2026-08-06): re-evalúa TODAS las
+     * autorizaciones de TE pendientes contra las checadas — el MISMO motor que
+     * corre al capturar y en el barrido por consola. Sirve cuando algo llega
+     * de última hora: la checada que sincronizó después de la captura, o una
+     * autorización agregada tarde. Aprueba lo respaldado, parte lo que reclama
+     * de más (excedente marcado a revisión) y deja intacto lo que el reloj no
+     * respalda. Salta las filas que el usuario no puede aprobar (aprobadores
+     * nombrados por concepto).
+     */
+    public function autoApprovePending(): RedirectResponse
+    {
+        if (! Auth::user()->hasPermissionTo('authorizations.approve')) {
+            abort(403);
+        }
+
+        $pending = Authorization::where('status', Authorization::STATUS_PENDING)
+            ->where('type', Authorization::TYPE_OVERTIME)
+            ->orderBy('id')
+            ->get();
+
+        $approved = 0;
+        $split = 0;
+        foreach ($pending as $authorization) {
+            if (! Auth::user()->can('approve', $authorization)) {
+                continue;
+            }
+            if ($this->attemptOvertimeAutoApproval($authorization)) {
+                $approved++;
+            } elseif ($this->attemptOvertimeSplitApproval($authorization) !== null) {
+                $split++;
+            }
+        }
+
+        $mensaje = $approved === 0 && $split === 0
+            ? 'Recalculado: ninguna pendiente tiene respaldo nuevo en checadas; siguen a revisión manual.'
+            : "Recalculado: {$approved} aprobadas completas y {$split} partidas (lo respaldado se aprobó; el excedente quedó marcado a revisión).";
+
+        return redirect()->route('authorizations.index')->with('success', $mensaje);
     }
 
     /** Minutos desde las 00:00 de una hora 'H:i' (para comparar ventanas del mismo día). */
