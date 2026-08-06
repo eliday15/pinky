@@ -61,6 +61,32 @@ class WeeklySummaryReportTest extends FeatureTestCase
                 ->has('retardos'));
     }
 
+    public function test_finiquito_and_cumpleanos_sections(): void
+    {
+        $this->actingAsAdmin();
+        // Cumpleaños: activo que nace en JUNIO (mes del rango) → aparece.
+        Employee::factory()->create(['status' => 'active', 'full_name' => 'Cumple June', 'birth_date' => '1990-06-15']);
+        // Activo que nace en diciembre → NO aparece (otro mes).
+        Employee::factory()->create(['status' => 'active', 'full_name' => 'Cumple Dec', 'birth_date' => '1988-12-20']);
+        // Finiquito: baja dentro del rango (incluye dados de baja).
+        Employee::factory()->create([
+            'status' => 'terminated',
+            'full_name' => 'Baja Junio',
+            'birth_date' => '1985-01-10',
+            'termination_date' => '2026-06-03',
+        ]);
+
+        $this->get(route('reports.resumen', ['from' => self::FROM, 'to' => self::TO]))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->has('cumpleanos', 1)
+                ->where('cumpleanos.0.name', 'Cumple June')
+                ->where('cumpleanos.0.observaciones', 'JUNIO')
+                ->has('finiquitos', 1)
+                ->where('finiquitos.0.name', 'Baja Junio')
+                ->where('finiquitos.0.observaciones', ''));
+    }
+
     public function test_absent_day_appears_in_faltas_but_justified_does_not(): void
     {
         $this->actingAsAdmin();

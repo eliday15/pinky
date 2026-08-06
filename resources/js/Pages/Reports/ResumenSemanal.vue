@@ -10,6 +10,8 @@ const props = defineProps({
     faltas: { type: Array, default: () => [] },
     retardos: { type: Array, default: () => [] },
     incapacidades: { type: Array, default: () => [] },
+    finiquitos: { type: Array, default: () => [] },
+    cumpleanos: { type: Array, default: () => [] },
 });
 
 const fromInput = ref(props.from);
@@ -41,6 +43,8 @@ const sections = computed(() => [
     { key: 'faltas', title: 'Faltas', rows: props.faltas, color: 'text-red-700' },
     { key: 'retardos', title: 'Faltas por retardo', rows: props.retardos, color: 'text-amber-700' },
     { key: 'incapacidades', title: 'Incapacidades', rows: props.incapacidades, color: 'text-blue-700' },
+    { key: 'finiquitos', title: 'Finiquito', rows: props.finiquitos, color: 'text-gray-700' },
+    { key: 'cumpleanos', title: 'Cumpleaños', rows: props.cumpleanos, color: 'text-pink-700' },
 ]);
 </script>
 
@@ -58,7 +62,7 @@ const sections = computed(() => [
             <div>
                 <h1 class="text-2xl font-bold text-gray-800">Resumen semanal</h1>
                 <p class="mt-1 text-sm text-gray-600">
-                    Vacaciones, faltas, faltas por retardo e incapacidades del rango, en una sola vista.
+                    Vacaciones, faltas, faltas por retardo, incapacidades, finiquito y cumpleaños del rango, en una sola vista.
                 </p>
             </div>
             <a

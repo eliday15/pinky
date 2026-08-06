@@ -59,9 +59,10 @@ class WeeklySummaryReportController extends Controller
     }
 
     /**
-     * Arma las 4 secciones del resumen para el rango.
+     * Arma las secciones del resumen para el rango: vacaciones, faltas, faltas
+     * por retardo, incapacidades, finiquitos y cumpleaños.
      *
-     * @return array{vacaciones: array, faltas: array, retardos: array, incapacidades: array}
+     * @return array{vacaciones: array, faltas: array, retardos: array, incapacidades: array, finiquitos: array, cumpleanos: array}
      */
     private function buildSummary(Carbon $from, Carbon $to): array
     {
@@ -71,7 +72,7 @@ class WeeklySummaryReportController extends Controller
         // Empleados activos (no exentos de checada para las faltas) + nombres.
         $employees = Employee::active()
             ->with('department:id,name')
-            ->get(['id', 'full_name', 'employee_number', 'department_id', 'is_attendance_exempt'])
+            ->get(['id', 'full_name', 'employee_number', 'department_id', 'is_attendance_exempt', 'birth_date'])
             ->keyBy('id');
 
         $label = fn ($e) => [
@@ -172,7 +173,38 @@ class WeeklySummaryReportController extends Controller
 
         usort($retardos, fn ($a, $b) => $b['count'] <=> $a['count']);
 
-        return compact('vacaciones', 'faltas', 'retardos', 'incapacidades');
+        // ---- CUMPLEAÑOS ---- Colaboradores activos cuyo cumpleaños cae en el/los
+        // mes(es) que toca el rango (Luis 2026-08-06). Fecha = nacimiento;
+        // observación = el mes. Ordenados por día del mes.
+        $monthNameByN = [];
+        for ($c = $from->copy()->startOfMonth(); $c->lte($to); $c->addMonthNoOverflow()) {
+            $monthNameByN[(int) $c->format('n')] = mb_strtoupper($c->locale('es')->isoFormat('MMMM'));
+        }
+        $cumpleanos = $employees
+            ->filter(fn ($e) => $e->birth_date && isset($monthNameByN[(int) $e->birth_date->format('n')]))
+            ->map(fn ($e) => array_merge($label($e), [
+                'date' => $e->birth_date->format('d/m/Y'),
+                'observaciones' => $monthNameByN[(int) $e->birth_date->format('n')],
+                'day' => (int) $e->birth_date->format('j'),
+            ]))
+            ->sortBy('day')->values()->all();
+
+        // ---- FINIQUITO ---- Colaboradores con fecha de BAJA en el rango (incluye
+        // dados de baja / soft-deleted, igual que el reporte al contador). El
+        // IMPORTE lo captura a mano el usuario: el sistema no calcula finiquitos,
+        // así que la observación sale en blanco para llenarla.
+        $finiquitos = Employee::withTrashed()
+            ->whereNotNull('termination_date')
+            ->whereBetween('termination_date', [$fromStr, $toStr])
+            ->with('department:id,name')
+            ->orderBy('full_name')
+            ->get(['id', 'full_name', 'employee_number', 'department_id', 'termination_date'])
+            ->map(fn ($e) => array_merge($label($e), [
+                'date' => Carbon::parse($e->termination_date)->format('d/m/Y'),
+                'observaciones' => '',
+            ]))->values()->all();
+
+        return compact('vacaciones', 'faltas', 'retardos', 'incapacidades', 'finiquitos', 'cumpleanos');
     }
 
     /** 'dd/mm/YYYY' o 'dd/mm–dd/mm/YYYY' cuando el rango abarca varios días. */

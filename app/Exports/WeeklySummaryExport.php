@@ -49,6 +49,8 @@ class WeeklySummaryExport implements FromArray, ShouldAutoSize, WithStyles, With
             ['FALTAS', $this->summary['faltas'] ?? []],
             ['FALTAS POR RETARDO', $this->summary['retardos'] ?? []],
             ['INCAPACIDADES', $this->summary['incapacidades'] ?? []],
+            ['FINIQUITO', $this->summary['finiquitos'] ?? []],
+            ['CUMPLEAÑOS', $this->summary['cumpleanos'] ?? []],
         ];
 
         foreach ($sections as [$title, $items]) {
