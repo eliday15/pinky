@@ -1722,6 +1722,16 @@ class AuthorizationController extends Controller
     {
         $checkIn = Carbon::parse($date.' '.$record->check_in);
         $checkOut = Carbon::parse($date.' '.$record->check_out);
+
+        // Salida que cruza medianoche (velada sobre horario de día): si la
+        // salida cae ANTES de la entrada, es del día siguiente — el mismo
+        // anclaje de OvertimeRoundingService::detectOvertimeHours (Elias
+        // 2026-08-03). Sin esto, una salida de la 01:00 se leía como anterior
+        // al horario y el segmento tardío nunca se emitía, así que el TE de la
+        // tarde no encontraba respaldo (#4042, Luis 2026-08-06).
+        if ($checkOut->lt($checkIn)) {
+            $checkOut->addDay();
+        }
         $scheduledEntry = $schedule->entry_time ?? null;
         $scheduledExit = $schedule->exit_time ?? null;
 
@@ -2227,13 +2237,15 @@ class AuthorizationController extends Controller
             if ($authorization->type === Authorization::TYPE_OVERTIME) {
                 $segStartMin = $this->minutesOfDay($seg['start_time']);
                 $segEndMin = $this->minutesOfDay($seg['end_time']);
-                // Solo segmentos del mismo día (el TE no cruza medianoche; eso
-                // sería velada). Si cruzara, se queda con el match exacto.
-                if ($segEndMin >= $segStartMin) {
-                    $backed = $segStartMin <= $authStartMin
-                        && $authEndMin <= $segEndMin
-                        && $authHours <= (float) $seg['hours'] + 0.01;
+                // Un fin menor al inicio es una salida del día SIGUIENTE
+                // (velada sobre horario de día, #4042): se extiende +24 h solo
+                // para comparar; la ventana autorizada sigue siendo del día.
+                if ($segEndMin < $segStartMin) {
+                    $segEndMin += 1440;
                 }
+                $backed = $segStartMin <= $authStartMin
+                    && $authEndMin <= $segEndMin
+                    && $authHours <= (float) $seg['hours'] + 0.01;
             }
 
             if ($exact || $backed) {
@@ -2342,9 +2354,10 @@ class AuthorizationController extends Controller
                 }
                 $segStartMin = $this->minutesOfDay($seg['start_time']);
                 $segEndMin = $this->minutesOfDay($seg['end_time']);
-                // Solo segmentos del mismo día (el TE no cruza medianoche).
+                // Fin menor al inicio = salida del día siguiente (velada sobre
+                // horario de día, #4042): se extiende +24 h para el traslape.
                 if ($segEndMin < $segStartMin) {
-                    continue;
+                    $segEndMin += 1440;
                 }
                 $ovStartMin = max($windowStartMin, $segStartMin);
                 $ovEndMin = min($windowEndMin, $segEndMin);
@@ -2408,7 +2421,9 @@ class AuthorizationController extends Controller
             $excessEndMin = $authEndMin;
         }
 
-        $fmt = fn (int $m): string => sprintf('%02d:%02d', intdiv($m, 60), $m % 60);
+        // %24: una ventana respaldada que termina tras medianoche (segmento
+        // extendido) se guarda como hora del reloj (25:00 → 01:00).
+        $fmt = fn (int $m): string => sprintf('%02d:%02d', intdiv($m, 60) % 24, $m % 60);
 
         return [
             'backed_start' => $fmt($best['ov_start']),

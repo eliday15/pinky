@@ -314,6 +314,45 @@ class OvertimeBackedAutoApprovalTest extends FeatureTestCase
         $this->assertSame('05:10', $auth->start_time->format('H:i'), 'la madrugada real conserva sus tiempos');
     }
 
+    public function test_overtime_backed_by_exit_after_midnight(): void
+    {
+        // Caso Elizabeth #4042 (Luis 2026-08-06): velada sobre horario de día
+        // — entrada 08:07, salida 01:00 del día siguiente. El TE de la tarde
+        // (17:30–22:00 = 4.5h) sí está respaldado por la salida real; antes el
+        // segmento nunca se emitía (la 01:00 se leía como anterior al horario)
+        // y quedaba pendiente.
+        $this->adminUser();
+        $emp = Employee::factory()->create([
+            'schedule_id' => Schedule::factory()->create([
+                'entry_time' => '08:00',
+                'exit_time' => '17:30',
+            ])->id,
+        ]);
+        AttendanceRecord::factory()->create([
+            'employee_id' => $emp->id,
+            'work_date' => '2026-07-29', // miércoles
+            'check_in' => '08:07:00',
+            'check_out' => '01:00:00', // cruza medianoche
+            'overtime_hours' => 4.5,
+        ]);
+        $auth = Authorization::factory()->create([
+            'employee_id' => $emp->id,
+            'type' => Authorization::TYPE_OVERTIME,
+            'date' => '2026-07-29',
+            'start_time' => '17:30',
+            'end_time' => '22:00',
+            'hours' => 4.5,
+            'status' => Authorization::STATUS_PENDING,
+        ]);
+
+        $this->artisan('authorizations:auto-approve-overtime')->assertSuccessful();
+
+        $auth->refresh();
+        $this->assertSame(Authorization::STATUS_APPROVED, $auth->status, 'la salida de la 01:00 respalda el TE de la tarde');
+        $this->assertSame('17:30', $auth->start_time->format('H:i'));
+        $this->assertSame('22:00', $auth->end_time->format('H:i'));
+    }
+
     public function test_recalcular_button_approves_backed_pending(): void
     {
         // Botón "Recalcular pendientes" (Luis 2026-08-06): mismo motor que el
