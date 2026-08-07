@@ -114,6 +114,23 @@ class MonthlyLateAbsenceTest extends FeatureTestCase
         $this->assertSame(12, $this->service()->lateCountForMonth($employee, Carbon::create(2026, 6, 1)));
     }
 
+    public function test_exempt_employee_never_generates_frt(): void
+    {
+        // "No checa": los retardos residuales (de antes de marcar la casilla)
+        // jamás generan falta por acumulación (Elias 2026-08-07).
+        $employee = $this->employee();
+        $this->twelveJuneLates($employee);
+        $employee->update(['is_attendance_exempt' => true]);
+
+        $incident = $this->service()->generateForMonth(
+            $employee->fresh(),
+            \Carbon\Carbon::parse('2026-06-01'),
+            \Carbon\Carbon::parse('2026-07-05'),
+        );
+
+        $this->assertNull($incident, 'exento de checador: sin FRT aunque tenga retardos residuales');
+    }
+
     public function test_generates_auto_approved_frt_incident_at_month_close(): void
     {
         $employee = $this->employee();

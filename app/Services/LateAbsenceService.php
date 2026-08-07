@@ -107,6 +107,13 @@ class LateAbsenceService
      */
     public function generateForMonth(Employee $employee, Carbon $month, ?Carbon $today = null): ?Incident
     {
+        // Exentos de checador ("No checa"): sus retardos residuales (de antes
+        // de marcar la casilla) jamás generan falta por acumulación — sus
+        // faltas se capturan por incidencia manual (Elias 2026-08-07).
+        if ($employee->is_attendance_exempt) {
+            return null;
+        }
+
         $today = $today ?? Carbon::today();
         $month = $month->copy()->startOfMonth();
         $startMonth = $this->startMonth();

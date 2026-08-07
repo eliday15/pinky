@@ -92,6 +92,30 @@ class AttendanceExemptEmployeeTest extends FeatureTestCase
         $this->assertSame(0, (int) $entry->days_absent);
     }
 
+    public function test_exempt_employee_ignores_residual_absent_records(): void
+    {
+        // Caso Adriana/Eloy (Elias 2026-08-07): el sync creó registros absent
+        // ANTES de que marcaran la casilla "No checa". Marcar la casilla y
+        // recalcular debe limpiar las faltas sin borrar registros a mano: el
+        // calculador ignora los absent residuales de un exento.
+        $employee = $this->employee(['is_attendance_exempt' => true, 'zkteco_user_id' => null]);
+        foreach (['2026-06-02', '2026-06-03', '2026-06-04', '2026-06-05'] as $date) {
+            AttendanceRecord::factory()->for($employee)->create([
+                'work_date' => $date,
+                'status' => 'absent',
+                'check_in' => null,
+                'check_out' => null,
+            ]);
+        }
+
+        $entry = $this->calculator()->calculateEmployeePayroll($this->weekly(), $employee);
+
+        $this->assertEqualsWithDelta(5600.00, (float) $entry->regular_pay, 0.01, 'SD 800 × 7 completo');
+        $this->assertEqualsWithDelta(0.00, (float) $entry->deductions, 0.01, 'los absent residuales no descuentan');
+        $this->assertEqualsWithDelta(5600.00, (float) $entry->net_pay, 0.01);
+        $this->assertSame(0, (int) $entry->days_absent);
+    }
+
     public function test_exempt_employee_absence_incident_deducts_seventh(): void
     {
         $employee = $this->employee(['is_attendance_exempt' => true, 'zkteco_user_id' => null]);

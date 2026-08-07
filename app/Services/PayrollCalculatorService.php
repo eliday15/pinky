@@ -1378,6 +1378,15 @@ class PayrollCalculatorService
             $isWeekend = $workDate->isWeekend() && ! $employee->isEffectiveWorkingDay($dayName);
 
             if ($record->status === 'absent') {
+                // Exentos de checador ("No checa"): un absent residual — creado
+                // por el sync ANTES de marcar la casilla — no cuenta ni
+                // descuenta. Cobran su sueldo completo y sus faltas se capturan
+                // por incidencia. Así, marcar la casilla + recalcular limpia
+                // las faltas sin borrar registros a mano (caso Adriana/Eloy,
+                // Elias 2026-08-07).
+                if ($employee->is_attendance_exempt) {
+                    continue;
+                }
                 // Holidays never count as ausencias even if a stale row was
                 // synced with status='absent' before the holiday was registered.
                 if ($isHoliday) {
