@@ -33,7 +33,10 @@ run_as_web() {
     su -s /bin/bash www-data -c "$*"
 }
 
-run_as_web "php artisan storage:link" 2>/dev/null || true
+# Como root (www-data no puede escribir en public/) y SIN tragar el error: si
+# el link no se puede crear queda visible en los logs del deploy. El Dockerfile
+# ya lo hornea en la imagen; esto es red de seguridad.
+php artisan storage:link 2>&1 || echo "storage:link falló (¿ya existe el link?)"
 run_as_web "php artisan migrate --force" 2>&1 || echo "Migration failed but continuing..."
 # Re-seed roles/permissions (idempotente: firstOrCreate + syncPermissions) para
 # que permisos nuevos como payroll.pay_cash existan tras cada deploy sin un paso

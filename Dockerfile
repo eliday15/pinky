@@ -56,6 +56,13 @@ RUN php artisan package:discover --ansi 2>/dev/null || true
 RUN chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache \
     && chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
 
+# Symlink público de storage HORNEADO en la imagen. El storage:link de
+# start.sh corría como www-data, que no puede escribir en public/ (root la
+# posee tras el COPY) y el error se tragaba — resultado: /storage/* daba 404
+# desde siempre (fotos de empleados, 2026-08-08). El destino vive bajo
+# storage/app/public, donde Coolify monta el volumen persistente.
+RUN ln -sfn /var/www/html/storage/app/public /var/www/html/public/storage
+
 # Create startup script
 COPY docker/start.sh /usr/local/bin/start.sh
 RUN chmod +x /usr/local/bin/start.sh
