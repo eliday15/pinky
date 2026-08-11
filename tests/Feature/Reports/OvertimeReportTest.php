@@ -146,6 +146,7 @@ class OvertimeReportTest extends FeatureTestCase
                     ->where('department.name', 'Producción')
                     ->where('week_start', self::WEEK_START)
                     ->has('week_end')
+                    ->where('includes_pending', false) // por omisión: solo aprobado
                     ->where('weekend_unit_hours', null) // depto sin regla de unidades
                     ->has('dates', 7)
                     ->has('rows')

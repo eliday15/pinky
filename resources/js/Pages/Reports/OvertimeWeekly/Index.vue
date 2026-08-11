@@ -59,12 +59,17 @@ const snapToWeek = () => {
     endDate.value = addDays(monday, 6);
 };
 
+// Incluir capturas PENDIENTES de aprobar (Luis 2026-08-11): el encargado
+// revisa lo que lleva capturado, con los mismos topes, antes de la aprobación.
+const includePending = ref(false);
+
 const generate = () => {
     if (!selectedDepartment.value || !rangeValid.value) return;
     router.get(route('reports.overtime-weekly.preview'), {
         department_id: selectedDepartment.value,
         week_start: startDate.value,
         end_date: endDate.value,
+        include_pending: includePending.value ? 1 : 0,
     });
 };
 </script>
@@ -157,7 +162,18 @@ const generate = () => {
                 </div>
             </div>
 
-            <div class="mt-6 flex justify-end">
+            <div class="mt-6 flex items-center justify-between gap-4">
+                <label class="flex items-center gap-2 text-sm text-gray-700">
+                    <input
+                        type="checkbox"
+                        v-model="includePending"
+                        class="rounded border-gray-300 text-pink-600 focus:ring-pink-500"
+                    />
+                    <span>
+                        Incluir capturas <strong>pendientes de aprobar</strong>
+                        <span class="block text-xs text-gray-500">Para revisar lo capturado antes de la aprobación; el oficial es sin pendientes.</span>
+                    </span>
+                </label>
                 <button
                     type="button"
                     @click="generate"

@@ -64,7 +64,7 @@ class OvertimeReportController extends Controller implements HasMiddleware
     {
         [$department, $start, $end] = $this->resolveInputs($request);
 
-        $report = $this->reportService->buildReport($department, $start, $end);
+        $report = $this->reportService->buildReport($department, $start, $end, $request->boolean('include_pending'));
         $template = $this->registry->for($department);
 
         return Inertia::render('Reports/OvertimeWeekly/Preview', [
@@ -80,7 +80,7 @@ class OvertimeReportController extends Controller implements HasMiddleware
     {
         [$department, $start, $end] = $this->resolveInputs($request);
 
-        $report = $this->reportService->buildReport($department, $start, $end);
+        $report = $this->reportService->buildReport($department, $start, $end, $request->boolean('include_pending'));
         $report['show_observations'] = $request->boolean('show_observations', true);
         $template = $this->registry->for($department);
 
@@ -99,15 +99,16 @@ class OvertimeReportController extends Controller implements HasMiddleware
     {
         [$department, $start, $end] = $this->resolveInputs($request);
 
-        $report = $this->reportService->buildReport($department, $start, $end);
+        $report = $this->reportService->buildReport($department, $start, $end, $request->boolean('include_pending'));
         $report['show_observations'] = $request->boolean('show_observations', true);
         $template = $this->registry->for($department);
 
         $title = sprintf(
-            'FORMATO DE TIEMPO EXTRA %s - PERIODO DEL %s AL %s',
+            'FORMATO DE TIEMPO EXTRA %s - PERIODO DEL %s AL %s%s',
             strtoupper($report['department']['name']),
             Carbon::parse($report['week_start'])->format('d/m/Y'),
             Carbon::parse($report['week_end'])->format('d/m/Y'),
+            ($report['includes_pending'] ?? false) ? ' (INCLUYE PENDIENTES DE APROBAR)' : '',
         );
 
         $export = new OvertimeWeeklyExport(
@@ -154,7 +155,9 @@ class OvertimeReportController extends Controller implements HasMiddleware
     {
         $code = strtolower($report['department']['code'] ?: 'reporte');
         $weekStart = $report['week_start'];
+        // Que el archivo con pendientes no se confunda con el oficial aprobado.
+        $suffix = ($report['includes_pending'] ?? false) ? '_con_pendientes' : '';
 
-        return "tiempo_extra_{$code}_{$weekStart}.{$extension}";
+        return "tiempo_extra_{$code}_{$weekStart}{$suffix}.{$extension}";
     }
 }

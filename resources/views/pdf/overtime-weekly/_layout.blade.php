@@ -28,6 +28,13 @@
         PERIODO DEL: {{ \Carbon\Carbon::parse($report['week_start'])->format('d/m/Y') }}
         AL {{ \Carbon\Carbon::parse($report['week_end'])->format('d/m/Y') }}
     </div>
+    {{-- La hoja se imprime para revisión (Luis 2026-08-11): si suma capturas
+         sin aprobar debe decirlo, para no confundirse con el formato oficial. --}}
+    @if (!empty($report['includes_pending']))
+        <div class="subtitle" style="font-weight: bold; color: #b45309;">
+            *** INCLUYE CAPTURAS PENDIENTES DE APROBAR — NO ES EL FORMATO OFICIAL ***
+        </div>
+    @endif
 
     @yield('content')
 

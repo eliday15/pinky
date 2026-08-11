@@ -196,6 +196,50 @@ class OvertimePaymentRoundingTest extends FeatureTestCase
         $this->assertEqualsWithDelta(1.0, $split['overtime_authorized'], 0.01, 'escalera da 1.5h pero la autorización (1h) sigue siendo el tope');
     }
 
+    public function test_weekly_report_includes_pending_only_when_asked(): void
+    {
+        // Luis 2026-08-11: el encargado revisa lo que capturó ANTES de la
+        // aprobación — el reporte con include_pending suma también las
+        // autorizaciones pendientes (con los mismos topes al timecard); sin la
+        // bandera se mantiene el diseño de siempre (solo aprobado).
+        $department = Department::factory()->create(['name' => 'Corte', 'code' => 'CORTE']);
+        $employee = Employee::factory()->create([
+            'status' => 'active',
+            'department_id' => $department->id,
+        ]);
+        AttendanceRecord::factory()->for($employee)->create([
+            'work_date' => '2026-06-03',
+            'check_in' => '08:00:00',
+            'check_out' => '19:00:00', // 120 min → 2.0h detectadas
+            'status' => 'present',
+        ]);
+        $heType = CompensationType::factory()->fixed(50.00)->create([
+            'code' => 'HE',
+            'application_mode' => CompensationType::APPLICATION_PER_HOUR,
+            'authorization_type' => Authorization::TYPE_OVERTIME,
+        ]);
+        Authorization::create([
+            'employee_id' => $employee->id,
+            'requested_by' => User::factory()->create()->id,
+            'type' => Authorization::TYPE_OVERTIME,
+            'compensation_type_id' => $heType->id,
+            'date' => '2026-06-03',
+            'hours' => 2.0,
+            'reason' => 'capturado, aún sin aprobar',
+            'status' => Authorization::STATUS_PENDING,
+        ]);
+
+        $svc = app(WeeklyOvertimeReportService::class);
+
+        $sinPendientes = $svc->buildReport($department, Carbon::parse('2026-06-01'));
+        $this->assertEqualsWithDelta(0.0, $sinPendientes['rows'][0]['days']['2026-06-03']['overtime_hours'], 0.01, 'sin la bandera: solo aprobado');
+        $this->assertFalse($sinPendientes['includes_pending']);
+
+        $conPendientes = $svc->buildReport($department, Carbon::parse('2026-06-01'), null, true);
+        $this->assertEqualsWithDelta(2.0, $conPendientes['rows'][0]['days']['2026-06-03']['overtime_hours'], 0.01, 'con la bandera: la captura pendiente cuenta (topada al timecard)');
+        $this->assertTrue($conPendientes['includes_pending']);
+    }
+
     public function test_weekly_report_caps_authorized_hours_at_timecard(): void
     {
         $department = Department::factory()->create(['name' => 'Corte', 'code' => 'CORTE']);

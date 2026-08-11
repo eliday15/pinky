@@ -27,7 +27,9 @@ use Illuminate\Support\Collection;
  *   - COMIDA marker (1/0)     : COM
  *
  * No fallback to unauthorized hours — if it's not authorized, it's not
- * shown, by design.
+ * shown, by design. Excepción OPT-IN (Luis 2026-08-11): `$includePending`
+ * suma también las autorizaciones PENDIENTES, para que el encargado revise
+ * lo que capturó (con los mismos topes al timecard) antes de la aprobación.
  */
 class WeeklyOvertimeReportService
 {
@@ -65,7 +67,7 @@ class WeeklyOvertimeReportService
      * Returns:
      *     Array with department, dates, rows and totals ready for templates.
      */
-    public function buildReport(Department $department, Carbon $weekStart, ?Carbon $rangeEnd = null): array
+    public function buildReport(Department $department, Carbon $weekStart, ?Carbon $rangeEnd = null, bool $includePending = false): array
     {
         // Rango libre: si viene una fecha fin se respeta el rango literal
         // [inicio, fin] que pidió el usuario ("de qué día a qué día"). Sin
@@ -100,10 +102,18 @@ class WeeklyOvertimeReportService
             ->get()
             ->groupBy('employee_id');
 
+        // Con $includePending, el encargado ve también lo capturado que aún no
+        // se aprueba — mismos topes al timecard, así el reporte enseña lo que
+        // PAGARÁ la captura tal como está, no la cifra tecleada.
+        $statuses = [Authorization::STATUS_APPROVED, Authorization::STATUS_PAID];
+        if ($includePending) {
+            $statuses[] = Authorization::STATUS_PENDING;
+        }
+
         $authorizations = Authorization::with('compensationType')
             ->whereIn('employee_id', $employeeIds)
             ->whereBetween('date', [$start->toDateString(), $end->toDateString()])
-            ->whereIn('status', [Authorization::STATUS_APPROVED, Authorization::STATUS_PAID])
+            ->whereIn('status', $statuses)
             ->get()
             ->groupBy('employee_id');
 
@@ -143,6 +153,7 @@ class WeeklyOvertimeReportService
             ],
             'week_start' => $start->toDateString(),
             'week_end' => $end->toDateString(),
+            'includes_pending' => $includePending,
             'weekend_unit_hours' => $weekendUnitHours,
             'dates' => $dates,
             'rows' => $rows,

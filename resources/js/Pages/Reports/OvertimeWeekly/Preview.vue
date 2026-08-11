@@ -57,6 +57,8 @@ const exportParams = computed(() => ({
     week_start: props.report.week_start,
     end_date: props.report.week_end,
     show_observations: showObservations.value ? 1 : 0,
+    // Que el PDF/Excel exporte lo MISMO que se está viendo en pantalla.
+    include_pending: props.report.includes_pending ? 1 : 0,
 }));
 
 const pdfHref = computed(() => route('reports.overtime-weekly.export.pdf', exportParams.value));
@@ -82,6 +84,13 @@ const excelHref = computed(() => route('reports.overtime-weekly.export.excel', e
                 <span class="text-sm text-gray-500">
                     Periodo del <strong>{{ formatDate(report.week_start) }}</strong> al
                     <strong>{{ formatDate(report.week_end) }}</strong>
+                    <span
+                        v-if="report.includes_pending"
+                        class="ml-2 px-2 py-0.5 text-xs rounded-full bg-amber-100 text-amber-800 align-middle"
+                        title="Los totales suman también capturas aún no aprobadas. El reporte oficial es sin pendientes."
+                    >
+                        Incluye pendientes de aprobar
+                    </span>
                 </span>
             </div>
             <div class="flex items-center gap-2">
