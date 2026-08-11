@@ -2191,13 +2191,23 @@ class AuthorizationController extends Controller
         if (! in_array($authorization->type, [Authorization::TYPE_OVERTIME, Authorization::TYPE_NIGHT_SHIFT], true)) {
             return false;
         }
-        // Attendance-pull concepts (Cena, Fin de semana) always stay pending for
-        // human review, even if misconfigured onto an overtime/velada type.
-        if ($authorization->compensation_type_id
+        // Attendance-pull concepts (Cena, Fin de semana) always stay pending
+        // for human review — EXCEPTO la velada (Luis 2026-08-11, caso Miguel
+        // Almacén PT): su concepto VEL también jala de asistencia, pero cuando
+        // las checadas muestran el bloque nocturno real la captura está
+        // respaldada y se aprueba sola, igual que el TE.
+        if ($authorization->type !== Authorization::TYPE_NIGHT_SHIFT
+            && $authorization->compensation_type_id
             && optional(CompensationType::find($authorization->compensation_type_id))->pullsFromAttendance()) {
             return false;
         }
-        if (! $authorization->start_time || ! $authorization->end_time || ! $authorization->hours) {
+        if (! $authorization->hours) {
+            return false;
+        }
+        // La velada capturada a mano suele venir SIN horario (paga por noche);
+        // solo el TE exige ventana para comparar contra los segmentos.
+        if ($authorization->type === Authorization::TYPE_OVERTIME
+            && (! $authorization->start_time || ! $authorization->end_time)) {
             return false;
         }
 
@@ -2222,19 +2232,28 @@ class AuthorizationController extends Controller
             return false;
         }
 
-        $authStart = $authorization->start_time->format('H:i');
-        $authEnd = $authorization->end_time->format('H:i');
+        $authStart = $authorization->start_time?->format('H:i');
+        $authEnd = $authorization->end_time?->format('H:i');
         $authHours = round((float) $authorization->hours, 2);
-        $authStartMin = $this->minutesOfDay($authStart);
-        $authEndMin = $this->minutesOfDay($authEnd);
+        $authStartMin = $authStart !== null ? $this->minutesOfDay($authStart) : null;
+        $authEndMin = $authEnd !== null ? $this->minutesOfDay($authEnd) : null;
 
         foreach ($segments as $seg) {
-            $exact = $seg['start_time'] === $authStart
+            $exact = $authStart !== null && $authEnd !== null
+                && $seg['start_time'] === $authStart
                 && $seg['end_time'] === $authEnd
                 && abs((float) $seg['hours'] - $authHours) < 0.01;
 
             $backed = false;
-            if ($authorization->type === Authorization::TYPE_OVERTIME) {
+            if ($authorization->type === Authorization::TYPE_NIGHT_SHIFT) {
+                // Velada RESPALDADA (Luis 2026-08-11): las checadas del día
+                // muestran un bloque nocturno real (re-entrada en ventana de
+                // velada o cruce de medianoche) y las horas capturadas no
+                // exceden el bloque. No se exige match exacto: la velada paga
+                // POR NOCHE (per_day) o topada a lo checado (por hora), así
+                // que respaldar nunca sobrepaga.
+                $backed = $authHours <= (float) $seg['hours'] + 0.01;
+            } elseif ($authorization->type === Authorization::TYPE_OVERTIME && $authStartMin !== null && $authEndMin !== null) {
                 $segStartMin = $this->minutesOfDay($seg['start_time']);
                 $segEndMin = $this->minutesOfDay($seg['end_time']);
                 // Un fin menor al inicio es una salida del día SIGUIENTE
@@ -2267,7 +2286,7 @@ class AuthorizationController extends Controller
     {
         $authorization->refresh();
 
-        if ($authorization->type !== Authorization::TYPE_OVERTIME
+        if (! in_array($authorization->type, [Authorization::TYPE_OVERTIME, Authorization::TYPE_NIGHT_SHIFT], true)
             || ! $this->matchesDetectedForAutoApproval($authorization)) {
             return false;
         }
@@ -2507,7 +2526,7 @@ class AuthorizationController extends Controller
         }
 
         $pending = Authorization::where('status', Authorization::STATUS_PENDING)
-            ->where('type', Authorization::TYPE_OVERTIME)
+            ->whereIn('type', [Authorization::TYPE_OVERTIME, Authorization::TYPE_NIGHT_SHIFT])
             ->orderBy('id')
             ->get();
 

@@ -43,8 +43,10 @@ class AutoApproveOvertimeAuthorizations extends Command
 
         $controller = app(AuthorizationController::class);
 
+        // TE + velada: la velada respaldada por el bloque nocturno de las
+        // checadas también se auto-aprueba (Luis 2026-08-11).
         $pending = Authorization::where('status', Authorization::STATUS_PENDING)
-            ->where('type', Authorization::TYPE_OVERTIME)
+            ->whereIn('type', [Authorization::TYPE_OVERTIME, Authorization::TYPE_NIGHT_SHIFT])
             ->orderBy('id')
             ->get();
 

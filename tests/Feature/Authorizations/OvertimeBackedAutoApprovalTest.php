@@ -382,4 +382,73 @@ class OvertimeBackedAutoApprovalTest extends FeatureTestCase
 
         $this->post(route('authorizations.autoApprovePending'))->assertForbidden();
     }
+
+    public function test_backed_velada_auto_approves_without_exact_match(): void
+    {
+        // Caso Miguel (Almacén PT, Luis 2026-08-11): checadas con bloque
+        // nocturno real (re-entrada 01:01, salida 05:01) y velada capturada a
+        // mano con 1.0h SIN horario. El concepto VEL jala de asistencia, pero
+        // la velada respaldada por el bloque ya no exige match exacto ni queda
+        // fuera por el pull-rule.
+        $this->adminUser();
+        $emp = Employee::factory()->create([
+            'schedule_id' => Schedule::factory()->create([
+                'entry_time' => '08:00',
+                'exit_time' => '17:30',
+            ])->id,
+        ]);
+        AttendanceRecord::factory()->create([
+            'employee_id' => $emp->id,
+            'work_date' => '2026-08-09',
+            'check_in' => '16:10:00',
+            'check_out' => '05:01:00',
+            'raw_punches' => [
+                ['time' => '16:10:00', 'type' => 'punch'],
+                ['time' => '22:00:00', 'type' => 'punch'],
+                ['time' => '01:01:00', 'type' => 'punch'],
+                ['time' => '05:01:00', 'type' => 'punch'],
+            ],
+        ]);
+        $vel = \App\Models\CompensationType::factory()->create([
+            'code' => 'VEL',
+            'application_mode' => \App\Models\CompensationType::APPLICATION_PER_DAY,
+            'authorization_type' => Authorization::TYPE_NIGHT_SHIFT,
+            'attendance_pull_rule' => \App\Models\CompensationType::PULL_RULE_VELADA,
+        ]);
+        $auth = Authorization::factory()->create([
+            'employee_id' => $emp->id,
+            'type' => Authorization::TYPE_NIGHT_SHIFT,
+            'compensation_type_id' => $vel->id,
+            'date' => '2026-08-09',
+            'start_time' => null,
+            'end_time' => null,
+            'hours' => 1.0,
+            'status' => Authorization::STATUS_PENDING,
+        ]);
+
+        $this->artisan('authorizations:auto-approve-overtime')->assertSuccessful();
+
+        $this->assertSame(Authorization::STATUS_APPROVED, $auth->fresh()->status, 'el bloque nocturno real respalda la velada');
+    }
+
+    public function test_velada_without_night_block_stays_pending(): void
+    {
+        $this->adminUser();
+        $emp = $this->corteEmployee(); // 08:00–16:30
+        // Día normal: entrada/salida de día, sin re-entrada nocturna.
+        $this->recordWithCheckout($emp, '17:00:00', 0.5);
+        $auth = Authorization::factory()->create([
+            'employee_id' => $emp->id,
+            'type' => Authorization::TYPE_NIGHT_SHIFT,
+            'date' => '2026-06-08',
+            'start_time' => null,
+            'end_time' => null,
+            'hours' => 1.0,
+            'status' => Authorization::STATUS_PENDING,
+        ]);
+
+        $this->artisan('authorizations:auto-approve-overtime')->assertSuccessful();
+
+        $this->assertSame(Authorization::STATUS_PENDING, $auth->fresh()->status, 'sin bloque nocturno no hay respaldo');
+    }
 }
