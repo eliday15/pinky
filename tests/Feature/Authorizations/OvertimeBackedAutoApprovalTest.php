@@ -383,6 +383,33 @@ class OvertimeBackedAutoApprovalTest extends FeatureTestCase
         $this->post(route('authorizations.autoApprovePending'))->assertForbidden();
     }
 
+    public function test_weekend_overtime_capture_is_not_blocked_by_schedule_overlap(): void
+    {
+        // Luis 2026-08-11: "no me deja poner tiempo extra sábado o domingo".
+        // Sáb/dom no son obligatorios: trabajarlos ES extra, así que la regla
+        // de "horas dentro de la jornada" no aplica en fin de semana aunque la
+        // ventana pise el horario entre-semana del empleado.
+        $this->actingAsSupervisor();
+        $emp = $this->corteEmployee(); // horario 08:00–16:30
+
+        $this->from(route('authorizations.create'))->post(route('authorizations.store'), [
+            'employee_id' => $emp->id,
+            'type' => Authorization::TYPE_OVERTIME,
+            'date' => '2026-06-07', // domingo
+            'start_time' => '10:00', // dentro del horario entre-semana
+            'end_time' => '14:00',
+            'hours' => 4.0,
+            'reason' => 'trabajo de domingo',
+        ])->assertRedirect(route('authorizations.index'))
+            ->assertSessionHasNoErrors();
+
+        $this->assertDatabaseHas('authorizations', [
+            'employee_id' => $emp->id,
+            'type' => Authorization::TYPE_OVERTIME,
+            'date' => '2026-06-07',
+        ]);
+    }
+
     public function test_backed_velada_auto_approves_without_exact_match(): void
     {
         // Caso Miguel (Almacén PT, Luis 2026-08-11): checadas con bloque

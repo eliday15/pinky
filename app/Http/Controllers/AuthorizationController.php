@@ -2645,6 +2645,16 @@ class AuthorizationController extends Controller
         if (\App\Models\Holiday::isHoliday($date)) {
             return false;
         }
+        // Sábado y domingo NO son obligatorios desde 2026-07-08 (misma doctrina
+        // de isObligatoryWorkDay): trabajarlos ES extra, así que ninguna hora
+        // del fin de semana "cae dentro de la jornada" — la ventana capturada
+        // no se bloquea aunque pise el horario entre-semana del empleado (Luis
+        // 2026-08-11: "no me deja poner tiempo extra sábado o domingo"). El
+        // pago no se infla: el finde se rige por su umbral/unidades y el TE se
+        // topa a lo checado.
+        if (Carbon::parse($date)->isWeekend()) {
+            return false;
+        }
         $dayName = Carbon::parse($date)->format('l');
         $schedule = $employee->getEffectiveScheduleForDay($dayName);
         if (! $schedule || empty($schedule->entry_time) || empty($schedule->exit_time)) {

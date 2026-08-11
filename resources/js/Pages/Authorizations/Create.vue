@@ -35,8 +35,12 @@ const toMin = (hhmm) => {
 const hasScheduleConflict = (entry) => {
     if (!entry?.date || !entry?.start_time || !entry?.end_time) return false;
     if (holidaySet.value.has(entry.date)) return false;
+    const day = new Date(entry.date + 'T12:00:00').getDay();
+    // Sábado/domingo no son obligatorios: trabajarlos ES extra, la regla de
+    // jornada no aplica (espejo del backend, Luis 2026-08-11).
+    if (day === 0 || day === 6) return false;
     const emp = props.employees.find(e => e.id == entry.employee_id);
-    const dayName = DAY_NAMES[new Date(entry.date + 'T12:00:00').getDay()];
+    const dayName = DAY_NAMES[day];
     const sched = emp?.schedule_by_day?.[dayName];
     if (!sched) return false;
     const eMin = toMin(sched.entry);
@@ -660,7 +664,7 @@ const submitCount = computed(() => {
                     <div v-if="isHoursType && conflictedEntries.length > 0"
                         class="mb-3 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-800">
                         <strong>{{ conflictedEntries.length }}</strong> fila(s) caen dentro del horario laboral del empleado y no pueden autorizarse.
-                        Ajusta los tiempos para que queden <em>fuera</em> de la jornada, o quita esas filas. Día festivo se exenta de esta regla.
+                        Ajusta los tiempos para que queden <em>fuera</em> de la jornada, o quita esas filas. Día festivo y fin de semana se exentan de esta regla.
                     </div>
 
                     <div v-if="isHoursType && zeroHourEntries.length > 0"
@@ -713,7 +717,7 @@ const submitCount = computed(() => {
                                 </div>
                                 <div v-if="isHoursType && hasScheduleConflict(entry)"
                                     class="px-4 pb-2 -mt-1 text-[11px] text-red-700 bg-red-50">
-                                    ⚠ Las horas caen dentro de su jornada laboral. Solo se autoriza fuera de horario (o en día festivo).
+                                    ⚠ Las horas caen dentro de su jornada laboral. Solo se autoriza fuera de horario (o en día festivo/fin de semana).
                                 </div>
                                 <div v-else-if="isHoursType && (parseFloat(entry.hours) || 0) <= 0"
                                     class="px-4 pb-2 -mt-1 text-[11px] text-amber-700 bg-amber-50">
