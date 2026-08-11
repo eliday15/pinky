@@ -1732,6 +1732,29 @@ class AuthorizationController extends Controller
         if ($checkOut->lt($checkIn)) {
             $checkOut->addDay();
         }
+
+        // FIN DE SEMANA: no hay jornada que medir — TODO el rango checado es
+        // extra (caso Miguel 2026-08-11: sus 6h de sábado 16:10–22:00 se
+        // partían porque el detector usaba la salida entre-semana 17:30 como
+        // frontera). Un solo segmento de entrada a salida, redondeado. Los
+        // deptos con umbral de finde (7h) ni llegan aquí (buildSuggestion
+        // Segments los atiende antes); esto cubre el fall-through (Almacén PT
+        // por unidades y horarios sin regla).
+        if (Carbon::parse($date)->isWeekend()) {
+            $minutes = abs((int) $checkIn->diffInMinutes($checkOut));
+            $rounded = $this->roundOvertimeMinutes($minutes);
+            if ($rounded <= 0) {
+                return [];
+            }
+
+            return [[
+                'kind' => 'late',
+                'start_time' => $checkIn->format('H:i'),
+                'end_time' => $checkOut->format('H:i'),
+                'hours' => number_format($rounded, 2, '.', ''),
+                'summary' => "Fin de semana: {$rounded}h (de {$checkIn->format('H:i')} a {$checkOut->format('H:i')}, todo el rango es extra).",
+            ]];
+        }
         $scheduledEntry = $schedule->entry_time ?? null;
         $scheduledExit = $schedule->exit_time ?? null;
 
@@ -2252,6 +2275,12 @@ class AuthorizationController extends Controller
                 // exceden el bloque. No se exige match exacto: la velada paga
                 // POR NOCHE (per_day) o topada a lo checado (por hora), así
                 // que respaldar nunca sobrepaga.
+                $backed = $authHours <= (float) $seg['hours'] + 0.01;
+            } elseif ($authorization->type === Authorization::TYPE_OVERTIME
+                && (! $seg['start_time'] || ! $seg['end_time'])) {
+                // Segmento sin ventana (finde con umbral de 7h: solo horas
+                // excedentes): se respalda por HORAS — lo pedido no excede lo
+                // que el umbral deja como extra. El pago va topado igual.
                 $backed = $authHours <= (float) $seg['hours'] + 0.01;
             } elseif ($authorization->type === Authorization::TYPE_OVERTIME && $authStartMin !== null && $authEndMin !== null) {
                 $segStartMin = $this->minutesOfDay($seg['start_time']);

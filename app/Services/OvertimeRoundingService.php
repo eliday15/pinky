@@ -71,6 +71,14 @@ class OvertimeRoundingService
             $checkOut->addDay();
         }
 
+        // Fin de semana: no hay jornada que medir — todo el rango checado es
+        // extra (caso Miguel 2026-08-11; misma doctrina que la captura y los
+        // segmentos). Los llamadores con umbral de finde (regla de las 7h)
+        // resuelven ANTES de llegar aquí; esto cubre el fall-through.
+        if (Carbon::parse($date)->isWeekend()) {
+            return $this->roundMinutes(abs((int) $checkIn->diffInMinutes($checkOut)));
+        }
+
         $scheduledEntry = $schedule->entry_time ?? null;
         $scheduledExit = $schedule->exit_time ?? null;
 

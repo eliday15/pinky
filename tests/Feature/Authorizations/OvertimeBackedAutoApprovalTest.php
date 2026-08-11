@@ -410,6 +410,49 @@ class OvertimeBackedAutoApprovalTest extends FeatureTestCase
         ]);
     }
 
+    public function test_weekend_overtime_is_backed_by_full_punch_span_not_schedule(): void
+    {
+        // Caso Miguel (Almacén PT, Luis 2026-08-11): 6h de sábado 16:10–22:00
+        // con checada 16:10 → 05:01 (+1). El detector usaba la salida
+        // entre-semana (17:30) como frontera y partía 1.5h como "fuera de
+        // checada". En fin de semana no hay jornada: TODO el rango checado
+        // respalda, así que la captura completa se aprueba sin split.
+        $this->adminUser();
+        $emp = Employee::factory()->create([
+            // Depto por UNIDADES (como Almacén PT): sin umbral de finde, el
+            // detector cae al camino de segmentos por horario.
+            'department_id' => \App\Models\Department::factory()->create(['weekend_unit_hours' => 6])->id,
+            'schedule_id' => Schedule::factory()->create([
+                'entry_time' => '08:00',
+                'exit_time' => '17:30',
+            ])->id,
+        ]);
+        AttendanceRecord::factory()->create([
+            'employee_id' => $emp->id,
+            'work_date' => '2026-08-08', // sábado
+            'check_in' => '16:10:00',
+            'check_out' => '05:01:00', // cruza medianoche
+            'is_weekend_work' => true,
+        ]);
+        $auth = Authorization::factory()->create([
+            'employee_id' => $emp->id,
+            'type' => Authorization::TYPE_OVERTIME,
+            'date' => '2026-08-08',
+            'start_time' => '16:10',
+            'end_time' => '22:00',
+            'hours' => 6.0,
+            'status' => Authorization::STATUS_PENDING,
+        ]);
+
+        $this->artisan('authorizations:auto-approve-overtime')->assertSuccessful();
+
+        $auth->refresh();
+        $this->assertSame(Authorization::STATUS_APPROVED, $auth->status, 'el rango completo del finde respalda las 6h');
+        $this->assertEqualsWithDelta(6.0, (float) $auth->hours, 0.01, 'sin split: no se parte nada');
+        $this->assertSame('16:10', $auth->start_time->format('H:i'));
+        $this->assertSame(1, Authorization::where('employee_id', $emp->id)->count(), 'sin excedente creado');
+    }
+
     public function test_backed_velada_auto_approves_without_exact_match(): void
     {
         // Caso Miguel (Almacén PT, Luis 2026-08-11): checadas con bloque
