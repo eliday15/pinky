@@ -35,6 +35,7 @@ class PayrollSplitTest extends FeatureTestCase
     {
         return Employee::factory()->create([
             'status' => 'active',
+            'hire_date' => '2025-01-01', // fijo: el sorteo del factory puede caer despues de la semana del test (flake conocido)
             'hourly_rate' => 100.00,
             'overtime_rate' => 1.5,
             'holiday_rate' => 2.0,
@@ -96,6 +97,7 @@ class PayrollSplitTest extends FeatureTestCase
 
         $employee = Employee::factory()->create([
             'status' => 'active',
+            'hire_date' => '2025-01-01', // fijo: el sorteo del factory puede caer despues de la semana del test (flake conocido)
             'schedule_id' => $schedule->id,
             'daily_salary' => 200.00,
         ]);
@@ -134,6 +136,7 @@ class PayrollSplitTest extends FeatureTestCase
     {
         $employee = Employee::factory()->create([
             'status' => 'active',
+            'hire_date' => '2025-01-01', // fijo: el sorteo del factory puede caer despues de la semana del test (flake conocido)
             'daily_salary' => 800.00,
         ]);
 
@@ -175,6 +178,7 @@ class PayrollSplitTest extends FeatureTestCase
     {
         $employee = Employee::factory()->create([
             'status' => 'active',
+            'hire_date' => '2025-01-01', // fijo: el sorteo del factory puede caer despues de la semana del test (flake conocido)
             'daily_salary' => 200.00,
         ]);
 

@@ -35,7 +35,12 @@ class EmployeeFactory extends Factory
             'full_name' => "$firstName $lastName",
             'email' => fake()->unique()->safeEmail(),
             'phone' => fake()->phoneNumber(),
-            'hire_date' => fake()->dateTimeBetween('-3 years', '-1 month'),
+            // Tope en -1 AÑO: con '-1 month' el sorteo alcanzaba fechas
+            // posteriores a las semanas fijas (jun-2026) de los tests de
+            // nómina y recortaba la base → flakes intermitentes (uno por
+            // corrida desde 2026-08). Un test que necesite alta reciente la
+            // fija explícito.
+            'hire_date' => fake()->dateTimeBetween('-3 years', '-1 year'),
             'department_id' => Department::factory(),
             'position_id' => Position::factory(),
             'schedule_id' => Schedule::factory(),
