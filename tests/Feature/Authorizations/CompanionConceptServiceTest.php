@@ -142,20 +142,46 @@ class CompanionConceptServiceTest extends FeatureTestCase
         $this->assertSame(1, Authorization::where('generated_from_authorization_id', $velada->id)->count());
     }
 
-    public function test_no_companion_when_a_meal_already_exists_for_the_day(): void
+    public function test_pending_hand_captured_meal_is_adopted_and_approved(): void
+    {
+        // Luis 2026-08-11 ("te faltó también aprobar la cena"): la Cena
+        // capturada a mano ANTES de aprobar la velada ya no queda huérfana —
+        // al aprobar el padre se aprueba ella (sin crear una segunda).
+        $approver = $this->adminUser();
+        $cena = $this->compType(CompensationType::PULL_RULE_MEAL, 'Cena');
+        $employee = $this->enrolledEmployee($cena);
+        $velada = $this->approvedVelada($employee, $approver);
+
+        $manual = Authorization::factory()->special()->create([
+            'employee_id' => $employee->id,
+            'requested_by' => User::factory()->create()->id,
+            'compensation_type_id' => $cena->id,
+            'date' => '2026-06-05',
+            'status' => Authorization::STATUS_PENDING,
+        ]);
+
+        $adopted = $this->service()->captureForApproved($velada);
+
+        $this->assertNotNull($adopted);
+        $this->assertSame($manual->id, $adopted->id, 'aprueba la existente, no crea otra');
+        $this->assertSame(Authorization::STATUS_APPROVED, $manual->fresh()->status);
+        $this->assertSame(1, Authorization::where('compensation_type_id', $cena->id)->count());
+    }
+
+    public function test_approved_meal_is_left_untouched(): void
     {
         $approver = $this->adminUser();
         $cena = $this->compType(CompensationType::PULL_RULE_MEAL, 'Cena');
         $employee = $this->enrolledEmployee($cena);
         $velada = $this->approvedVelada($employee, $approver);
 
-        // Ya existe una Cena capturada por otra vía ese mismo día.
+        // Ya hay una Cena APROBADA por otra vía: no hay nada que hacer.
         Authorization::factory()->special()->create([
             'employee_id' => $employee->id,
             'requested_by' => User::factory()->create()->id,
             'compensation_type_id' => $cena->id,
             'date' => '2026-06-05',
-            'status' => Authorization::STATUS_PENDING,
+            'status' => Authorization::STATUS_APPROVED,
         ]);
 
         $this->assertNull($this->service()->captureForApproved($velada));

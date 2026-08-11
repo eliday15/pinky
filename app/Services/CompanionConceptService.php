@@ -42,7 +42,16 @@ class CompanionConceptService
         if ($plan === null) {
             return null;
         }
-        [$companionType, $approver] = $plan;
+        [$companionType, $approver, $existing] = $plan;
+
+        // Cena/Comida capturada a mano y aún pendiente: se aprueba con el
+        // padre (mismo aprobador y mismos efectos) en vez de crear otra.
+        if ($existing !== null) {
+            $existing->approve($approver);
+            $this->applyEffects($existing);
+
+            return $existing;
+        }
 
         $companion = Authorization::create([
             'employee_id' => $parent->employee_id,
@@ -117,10 +126,13 @@ class CompanionConceptService
         }
 
         // Dedup: nunca duplicar la Cena/Comida. Se compara por CATEGORÍA de
-        // concepto (la misma pull rule), no por el id exacto, para no crear una
-        // segunda aunque ya exista por otra vía (capturada a mano o con otro id
-        // del mismo tipo). Cuenta cualquier activa (pendiente/aprobada/pagada).
-        $exists = Authorization::where('employee_id', $parent->employee_id)
+        // concepto (la misma pull rule), no por el id exacto. Una ya
+        // aprobada/pagada = nada que hacer. Una PENDIENTE (capturada a mano
+        // antes de aprobar el padre) se ADOPTA: se aprueba junto con el padre
+        // en vez de quedar huérfana (Luis 2026-08-11, "te faltó también
+        // aprobar la cena": las veladas auto-aprobadas del barrido dejaban
+        // viva la cena manual pendiente).
+        $existing = Authorization::where('employee_id', $parent->employee_id)
             ->whereDate('date', $this->dateString($parent))
             ->whereIn('status', [
                 Authorization::STATUS_PENDING,
@@ -128,12 +140,13 @@ class CompanionConceptService
                 Authorization::STATUS_PAID,
             ])
             ->whereHas('compensationType', fn ($q) => $q->where('attendance_pull_rule', $pullRule))
-            ->exists();
-        if ($exists) {
+            ->orderBy('id')
+            ->first();
+        if ($existing !== null && $existing->status !== Authorization::STATUS_PENDING) {
             return null;
         }
 
-        return [$companionType, $approver];
+        return [$companionType, $approver, $existing];
     }
 
     /**
