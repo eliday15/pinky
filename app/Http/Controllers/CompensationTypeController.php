@@ -173,6 +173,15 @@ class CompensationTypeController extends Controller
             abort(403);
         }
 
+        // Concepto blindado (Elias 2026-08-12): NADIE lo modifica desde la UI
+        // — ni superadmin. Nació por "Falta Justificada" (paga un día del
+        // empleado); una reconfiguración accidental cambiaría pagos ya
+        // capturados.
+        if ($compensationType->is_locked) {
+            return redirect()->route('compensation-types.index')
+                ->with('error', "El concepto \"{$compensationType->name}\" está blindado y no se puede modificar.");
+        }
+
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:100'],
             'code' => ['required', 'string', 'max:50', Rule::unique('compensation_types')->ignore($compensationType->id)],
@@ -233,6 +242,12 @@ class CompensationTypeController extends Controller
         $user = Auth::user();
         if (! $user->hasPermissionTo('compensation_types.manage')) {
             abort(403);
+        }
+
+        // Concepto blindado: tampoco se borra/desactiva desde la UI.
+        if ($compensationType->is_locked) {
+            return redirect()->route('compensation-types.index')
+                ->with('error', "El concepto \"{$compensationType->name}\" está blindado y no se puede borrar.");
         }
 
         $compensationType->update(['is_active' => false]);

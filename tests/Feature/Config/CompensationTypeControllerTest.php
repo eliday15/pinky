@@ -654,6 +654,38 @@ class CompensationTypeControllerTest extends FeatureTestCase
         ]);
     }
 
+    public function test_locked_type_cannot_be_updated_or_destroyed(): void
+    {
+        // Concepto blindado (Elias 2026-08-12, "Falta Justificada" paga un día
+        // del empleado): NADIE lo modifica ni lo borra desde la UI.
+        $this->actingAsSuperadmin();
+        $type = CompensationType::factory()->percentage(0)->create([
+            'code' => 'LOCK-1',
+            'name' => 'Blindado',
+            'application_mode' => 'per_day',
+            'is_locked' => true,
+        ]);
+
+        $this->put(route('compensation-types.update', $type), [
+            'name' => 'Hackeado',
+            'code' => 'LOCK-1',
+            'calculation_type' => 'fixed',
+            'fixed_amount' => 999,
+            'application_mode' => 'one_time',
+            'priority' => 5,
+        ])->assertRedirect(route('compensation-types.index'))
+            ->assertSessionHas('error');
+
+        $this->delete(route('compensation-types.destroy', $type))
+            ->assertRedirect(route('compensation-types.index'))
+            ->assertSessionHas('error');
+
+        $fresh = $type->fresh();
+        $this->assertSame('Blindado', $fresh->name, 'no se modificó');
+        $this->assertSame('per_day', $fresh->application_mode);
+        $this->assertTrue((bool) $fresh->is_active, 'no se desactivó');
+    }
+
     public function test_update_allows_keeping_same_code(): void
     {
         $this->actingAsAdmin();

@@ -93,6 +93,7 @@ class CompensationType extends Model
         'priority',
         'payment_period',
         'is_recurring',
+        'is_locked',
         'pays_via_transfer',
         'sat_perception_code',
     ];
@@ -103,6 +104,7 @@ class CompensationType extends Model
         'is_active' => 'boolean',
         'priority' => 'integer',
         'is_recurring' => 'boolean',
+        'is_locked' => 'boolean',
         'pays_via_transfer' => 'boolean',
     ];
 
