@@ -32,10 +32,12 @@ class HolidayFactory extends Factory
         ];
 
         return [
-            // 'date' is UNIQUE. unique()->dateTimeBetween() only guarantees
-            // distinct DateTimes — two times on the SAME day collide after
-            // format('Y-m-d'). A unique day offset guarantees distinct days.
-            'date' => now()->subYear()->startOfDay()
+            // 'date' is UNIQUE. unique() solo separa los offsets ENTRE SÍ — no
+            // contra los festivos de fecha FIJA que los tests crean con
+            // onDate('2026-…'), y la base now()±1año los pisaba de vez en
+            // cuando (flake cazado 2026-08-11). Base 2030: lejos de cualquier
+            // fecha de fixture; ningún test usa festivos aleatorios sin fijar.
+            'date' => \Carbon\Carbon::create(2030, 1, 1)
                 ->addDays(fake()->unique()->numberBetween(0, 730))
                 ->format('Y-m-d'),
             'name' => fake()->randomElement($names),
