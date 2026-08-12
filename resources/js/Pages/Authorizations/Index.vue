@@ -508,6 +508,17 @@ const typeLabels = {
                             >
                                 Extra fuera de checada
                             </span>
+                            <!-- Recordatorio (Dani 2026-08-12): el día tiene omisión de
+                                 checada APROBADA — sin marca no habrá respaldo del reloj,
+                                 pero la ausencia ya está justificada: se puede aprobar
+                                 a mano con esa certeza. -->
+                            <span
+                                v-if="auth.has_approved_omission"
+                                class="ml-2 px-2 py-0.5 text-xs rounded-full bg-blue-100 text-blue-800"
+                                title="Este día tiene una omisión de checada aprobada: la falta de marca ya está justificada. La checada no va a respaldar estas horas; si proceden, apruébalas a mano."
+                            >
+                                Omisión aprobada
+                            </span>
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap">
                             <div class="text-sm text-gray-900">

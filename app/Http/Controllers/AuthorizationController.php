@@ -7,6 +7,7 @@ use App\Models\AttendanceAnomaly;
 use App\Models\AttendanceRecord;
 use App\Models\AuditLog;
 use App\Models\Authorization;
+use App\Models\CheckOmission;
 use App\Models\CompensationType;
 use App\Models\Department;
 use App\Models\Employee;
@@ -91,16 +92,43 @@ class AuthorizationController extends Controller
 
         $authorizations = $query->orderBy('created_at', 'desc')->paginate(15)->withQueryString();
 
+        // Recordatorio de omisión aprobada (Dani 2026-08-12): un TE/velada
+        // pendiente de un día SIN checada nunca se va a auto-aprobar, pero si
+        // la omisión de checada de ese día ya fue aprobada, la falta de marca
+        // está justificada y el aprobador puede decidir a mano con confianza.
+        // Una sola consulta por página; el par exacto (empleado, fecha) se
+        // verifica en el lookup, no en el whereIn (que cruza productos).
+        $omissionKeys = collect($authorizations->items())
+            ->filter(fn ($a) => $a->status === Authorization::STATUS_PENDING
+                && in_array($a->type, [Authorization::TYPE_OVERTIME, Authorization::TYPE_NIGHT_SHIFT], true))
+            ->map(fn ($a) => [
+                'employee_id' => $a->employee_id,
+                'date' => Carbon::parse($a->date)->toDateString(),
+            ]);
+        $approvedOmissions = $omissionKeys->isEmpty()
+            ? collect()
+            : CheckOmission::query()
+                ->where('status', CheckOmission::STATUS_APPROVED)
+                ->whereIn('employee_id', $omissionKeys->pluck('employee_id')->unique())
+                ->whereIn('work_date', $omissionKeys->pluck('date')->unique())
+                ->get(['employee_id', 'work_date'])
+                ->mapWithKeys(fn (CheckOmission $o) => [
+                    $o->employee_id.'|'.Carbon::parse($o->work_date)->toDateString() => true,
+                ]);
+
         // Per-row approve capability drives "Aprobar parcial" (pending) and
         // "Modificar aprobación" (already approved) in the list. The policy
         // already accounts for pending-vs-admin, ownership, team scope and the
         // paid lock, so the frontend doesn't have to duplicate that logic.
-        $authorizations->through(function ($authorization) use ($user) {
+        $authorizations->through(function ($authorization) use ($user, $approvedOmissions) {
             $authorization->can_approve = $user->can('approve', $authorization);
             // Per-row también para rechazar: un concepto con aprobadores
             // nombrados restringe ambas acciones, así que el botón global de
             // permiso ya no alcanza.
             $authorization->can_reject = $user->can('reject', $authorization);
+            $authorization->has_approved_omission = $approvedOmissions->has(
+                $authorization->employee_id.'|'.Carbon::parse($authorization->date)->toDateString()
+            );
 
             return $authorization;
         });
@@ -831,8 +859,24 @@ class AuthorizationController extends Controller
             $weekendUnits = (int) floor($totalWeekendHours / $unitHours);
         }
 
+        // Omisión de checada APROBADA del mismo día (Dani 2026-08-12): la falta
+        // de marca ya está justificada — el aprobador lo ve aquí mismo y puede
+        // aprobar el TE a mano sabiendo por qué la checada no lo respalda.
+        $approvedOmission = CheckOmission::query()
+            ->where('employee_id', $authorization->employee_id)
+            ->whereDate('work_date', $dateString)
+            ->where('status', CheckOmission::STATUS_APPROVED)
+            ->latest('approved_at')
+            ->first();
+
         return Inertia::render('Authorizations/Show', [
             'authorization' => $authorization,
+            'approvedOmission' => $approvedOmission === null ? null : [
+                'reason_label' => $approvedOmission->reasonLabel(),
+                'comments' => $approvedOmission->comments,
+                'approved_at' => $approvedOmission->approved_at?->format('d/m/Y H:i'),
+                'approved_by' => $approvedOmission->approvedBy?->name,
+            ],
             'weekendUnits' => $weekendUnits === null ? null : [
                 'units' => $weekendUnits,
                 'unit_hours' => (int) $unitHours,

@@ -10,6 +10,10 @@ const props = defineProps({
     // Conteo por unidades (Almacén PT): { units, unit_hours, worked_hours, label }
     // o null cuando el depto no cuenta por unidades.
     weekendUnits: { type: Object, default: null },
+    // Omisión de checada APROBADA del mismo día: { reason_label, comments,
+    // approved_at, approved_by } o null. La checada no respaldará estas horas,
+    // pero la falta de marca ya está justificada.
+    approvedOmission: { type: Object, default: null },
     can: Object,
 });
 
@@ -152,6 +156,31 @@ const submitReject = () => {
                         <p class="mt-1">
                             Este registro lo genera el sistema y no se puede editar:
                             apruébalo (puedes ajustar las horas al aprobar) o recházalo.
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Recordatorio (Dani 2026-08-12): el día tiene una omisión de
+                     checada APROBADA. La checada nunca va a respaldar estas horas
+                     (falta la marca), pero la ausencia ya está justificada: el
+                     aprobador puede aprobar a mano con esa certeza. -->
+                <div
+                    v-if="approvedOmission && authorization.status === 'pending'"
+                    class="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start"
+                >
+                    <svg class="w-5 h-5 text-blue-500 mt-0.5 mr-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+                    </svg>
+                    <div class="text-sm text-blue-800">
+                        <p class="font-semibold">Omisión de checada aprobada este día</p>
+                        <p class="mt-1">
+                            El colaborador no registró su marca, pero la omisión ya fue
+                            aprobada ({{ approvedOmission.reason_label }}<template v-if="approvedOmission.approved_by">, por {{ approvedOmission.approved_by }}</template><template v-if="approvedOmission.approved_at"> el {{ approvedOmission.approved_at }}</template>).
+                            La checada no va a respaldar estas horas — si proceden,
+                            apruébalas a mano.
+                        </p>
+                        <p v-if="approvedOmission.comments" class="mt-1 text-blue-700">
+                            Comentarios: {{ approvedOmission.comments }}
                         </p>
                     </div>
                 </div>
