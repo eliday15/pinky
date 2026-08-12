@@ -828,13 +828,14 @@ watch(() => form.hire_date, onHireDateChange);
                             <p class="mt-1 text-xs text-gray-400">Para el bono de cumpleaños (1 día de sueldo la semana del cumpleaños).</p>
                             <p v-if="form.errors.birth_date" class="mt-1 text-sm text-red-600">{{ form.errors.birth_date }}</p>
                         </div>
+                        <!-- Fecha de baja + importe de finiquito APILADOS en la
+                             misma celda: el importe va siempre justo debajo de
+                             la fecha (Dani 2026-08-12). -->
                         <div v-if="canEditAll">
                             <label class="block text-sm font-medium text-gray-700 mb-1">Fecha de Baja</label>
                             <input v-model="form.termination_date" type="date" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.termination_date }" />
                             <p v-if="form.errors.termination_date" class="mt-1 text-sm text-red-600">{{ form.errors.termination_date }}</p>
-                        </div>
-                        <div v-if="canEditAll">
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Importe de Finiquito</label>
+                            <label class="block text-sm font-medium text-gray-700 mb-1 mt-3">Importe de Finiquito</label>
                             <input v-model="form.finiquito_amount" type="number" step="0.01" min="0" placeholder="0.00" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.finiquito_amount }" />
                             <p class="mt-1 text-xs text-gray-400">Se captura a mano (el sistema no lo calcula) y sale impreso en la sección Finiquito del Resumen semanal.</p>
                             <p v-if="form.errors.finiquito_amount" class="mt-1 text-sm text-red-600">{{ form.errors.finiquito_amount }}</p>
