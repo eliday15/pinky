@@ -231,18 +231,19 @@ class OvertimePaymentRoundingTest extends FeatureTestCase
 
         $svc = app(WeeklyOvertimeReportService::class);
 
-        $sinPendientes = $svc->buildReport($department, Carbon::parse('2026-06-01'));
-        $this->assertEqualsWithDelta(0.0, $sinPendientes['rows'][0]['days']['2026-06-03']['overtime_hours'], 0.01, 'sin la bandera: solo aprobado');
-        $this->assertFalse($sinPendientes['includes_pending']);
-
-        // Con la bandera lo pendiente sale DISTINGUIDO (Elias 2026-08-12): la
-        // celda aprobada sigue en 0 y la captura espera en la parte ámbar.
-        $conPendientes = $svc->buildReport($department, Carbon::parse('2026-06-01'), null, true);
-        $day = $conPendientes['rows'][0]['days']['2026-06-03'];
+        // Semántica ÚNICA (Luis 2026-08-12): la celda aprobada jamás mezcla lo
+        // pendiente, y el "por aprobar" es SIEMPRE lo capturado por el
+        // encargado — nunca lo detectado del checador. La bandera solo marca
+        // el payload para la impresión.
+        $report = $svc->buildReport($department, Carbon::parse('2026-06-01'));
+        $day = $report['rows'][0]['days']['2026-06-03'];
         $this->assertEqualsWithDelta(0.0, $day['overtime_hours'], 0.01, 'lo aprobado no se mezcla con lo pendiente');
-        $this->assertEqualsWithDelta(2.0, $day['pending_overtime_hours'], 0.01, 'la captura pendiente aparece como "por aprobar"');
-        $this->assertEqualsWithDelta(2.0, $conPendientes['rows'][0]['totals']['pending_hours'], 0.01);
-        $this->assertTrue($conPendientes['includes_pending']);
+        $this->assertEqualsWithDelta(2.0, $day['pending_overtime_hours'], 0.01, 'por aprobar = la captura pendiente, no lo del checador');
+        $this->assertEqualsWithDelta(2.0, $report['rows'][0]['totals']['pending_hours'], 0.01);
+        $this->assertFalse($report['includes_pending']);
+
+        $conBandera = $svc->buildReport($department, Carbon::parse('2026-06-01'), null, true);
+        $this->assertTrue($conBandera['includes_pending'], 'la bandera solo controla la impresión');
     }
 
     public function test_weekly_report_caps_authorized_hours_at_timecard(): void

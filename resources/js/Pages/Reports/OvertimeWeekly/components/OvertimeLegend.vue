@@ -11,7 +11,7 @@ const showPending = inject('showPending', ref(true));
         </span>
         <span v-if="showPending" class="inline-flex items-center gap-1">
             <span class="inline-block w-3 h-3 rounded bg-amber-100 border border-amber-300"></span>
-            <span><strong>+0.5</strong> = trabajado y detectado, sin aprobar</span>
+            <span><strong>+0.5</strong> = capturado por el encargado, pendiente de aprobar</span>
         </span>
     </div>
 </template>
