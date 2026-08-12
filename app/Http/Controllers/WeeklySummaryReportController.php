@@ -198,10 +198,14 @@ class WeeklySummaryReportController extends Controller
             ->whereBetween('termination_date', [$fromStr, $toStr])
             ->with('department:id,name')
             ->orderBy('full_name')
-            ->get(['id', 'full_name', 'employee_number', 'department_id', 'termination_date'])
+            ->get(['id', 'full_name', 'employee_number', 'department_id', 'termination_date', 'finiquito_amount'])
             ->map(fn ($e) => array_merge($label($e), [
                 'date' => Carbon::parse($e->termination_date)->format('d/m/Y'),
-                'observaciones' => '',
+                // El importe capturado en la ficha (Dani 2026-08-12) sale
+                // impreso; sin captura, en blanco para anotarse a pluma.
+                'observaciones' => $e->finiquito_amount !== null
+                    ? '$'.number_format((float) $e->finiquito_amount, 2)
+                    : '',
             ]))->values()->all();
 
         return compact('vacaciones', 'faltas', 'retardos', 'incapacidades', 'finiquitos', 'cumpleanos');

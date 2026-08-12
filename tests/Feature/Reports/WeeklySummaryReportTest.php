@@ -87,6 +87,26 @@ class WeeklySummaryReportTest extends FeatureTestCase
                 ->where('finiquitos.0.observaciones', ''));
     }
 
+    public function test_finiquito_amount_prints_when_captured(): void
+    {
+        // Dani 2026-08-12: el importe se captura en la ficha (junto a la fecha
+        // de baja) y sale impreso en la sección; sin captura sigue en blanco.
+        $this->actingAsAdmin();
+        Employee::factory()->create([
+            'status' => 'terminated',
+            'full_name' => 'Baja Con Importe',
+            'termination_date' => '2026-06-03',
+            'finiquito_amount' => 9454.20,
+        ]);
+
+        $this->get(route('reports.resumen', ['from' => self::FROM, 'to' => self::TO]))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->has('finiquitos', 1)
+                ->where('finiquitos.0.name', 'Baja Con Importe')
+                ->where('finiquitos.0.observaciones', '$9,454.20'));
+    }
+
     public function test_absent_day_appears_in_faltas_but_justified_does_not(): void
     {
         $this->actingAsAdmin();

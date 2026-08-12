@@ -100,6 +100,7 @@ const form = useForm({
     hire_date: props.employee.hire_date?.split('T')[0] || '',
     birth_date: props.employee.birth_date?.split('T')[0] || '',
     termination_date: props.employee.termination_date?.split('T')[0] || '',
+    finiquito_amount: props.employee.finiquito_amount || '',
     department_id: props.employee.department_id,
     position_id: props.employee.position_id,
     schedule_id: props.employee.schedule_id,
@@ -831,6 +832,12 @@ watch(() => form.hire_date, onHireDateChange);
                             <label class="block text-sm font-medium text-gray-700 mb-1">Fecha de Baja</label>
                             <input v-model="form.termination_date" type="date" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.termination_date }" />
                             <p v-if="form.errors.termination_date" class="mt-1 text-sm text-red-600">{{ form.errors.termination_date }}</p>
+                        </div>
+                        <div v-if="canEditAll">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Importe de Finiquito</label>
+                            <input v-model="form.finiquito_amount" type="number" step="0.01" min="0" placeholder="0.00" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.finiquito_amount }" />
+                            <p class="mt-1 text-xs text-gray-400">Se captura a mano (el sistema no lo calcula) y sale impreso en la sección Finiquito del Resumen semanal.</p>
+                            <p v-if="form.errors.finiquito_amount" class="mt-1 text-sm text-red-600">{{ form.errors.finiquito_amount }}</p>
                         </div>
                         <!-- Photo Upload -->
                         <div class="md:col-span-2">
