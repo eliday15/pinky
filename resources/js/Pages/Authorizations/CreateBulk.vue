@@ -493,6 +493,28 @@ const removeEntry = (index) => {
     form.entries = next;
 };
 
+/** Turno de la TARDE tecleado como a.m. (Dani 2026-08-12, caso Alondra
+ *  05:30–09:00 que era 17:30–21:00): corre inicio y fin +12 h con un clic.
+ *  Solo se ofrece cuando ambas horas son de la mañana. */
+const canShiftPm = (entry) => {
+    const s = toMin(entry?.start_time);
+    const f = toMin(entry?.end_time);
+    return s != null && f != null && s < 720 && f < 720;
+};
+const shiftEntryToPm = (index) => {
+    const plus12 = (hhmm) => {
+        const [h, m] = hhmm.split(':').map(Number);
+        return `${String(h + 12).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    };
+    const next = [...form.entries];
+    const row = { ...next[index] };
+    row.start_time = plus12(row.start_time);
+    row.end_time = plus12(row.end_time);
+    row.hours = recomputeHours(row);
+    next[index] = row;
+    form.entries = next;
+};
+
 /** Add one blank row for every selected employee (mirrors how "Cargar desde
  *  checadas" fans out across the whole selection), not just the first. */
 const addManualEntry = () => {
@@ -907,6 +929,14 @@ const canSubmit = computed(() => {
                                     <div v-if="isHoursType && hasScheduleConflict(entry)"
                                         class="px-4 pb-2 -mt-1 text-[11px] text-red-700 bg-red-50">
                                         ⚠ Las horas caen dentro de su jornada laboral. Solo se autoriza fuera de horario (o en día festivo/fin de semana).
+                                        <button
+                                            v-if="canShiftPm(entry)"
+                                            type="button"
+                                            @click="shiftEntryToPm(entry._index)"
+                                            class="ml-1 font-semibold text-pink-700 underline hover:text-pink-900"
+                                        >
+                                            ¿Eran de la tarde? Cambiar a p.m.
+                                        </button>
                                     </div>
                                     <div v-else-if="isHoursType && (parseFloat(entry.hours) || 0) <= 0"
                                         class="px-4 pb-2 -mt-1 text-[11px] text-amber-700 bg-amber-50">
