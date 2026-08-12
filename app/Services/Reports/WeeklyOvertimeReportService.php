@@ -203,11 +203,12 @@ class WeeklyOvertimeReportService
             $day = $this->buildDay($employee, $date, $record, $dayAuths, $isDeliveryDay, $includePending);
 
             $days[$date] = $day;
-            // El TOTAL suma lo MISMO que muestran las celdas del día (TE +
-            // velada en horas, el formato histórico de la hoja). Antes sumaba
-            // solo TE y el total salía MENOR que una celda — "no cuadra"
-            // (Luis 2026-08-11, caso Elsa: jueves 7.5 vs total 6.5).
-            $weeklyExtra += $day['overtime_hours'] + $day['velada_hours'];
+            // El TOTAL suma lo MISMO que muestran las celdas del día. Decisión
+            // FINAL de Luis (2026-08-12, caso Elsa): la celda es SOLO el
+            // tiempo extra que aprobó el encargado — la velada NO se mezcla,
+            // va en su propia columna (marcador). Así celda, total y captura
+            // del encargado cuadran (6.5 = 6.5 = 6.5).
+            $weeklyExtra += $day['overtime_hours'];
             $weeklyWeekend += $day['weekend_hours'];
             $weeklyWeekendWorked += $day['weekend_worked_hours'];
             $weeklyDetected += $day['detected_overtime_hours'];
@@ -336,13 +337,13 @@ class WeeklyOvertimeReportService
             }
         }
 
-        // Horas CAPTURADAS pendientes de aprobar (TE + velada, tal cual se
-        // capturaron): la revisión del encargado se hace sobre su captura.
+        // Horas CAPTURADAS pendientes de aprobar (SOLO TE, tal cual se
+        // capturaron): la celda es de tiempo extra; la velada va en su columna.
         $pendingCapturedHours = 0.0;
         if ($includePending) {
             foreach ($dayAuthorizations->filter(fn (Authorization $a) => $a->status === Authorization::STATUS_PENDING) as $auth) {
                 $code = $this->normalizeCode($auth->compensationType?->code);
-                if (in_array($code, self::OVERTIME_CODES, true) || $code === self::VELADA_CODE) {
+                if (in_array($code, self::OVERTIME_CODES, true)) {
                     $pendingCapturedHours += (float) $auth->hours;
                 }
             }
@@ -461,7 +462,7 @@ class WeeklyOvertimeReportService
         if ($includePending) {
             foreach ($dayAuthorizations->filter(fn (Authorization $a) => $a->status === Authorization::STATUS_PENDING) as $auth) {
                 $code = $this->normalizeCode($auth->compensationType?->code);
-                if (in_array($code, self::OVERTIME_CODES, true) || $code === self::VELADA_CODE) {
+                if (in_array($code, self::OVERTIME_CODES, true)) {
                     $pendingCapturedHours += (float) $auth->hours;
                 }
             }

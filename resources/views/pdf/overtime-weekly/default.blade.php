@@ -33,7 +33,9 @@
                 <td>{{ $row['employee']['full_name'] }}</td>
                 @foreach ($report['dates'] as $date)
                     @php
-                        $extra = $row['days'][$date]['overtime_hours'] + $row['days'][$date]['velada_hours'];
+                        // SOLO tiempo extra (Luis 2026-08-12): la velada no se
+                        // mezcla en la celda — tiene su propia columna.
+                        $extra = $row['days'][$date]['overtime_hours'];
                         // Con "incluye pendientes": lo capturado sin aprobar sale
                         // DISTINGUIDO entre paréntesis (Elias 2026-08-12).
                         $porAprobar = ! empty($report['includes_pending']) ? ($row['days'][$date]['pending_overtime_hours'] ?? 0) : 0;
@@ -62,7 +64,7 @@
                     @php
                         $colSum = 0;
                         foreach ($report['rows'] as $r) {
-                            $colSum += $r['days'][$date]['overtime_hours'] + $r['days'][$date]['velada_hours'];
+                            $colSum += $r['days'][$date]['overtime_hours'];
                         }
                     @endphp
                     <td class="num">{{ $fmt($colSum) }}</td>

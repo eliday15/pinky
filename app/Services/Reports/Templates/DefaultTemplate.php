@@ -49,7 +49,8 @@ class DefaultTemplate extends AbstractOvertimeReportTemplate
 
             foreach ($report['dates'] as $date) {
                 $day = $row['days'][$date];
-                $extra = $day['overtime_hours'] + $day['velada_hours'];
+                // SOLO tiempo extra (Luis 2026-08-12): la velada va en su columna.
+                $extra = $day['overtime_hours'];
                 $cell = $this->formatHours($extra);
                 // Con "incluye pendientes": lo capturado sin aprobar sale
                 // DISTINGUIDO entre paréntesis (Elias 2026-08-12).
