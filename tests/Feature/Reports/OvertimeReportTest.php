@@ -356,10 +356,11 @@ class OvertimeReportTest extends FeatureTestCase
      */
     public function test_supervisor_can_view_overtime_preview(): void
     {
+        // Scoping por equipo (Luis 2026-08-12): el encargado solo genera el
+        // reporte de SUS departamentos — aquí, el suyo propio.
         $user = $this->actingAsSupervisor();
-        $this->attachEmployee($user);
-
         $dept = Department::factory()->create();
+        $this->attachEmployee($user, ['department_id' => $dept->id]);
 
         $this->get(route('reports.overtime-weekly.preview', [
             'department_id' => $dept->id,
@@ -369,6 +370,21 @@ class OvertimeReportTest extends FeatureTestCase
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Reports/OvertimeWeekly/Preview')
                 ->where('report.department.id', $dept->id));
+    }
+
+    public function test_supervisor_cannot_view_foreign_department_preview(): void
+    {
+        // "Los encargados no pueden ver lo de otros departamentos" (Luis
+        // 2026-08-12): un depto ajeno da 403 aunque armen la URL a mano.
+        $user = $this->actingAsSupervisor();
+        $this->attachEmployee($user, ['department_id' => Department::factory()->create()->id]);
+
+        $ajeno = Department::factory()->create();
+
+        $this->get(route('reports.overtime-weekly.preview', [
+            'department_id' => $ajeno->id,
+            'week_start' => self::WEEK_START,
+        ]))->assertForbidden();
     }
 
     /**

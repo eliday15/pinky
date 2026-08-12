@@ -47,14 +47,52 @@ class OvertimeReportController extends Controller implements HasMiddleware
     /**
      * Selector page (department + week picker).
      */
-    public function index(): Response
+    public function index(Request $request): Response
     {
+        $departments = Department::active()
+            ->orderBy('name')
+            ->get(['id', 'name', 'code']);
+
+        // Encargados (view_team sin view_all): SOLO sus departamentos — el de
+        // su propio registro y los de su gente (Luis 2026-08-12: "los
+        // encargados no pueden ver lo de otros departamentos").
+        $allowed = $this->allowedDepartmentIds($request->user());
+        if ($allowed !== null) {
+            $departments = $departments->whereIn('id', $allowed)->values();
+        }
+
         return Inertia::render('Reports/OvertimeWeekly/Index', [
-            'departments' => Department::active()
-                ->orderBy('name')
-                ->get(['id', 'name', 'code']),
+            'departments' => $departments,
             'defaultWeekStart' => Carbon::now()->startOfWeek()->toDateString(),
         ]);
+    }
+
+    /**
+     * Departamentos que puede reportear el usuario. null = sin restricción
+     * (reports.view_all). Para view_team: el depto propio + los de sus
+     * subordinados (un encargado puede tener gente en más de uno).
+     *
+     * @return \Illuminate\Support\Collection<int>|null
+     */
+    private function allowedDepartmentIds($user): ?\Illuminate\Support\Collection
+    {
+        if ($user->hasPermissionTo('reports.view_all')) {
+            return null;
+        }
+
+        $employee = $user->employee;
+        if (! $employee) {
+            return collect();
+        }
+
+        $ids = \App\Models\Employee::whereIn('id', $employee->allSubordinateIds())
+            ->pluck('department_id')
+            ->push($employee->department_id)
+            ->filter()
+            ->unique()
+            ->values();
+
+        return $ids;
     }
 
     /**
@@ -142,6 +180,14 @@ class OvertimeReportController extends Controller implements HasMiddleware
         ]);
 
         $department = Department::findOrFail($validated['department_id']);
+
+        // Mismo candado que el selector: un encargado no genera (ni exporta)
+        // el reporte de un departamento ajeno aunque arme la URL a mano.
+        $allowed = $this->allowedDepartmentIds($request->user());
+        if ($allowed !== null && ! $allowed->contains($department->id)) {
+            abort(403, 'Solo puedes generar el reporte de tus departamentos.');
+        }
+
         $start = Carbon::parse($validated['week_start']);
         $end = ! empty($validated['end_date']) ? Carbon::parse($validated['end_date']) : null;
 
