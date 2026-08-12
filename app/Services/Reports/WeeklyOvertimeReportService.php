@@ -201,7 +201,11 @@ class WeeklyOvertimeReportService
             $day = $this->buildDay($employee, $date, $record, $dayAuths, $isDeliveryDay);
 
             $days[$date] = $day;
-            $weeklyExtra += $day['overtime_hours'];
+            // El TOTAL suma lo MISMO que muestran las celdas del día (TE +
+            // velada en horas, el formato histórico de la hoja). Antes sumaba
+            // solo TE y el total salía MENOR que una celda — "no cuadra"
+            // (Luis 2026-08-11, caso Elsa: jueves 7.5 vs total 6.5).
+            $weeklyExtra += $day['overtime_hours'] + $day['velada_hours'];
             $weeklyWeekend += $day['weekend_hours'];
             $weeklyWeekendWorked += $day['weekend_worked_hours'];
             $weeklyDetected += $day['detected_overtime_hours'];
