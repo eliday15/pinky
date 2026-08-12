@@ -367,7 +367,7 @@ class AuthorizationController extends Controller
         // veces; el control vive aquí, no en la nómina.
         if ($this->activeDuplicateExists((int) $validated['employee_id'], $validated['date'], $validated['type'], $validated['compensation_type_id'] ?? null, $validated['start_time'] ?? null, $validated['end_time'] ?? null)) {
             throw \Illuminate\Validation\ValidationException::withMessages([
-                'compensation_type_id' => 'Ya existe una autorización activa de este concepto para ese empleado y ese día.',
+                'compensation_type_id' => 'Ya existe una autorización activa de este concepto para ese empleado y ese día (en horas extra: el rango se encima con una ya registrada).',
             ]);
         }
 
@@ -672,11 +672,17 @@ class AuthorizationController extends Controller
      * temprano (entrada antes del horario) y otro tardío (salida después del
      * horario), y la nómina las paga por SUMA de horas (getAuthorizedHours()).
      * Por eso el duplicado de hora extra se distingue además por su rango
-     * horario: dos bloques distintos del mismo día NO son duplicados. El resto
-     * de conceptos paga por fila/día (1 fila = 1 día/unidad), así que siguen
-     * deduplicándose por (empleado, fecha, tipo, concepto) sin mirar la hora.
+     * horario: dos bloques DISTINTOS del mismo día NO son duplicados — pero dos
+     * rangos que se ENCIMAN sí, porque nadie trabaja la misma hora dos veces y
+     * la suma pagaría doble (re-captura sobre una ventana ya aprobada, caso
+     * Jesús Fabián 2026-08-12). El resto de conceptos paga por fila/día
+     * (1 fila = 1 día/unidad), así que siguen deduplicándose por (empleado,
+     * fecha, tipo, concepto) sin mirar la hora.
+     *
+     * $ignoreId excluye a la propia autorización cuando el chequeo corre desde
+     * una edición (compararse contra sí misma siempre daría duplicado).
      */
-    private function activeDuplicateExists(int $employeeId, string $date, string $type, ?int $compensationTypeId, ?string $startTime = null, ?string $endTime = null): bool
+    private function activeDuplicateExists(int $employeeId, string $date, string $type, ?int $compensationTypeId, ?string $startTime = null, ?string $endTime = null, ?int $ignoreId = null): bool
     {
         $query = Authorization::where('employee_id', $employeeId)
             ->whereDate('date', Carbon::parse($date)->toDateString())
@@ -688,6 +694,10 @@ class AuthorizationController extends Controller
                 Authorization::STATUS_PAID,
             ]);
 
+        if ($ignoreId !== null) {
+            $query->where('id', '!=', $ignoreId);
+        }
+
         if ($type === Authorization::TYPE_OVERTIME) {
             $start = $this->normalizeTimeForCompare($startTime);
             $end = $this->normalizeTimeForCompare($endTime);
@@ -697,11 +707,81 @@ class AuthorizationController extends Controller
             // vs SQLite en pruebas).
             return $query
                 ->get(['start_time', 'end_time'])
-                ->contains(fn (Authorization $auth) => $this->normalizeTimeForCompare($auth->start_time?->format('H:i')) === $start
-                    && $this->normalizeTimeForCompare($auth->end_time?->format('H:i')) === $end);
+                ->contains(function (Authorization $auth) use ($start, $end) {
+                    $existingStart = $this->normalizeTimeForCompare($auth->start_time?->format('H:i'));
+                    $existingEnd = $this->normalizeTimeForCompare($auth->end_time?->format('H:i'));
+
+                    return ($existingStart === $start && $existingEnd === $end)
+                        || $this->overtimeRangesOverlap($start, $end, $existingStart, $existingEnd);
+                });
         }
 
         return $query->exists();
+    }
+
+    /**
+     * ¿Se enciman dos rangos horarios de TE del mismo día? Prueba semiabierta
+     * [inicio, fin): bloques contiguos (17:00–18:00 y 18:00–19:00) NO se
+     * enciman. Un fin menor o igual al inicio es salida tras medianoche y se
+     * extiende +24 h — la misma convención que el respaldo por segmentos. Sin
+     * ventana en alguno de los dos no hay forma de comparar: responde false y
+     * decide el dedup exacto.
+     */
+    private function overtimeRangesOverlap(?string $aStart, ?string $aEnd, ?string $bStart, ?string $bEnd): bool
+    {
+        if (! $aStart || ! $aEnd || ! $bStart || ! $bEnd) {
+            return false;
+        }
+
+        $aStartMin = $this->minutesOfDay($aStart);
+        $aEndMin = $this->minutesOfDay($aEnd);
+        if ($aEndMin <= $aStartMin) {
+            $aEndMin += 1440;
+        }
+        $bStartMin = $this->minutesOfDay($bStart);
+        $bEndMin = $this->minutesOfDay($bEnd);
+        if ($bEndMin <= $bStartMin) {
+            $bEndMin += 1440;
+        }
+
+        return max($aStartMin, $bStartMin) < min($aEndMin, $bEndMin);
+    }
+
+    /**
+     * ¿La ventana de esta autorización de TE se encima con TE ya aprobado o
+     * pagado del mismo empleado y día? La checada que la respaldaría ya pagó
+     * esas horas: auto-aprobarla o partirla duplicaría el pago. Se usa como
+     * guardia en la auto-aprobación y el split; la fila queda pendiente para
+     * que un humano la revise (normalmente: rechazarla como re-captura).
+     */
+    private function overlapsLiveApprovedOvertime(Authorization $authorization): bool
+    {
+        if ($authorization->type !== Authorization::TYPE_OVERTIME) {
+            return false;
+        }
+
+        $start = $this->normalizeTimeForCompare($authorization->start_time?->format('H:i'));
+        $end = $this->normalizeTimeForCompare($authorization->end_time?->format('H:i'));
+        if (! $start || ! $end) {
+            return false;
+        }
+
+        $dateString = $authorization->date instanceof Carbon
+            ? $authorization->date->toDateString()
+            : (string) $authorization->date;
+
+        return Authorization::where('employee_id', $authorization->employee_id)
+            ->whereDate('date', $dateString)
+            ->where('type', Authorization::TYPE_OVERTIME)
+            ->where('id', '!=', $authorization->id)
+            ->whereIn('status', [Authorization::STATUS_APPROVED, Authorization::STATUS_PAID])
+            ->get(['start_time', 'end_time'])
+            ->contains(fn (Authorization $other) => $this->overtimeRangesOverlap(
+                $start,
+                $end,
+                $this->normalizeTimeForCompare($other->start_time?->format('H:i')),
+                $this->normalizeTimeForCompare($other->end_time?->format('H:i')),
+            ));
     }
 
     /**
@@ -842,6 +922,23 @@ class AuthorizationController extends Controller
                     'start_time' => 'Las horas seleccionadas chocan con el horario de trabajo del empleado. No se autoriza tiempo dentro de su jornada (salvo días festivos).',
                 ]);
             }
+        }
+
+        // Mismo dedup que el alta: una edición no puede dejar la fila encimada
+        // sobre otra autorización viva del mismo día — así se disfrazó un
+        // excedente de la parte ya aprobada y se pagó doble (Corte 2026-08-12).
+        if ($this->activeDuplicateExists(
+            (int) $validated['employee_id'],
+            $validated['date'],
+            $validated['type'],
+            $validated['compensation_type_id'] ?? null,
+            $validated['start_time'] ?? null,
+            $validated['end_time'] ?? null,
+            $authorization->id,
+        )) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'start_time' => 'Ya existe otra autorización activa de este concepto para ese empleado y día, o el rango se encima con una ya registrada.',
+            ]);
         }
 
         $authorization->update($validated);
@@ -2244,6 +2341,12 @@ class AuthorizationController extends Controller
             && (! $authorization->start_time || ! $authorization->end_time)) {
             return false;
         }
+        // Horas ya consumidas: si la ventana se encima con TE aprobado/pagado
+        // del mismo día, ese tramo de checada ya pagó (re-captura de una
+        // ventana ya aprobada, caso Jesús Fabián 2026-08-12). A revisión humana.
+        if ($this->overlapsLiveApprovedOvertime($authorization)) {
+            return false;
+        }
 
         $dateString = $authorization->date instanceof Carbon
             ? $authorization->date->toDateString()
@@ -2376,6 +2479,12 @@ class AuthorizationController extends Controller
             return null;
         }
         if (! $authorization->start_time || ! $authorization->end_time || ! $authorization->hours) {
+            return null;
+        }
+        // Horas ya consumidas: una ventana encimada con TE aprobado/pagado del
+        // mismo día no se parte — aprobar su "porción respaldada" pagaría por
+        // segunda vez el mismo tramo de checada. A revisión humana.
+        if ($this->overlapsLiveApprovedOvertime($authorization)) {
             return null;
         }
 

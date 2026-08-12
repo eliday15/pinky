@@ -85,6 +85,14 @@ class AuthorizationPolicy
             return false;
         }
 
+        // El excedente de un split (extra fuera de checada) es evidencia
+        // generada por el sistema: editarlo permite disfrazarlo de la parte ya
+        // aprobada y pagar doble (caso Corte 2026-08-12). Se aprueba (ajustando
+        // horas al aprobar si hace falta) o se rechaza — nunca se edita.
+        if ($authorization->is_unbacked_extra) {
+            return false;
+        }
+
         if ($user->hasPermissionTo('authorizations.view_all')) {
             return true;
         }

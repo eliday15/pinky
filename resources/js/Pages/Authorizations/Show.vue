@@ -149,6 +149,10 @@ const submitReject = () => {
                             (la parte respaldada ya se aprobó por separado). Aprobarlas
                             es autorizar el pago de tiempo extra no respaldado por checada.
                         </p>
+                        <p class="mt-1">
+                            Este registro lo genera el sistema y no se puede editar:
+                            apruébalo (puedes ajustar las horas al aprobar) o recházalo.
+                        </p>
                     </div>
                 </div>
 
