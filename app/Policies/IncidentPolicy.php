@@ -66,6 +66,14 @@ class IncidentPolicy
      */
     public function update(User $user, Incident $incident): bool
     {
+        // Hojas de vacaciones (Dani 2026-08-12): SOLO Admin/RRHH las edita —
+        // el encargado ya no corrige días (una captura de 4 días por error se
+        // corrige arriba, incluso aprobada, con ajuste de saldo en el
+        // controller). Aplica a todo tipo que descuenta vacaciones.
+        if ($incident->incidentType?->deducts_vacation) {
+            return $user->hasPermissionTo('incidents.view_all');
+        }
+
         // Admin/RRHH can always update
         if ($user->hasPermissionTo('incidents.view_all')) {
             return true;
@@ -86,6 +94,14 @@ class IncidentPolicy
      */
     public function delete(User $user, Incident $incident): bool
     {
+        // Hojas de vacaciones (Dani 2026-08-12): SOLO Admin/RRHH las elimina,
+        // incluso aprobadas — el borrado devuelve los días al saldo
+        // (IncidentController::destroy) y es la vía de corrección cuando el
+        // empleado o el tipo estaban mal capturados.
+        if ($incident->incidentType?->deducts_vacation && ! $incident->converts_to_vacation_hours) {
+            return $user->hasPermissionTo('incidents.view_all');
+        }
+
         // Los vales de conversión "a cuenta de horas" (HxV) sí pueden borrarse
         // aunque estén aprobados: el borrado devuelve las horas no gastadas a la
         // bolsa (IncidentController::destroy) y es la vía de corrección, ya que

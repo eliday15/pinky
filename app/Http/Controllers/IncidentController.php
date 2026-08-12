@@ -75,6 +75,16 @@ class IncidentController extends Controller
 
         $incidents = $query->orderBy('created_at', 'desc')->paginate(15)->withQueryString();
 
+        // Per-row: las hojas de vacaciones solo las edita/elimina Admin/RRHH
+        // (Dani 2026-08-12), y una aprobada solo la corrige el admin — la
+        // policy ya decide todo eso; el frontend solo muestra u oculta.
+        $incidents->through(function ($incident) use ($user) {
+            $incident->can_update = $user->can('update', $incident);
+            $incident->can_delete = $user->can('delete', $incident);
+
+            return $incident;
+        });
+
         // Pending count (scoped to user's view permissions)
         $pendingQuery = Incident::where('status', 'pending');
         if (! $user->hasPermissionTo('incidents.view_all')) {
@@ -556,8 +566,25 @@ class IncidentController extends Controller
     {
         $this->authorize('update', $incident);
 
-        if ($incident->status !== 'pending') {
+        $wasApproved = $incident->status === 'approved';
+
+        if ($incident->status !== 'pending' && ! $wasApproved) {
             return redirect()->back()->with('error', 'Solo se pueden editar incidencias pendientes.');
+        }
+
+        // Corrección de una APROBADA (Dani 2026-08-12: hoja de vacaciones de
+        // 1 día capturada como 4): solo Admin/RRHH, solo fechas/horas/motivo,
+        // y el saldo de vacaciones se ajusta por la diferencia de días.
+        if ($wasApproved) {
+            if (! auth()->user()->hasPermissionTo('incidents.view_all')) {
+                return redirect()->back()->with('error', 'Solo el administrador puede corregir una incidencia aprobada.');
+            }
+            if ($incident->converts_to_vacation_hours || $incident->incidentType?->uses_vacation_hours) {
+                return redirect()->back()->with('error', 'Este tipo se corrige eliminándolo y capturándolo de nuevo (el borrado devuelve el saldo a la bolsa).');
+            }
+            if ((int) $incident->reserved_days_taken > 0) {
+                return redirect()->back()->with('error', 'Esta incidencia tomó días apartados de diciembre; corrígela eliminándola y capturándola de nuevo.');
+            }
         }
 
         $validated = $request->validate([
@@ -570,6 +597,11 @@ class IncidentController extends Controller
             'hours' => ['nullable', 'numeric', 'min:0', 'max:24'],
             'reason' => ['nullable', 'string', 'max:500'],
         ]);
+
+        if ($wasApproved && ((int) $validated['employee_id'] !== (int) $incident->employee_id
+            || (int) $validated['incident_type_id'] !== (int) $incident->incident_type_id)) {
+            return redirect()->back()->with('error', 'En una incidencia aprobada solo se corrigen fechas, horas y motivo. Para cambiar de empleado o de tipo, elimínala (devuelve el saldo) y captúrala de nuevo.');
+        }
 
         // Auto-calculate hours from start/end time if not provided
         if (! empty($validated['start_time']) && ! empty($validated['end_time']) && empty($validated['hours'])) {
@@ -584,10 +616,68 @@ class IncidentController extends Controller
         $endDate = Carbon::parse($validated['end_date']);
         $validated['days_count'] = $this->calculateDaysCount($updateType, $startDate, $endDate, $employee);
 
+        if (! $wasApproved) {
+            $incident->update($validated);
+
+            return redirect()->route('incidents.index')
+                ->with('success', 'Incidencia actualizada.');
+        }
+
+        // ─── Corrección de aprobada: ajustar saldo + reprocesar asistencia ───
+        $oldDays = (float) $incident->days_count;
+        $newDays = (float) $validated['days_count'];
+        $oldStart = Carbon::parse($incident->start_date)->toDateString();
+        $oldEnd = Carbon::parse($incident->end_date)->toDateString();
+        $delta = round($newDays - $oldDays, 2);
+
+        if ($updateType->deducts_vacation) {
+            if ($newDays <= 0) {
+                return redirect()->back()->withErrors([
+                    'saldo' => 'La corrección deja 0 días; si la hoja no procede, elimínala (el borrado devuelve los días al saldo).',
+                ]);
+            }
+            if ($delta > 0 && $delta > (float) $employee->vacation_days_available_for_request) {
+                $label = rtrim(rtrim(number_format((float) $employee->vacation_days_available_for_request, 2), '0'), '.');
+
+                return redirect()->back()->withErrors([
+                    'saldo' => "Saldo insuficiente para ampliar la hoja: la corrección agrega {$delta} día(s) y solo hay {$label} disponibles.",
+                ]);
+            }
+        }
+
         $incident->update($validated);
 
+        if ($updateType->deducts_vacation && abs($delta) > 0.001) {
+            $delta > 0
+                ? $employee->increment('vacation_days_used', $delta)
+                : $employee->decrement('vacation_days_used', abs($delta));
+        }
+
+        // Los días que SALEN de la hoja deben volver a su estado real (falta,
+        // retardo, día normal) y los que ENTRAN deben marcarse: recalcular la
+        // unión del rango viejo y el nuevo, e invalidar la nómina que lo cubre.
+        $this->recalculateAttendanceRange(
+            $incident->employee_id,
+            min($oldStart, $startDate->toDateString()),
+            max($oldEnd, $endDate->toDateString()),
+        );
+
+        $incident->recordAuditEvent(
+            action: AuditLog::ACTION_UPDATE,
+            description: 'Corrigio incidencia aprobada de '.($employee?->full_name ?? 'empleado')
+                .': '.rtrim(rtrim(number_format($oldDays, 2), '0'), '.').' → '.rtrim(rtrim(number_format($newDays, 2), '0'), '.').' dias'
+                .' ('.$oldStart.' a '.$oldEnd.' → '.$startDate->toDateString().' a '.$endDate->toDateString().')',
+            metadata: ['dias_antes' => $oldDays, 'dias_despues' => $newDays, 'ajuste_saldo' => -$delta],
+            oldValues: ['start_date' => $oldStart, 'end_date' => $oldEnd, 'days_count' => $oldDays],
+            newValues: ['start_date' => $startDate->toDateString(), 'end_date' => $endDate->toDateString(), 'days_count' => $newDays],
+        );
+
+        $deltaLabel = $delta < 0
+            ? 'se devolvieron '.rtrim(rtrim(number_format(abs($delta), 2), '0'), '.').' día(s) al saldo'
+            : ($delta > 0 ? 'se descontaron '.rtrim(rtrim(number_format($delta, 2), '0'), '.').' día(s) más del saldo' : 'sin cambio de saldo');
+
         return redirect()->route('incidents.index')
-            ->with('success', 'Incidencia actualizada.');
+            ->with('success', "Incidencia corregida ({$deltaLabel}). Asistencia y nómina del rango quedaron al día.");
     }
 
     /**
@@ -904,11 +994,23 @@ class IncidentController extends Controller
      */
     private function recalculateAttendanceForIncident(Incident $incident): void
     {
-        $records = AttendanceRecord::where('employee_id', $incident->employee_id)
-            ->whereBetween('work_date', [
-                Carbon::parse($incident->start_date)->toDateString(),
-                Carbon::parse($incident->end_date)->toDateString(),
-            ])
+        $this->recalculateAttendanceRange(
+            $incident->employee_id,
+            Carbon::parse($incident->start_date)->toDateString(),
+            Carbon::parse($incident->end_date)->toDateString(),
+        );
+    }
+
+    /**
+     * Recalcula la asistencia de un rango de fechas del empleado e invalida la
+     * nómina de los periodos que lo solapan. La corrección de una incidencia
+     * aprobada lo usa con la UNIÓN del rango viejo y el nuevo, para que los
+     * días que salieron de la hoja vuelvan a su estado real.
+     */
+    private function recalculateAttendanceRange(int $employeeId, string $startDate, string $endDate): void
+    {
+        $records = AttendanceRecord::where('employee_id', $employeeId)
+            ->whereBetween('work_date', [$startDate, $endDate])
             ->get();
 
         if ($records->isNotEmpty()) {
@@ -922,10 +1024,6 @@ class IncidentController extends Controller
         // Fase E (DECISIONES §7): la nómina de los periodos que solapan la
         // incidencia queda al día (draft: recálculo automático) o marcada
         // "requiere recálculo" (review/approved). Pagados son inmutables.
-        app(PayrollInvalidationService::class)->invalidate(
-            $incident->employee_id,
-            Carbon::parse($incident->start_date)->toDateString(),
-            Carbon::parse($incident->end_date)->toDateString(),
-        );
+        app(PayrollInvalidationService::class)->invalidate($employeeId, $startDate, $endDate);
     }
 }

@@ -277,13 +277,17 @@ const deleteIncident = (incident) => {
                             >
                                 Formato
                             </a>
+                            <!-- Per-row desde la policy: hojas de vacaciones solo
+                                 Admin/RRHH; aprobadas solo las corrige el admin. -->
                             <Link
+                                v-if="incident.can_update"
                                 :href="route('incidents.edit', incident.id)"
                                 class="text-pink-600 hover:text-pink-900"
                             >
                                 Editar
                             </Link>
                             <button
+                                v-if="incident.can_delete"
                                 @click="deleteIncident(incident)"
                                 class="text-gray-600 hover:text-gray-900"
                             >

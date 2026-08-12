@@ -938,17 +938,21 @@ class IncidentControllerTest extends FeatureTestCase
         $this->assertDatabaseHas('incidents', ['id' => $incident->id, 'reason' => 'nuevo motivo']);
     }
 
-    public function test_update_blocks_non_pending_incident(): void
+    public function test_update_blocks_rejected_but_admin_corrects_approved(): void
     {
+        // Regla desde 2026-08-12 (Dani): el admin SÍ corrige una APROBADA
+        // (fechas/horas/motivo, mismo empleado y tipo, con recálculo); una
+        // RECHAZADA sigue intocable para todos.
         $this->actingAsAdmin();
         $type = IncidentType::factory()->create();
         $employee = $this->makeEmployee();
-        $incident = Incident::factory()->approved()->create([
+
+        $rejected = Incident::factory()->create([
             'employee_id' => $employee->id,
             'incident_type_id' => $type->id,
+            'status' => 'rejected',
         ]);
-
-        $this->put(route('incidents.update', $incident), [
+        $this->put(route('incidents.update', $rejected), [
             'employee_id' => $employee->id,
             'incident_type_id' => $type->id,
             'start_date' => '2026-06-01',
@@ -957,8 +961,22 @@ class IncidentControllerTest extends FeatureTestCase
         ])
             ->assertRedirect()
             ->assertSessionHas('error');
+        $this->assertDatabaseMissing('incidents', ['id' => $rejected->id, 'reason' => 'attempt']);
 
-        $this->assertDatabaseMissing('incidents', ['id' => $incident->id, 'reason' => 'attempt']);
+        $approved = Incident::factory()->approved()->create([
+            'employee_id' => $employee->id,
+            'incident_type_id' => $type->id,
+        ]);
+        $this->put(route('incidents.update', $approved), [
+            'employee_id' => $employee->id,
+            'incident_type_id' => $type->id,
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-02',
+            'reason' => 'corregida por admin',
+        ])
+            ->assertRedirect(route('incidents.index'))
+            ->assertSessionHas('success');
+        $this->assertDatabaseHas('incidents', ['id' => $approved->id, 'reason' => 'corregida por admin']);
     }
 
     public function test_update_validation_errors(): void
@@ -1079,15 +1097,15 @@ class IncidentControllerTest extends FeatureTestCase
         $this->assertSoftDeleted('incidents', ['id' => $incident->id]);
     }
 
-    public function test_destroy_approved_incident_is_blocked_by_policy_for_everyone(): void
+    public function test_destroy_approved_non_vacation_incident_is_blocked_for_everyone(): void
     {
-        // The controller destroy() contains vacation-refund logic for an already-approved
-        // deducts_vacation incident, but IncidentPolicy::delete() returns false whenever
-        // status !== 'pending' for ALL roles (the status guard precedes the view_all check),
-        // so that refund branch is unreachable: even admin gets 403. We assert the real
-        // (authorization-blocked) behavior here; the refund code is effectively dead.
+        // Para tipos que NO descuentan vacaciones, una aprobada sigue sin
+        // poderse borrar (ni el admin): el status guard de la policy manda.
+        // Las hojas de vacaciones son la excepción desde 2026-08-12 (el admin
+        // las borra y el destroy devuelve los días) — eso se cubre en
+        // VacationIncidentAdminEditTest.
         $this->actingAsAdmin();
-        $type = IncidentType::factory()->create(['deducts_vacation' => true]);
+        $type = IncidentType::factory()->create();
         $employee = $this->makeEmployee(['vacation_days_used' => 5]);
         $incident = Incident::factory()->approved()->create([
             'employee_id' => $employee->id,
