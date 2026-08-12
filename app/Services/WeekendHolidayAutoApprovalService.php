@@ -77,12 +77,18 @@ class WeekendHolidayAutoApprovalService
 
         $dateString = $this->dateString($authorization);
 
+        // "No checa" (Dani 2026-08-12, supervisoras de Calidad): el exento de
+        // checador nunca va a tener marcas — su captura es la fuente de verdad,
+        // así que el fin de semana / festivo capturado se aprueba solo siempre
+        // que el día realmente sea sábado/domingo o festivo oficial.
+        $isExempt = (bool) $authorization->employee?->is_attendance_exempt;
+
         $record = AttendanceRecord::where('employee_id', $authorization->employee_id)
             ->whereDate('work_date', $dateString)
             ->first();
 
-        // Requiere checada de entrada Y salida ese día.
-        if (! $record || ! $record->check_in || ! $record->check_out) {
+        // Requiere checada de entrada Y salida ese día (salvo exentos).
+        if (! $isExempt && (! $record || ! $record->check_in || ! $record->check_out)) {
             return false;
         }
 
@@ -94,7 +100,12 @@ class WeekendHolidayAutoApprovalService
         }
 
         // Fin de Semana / Comida: fin de semana trabajado (fuera de horario)
-        // o festivo.
+        // o festivo. Para el exento, sin marcas que lo demuestren, manda el
+        // calendario: sábado/domingo o festivo.
+        if ($isExempt) {
+            return Carbon::parse($dateString)->isWeekend() || $isHoliday;
+        }
+
         return (bool) $record->is_weekend_work || $isHoliday;
     }
 

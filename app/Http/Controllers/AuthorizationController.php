@@ -2392,6 +2392,21 @@ class AuthorizationController extends Controller
             return false;
         }
 
+        $employee = $authorization->employee ?? Employee::find($authorization->employee_id);
+        if (! $employee) {
+            return false;
+        }
+
+        // "No checa" (Dani 2026-08-12, supervisoras de Calidad): el exento de
+        // checador no tiene marcas que respalden nada — su captura aprobada ES
+        // la fuente de verdad en nómina. Su TE se aprueba solo, con los mismos
+        // candados de arriba (pendiente, no excedente, sin candado de nómina,
+        // concepto que no jala de asistencia, sin encimarse con lo aprobado).
+        // Solo TE: la velada de exentos sigue a revisión humana.
+        if ($authorization->type === Authorization::TYPE_OVERTIME && $employee->is_attendance_exempt) {
+            return true;
+        }
+
         $dateString = $authorization->date instanceof Carbon
             ? $authorization->date->toDateString()
             : (string) $authorization->date;
@@ -2400,11 +2415,6 @@ class AuthorizationController extends Controller
             ->where('work_date', $dateString)
             ->first();
         if (! $record || ! $record->check_in || ! $record->check_out) {
-            return false;
-        }
-
-        $employee = $authorization->employee ?? Employee::find($authorization->employee_id);
-        if (! $employee) {
             return false;
         }
 
