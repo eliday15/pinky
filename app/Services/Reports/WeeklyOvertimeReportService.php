@@ -141,6 +141,7 @@ class WeeklyOvertimeReportService
             $authorizations->get($employee->id, collect()),
             $weekendUnitHours,
             $deliveryPeriods->get($employee->id, []),
+            $includePending,
         ))->values()->all();
 
         $totals = $this->buildGrandTotals($rows, $weekendUnitHours);
@@ -171,6 +172,7 @@ class WeeklyOvertimeReportService
         Collection $authorizations,
         ?int $weekendUnitHours = null,
         array $deliveryPeriods = [],
+        bool $includePending = false,
     ): array {
         $recordsByDate = $records->keyBy(fn (AttendanceRecord $r) => $r->work_date->toDateString());
         $authsByDate = $authorizations->groupBy(fn (Authorization $a) => $a->date->toDateString());
@@ -198,7 +200,7 @@ class WeeklyOvertimeReportService
                     break;
                 }
             }
-            $day = $this->buildDay($employee, $date, $record, $dayAuths, $isDeliveryDay);
+            $day = $this->buildDay($employee, $date, $record, $dayAuths, $isDeliveryDay, $includePending);
 
             $days[$date] = $day;
             // El TOTAL suma lo MISMO que muestran las celdas del día (TE +
@@ -270,6 +272,7 @@ class WeeklyOvertimeReportService
         ?AttendanceRecord $record,
         Collection $dayAuthorizations,
         bool $isDeliveryDay = false,
+        bool $includePending = false,
     ): array {
         $dateObj = Carbon::parse($date);
         $isWeekendDate = $dateObj->isWeekend();
@@ -303,10 +306,19 @@ class WeeklyOvertimeReportService
             // 2026-07-08, caso Julissa: TE aprobado con salida no marcada).
             // El tope al timecard (auditoría #20) solo rige cuando SÍ hay
             // checada completa que medir.
-            return $this->buildUnbackedDay($blank, $dayAuthorizations);
+            return $this->buildUnbackedDay($blank, $dayAuthorizations, $includePending);
         }
 
         $byCode = $dayAuthorizations->groupBy(fn (Authorization $a) => $this->normalizeCode($a->compensationType?->code));
+
+        // Con includePending la colección trae TAMBIÉN capturas pendientes:
+        // las horas de TE/velada se SEPARAN — lo aprobado alimenta las celdas
+        // de siempre y lo pendiente va aparte ("por aprobar"), bien
+        // distinguido (Elias 2026-08-12). Marcadores y FIN siguen contando
+        // toda la colección (son indicadores de presencia).
+        $approvedByCode = $dayAuthorizations
+            ->filter(fn (Authorization $a) => $a->status !== Authorization::STATUS_PENDING)
+            ->groupBy(fn (Authorization $a) => $this->normalizeCode($a->compensationType?->code));
 
         // El excedente aprobado "fuera de checada" (is_unbacked_extra, split de
         // Elias 2026-08-05) se separa del resto: la nómina lo paga SIN topar al
@@ -315,7 +327,7 @@ class WeeklyOvertimeReportService
         $authorizedOvertimeRaw = 0.0;
         $unbackedExtraHours = 0.0;
         foreach (self::OVERTIME_CODES as $code) {
-            foreach ($byCode->get($code, collect()) as $auth) {
+            foreach ($approvedByCode->get($code, collect()) as $auth) {
                 if ($auth->is_unbacked_extra) {
                     $unbackedExtraHours += (float) $auth->hours;
                 } else {
@@ -324,8 +336,20 @@ class WeeklyOvertimeReportService
             }
         }
 
+        // Horas CAPTURADAS pendientes de aprobar (TE + velada, tal cual se
+        // capturaron): la revisión del encargado se hace sobre su captura.
+        $pendingCapturedHours = 0.0;
+        if ($includePending) {
+            foreach ($dayAuthorizations->filter(fn (Authorization $a) => $a->status === Authorization::STATUS_PENDING) as $auth) {
+                $code = $this->normalizeCode($auth->compensationType?->code);
+                if (in_array($code, self::OVERTIME_CODES, true) || $code === self::VELADA_CODE) {
+                    $pendingCapturedHours += (float) $auth->hours;
+                }
+            }
+        }
+
         $weekendHours = (float) $byCode->get(self::WEEKEND_CODE, collect())->sum('hours');
-        $authorizedVeladaRaw = (float) $byCode->get(self::VELADA_CODE, collect())->sum('hours');
+        $authorizedVeladaRaw = (float) $approvedByCode->get(self::VELADA_CODE, collect())->sum('hours');
 
         $veladaMarker = $byCode->has(self::VELADA_CODE) ? 1 : 0;
         $cenaMarker = $byCode->has(self::CENA_CODE) ? 1 : 0;
@@ -371,8 +395,12 @@ class WeeklyOvertimeReportService
 
         // Approved is what the supervisor signed off on (HE codes + Velada),
         // SIN topar — pending mide lo detectado no cubierto por autorización.
+        // En modo includePending el "pendiente" es OTRA cosa: las horas
+        // CAPTURADAS que esperan aprobación (la celda ámbar "por aprobar").
         $approvedForGap = $authorizedOvertimeRaw + $authorizedVeladaRaw;
-        $pendingHours = max($detectedHours - $approvedForGap, 0.0);
+        $pendingHours = $includePending
+            ? $pendingCapturedHours
+            : max($detectedHours - $approvedForGap, 0.0);
 
         return [
             'date' => $date,
@@ -410,7 +438,7 @@ class WeeklyOvertimeReportService
      * Julissa). Sin checada completa no hay nada detectado ni pendiente, y
      * el tope al timecard solo rige cuando sí hay checada que medir.
      */
-    private function buildUnbackedDay(array $blank, Collection $dayAuthorizations): array
+    private function buildUnbackedDay(array $blank, Collection $dayAuthorizations, bool $includePending = false): array
     {
         if ($dayAuthorizations->isEmpty()) {
             return $blank;
@@ -418,15 +446,32 @@ class WeeklyOvertimeReportService
 
         $byCode = $dayAuthorizations->groupBy(fn (Authorization $a) => $this->normalizeCode($a->compensationType?->code));
 
+        // Mismo split que buildDay (Elias 2026-08-12): lo APROBADO en las
+        // celdas de siempre; lo capturado PENDIENTE, aparte y distinguido.
+        $approvedByCode = $dayAuthorizations
+            ->filter(fn (Authorization $a) => $a->status !== Authorization::STATUS_PENDING)
+            ->groupBy(fn (Authorization $a) => $this->normalizeCode($a->compensationType?->code));
+
         $overtimeHours = 0.0;
         foreach (self::OVERTIME_CODES as $code) {
-            $overtimeHours += (float) $byCode->get($code, collect())->sum('hours');
+            $overtimeHours += (float) $approvedByCode->get($code, collect())->sum('hours');
+        }
+
+        $pendingCapturedHours = 0.0;
+        if ($includePending) {
+            foreach ($dayAuthorizations->filter(fn (Authorization $a) => $a->status === Authorization::STATUS_PENDING) as $auth) {
+                $code = $this->normalizeCode($auth->compensationType?->code);
+                if (in_array($code, self::OVERTIME_CODES, true) || $code === self::VELADA_CODE) {
+                    $pendingCapturedHours += (float) $auth->hours;
+                }
+            }
         }
 
         return array_merge($blank, [
             'overtime_hours' => round($overtimeHours, 2),
             'm_hours' => round($overtimeHours, 2),
-            'velada_hours' => round((float) $byCode->get(self::VELADA_CODE, collect())->sum('hours'), 2),
+            'velada_hours' => round((float) $approvedByCode->get(self::VELADA_CODE, collect())->sum('hours'), 2),
+            'pending_overtime_hours' => round($pendingCapturedHours, 2),
             'weekend_hours' => round((float) $byCode->get(self::WEEKEND_CODE, collect())->sum('hours'), 2),
             'has_weekend_auth' => $byCode->has(self::WEEKEND_CODE),
             'velada_marker' => $byCode->has(self::VELADA_CODE) ? 1 : 0,

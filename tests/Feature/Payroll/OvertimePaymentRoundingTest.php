@@ -235,8 +235,13 @@ class OvertimePaymentRoundingTest extends FeatureTestCase
         $this->assertEqualsWithDelta(0.0, $sinPendientes['rows'][0]['days']['2026-06-03']['overtime_hours'], 0.01, 'sin la bandera: solo aprobado');
         $this->assertFalse($sinPendientes['includes_pending']);
 
+        // Con la bandera lo pendiente sale DISTINGUIDO (Elias 2026-08-12): la
+        // celda aprobada sigue en 0 y la captura espera en la parte ámbar.
         $conPendientes = $svc->buildReport($department, Carbon::parse('2026-06-01'), null, true);
-        $this->assertEqualsWithDelta(2.0, $conPendientes['rows'][0]['days']['2026-06-03']['overtime_hours'], 0.01, 'con la bandera: la captura pendiente cuenta (topada al timecard)');
+        $day = $conPendientes['rows'][0]['days']['2026-06-03'];
+        $this->assertEqualsWithDelta(0.0, $day['overtime_hours'], 0.01, 'lo aprobado no se mezcla con lo pendiente');
+        $this->assertEqualsWithDelta(2.0, $day['pending_overtime_hours'], 0.01, 'la captura pendiente aparece como "por aprobar"');
+        $this->assertEqualsWithDelta(2.0, $conPendientes['rows'][0]['totals']['pending_hours'], 0.01);
         $this->assertTrue($conPendientes['includes_pending']);
     }
 

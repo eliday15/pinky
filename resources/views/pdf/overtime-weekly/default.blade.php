@@ -32,10 +32,16 @@
             <tr>
                 <td>{{ $row['employee']['full_name'] }}</td>
                 @foreach ($report['dates'] as $date)
-                    @php $extra = $row['days'][$date]['overtime_hours'] + $row['days'][$date]['velada_hours']; @endphp
-                    <td class="num {{ $extra <= 0 ? 'zero' : '' }}">{{ $fmt($extra) }}</td>
+                    @php
+                        $extra = $row['days'][$date]['overtime_hours'] + $row['days'][$date]['velada_hours'];
+                        // Con "incluye pendientes": lo capturado sin aprobar sale
+                        // DISTINGUIDO entre paréntesis (Elias 2026-08-12).
+                        $porAprobar = ! empty($report['includes_pending']) ? ($row['days'][$date]['pending_overtime_hours'] ?? 0) : 0;
+                    @endphp
+                    <td class="num {{ $extra <= 0 && $porAprobar <= 0 ? 'zero' : '' }}">{{ $fmt($extra) }}@if ($porAprobar > 0) <span class="pending">(+{{ $fmt($porAprobar) }})</span>@endif</td>
                 @endforeach
-                <td class="num">{{ $fmt($row['totals']['total_hours']) }}</td>
+                @php $rowPend = ! empty($report['includes_pending']) ? ($row['totals']['pending_hours'] ?? 0) : 0; @endphp
+                <td class="num">{{ $fmt($row['totals']['total_hours']) }}@if ($rowPend > 0) <span class="pending">(+{{ $fmt($rowPend) }})</span>@endif</td>
                 <td class="num">{{ $weekendByUnits ? $fmt($row['totals']['weekend_units']) : $fmt($row['totals']['weekend_hours']) }}</td>
                 <td class="center {{ $row['totals']['comida_count'] === 0 ? 'zero' : '' }}">{{ $row['totals']['comida_count'] }}</td>
                 <td class="center {{ $row['totals']['velada_count'] === 0 ? 'zero' : '' }}">{{ $row['totals']['velada_count'] }}</td>

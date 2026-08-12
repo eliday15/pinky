@@ -14,6 +14,7 @@
         td.num { text-align: right; }
         td.center { text-align: center; }
         td.zero { color: #9ca3af; }
+        .pending { color: #b45309; font-weight: bold; }
         tr.totals td { background: #fafafa; font-weight: bold; }
         .obs { font-size: 8px; max-width: 180px; }
         .footer { margin-top: 12px; font-size: 8px; color: #555; display: flex; justify-content: space-between; }
@@ -33,6 +34,7 @@
     @if (!empty($report['includes_pending']))
         <div class="subtitle" style="font-weight: bold; color: #b45309;">
             *** INCLUYE CAPTURAS PENDIENTES DE APROBAR — NO ES EL FORMATO OFICIAL ***
+            Los montos entre paréntesis (+N) están POR APROBAR; el resto ya está aprobado.
         </div>
     @endif
 

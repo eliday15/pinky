@@ -50,10 +50,22 @@ class DefaultTemplate extends AbstractOvertimeReportTemplate
             foreach ($report['dates'] as $date) {
                 $day = $row['days'][$date];
                 $extra = $day['overtime_hours'] + $day['velada_hours'];
-                $line[] = $this->formatHours($extra);
+                $cell = $this->formatHours($extra);
+                // Con "incluye pendientes": lo capturado sin aprobar sale
+                // DISTINGUIDO entre paréntesis (Elias 2026-08-12).
+                $pend = ! empty($report['includes_pending']) ? ($day['pending_overtime_hours'] ?? 0) : 0;
+                if ($pend > 0) {
+                    $cell .= ' (+'.$this->formatHours($pend).' x aprobar)';
+                }
+                $line[] = $cell;
             }
 
-            $line[] = $this->formatHours($row['totals']['total_hours']);
+            $total = $this->formatHours($row['totals']['total_hours']);
+            $rowPend = ! empty($report['includes_pending']) ? ($row['totals']['pending_hours'] ?? 0) : 0;
+            if ($rowPend > 0) {
+                $total .= ' (+'.$this->formatHours($rowPend).' x aprobar)';
+            }
+            $line[] = $total;
             $line[] = ! empty($report['weekend_unit_hours'])
                 ? $row['totals']['weekend_units']
                 : $this->formatHours($row['totals']['weekend_hours']);
