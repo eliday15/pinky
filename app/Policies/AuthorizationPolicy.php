@@ -140,6 +140,14 @@ class AuthorizationPolicy
             return false;
         }
 
+        // Candado de nómina generada (Luis 2026-08-06): cuando el periodo que
+        // PAGA esta autorización ya está aprobado/pagado, el pago queda
+        // congelado — nadie aprueba ni modifica; solo el superadmin (custodio)
+        // puede corregir.
+        if (! $user->hasRole('superadmin') && $authorization->isPaymentLockedByPeriod()) {
+            return false;
+        }
+
         // Full-access admins (RRHH/admin) can also modify an existing approval or
         // re-approve a rejected one — partial approval and post-hoc adjustments —
         // for anything that isn't already paid out.
@@ -175,6 +183,12 @@ class AuthorizationPolicy
         // Supervisors can only reject team authorizations — salvo aprobador
         // nombrado del concepto.
         if ($gate === self::GATE_OPEN && $user->hasRole('supervisor') && ! $this->isInUserTeam($user, $authorization)) {
+            return false;
+        }
+
+        // Candado de nómina generada: mismo congelamiento que approve() —
+        // revertir una aprobación también cambia el pago.
+        if (! $user->hasRole('superadmin') && $authorization->isPaymentLockedByPeriod()) {
             return false;
         }
 

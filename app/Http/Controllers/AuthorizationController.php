@@ -1374,6 +1374,12 @@ class AuthorizationController extends Controller
             return redirect()->back()->with('error', 'No se puede cambiar la fecha de una autorización ya pagada.');
         }
 
+        // Candado de nómina generada (Luis 2026-08-06): mover la fecha cambia
+        // en qué semana paga — congelado salvo superadmin.
+        if (! Auth::user()->hasRole('superadmin') && $authorization->isPaymentLockedByPeriod()) {
+            return redirect()->back()->with('error', 'La nómina de esa semana ya se generó: el pago está congelado. Solo el superadmin puede corregirlo.');
+        }
+
         $validated = $request->validate([
             'date' => ['required', 'date'],
         ]);
@@ -2211,6 +2217,11 @@ class AuthorizationController extends Controller
         if ($authorization->is_unbacked_extra) {
             return false;
         }
+        // Candado de nómina generada: con el periodo que la paga ya
+        // aprobado/pagado, la auto-aprobación tampoco toca el pago.
+        if ($authorization->isPaymentLockedByPeriod()) {
+            return false;
+        }
         if (! in_array($authorization->type, [Authorization::TYPE_OVERTIME, Authorization::TYPE_NIGHT_SHIFT], true)) {
             return false;
         }
@@ -2351,6 +2362,11 @@ class AuthorizationController extends Controller
         // Solo tiempo extra (la velada sigue en match exacto) y nunca un
         // excedente ya partido.
         if ($authorization->type !== Authorization::TYPE_OVERTIME || $authorization->is_unbacked_extra) {
+            return null;
+        }
+        // Candado de nómina generada: no se parte ni aprueba nada de una
+        // semana cuyo periodo de pago ya está aprobado/pagado.
+        if ($authorization->isPaymentLockedByPeriod()) {
             return null;
         }
         // Conceptos que jalan de asistencia (Cena, Fin de semana) siempre quedan

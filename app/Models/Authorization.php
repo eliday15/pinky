@@ -291,6 +291,38 @@ class Authorization extends Model
     /**
      * Check if authorization is paid.
      */
+    /**
+     * ¿La nómina que PAGA esta autorización ya se generó (pasó de revisión)?
+     *
+     * Candado de Luis (2026-08-06): "una vez generada la nómina que ya no se
+     * pueda modificar el pago". Cuenta un periodo aprobado/pagado que cubra la
+     * FECHA y que sea del tipo donde paga el concepto: weekly/biweekly para
+     * conceptos semanales, monthly para los extras (los conceptos sin
+     * payment_period y las autorizaciones sin concepto pagan en la de extras).
+     * Respeta el alcance por departamento (Taller aparte): un depto con nómina
+     * propia solo se congela con SU periodo; el resto, con la general.
+     */
+    public function isPaymentLockedByPeriod(): bool
+    {
+        $pp = $this->compensationType?->payment_period ?? 'monthly';
+        $kinds = $pp === 'weekly' ? ['weekly', 'biweekly'] : ['monthly'];
+        $dateStr = $this->date instanceof \Illuminate\Support\Carbon
+            ? $this->date->toDateString()
+            : substr((string) $this->date, 0, 10);
+        $dept = $this->employee?->department;
+        $separate = (bool) ($dept?->has_separate_payroll);
+
+        return PayrollPeriod::query()
+            ->whereIn('status', ['approved', 'paid'])
+            ->whereIn('type', $kinds)
+            ->whereDate('start_date', '<=', $dateStr)
+            ->whereDate('end_date', '>=', $dateStr)
+            ->where(fn ($q) => $separate
+                ? $q->where('department_id', $dept->id)
+                : $q->whereNull('department_id'))
+            ->exists();
+    }
+
     public function isPaid(): bool
     {
         return $this->status === self::STATUS_PAID;
