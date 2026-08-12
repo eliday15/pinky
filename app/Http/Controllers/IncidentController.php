@@ -831,6 +831,70 @@ class IncidentController extends Controller
     }
 
     /**
+     * Formato individual de vacaciones en MEDIA CARTA (Dani 2026-08-12): el
+     * encargado lo imprime al capturar la hoja, con las fechas tomadas, el
+     * estado del saldo (corresponden / tomados / toma / pendientes) y las
+     * líneas de firma — réplica del formato en papel de la fábrica. Mismo
+     * scoping de visibilidad que el resto del módulo (view_all / view_team /
+     * view_own).
+     */
+    public function vacationForm(Incident $incident): \Symfony\Component\HttpFoundation\Response
+    {
+        $user = Auth::user();
+        if (! $user->hasPermissionTo('incidents.view_all')) {
+            if ($user->hasPermissionTo('incidents.view_team')) {
+                $allowedIds = $user->employee?->allSubordinateIds() ?? collect();
+                abort_unless(collect($allowedIds)->contains($incident->employee_id), 403);
+            } elseif ($user->hasPermissionTo('incidents.view_own')) {
+                abort_unless($incident->employee_id === $user->employee?->id, 403);
+            } else {
+                abort(403);
+            }
+        }
+
+        abort_unless(($incident->incidentType?->category) === 'vacation', 404, 'El formato solo aplica a Vacaciones.');
+
+        $employee = $incident->employee()->withTrashed()->with('department')->first();
+        abort_unless($employee !== null, 404);
+
+        // Fechas listadas: el rango capturado, saltando domingos (nunca son
+        // día de vacación).
+        $dates = [];
+        $cursor = Carbon::parse($incident->start_date);
+        $end = Carbon::parse($incident->end_date);
+        while ($cursor->lte($end)) {
+            if ($cursor->dayOfWeek !== Carbon::SUNDAY) {
+                $dates[] = $cursor->copy();
+            }
+            $cursor->addDay();
+        }
+
+        $toma = (int) ($incident->days_count ?? count($dates));
+        $used = (float) ($employee->vacation_days_used ?? 0);
+        // "Tomados anteriores" excluye ESTA hoja: si ya se aprobó, sus días ya
+        // están sumados en vacation_days_used y se restan para el desglose.
+        $anteriores = $incident->status === 'approved' ? max(0, $used - $toma) : $used;
+        $corresponden = (float) ($employee->vacation_days_entitled ?? 0);
+        $pendientes = max(0, $corresponden - $anteriores - $toma);
+
+        $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdf.vacation-form', [
+            'employee' => $employee,
+            'solicitud' => Carbon::parse($incident->created_at)->format('d/m/Y'),
+            'ingreso' => $employee->hire_date ? Carbon::parse($employee->hire_date)->format('d/m/Y') : '—',
+            'dates' => $dates,
+            'inicio' => Carbon::parse($incident->start_date)->format('d/m/Y'),
+            'fin' => Carbon::parse($incident->end_date)->format('d/m/Y'),
+            'corresponden' => rtrim(rtrim(number_format($corresponden, 1), '0'), '.'),
+            'toma' => $toma,
+            'anteriores' => rtrim(rtrim(number_format($anteriores, 1), '0'), '.'),
+            'pendientes' => rtrim(rtrim(number_format($pendientes, 1), '0'), '.'),
+            // Media carta: 8.5 × 5.5 in = 612 × 396 pt.
+        ])->setPaper([0, 0, 612, 396]);
+
+        return $pdf->download("vacaciones_{$employee->employee_number}_".Carbon::parse($incident->start_date)->format('Y-m-d').'.pdf');
+    }
+
+    /**
      * Recalcula los attendance_records cubiertos por la incidencia para que
      * su efecto (o la ausencia de él) se refleje de inmediato — espejo de lo
      * que AuthorizationController::approve ya hace para autorizaciones.

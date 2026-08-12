@@ -97,6 +97,7 @@ Route::middleware(['auth', 'password-changed', 'two-factor-setup'])->group(funct
     Route::get('/incidents/create-bulk', [IncidentController::class, 'createBulk'])->name('incidents.createBulk');
     Route::post('/incidents/store-bulk', [IncidentController::class, 'storeBulk'])->name('incidents.storeBulk');
     Route::resource('incidents', IncidentController::class);
+    Route::get('/incidents/{incident}/vacation-form', [IncidentController::class, 'vacationForm'])->name('incidents.vacationForm');
     Route::post('/incidents/{incident}/approve', [IncidentController::class, 'approve'])->name('incidents.approve');
     Route::post('/incidents/{incident}/reject', [IncidentController::class, 'reject'])->name('incidents.reject');
 

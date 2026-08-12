@@ -268,6 +268,15 @@ const deleteIncident = (incident) => {
                                     Rechazar
                                 </button>
                             </template>
+                            <!-- Formato individual de vacaciones en media carta
+                                 (Dani 2026-08-12): descarga directa, no Inertia. -->
+                            <a
+                                v-if="incident.incident_type?.category === 'vacation'"
+                                :href="route('incidents.vacationForm', incident.id)"
+                                class="text-blue-600 hover:text-blue-900"
+                            >
+                                Formato
+                            </a>
                             <Link
                                 :href="route('incidents.edit', incident.id)"
                                 class="text-pink-600 hover:text-pink-900"
