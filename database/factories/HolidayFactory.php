@@ -15,6 +15,18 @@ class HolidayFactory extends Factory
     protected $model = Holiday::class;
 
     /**
+     * Offset SECUENCIAL por proceso para la fecha (columna UNIQUE): un
+     * contador monotónico jamás se repite en el proceso (cada proceso
+     * paralelo tiene su propia base). El fake()->unique() aleatorio del fix
+     * anterior seguía chocando: la RAÍZ del flake era que la migración
+     * seed_dof_and_jewish_holidays siembra festivos oficiales HASTA 2030 y
+     * la base "2030" caía encima de ellos (offset aleatorio 0-730 ≈ 1-2% de
+     * choque; cazado por fin 2026-08-12). Base 2032: después de TODO lo
+     * sembrado — si algún día se siembran más años, mover la base más lejos.
+     */
+    protected static int $dateOffset = 0;
+
+    /**
      * Define the model's default state.
      *
      * @return array<string, mixed>
@@ -32,13 +44,8 @@ class HolidayFactory extends Factory
         ];
 
         return [
-            // 'date' is UNIQUE. unique() solo separa los offsets ENTRE SÍ — no
-            // contra los festivos de fecha FIJA que los tests crean con
-            // onDate('2026-…'), y la base now()±1año los pisaba de vez en
-            // cuando (flake cazado 2026-08-11). Base 2030: lejos de cualquier
-            // fecha de fixture; ningún test usa festivos aleatorios sin fijar.
-            'date' => \Carbon\Carbon::create(2030, 1, 1)
-                ->addDays(fake()->unique()->numberBetween(0, 730))
+            'date' => \Carbon\Carbon::create(2032, 1, 1)
+                ->addDays(self::$dateOffset++)
                 ->format('Y-m-d'),
             'name' => fake()->randomElement($names),
             'is_mandatory' => true,
