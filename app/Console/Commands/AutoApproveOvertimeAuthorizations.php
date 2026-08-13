@@ -85,6 +85,12 @@ class AutoApproveOvertimeAuthorizations extends Command
                     $split['excess_hours'],
                 ));
                 $splitCount++;
+            } elseif ($controller->attemptRawPunchMorningApproval($authorization)) {
+                // TE de ANTES del horario anclado a una huella que la regla de
+                // madrugada descartó (Elias 2026-08-12): pagado completo como
+                // extra fuera de checada.
+                $this->info("Aprobada {$label} (huella de madrugada)");
+                $count++;
             }
         }
 

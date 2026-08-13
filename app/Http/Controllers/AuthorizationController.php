@@ -2353,7 +2353,13 @@ class AuthorizationController extends Controller
             // Reclama MÁS de lo que la checada respalda: partirla — aprobar la
             // porción respaldada y dejar el excedente pendiente, marcado como
             // extra fuera de checada (Elias 2026-08-05).
-            $this->attemptOvertimeSplitApproval($authorization);
+            if ($this->attemptOvertimeSplitApproval($authorization) !== null) {
+                return;
+            }
+
+            // TE de ANTES del horario respaldado por una huella que la regla
+            // de madrugada descartó (Elias 2026-08-12): se aprueba solo.
+            $this->attemptRawPunchMorningApproval($authorization);
 
             return;
         }
@@ -2750,6 +2756,124 @@ class AuthorizationController extends Controller
     }
 
     /**
+     * Respaldo por HUELLA DE MADRUGADA (Elias 2026-08-12: "muchas veces hacen
+     * horas extra antes de su horario que NO son veladas").
+     *
+     * La regla de las 3 h descarta como entrada toda marca muy anterior al
+     * turno — correcto para el pareo de asistencia (una salida de velada tras
+     * medianoche no es la entrada del día), pero deja sin respaldo el TE
+     * matutino REAL (auditorías de madrugada: caso Miriam #4525, huella de
+     * 05:01 con turno de 09:00). Aquí la CAPTURA desambigua lo que el pareo no
+     * puede: si la ventana capturada es de ANTES del turno (termina a más
+     * tardar al inicio) y ARRANCA pegada a una marca cruda del día
+     * (P ∈ [inicio−15 min, inicio+30 min]), esa huella la respalda — una
+     * salida de velada (≈01:00) jamás queda pegada a una captura matutina
+     * (≈05:00–07:00), así que no hay confusión.
+     *
+     * Se aprueba MARCADA `is_unbacked_extra`: el timecard no acredita esas
+     * horas (la marca fue descartada del pareo), y el flag es exactamente lo
+     * que las paga completas SOBRE el tope y las señala en reporte y recibo.
+     * Las horas se topan a lo que va de la huella al inicio del turno (una
+     * huella de 05:31 con captura de 05:00 paga desde 05:31, con escalera).
+     * Mismos candados que el resto de la auto-aprobación: pendiente, sin
+     * candado de nómina, sin encimarse con TE aprobado, sin concepto que jala
+     * de asistencia, y nunca exentos (tienen su propio bypass).
+     */
+    public function attemptRawPunchMorningApproval(Authorization $authorization): bool
+    {
+        $authorization->refresh();
+
+        if ($authorization->status !== Authorization::STATUS_PENDING
+            || $authorization->type !== Authorization::TYPE_OVERTIME
+            || $authorization->is_unbacked_extra
+            || ! $authorization->start_time
+            || ! $authorization->end_time
+            || ! $authorization->hours) {
+            return false;
+        }
+        if ($authorization->isPaymentLockedByPeriod() || $this->overlapsLiveApprovedOvertime($authorization)) {
+            return false;
+        }
+        if ($authorization->compensation_type_id
+            && optional(CompensationType::find($authorization->compensation_type_id))->pullsFromAttendance()) {
+            return false;
+        }
+
+        $employee = $authorization->employee ?? Employee::find($authorization->employee_id);
+        if (! $employee || $employee->is_attendance_exempt) {
+            return false;
+        }
+
+        $dateString = Carbon::parse($authorization->date)->toDateString();
+        $schedule = $employee->getEffectiveScheduleForDay(Carbon::parse($dateString)->format('l'));
+        if (! $schedule || empty($schedule->entry_time)) {
+            return false;
+        }
+
+        $record = AttendanceRecord::where('employee_id', $authorization->employee_id)
+            ->whereDate('work_date', $dateString)
+            ->first();
+        if (! $record || ! $record->check_in || ! $record->check_out) {
+            return false;
+        }
+
+        $entryMin = $this->minutesOfDay(substr((string) $schedule->entry_time, 0, 5));
+        $startMin = $this->minutesOfDay($authorization->start_time->format('H:i'));
+        $endMin = $this->minutesOfDay($authorization->end_time->format('H:i'));
+
+        // Solo ventanas íntegramente ANTES del turno. Lo que cruza el inicio
+        // del turno o va después ya lo cubren los caminos normales.
+        if ($endMin <= $startMin || $endMin > $entryMin || $startMin >= $entryMin) {
+            return false;
+        }
+
+        // Marca cruda pegada al inicio capturado (la más temprana que ancle).
+        $anchorMin = null;
+        foreach ((array) $record->raw_punches as $punch) {
+            $time = substr((string) ($punch['time'] ?? ''), 0, 5);
+            if (! preg_match('/^\d{2}:\d{2}$/', $time)) {
+                continue;
+            }
+            $p = $this->minutesOfDay($time);
+            if ($p >= $startMin - 15 && $p <= $startMin + 30 && $p < $entryMin) {
+                $anchorMin = $anchorMin === null ? $p : min($anchorMin, $p);
+            }
+        }
+        if ($anchorMin === null) {
+            return false;
+        }
+
+        $backedHours = min(
+            $this->roundOvertimeMinutes($endMin - max($startMin, $anchorMin)),
+            round((float) $authorization->hours, 2),
+        );
+        if ($backedHours <= 0) {
+            return false;
+        }
+
+        DB::transaction(function () use ($authorization, $backedHours) {
+            $authorization->forceFill(['is_unbacked_extra' => true])->save();
+            $authorization->approve(Auth::user(), $backedHours);
+        });
+
+        $anchorLabel = sprintf('%02d:%02d', intdiv($anchorMin, 60), $anchorMin % 60);
+        $authorization->loadMissing('employee');
+        $authorization->recordAuditEvent(
+            action: AuditLog::ACTION_APPROVE,
+            description: 'Aprobo TE matutino de '.($authorization->employee?->full_name ?? 'empleado')
+                .' ('.number_format((float) $authorization->hours, 2).' h) del '
+                .Carbon::parse($authorization->date)->format('d/m/Y')
+                .': la huella de las '.$anchorLabel.' respalda la ventana (la regla de madrugada la habia descartado del pareo). Pagada completa como extra fuera de checada.',
+            metadata: ['huella_ancla' => $anchorLabel, 'extra_fuera_de_checada' => true],
+            oldValues: ['status' => Authorization::STATUS_PENDING],
+            newValues: ['status' => $authorization->status],
+        );
+        $this->applyApprovalEffects($authorization, app(ZktecoSyncService::class));
+
+        return true;
+    }
+
+    /**
      * Botón "Recalcular pendientes" (Luis 2026-08-06): re-evalúa TODAS las
      * autorizaciones de TE pendientes contra las checadas — el MISMO motor que
      * corre al capturar y en el barrido por consola. Sirve cuando algo llega
@@ -2780,6 +2904,10 @@ class AuthorizationController extends Controller
                 $approved++;
             } elseif ($this->attemptOvertimeSplitApproval($authorization) !== null) {
                 $split++;
+            } elseif ($this->attemptRawPunchMorningApproval($authorization)) {
+                // TE de antes del horario respaldado por una huella descartada
+                // por la regla de madrugada (Elias 2026-08-12).
+                $approved++;
             }
         }
 
