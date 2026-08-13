@@ -188,6 +188,9 @@ class AuthorizationController extends Controller
                 'reject' => $user->hasPermissionTo('authorizations.reject'),
                 // Solo el admin puede cambiar la fecha de una autorización.
                 'edit_date' => $user->hasAnyRole(['superadmin', 'admin']),
+                // Solo el admin aprueba TE como "extra fuera de checada"
+                // (pago completo sin respaldo del reloj, señalado en reporte).
+                'approve_unbacked' => $user->hasPermissionTo('authorizations.view_all'),
             ],
         ]);
     }
@@ -1041,19 +1044,39 @@ class AuthorizationController extends Controller
         // empty value keeps the requested/detected hours untouched.
         $validated = $request->validate([
             'hours' => $this->hoursRules($authorization->compensation_type_id, $authorization->type),
+            'as_unbacked_extra' => ['nullable', 'boolean'],
         ]);
         $overrideHours = (isset($validated['hours']) && $validated['hours'] !== null && $validated['hours'] !== '')
             ? (float) $validated['hours']
             : null;
 
+        // Aprobar como EXTRA FUERA DE CHECADA (Elias 2026-08-12, "soluciones
+        // auto-servibles"): la decisión consciente de pagar TE que el reloj no
+        // respalda (trabajo real sin marca — p. ej. entrada de madrugada que la
+        // regla de las 3 h descartó, casos Elsa #4488 y Miriam #4525) antes
+        // exigía intervención por consola. Solo ADMIN y solo TE: se marca
+        // is_unbacked_extra (paga completa SOBRE el tope y así queda señalada
+        // en reporte y recibo) y el tope de checadas no aplica.
+        $asUnbacked = $request->boolean('as_unbacked_extra');
+        if ($asUnbacked) {
+            if (! $isAdmin || $authorization->type !== Authorization::TYPE_OVERTIME) {
+                return redirect()->back()->with('error', 'Solo el administrador puede aprobar tiempo extra como "extra fuera de checada".');
+            }
+            $authorization->forceFill(['is_unbacked_extra' => true])->save();
+        }
+
         // Tope al aprobar (Luis 2026-07-08): el tiempo extra aprobado no puede
         // exceder lo que respaldan las checadas del día, para que la
         // aprobación, la hoja y la nómina siempre cuadren.
         $capMessage = '';
-        $cap = $this->payableOvertimeCap($authorization);
-        if ($cap !== null) {
+        $cap = $asUnbacked ? null : $this->payableOvertimeCap($authorization);
+        if ($cap !== null && ! $authorization->is_unbacked_extra) {
             if ($cap <= 0) {
-                return redirect()->back()->with('error', 'Las checadas de ese día no respaldan tiempo extra; corrige la asistencia o rechaza la solicitud.');
+                $hint = $isAdmin
+                    ? ' Si el trabajo fue real pero sin marca, apruébala con la casilla "extra fuera de checada" (paga completa y queda señalada).'
+                    : '';
+
+                return redirect()->back()->with('error', 'Las checadas de ese día no respaldan tiempo extra; corrige la asistencia o rechaza la solicitud.'.$hint);
             }
             $requested = $overrideHours ?? (float) $authorization->hours;
             if ($requested > $cap) {
@@ -1079,6 +1102,7 @@ class AuthorizationController extends Controller
                 'horas_aprobadas' => $authorization->hours,
                 'horas_ajustadas' => $overrideHours,
                 'tope_aplicado' => $capMessage !== '' ? true : null,
+                'extra_fuera_de_checada' => $asUnbacked ?: null,
             ], fn ($v) => $v !== null),
             oldValues: ['status' => $oldStatus],
             newValues: ['status' => $authorization->status],

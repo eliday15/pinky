@@ -176,6 +176,7 @@ const hourStepOptions = computed(() => {
 const approveForm = useForm({
     hours: '',
     two_factor_code: '',
+    as_unbacked_extra: false,
 });
 
 const isApproveModify = computed(() => approveAuth.value?.status === 'approved');
@@ -186,6 +187,9 @@ const openApprove = (auth) => {
     const n = Number(auth.hours);
     approveForm.hours = n > 0 ? n.toFixed(2) : '';
     approveForm.two_factor_code = '';
+    // El excedente de un split ya viene marcado; la casilla arranca apagada
+    // para el resto (decisión explícita del admin, caso por caso).
+    approveForm.as_unbacked_extra = false;
     approveForm.clearErrors();
     showApproveModal.value = true;
 };
@@ -683,6 +687,27 @@ const typeLabels = {
                             <p v-if="approveForm.errors.hours" class="mt-1 text-sm text-red-600">
                                 {{ approveForm.errors.hours }}
                             </p>
+                        </div>
+                        <!-- Solo admin y solo TE: pagar completo sin respaldo del
+                             reloj (trabajo real sin marca). Antes exigía consola. -->
+                        <div
+                            v-if="can?.approve_unbacked && approveAuth.type === 'overtime' && !approveAuth.is_unbacked_extra"
+                            class="mb-4"
+                        >
+                            <label class="flex items-start gap-2 text-sm text-gray-700">
+                                <input
+                                    v-model="approveForm.as_unbacked_extra"
+                                    type="checkbox"
+                                    class="mt-0.5 rounded border-gray-300 text-pink-600 focus:ring-pink-500"
+                                />
+                                <span>
+                                    Extra fuera de checada: pagar completo aunque el reloj no lo respalde
+                                    <span class="block text-xs text-gray-400">
+                                        Para trabajo real sin marca (p. ej. entrada de madrugada que el
+                                        sistema descartó). Sin tope de checadas y señalado en el reporte.
+                                    </span>
+                                </span>
+                            </label>
                         </div>
                         <div v-if="hasTwoFactor" class="mb-4">
                             <label class="block text-sm font-medium text-gray-700 mb-1">
