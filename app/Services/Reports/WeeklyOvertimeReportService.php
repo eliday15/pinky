@@ -89,9 +89,19 @@ class WeeklyOvertimeReportService
             $cursor->addDay();
         }
 
+        // Activos + bajas cuya fecha de baja cae DENTRO o DESPUÉS de la semana
+        // reportada (Dani 2026-08-12): el TE de la última semana de un dado de
+        // baja se captura después de la baja y debe salir en su formato; en
+        // semanas posteriores a su baja ya no aparecen.
         $employees = Employee::with(['schedule', 'department', 'compensationTypes'])
             ->where('department_id', $department->id)
-            ->where('status', 'active')
+            ->where(function ($q) use ($start) {
+                $q->where('status', 'active')
+                    ->orWhere(function ($q2) use ($start) {
+                        $q2->where('status', 'terminated')
+                            ->whereDate('termination_date', '>=', $start->toDateString());
+                    });
+            })
             ->orderBy('full_name')
             ->get();
 

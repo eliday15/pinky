@@ -154,8 +154,10 @@ class AuthorizationController extends Controller
         $pendingCount = $pendingQuery->count();
 
         // Get employees for filter (scoped) — only those who have at least one
-        // authorization, so the dropdown stays short and relevant.
-        $employeesQuery = Employee::active()
+        // authorization, so the dropdown stays short and relevant. Bajas
+        // recientes incluidas: sus autorizaciones de la última semana se
+        // capturan y consultan después de la baja (Dani 2026-08-12).
+        $employeesQuery = Employee::activeOrRecentlyTerminated()
             ->orderBy('full_name')
             ->whereExists(function ($q) {
                 $q->select(\Illuminate\Support\Facades\DB::raw(1))
@@ -199,8 +201,9 @@ class AuthorizationController extends Controller
 
         $user = Auth::user();
 
-        // Scope employees based on permissions
-        $employeesQuery = Employee::active()->orderBy('full_name');
+        // Scope employees based on permissions. Incluye bajas recientes: el TE
+        // de su última semana se captura después de la baja (Dani 2026-08-12).
+        $employeesQuery = Employee::activeOrRecentlyTerminated()->orderBy('full_name');
         if (! $user->hasPermissionTo('authorizations.view_all')) {
             if ($user->hasPermissionTo('authorizations.view_team')) {
                 $userEmployee = $user->employee;
@@ -215,9 +218,10 @@ class AuthorizationController extends Controller
             }
         }
 
-        $employees = $employeesQuery->get(['id', 'full_name', 'employee_number', 'department_id', 'schedule_id', 'schedule_overrides']);
+        $employees = $employeesQuery->get(['id', 'full_name', 'employee_number', 'department_id', 'schedule_id', 'schedule_overrides', 'status', 'termination_date']);
         $this->appendActiveCompensationTypeIds($employees);
         $this->appendScheduleByDay($employees);
+        $this->labelTerminatedEmployees($employees);
         $employees->each(fn ($e) => $e->makeHidden(['schedule_id', 'schedule_overrides']));
 
         $types = $this->getAuthorizationTypes();
@@ -425,8 +429,9 @@ class AuthorizationController extends Controller
 
         $user = Auth::user();
 
-        // Scope employees based on permissions
-        $employeesQuery = Employee::active()->orderBy('full_name');
+        // Scope employees based on permissions. Incluye bajas recientes: el TE
+        // de su última semana se captura después de la baja (Dani 2026-08-12).
+        $employeesQuery = Employee::activeOrRecentlyTerminated()->orderBy('full_name');
         if (! $user->hasPermissionTo('authorizations.view_all')) {
             if ($user->hasPermissionTo('authorizations.view_team')) {
                 $userEmployee = $user->employee;
@@ -440,9 +445,10 @@ class AuthorizationController extends Controller
             }
         }
 
-        $employees = $employeesQuery->get(['id', 'full_name', 'employee_number', 'department_id', 'schedule_id', 'schedule_overrides']);
+        $employees = $employeesQuery->get(['id', 'full_name', 'employee_number', 'department_id', 'schedule_id', 'schedule_overrides', 'status', 'termination_date']);
         $this->appendActiveCompensationTypeIds($employees);
         $this->appendScheduleByDay($employees);
+        $this->labelTerminatedEmployees($employees);
         $employees->each(fn ($e) => $e->makeHidden(['schedule_id', 'schedule_overrides']));
 
         return Inertia::render('Authorizations/CreateBulk', [
@@ -909,8 +915,10 @@ class AuthorizationController extends Controller
 
         $authorization->load(['employee']);
 
-        $employees = Employee::active()->orderBy('full_name')->get(['id', 'full_name', 'employee_number']);
+        $employees = Employee::activeOrRecentlyTerminated()->orderBy('full_name')
+            ->get(['id', 'full_name', 'employee_number', 'status', 'termination_date']);
         $this->appendActiveCompensationTypeIds($employees);
+        $this->labelTerminatedEmployees($employees);
 
         return Inertia::render('Authorizations/Edit', [
             'authorization' => $authorization,
@@ -2780,6 +2788,22 @@ class AuthorizationController extends Controller
      * con la tarifa global del concepto (resolveRate cae a la tarifa global
      * cuando no hay override de empleado/puesto/depto).
      */
+    /**
+     * Etiqueta "(baja dd/mm)" en el nombre de los dados de baja para que se
+     * distingan en los selectores de captura (Dani 2026-08-12). Los campos
+     * crudos status/termination_date se ocultan del payload.
+     */
+    private function labelTerminatedEmployees(\Illuminate\Database\Eloquent\Collection $employees): void
+    {
+        $employees->each(function ($e) {
+            if ($e->status === 'terminated') {
+                $fecha = $e->termination_date ? ' '.Carbon::parse($e->termination_date)->format('d/m') : '';
+                $e->full_name .= ' (baja'.$fecha.')';
+            }
+            $e->makeHidden(['status', 'termination_date']);
+        });
+    }
+
     private function appendActiveCompensationTypeIds(\Illuminate\Database\Eloquent\Collection $employees): void
     {
         $employees->load(['compensationTypes' => fn ($q) => $q->wherePivot('is_active', true)->select('compensation_types.id')]);

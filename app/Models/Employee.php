@@ -577,6 +577,24 @@ class Employee extends Model
     }
 
     /**
+     * Activos MÁS bajas recientes (Dani 2026-08-12): el tiempo extra de la
+     * última semana de un dado de baja se captura DESPUÉS de la baja, así que
+     * los selectores de captura no pueden esconderlo. 30 días cubren de sobra
+     * el cierre de su última semana y su finiquito.
+     */
+    public function scopeActiveOrRecentlyTerminated($query, int $days = 30)
+    {
+        return $query->where(function ($q) use ($days) {
+            $q->where('status', 'active')
+                ->orWhere(function ($q2) use ($days) {
+                    $q2->where('status', 'terminated')
+                        ->whereNotNull('termination_date')
+                        ->whereDate('termination_date', '>=', now()->subDays($days)->toDateString());
+                });
+        });
+    }
+
+    /**
      * Scope for minimum wage employees.
      */
     public function scopeMinimumWage($query)
