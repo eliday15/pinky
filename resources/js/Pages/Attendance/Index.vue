@@ -346,10 +346,13 @@ const getAttendance = (employee, date) => {
                                 </div>
                                 <div class="flex items-center justify-center gap-1 mt-1">
                                     <span class="text-xs text-gray-500">{{ getAttendance(employee, date).worked_hours }}h</span>
+                                    <!-- display_status: un "Ausente" cubierto por incidencia
+                                         aprobada se pinta como Vacaciones/Incapacidad/Permiso
+                                         (Dani 2026-08-13); el status crudo no cambia. -->
                                     <span
-                                        :class="[statusColors[getAttendance(employee, date).status], 'px-1.5 py-0.5 text-[10px] font-medium rounded-full']"
+                                        :class="[statusColors[getAttendance(employee, date).display_status || getAttendance(employee, date).status], 'px-1.5 py-0.5 text-[10px] font-medium rounded-full']"
                                     >
-                                        {{ statusLabels[getAttendance(employee, date).status] }}
+                                        {{ statusLabels[getAttendance(employee, date).display_status || getAttendance(employee, date).status] }}
                                     </span>
                                 </div>
                                 <div v-if="getAttendance(employee, date).late_minutes > 0" class="text-[10px] text-yellow-600 mt-0.5">

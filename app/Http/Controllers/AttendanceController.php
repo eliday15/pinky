@@ -9,6 +9,7 @@ use App\Models\AttendanceRecord;
 use App\Models\Authorization;
 use App\Models\Department;
 use App\Models\Employee;
+use App\Models\Incident;
 use App\Models\SyncLog;
 use App\Policies\AttendanceRecordPolicy;
 use App\Services\AnomalyDetectorService;
@@ -96,8 +97,18 @@ class AttendanceController extends Controller
 
         $employees = $employeeQuery->orderBy('full_name')->paginate(20)->withQueryString();
 
+        // Días cubiertos por incidencia aprobada (Dani 2026-08-13): un ausente
+        // de vacaciones/incapacidad/permiso se MUESTRA con su incidencia en
+        // lugar de "Ausente". Solo display — el status crudo no cambia y la
+        // nómina/reportes siguen con typeJustifiesAbsence.
+        $coveredByIncident = Incident::coveredStatusByEmployee(
+            $employees->getCollection()->pluck('id'),
+            $startDate->toDateString(),
+            $endDate->toDateString(),
+        );
+
         // Transform: key attendance by date for each employee
-        $employees->getCollection()->transform(function ($employee) {
+        $employees->getCollection()->transform(function ($employee) use ($coveredByIncident) {
             $employee->attendance_by_date = $employee->attendanceRecords
                 ->keyBy(fn ($r) => $r->work_date->format('Y-m-d'))
                 ->map(fn ($r) => [
@@ -107,6 +118,12 @@ class AttendanceController extends Controller
                     'worked_hours' => $r->worked_hours,
                     'overtime_hours' => $r->overtime_hours,
                     'status' => $r->status,
+                    // Lo que la celda pinta: la incidencia aprobada gana sobre
+                    // un "Ausente" (los estatus vacation/sick_leave/permission
+                    // ya existen en la paleta del UI).
+                    'display_status' => $r->status === 'absent'
+                        ? ($coveredByIncident[$employee->id][$r->work_date->format('Y-m-d')] ?? $r->status)
+                        : $r->status,
                     'late_minutes' => $r->late_minutes,
                 ]);
             unset($employee->attendanceRecords);
@@ -134,6 +151,21 @@ class AttendanceController extends Controller
             }
         }
 
+        // Ausentes cubiertos por incidencia aprobada NO cuentan en la tarjeta
+        // (Dani 2026-08-13): quien está de vacaciones no es un "ausente".
+        $absentPairs = (clone $allRecords)->where('status', 'absent')->get(['employee_id', 'work_date']);
+        $coveredAbsent = 0;
+        if ($absentPairs->isNotEmpty()) {
+            $coveredForSummary = Incident::coveredStatusByEmployee(
+                $absentPairs->pluck('employee_id')->unique(),
+                $startDate->toDateString(),
+                $endDate->toDateString(),
+            );
+            $coveredAbsent = $absentPairs
+                ->filter(fn ($r) => isset($coveredForSummary[$r->employee_id][Carbon::parse($r->work_date)->toDateString()]))
+                ->count();
+        }
+
         $summaryCounts = $allRecords
             ->selectRaw('status, COUNT(*) as count')
             ->groupBy('status')
@@ -143,7 +175,7 @@ class AttendanceController extends Controller
         $summary = [
             'present' => $summaryCounts['present'] ?? 0,
             'late' => $summaryCounts['late'] ?? 0,
-            'absent' => $summaryCounts['absent'] ?? 0,
+            'absent' => max(0, ($summaryCounts['absent'] ?? 0) - $coveredAbsent),
             'partial' => $summaryCounts['partial'] ?? 0,
         ];
 

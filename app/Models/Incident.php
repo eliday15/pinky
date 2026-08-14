@@ -184,6 +184,46 @@ class Incident extends Model
     }
 
     /**
+     * Como justifiedDatesByEmployee, pero con la CATEGORÍA visible por fecha:
+     * [employee_id => ['Y-m-d' => 'vacation'|'sick_leave'|'permission']].
+     * La usa Asistencia para mostrar "Vacaciones"/"Incapacidad"/"Permiso" en
+     * lugar de "Ausente" (Dani 2026-08-13) — solo DISPLAY: el status crudo del
+     * registro no cambia, así nómina y reportes siguen con su propia regla
+     * (typeJustifiesAbsence). La categoría 'absence' (falta justificada
+     * pagada) NO se mapea a propósito: sigue viéndose como falta.
+     */
+    public static function coveredStatusByEmployee(iterable $employeeIds, string $startDate, string $endDate): array
+    {
+        $displayable = ['vacation', 'sick_leave', 'permission'];
+
+        $incidents = self::query()
+            ->where('status', 'approved')
+            ->whereIn('employee_id', collect($employeeIds)->all())
+            ->where('start_date', '<=', $endDate)
+            ->where('end_date', '>=', $startDate)
+            ->with('incidentType')
+            ->get();
+
+        $map = [];
+
+        foreach ($incidents as $incident) {
+            $category = $incident->incidentType?->category;
+            if (! in_array($category, $displayable, true)) {
+                continue;
+            }
+
+            $from = Carbon::parse($incident->start_date)->max(Carbon::parse($startDate));
+            $to = Carbon::parse($incident->end_date)->min(Carbon::parse($endDate));
+
+            for ($day = $from->copy(); $day->lte($to); $day->addDay()) {
+                $map[$incident->employee_id][$day->toDateString()] = $category;
+            }
+        }
+
+        return $map;
+    }
+
+    /**
      * Días de ESTA incidencia que solapan el rango [start, end], contados
      * según el count_mode del tipo (DECISIONES §6): calendario para
      * incapacidades (estándar IMSS), hábiles para vacaciones/permisos.
