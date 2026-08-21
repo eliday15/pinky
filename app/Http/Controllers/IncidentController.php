@@ -43,7 +43,9 @@ class IncidentController extends Controller
             if ($user->hasPermissionTo('incidents.view_team')) {
                 $userEmployee = $user->employee;
                 if ($userEmployee) {
-                    $allowedIds = $userEmployee->allSubordinateIds();
+                    // El equipo incluye al propio jefe (Dani 2026-08-19): ve su
+                    // propia hoja de vacaciones además de las de su gente.
+                    $allowedIds = array_merge([$userEmployee->id], $userEmployee->allSubordinateIds());
                     $query->whereHas('employee', function ($q) use ($allowedIds) {
                         $q->whereIn('id', $allowedIds);
                     });
@@ -91,7 +93,7 @@ class IncidentController extends Controller
             if ($user->hasPermissionTo('incidents.view_team')) {
                 $userEmployee = $user->employee;
                 if ($userEmployee) {
-                    $allowedIds = $userEmployee->allSubordinateIds();
+                    $allowedIds = array_merge([$userEmployee->id], $userEmployee->allSubordinateIds());
                     $pendingQuery->whereHas('employee', function ($q) use ($allowedIds) {
                         $q->whereIn('id', $allowedIds);
                     });
@@ -108,7 +110,7 @@ class IncidentController extends Controller
             if ($user->hasPermissionTo('incidents.view_team')) {
                 $userEmployee = $user->employee;
                 if ($userEmployee) {
-                    $employeesQuery->whereIn('id', $userEmployee->allSubordinateIds());
+                    $employeesQuery->whereIn('id', array_merge([$userEmployee->id], $userEmployee->allSubordinateIds()));
                 }
             } elseif ($user->hasPermissionTo('incidents.view_own')) {
                 $employeesQuery->where('id', $user->employee?->id);
@@ -933,7 +935,12 @@ class IncidentController extends Controller
         $user = Auth::user();
         if (! $user->hasPermissionTo('incidents.view_all')) {
             if ($user->hasPermissionTo('incidents.view_team')) {
-                $allowedIds = $user->employee?->allSubordinateIds() ?? collect();
+                // El equipo incluye al propio jefe (Dani 2026-08-19): también
+                // imprime SU propia hoja de vacaciones.
+                $userEmployee = $user->employee;
+                $allowedIds = $userEmployee
+                    ? array_merge([$userEmployee->id], $userEmployee->allSubordinateIds())
+                    : [];
                 abort_unless(collect($allowedIds)->contains($incident->employee_id), 403);
             } elseif ($user->hasPermissionTo('incidents.view_own')) {
                 abort_unless($incident->employee_id === $user->employee?->id, 403);

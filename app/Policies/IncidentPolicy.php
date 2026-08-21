@@ -178,7 +178,11 @@ class IncidentPolicy
             return false;
         }
 
-        return in_array($incidentEmployee->id, $userEmployee->allSubordinateIds(), true);
+        // El equipo del jefe lo incluye a él mismo (Dani 2026-08-19): un jefe de
+        // departamento con view_team también ve (e imprime) SU propia hoja de
+        // vacaciones. Aprobar lo propio sigue bloqueado por el guard de approve().
+        return $incidentEmployee->id === $userEmployee->id
+            || in_array($incidentEmployee->id, $userEmployee->allSubordinateIds(), true);
     }
 
     /**
