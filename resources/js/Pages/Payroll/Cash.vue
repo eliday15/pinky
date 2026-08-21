@@ -804,22 +804,27 @@ const submitCollect = () => {
                                 El empleado ingresa su contraseña de cobro para confirmar que recibio su efectivo.
                             </p>
                             <label for="cash_pin" class="block text-sm font-medium text-gray-700 mb-1">Contraseña de cobro</label>
-                            <!-- Se marca como "one-time-code" (PIN de un solo uso) y con un
-                                 name genérico + banderas de los gestores de contraseñas para que
-                                 el navegador NO la autocomplete con la contraseña del sitio ni
-                                 ofrezca guardarla (Luis 2026-07-16). -->
+                            <!-- NO es type="password" a propósito (Luis 2026-08-19): Chrome
+                                 ofrece guardar cualquier campo password aunque lleve
+                                 autocomplete/one-time-code, y en la máquina compartida de cobro
+                                 acababa guardando el NIP de cada empleado. Es un input de texto
+                                 enmascarado por CSS (.pin-masked), invisible para el gestor de
+                                 contraseñas del navegador. -->
                             <input
                                 id="cash_pin"
                                 v-model="form.pin"
-                                type="password"
+                                type="text"
                                 name="cobro-otp"
-                                autocomplete="one-time-code"
+                                autocomplete="off"
+                                autocapitalize="off"
+                                autocorrect="off"
+                                spellcheck="false"
                                 data-lpignore="true"
                                 data-1p-ignore="true"
                                 data-bwignore="true"
                                 data-form-type="other"
                                 autofocus
-                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                class="pin-masked w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
                                 :class="{ 'border-red-500': form.errors.pin }"
                             />
                             <p v-if="form.errors.pin" class="mt-1 text-sm text-red-600">{{ form.errors.pin }}</p>
@@ -891,3 +896,11 @@ const submitCollect = () => {
         </div>
     </AppLayout>
 </template>
+
+<style scoped>
+/* Enmascara el NIP de cobro sin ser type="password": los puntos los pinta el
+   CSS y el gestor de contraseñas de Chrome nunca ve un campo que guardar. */
+.pin-masked {
+    -webkit-text-security: disc;
+}
+</style>
