@@ -30,6 +30,7 @@ class BreakfastClaimTest extends FeatureTestCase
         SystemSetting::set('breakfast_cost', 30);
         SystemSetting::set('breakfast_window_minutes', 60);
         SystemSetting::set('breakfast_face_max_distance', 0.5);
+        SystemSetting::set('breakfast_open_all_day', false);
     }
 
     protected function tearDown(): void
@@ -391,5 +392,65 @@ class BreakfastClaimTest extends FeatureTestCase
         ])
             ->assertStatus(422)
             ->assertJsonValidationErrors(['pin']);
+    }
+
+    // ------------------------------------------------------------------
+    // Ventana Abierta (Pruebas) — Luis 2026-08-18: el switch entrega a
+    // cualquier hora y cualquier día; NIP/foto/1-por-día siguen aplicando.
+
+    public function test_open_all_day_allows_claim_after_entry_time(): void
+    {
+        SystemSetting::set('breakfast_open_all_day', true);
+        $employee = $this->makeEmployee();
+
+        // 13:40 de un miércoles, mucho después de la entrada de las 09:00:
+        // sin el switch sería "Fuera de horario".
+        $claim = $this->claimAt($employee, '2026-06-03 13:40:00');
+
+        $this->assertDatabaseHas('breakfast_claims', [
+            'id' => $claim->id,
+            'employee_id' => $employee->id,
+            'claim_date' => '2026-06-03',
+        ]);
+    }
+
+    public function test_open_all_day_allows_non_working_day(): void
+    {
+        SystemSetting::set('breakfast_open_all_day', true);
+        $employee = $this->makeEmployee();
+
+        // Domingo (fuera de sus working_days): sin el switch sería
+        // "no es un día laborable".
+        $claim = $this->claimAt($employee, '2026-06-07 10:00:00');
+
+        $this->assertDatabaseHas('breakfast_claims', [
+            'id' => $claim->id,
+            'claim_date' => '2026-06-07',
+        ]);
+    }
+
+    public function test_open_all_day_still_enforces_one_per_day_and_pin(): void
+    {
+        SystemSetting::set('breakfast_open_all_day', true);
+        $employee = $this->makeEmployee();
+
+        $this->claimAt($employee, '2026-06-03 13:40:00');
+        $this->assertClaimFails($employee, '2026-06-03 15:00:00', 'Ya cobraste');
+
+        Carbon::setTestNow(Carbon::parse('2026-06-04 15:00:00'));
+        try {
+            $this->service()->validateAndCreate($employee, '9999', 0.35, null, $this->adminUser());
+            $this->fail('El NIP incorrecto debe rechazarse aunque la ventana esté abierta.');
+        } catch (ValidationException $e) {
+            $this->assertStringContainsString('incorrecta', collect($e->errors())->flatten()->implode(' '));
+        }
+    }
+
+    public function test_switch_off_keeps_normal_window(): void
+    {
+        SystemSetting::set('breakfast_open_all_day', false);
+        $employee = $this->makeEmployee();
+
+        $this->assertClaimFails($employee, '2026-06-03 13:40:00', 'Fuera de horario');
     }
 }
