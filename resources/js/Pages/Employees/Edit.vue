@@ -1353,12 +1353,14 @@ watch(() => form.hire_date, onHireDateChange);
                                 <div v-if="form.compensation_type_ids.includes(ct.id)" class="flex items-center ml-4">
                                     <template v-if="ct.calculation_type === 'fixed'">
                                         <label class="text-xs text-gray-500 mr-2">Monto:</label>
+                                        <!-- Sin min="0": un monto NEGATIVO es una deducción por
+                                             periodo (Infonavit, préstamo) — Dani 2026-08-19. -->
                                         <input
                                             :value="form.compensation_type_overrides[ct.id] || ct.fixed_amount"
                                             @input="form.compensation_type_overrides = { ...form.compensation_type_overrides, [ct.id]: parseFloat($event.target.value) || 0 }"
                                             type="number"
                                             step="0.01"
-                                            min="0"
+                                            title="Un monto negativo se descuenta cada periodo (p. ej. Infonavit)"
                                             class="w-24 rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 text-sm"
                                         />
                                     </template>
