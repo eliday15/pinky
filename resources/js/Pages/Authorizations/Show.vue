@@ -226,7 +226,7 @@ const submitReject = () => {
                                         {{ weekendUnits.units }} {{ weekendUnits.label }}
                                     </dd>
                                     <dd class="mt-0.5 text-xs text-gray-500">
-                                        {{ weekendUnits.worked_hours }} h trabajadas ÷ {{ weekendUnits.unit_hours }} h por unidad (se trunca, no se redondea)
+                                        {{ weekendUnits.worked_hours }} h corridas de entrada a salida (sin descontar comida) ÷ {{ weekendUnits.unit_hours }} h por unidad (se trunca, no se redondea)
                                     </dd>
                                 </div>
                                 <div>

@@ -70,11 +70,16 @@ class WeekendUnitsTest extends FeatureTestCase
 
     /**
      * Un sábado de fin de semana trabajado + autorización FIN aprobada. Las horas
-     * de fin de semana contables son worked_hours + overtime_hours (toda la
-     * jornada del fin de semana cuenta para las unidades).
+     * contables para unidades son las CORRIDAS de entrada a salida (Dani
+     * 2026-08-19); la salida por omisión se deriva de worked + overtime para que
+     * las corridas coincidan con las netas salvo que el caso pida otra cosa.
      */
-    private function seedWeekendWork(Employee $employee, CompensationType $fin, float $workedHours = 12.0, float $overtimeHours = 0.0, string $checkOut = '20:00:00'): void
+    private function seedWeekendWork(Employee $employee, CompensationType $fin, float $workedHours = 12.0, float $overtimeHours = 0.0, ?string $checkOut = null): void
     {
+        $checkOut ??= Carbon::parse(self::SATURDAY.' 08:00:00')
+            ->addMinutes((int) round(($workedHours + $overtimeHours) * 60))
+            ->format('H:i:s');
+
         AttendanceRecord::factory()->create([
             'employee_id' => $employee->id,
             'work_date' => self::SATURDAY,
@@ -261,6 +266,43 @@ class WeekendUnitsTest extends FeatureTestCase
             ->calculateEmployeePayroll($period, $employee->fresh());
 
         $this->assertEqualsWithDelta(400.0, (float) $entry->weekend_pay, 0.01); // 2 × 200
+    }
+
+    public function test_weekend_units_count_gross_span_not_net_of_lunch(): void
+    {
+        // Caso Elizabeth (Dani 2026-08-19): checó 6:55–19:00 (12.08 h corridas)
+        // pero el neto con la comida descontada queda en 11.58, y floor(11.58/6)
+        // daba 1 unidad. Las unidades se cuentan sobre las horas CORRIDAS de
+        // entrada a salida: 12.08 ÷ 6 = 2, en reporte y nómina por igual.
+        $dept = Department::factory()->create([
+            'name' => 'Almacén PT',
+            'code' => 'ALMACENPT',
+            'weekend_unit_hours' => 6,
+        ]);
+        $employee = Employee::factory()->create(['department_id' => $dept->id, 'status' => 'active']);
+        $fin = $this->weekendCompType(200.0);
+        $employee->compensationTypes()->attach($fin->id, ['is_active' => true]);
+
+        // El helper siembra entrada 08:00; el caso real entró 06:55 → se ajusta
+        // el registro para reproducir las checadas exactas (6:55–19:00).
+        $this->seedWeekendWork($employee, $fin, 11.58, 0.0, '19:00:00');
+        AttendanceRecord::where('employee_id', $employee->id)
+            ->whereDate('work_date', self::SATURDAY)
+            ->update(['check_in' => '06:55:00']);
+
+        $report = app(WeeklyOvertimeReportService::class)
+            ->buildReport($dept, Carbon::parse('2026-03-09'));
+        $this->assertEqualsWithDelta(12.08, $report['rows'][0]['totals']['weekend_worked_hours'], 0.01);
+        $this->assertSame(2, $report['rows'][0]['totals']['weekend_units']);
+
+        $period = PayrollPeriod::factory()->monthly()->create([
+            'start_date' => '2026-03-01',
+            'end_date' => '2026-03-31',
+            'payment_date' => '2026-04-03',
+        ]);
+        $entry = app(PayrollCalculatorService::class)
+            ->calculateEmployeePayroll($period, $employee->fresh());
+        $this->assertEqualsWithDelta(400.0, (float) $entry->weekend_pay, 0.01, '12.08 h corridas = 2 unidades × $200');
     }
 
     public function test_comida_paid_by_units_for_almacen_pt(): void

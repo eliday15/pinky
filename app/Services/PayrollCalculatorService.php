@@ -1486,14 +1486,18 @@ class PayrollCalculatorService
      * Unidades de fin de semana de un depto que cuenta por horas (Almacén PT).
      * Por cada día con autorización FIN aprobada cuenta AL MENOS 1 (regla de Dani
      * 2026-06-28: "aunque se presenten 1 hora es un fin de semana"), más 1 por
-     * cada bloque completo de weekend_unit_hours horas trabajadas ese día
-     * (12 h ÷ 6 = 2). Se basa en las autorizaciones, no en el status, para que un
-     * día trabajado y autorizado pero marcado "ausente" también pague.
+     * cada bloque completo de weekend_unit_hours horas CORRIDAS de entrada a
+     * salida ese día (12 h ÷ 6 = 2). Corridas, sin descontar comida (Dani
+     * 2026-08-19, caso Elizabeth: 6:55–19:00 son 12 h aunque el neto quede en
+     * 11.58) — la misma base que ya usa el umbral de los deptos sin unidades.
+     * Se basa en las autorizaciones, no en el status, para que un día trabajado
+     * y autorizado pero marcado "ausente" también pague.
      */
     private function calculateWeekendUnits(Collection $attendance, Collection $approvedAuthorizations, Employee $employee): int
     {
         $hoursByDate = $attendance->mapWithKeys(fn ($r) => [
-            Carbon::parse($r->work_date)->toDateString() => (float) ($r->worked_hours ?? 0) + (float) ($r->overtime_hours ?? 0),
+            Carbon::parse($r->work_date)->toDateString() => $r->grossSpanHours()
+                ?? (float) ($r->worked_hours ?? 0) + (float) ($r->overtime_hours ?? 0),
         ]);
 
         $finDates = $approvedAuthorizations

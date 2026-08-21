@@ -416,13 +416,15 @@ class WeeklyOvertimeReportService
             'overtime_hours' => round($overtimeHours, 2),
             'velada_hours' => round($veladaHours, 2),
             'weekend_hours' => round($weekendHours, 2),
-            // Horas realmente trabajadas ese día cuando hay autorización de fin
-            // de semana (FIN): base del conteo por unidades de Almacén PT. Incluye
-            // las horas extra: en fin de semana TODA la jornada cuenta para las
-            // unidades (worked_hours topa a la jornada base, overtime_hours es el
-            // excedente) — igual que la nómina (metrics['weekend_hours']).
+            // Horas del día cuando hay autorización de fin de semana (FIN): base
+            // del conteo por unidades de Almacén PT. Se cuentan CORRIDAS de
+            // entrada a salida, sin descontar comida (Dani 2026-08-19, caso
+            // Elizabeth: 6:55–19:00 son 12 h = 2 unidades aunque el neto quede
+            // en 11.58) — igual que la nómina (calculateWeekendUnits). Sin
+            // checada completa cae al neto worked + overtime.
             'weekend_worked_hours' => $approvedByCode->has(self::WEEKEND_CODE)
-                ? round((float) ($record->worked_hours ?? 0) + (float) ($record->overtime_hours ?? 0), 2)
+                ? round($record->grossSpanHours()
+                    ?? (float) ($record->worked_hours ?? 0) + (float) ($record->overtime_hours ?? 0), 2)
                 : 0.0,
             'has_weekend_auth' => $approvedByCode->has(self::WEEKEND_CODE),
             'worked_hours' => round((float) ($record->worked_hours ?? 0), 2),

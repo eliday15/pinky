@@ -853,18 +853,22 @@ class AuthorizationController extends Controller
             ->first();
 
         // Conteo por unidades (Almacén PT): cuando el depto cuenta el fin de
-        // semana / comida por unidades de N horas trabajadas, una jornada de
-        // fin de semana de 12 h equivale a 2 unidades. Se deriva de las horas
-        // reales del día (worked + overtime) con floor — exactamente igual que
-        // la nómina y el reporte — para que la pantalla refleje el conteo real.
+        // semana / comida por unidades de N horas, una jornada de fin de semana
+        // de 12 h equivale a 2 unidades. Las horas se cuentan CORRIDAS de
+        // entrada a salida, sin descontar comida (Dani 2026-08-19, caso
+        // Elizabeth: 6:55–19:00 = 12 h = 2 unidades) con floor — exactamente
+        // igual que la nómina y el reporte — para que la pantalla refleje el
+        // conteo real. Sin checada completa cae al neto worked + overtime.
         $unitHours = $authorization->employee->department?->weekend_unit_hours;
         $pullRule = $authorization->compensationType?->attendance_pull_rule;
         $weekendUnits = null;
+        $totalWeekendHours = 0.0;
         if ($unitHours && $record && in_array($pullRule, [
             CompensationType::PULL_RULE_WEEKEND,
             CompensationType::PULL_RULE_COMIDA,
         ], true)) {
-            $totalWeekendHours = (float) ($record->worked_hours ?? 0) + (float) ($record->overtime_hours ?? 0);
+            $totalWeekendHours = $record->grossSpanHours()
+                ?? (float) ($record->worked_hours ?? 0) + (float) ($record->overtime_hours ?? 0);
             $weekendUnits = (int) floor($totalWeekendHours / $unitHours);
         }
 
@@ -889,7 +893,7 @@ class AuthorizationController extends Controller
             'weekendUnits' => $weekendUnits === null ? null : [
                 'units' => $weekendUnits,
                 'unit_hours' => (int) $unitHours,
-                'worked_hours' => round((float) ($record->worked_hours ?? 0) + (float) ($record->overtime_hours ?? 0), 2),
+                'worked_hours' => round($totalWeekendHours, 2),
                 'label' => $pullRule === CompensationType::PULL_RULE_COMIDA ? 'comida(s)' : 'fin(es) de semana',
             ],
             'punches' => [
