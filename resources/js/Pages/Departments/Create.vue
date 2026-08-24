@@ -10,6 +10,7 @@ const form = useForm({
     default_break_minutes: null,
     cena_min_overtime_hours: null,
     weekend_overtime_after_hours: null,
+    weekend_unit_hours: null,
     velada_start: null,
     velada_end: null,
 });
@@ -138,6 +139,27 @@ const submit = () => {
                             </p>
                             <p v-if="form.errors.weekend_overtime_after_hours" class="mt-1 text-sm text-red-600">
                                 {{ form.errors.weekend_overtime_after_hours }}
+                            </p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                Fin de semana por bloques de horas
+                            </label>
+                            <input
+                                v-model="form.weekend_unit_hours"
+                                type="number"
+                                min="1"
+                                max="24"
+                                class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                                :class="{ 'border-red-500': form.errors.weekend_unit_hours }"
+                                placeholder="Ej: 6"
+                            />
+                            <p class="mt-1 text-sm text-gray-500">
+                                Regla de Almacén PT: cada bloque de estas horas corridas trabajadas en el dia cuenta 1 fin de semana y 1 comida (12 h / 6 = 2), minimo 1 por dia autorizado. Vacio = regla normal (1 fin por dia que alcance el umbral).
+                            </p>
+                            <p v-if="form.errors.weekend_unit_hours" class="mt-1 text-sm text-red-600">
+                                {{ form.errors.weekend_unit_hours }}
                             </p>
                         </div>
 

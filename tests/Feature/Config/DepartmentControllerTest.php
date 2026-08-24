@@ -243,6 +243,28 @@ class DepartmentControllerTest extends FeatureTestCase
         ])->assertRedirect(route('departments.index'));
     }
 
+    public function test_update_sets_and_clears_weekend_unit_hours(): void
+    {
+        // Regla de fin de semana por bloques (Almacén PT) configurable desde
+        // la UI (Dani 2026-08-25, caso Saldos): activar y desactivar sin tinker.
+        $this->actingAsAdmin();
+        $department = Department::factory()->create(['code' => 'UNIT-01', 'weekend_unit_hours' => null]);
+
+        $this->put(route('departments.update', $department), [
+            'name' => 'Saldos',
+            'code' => 'UNIT-01',
+            'weekend_unit_hours' => 6,
+        ])->assertRedirect(route('departments.index'));
+        $this->assertSame(6, $department->fresh()->weekend_unit_hours);
+
+        $this->put(route('departments.update', $department), [
+            'name' => 'Saldos',
+            'code' => 'UNIT-01',
+            'weekend_unit_hours' => null,
+        ])->assertRedirect(route('departments.index'));
+        $this->assertNull($department->fresh()->weekend_unit_hours);
+    }
+
     public function test_update_rejects_code_used_by_another_department(): void
     {
         $this->actingAsAdmin();

@@ -81,6 +81,10 @@ class DepartmentController extends Controller
             'default_break_minutes' => ['nullable', 'integer', 'min:0', 'max:480'],
             'cena_min_overtime_hours' => ['nullable', 'numeric', 'min:0', 'max:24'],
             'weekend_overtime_after_hours' => ['nullable', 'numeric', 'min:0', 'max:24'],
+            // Fin de semana por BLOQUES de horas (Almacén PT): cada bloque de N
+            // horas corridas trabajadas cuenta 1 fin de semana y 1 comida
+            // (12 h / 6 = 2). Vacío = regla normal (1 fin por día con >= T h).
+            'weekend_unit_hours' => ['nullable', 'integer', 'min:1', 'max:24'],
             'velada_start' => ['nullable', 'date_format:H:i', 'required_with:velada_end'],
             'velada_end' => ['nullable', 'date_format:H:i', 'required_with:velada_start'],
         ]);
@@ -151,6 +155,10 @@ class DepartmentController extends Controller
             'default_break_minutes' => ['nullable', 'integer', 'min:0', 'max:480'],
             'cena_min_overtime_hours' => ['nullable', 'numeric', 'min:0', 'max:24'],
             'weekend_overtime_after_hours' => ['nullable', 'numeric', 'min:0', 'max:24'],
+            // Fin de semana por BLOQUES de horas (Almacén PT): cada bloque de N
+            // horas corridas trabajadas cuenta 1 fin de semana y 1 comida
+            // (12 h / 6 = 2). Vacío = regla normal (1 fin por día con >= T h).
+            'weekend_unit_hours' => ['nullable', 'integer', 'min:1', 'max:24'],
             'velada_start' => ['nullable', 'date_format:H:i', 'required_with:velada_end'],
             'velada_end' => ['nullable', 'date_format:H:i', 'required_with:velada_start'],
         ]);
