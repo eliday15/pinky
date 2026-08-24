@@ -231,9 +231,13 @@ class WeeklyOvertimeReportService
             // Unidades de fin de semana POR DÍA autorizado (Almacén): cada día de
             // fin de semana con autorización FIN cuenta al menos 1, aunque trabaje
             // < 1 unidad (regla de Dani 2026-06-28: "aunque se presenten 1 hora es
-            // un fin de semana"); 12 h ÷ 6 = 2. Coincide con la nómina.
+            // un fin de semana"); 12 h ÷ 6 = 2 sobre horas corridas MENOS velada.
+            // Sin checada completa valen las unidades capturadas en el FIN
+            // (Dani 2026-08-24). Coincide con la nómina (calculateWeekendUnits).
             if ($weekendUnitHours && $day['has_weekend_auth']) {
-                $weekendUnitsAccum += max(1, (int) floor($day['weekend_worked_hours'] / $weekendUnitHours));
+                $weekendUnitsAccum += ! empty($day['weekend_gross_missing'])
+                    ? max(1, (int) round((float) ($day['weekend_captured_units'] ?? 1)))
+                    : max(1, (int) floor($day['weekend_worked_hours'] / $weekendUnitHours));
             }
         }
 
@@ -302,6 +306,8 @@ class WeeklyOvertimeReportService
             'weekend_hours' => 0.0,
             'weekend_worked_hours' => 0.0,
             'has_weekend_auth' => false,
+            'weekend_gross_missing' => false,
+            'weekend_captured_units' => 0.0,
             'worked_hours' => 0.0,
             'detected_overtime_hours' => 0.0,
             'pending_overtime_hours' => 0.0,
@@ -420,11 +426,21 @@ class WeeklyOvertimeReportService
             // del conteo por unidades de Almacén PT. Se cuentan CORRIDAS de
             // entrada a salida, sin descontar comida (Dani 2026-08-19, caso
             // Elizabeth: 6:55–19:00 son 12 h = 2 unidades aunque el neto quede
-            // en 11.58) — igual que la nómina (calculateWeekendUnits). Sin
-            // checada completa cae al neto worked + overtime.
+            // en 11.58), MENOS las horas de velada — la velada se paga aparte y
+            // no genera unidades (Dani 2026-08-24, caso Miguel: 14 h corridas −
+            // 4.5 de velada = 9.5 → 1 unidad). Igual que la nómina
+            // (calculateWeekendUnits). Sin checada completa cae al neto.
             'weekend_worked_hours' => $approvedByCode->has(self::WEEKEND_CODE)
-                ? round($record->grossSpanHours()
-                    ?? (float) ($record->worked_hours ?? 0) + (float) ($record->overtime_hours ?? 0), 2)
+                ? round(max(0, ($record->grossSpanHours()
+                    ?? (float) ($record->worked_hours ?? 0) + (float) ($record->overtime_hours ?? 0))
+                    - (float) ($record->velada_hours ?? 0)), 2)
+                : 0.0,
+            // Sin checada completa no hay horas que medir: la autorización
+            // aprobada es la evidencia y valen sus unidades capturadas.
+            'weekend_gross_missing' => $approvedByCode->has(self::WEEKEND_CODE)
+                && $record->grossSpanHours() === null,
+            'weekend_captured_units' => $approvedByCode->has(self::WEEKEND_CODE)
+                ? (float) $approvedByCode->get(self::WEEKEND_CODE, collect())->max('hours')
                 : 0.0,
             'has_weekend_auth' => $approvedByCode->has(self::WEEKEND_CODE),
             'worked_hours' => round((float) ($record->worked_hours ?? 0), 2),
@@ -480,6 +496,11 @@ class WeeklyOvertimeReportService
             'pending_overtime_hours' => round($pendingCapturedHours, 2),
             'weekend_hours' => round((float) $approvedByCode->get(self::WEEKEND_CODE, collect())->sum('hours'), 2),
             'has_weekend_auth' => $approvedByCode->has(self::WEEKEND_CODE),
+            // Sin checada completa no hay horas que medir: valen las unidades
+            // capturadas en el FIN aprobado (Dani 2026-08-24, caso Elsa Laura:
+            // sábado sin salida checada con FIN de 2 → 2 unidades, no 1).
+            'weekend_gross_missing' => $approvedByCode->has(self::WEEKEND_CODE),
+            'weekend_captured_units' => (float) $approvedByCode->get(self::WEEKEND_CODE, collect())->max('hours'),
             'velada_marker' => $approvedByCode->has(self::VELADA_CODE) ? 1 : 0,
             'cena_marker' => $approvedByCode->has(self::CENA_CODE) ? 1 : 0,
             'comida_marker' => $approvedByCode->has(self::COMIDA_CODE) ? 1 : 0,

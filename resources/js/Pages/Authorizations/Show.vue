@@ -225,8 +225,11 @@ const submitReject = () => {
                                     <dd class="mt-1 text-sm font-semibold text-pink-700">
                                         {{ weekendUnits.units }} {{ weekendUnits.label }}
                                     </dd>
-                                    <dd class="mt-0.5 text-xs text-gray-500">
-                                        {{ weekendUnits.worked_hours }} h corridas de entrada a salida (sin descontar comida) ÷ {{ weekendUnits.unit_hours }} h por unidad (se trunca, no se redondea)
+                                    <dd v-if="weekendUnits.from_capture" class="mt-0.5 text-xs text-gray-500">
+                                        Sin checada completa: valen las unidades capturadas en esta autorización
+                                    </dd>
+                                    <dd v-else class="mt-0.5 text-xs text-gray-500">
+                                        {{ weekendUnits.worked_hours }} h corridas de entrada a salida (sin descontar comida<template v-if="weekendUnits.velada_hours">, menos {{ weekendUnits.velada_hours }} h de velada</template>) ÷ {{ weekendUnits.unit_hours }} h por unidad (se trunca, no se redondea)
                                     </dd>
                                 </div>
                                 <div>

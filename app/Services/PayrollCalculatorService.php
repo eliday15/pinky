@@ -1490,20 +1490,30 @@ class PayrollCalculatorService
      * salida ese día (12 h ÷ 6 = 2). Corridas, sin descontar comida (Dani
      * 2026-08-19, caso Elizabeth: 6:55–19:00 son 12 h aunque el neto quede en
      * 11.58) — la misma base que ya usa el umbral de los deptos sin unidades.
+     * Dos reglas más (Dani 2026-08-24):
+     *   - Las horas de VELADA se restan de la base (caso Miguel: 15:01–05:01 son
+     *     14 h pero 4.5 son velada pagada aparte → 9.5 ÷ 6 = 1 unidad, no 2 —
+     *     una hora nunca paga doble).
+     *   - Sin checada completa, la autorización aprobada es la evidencia: valen
+     *     las unidades que capturó el encargado (hours del FIN, mínimo 1) —
+     *     caso Elsa Laura: sábado sin salida checada con FIN de 2 → 2 unidades.
      * Se basa en las autorizaciones, no en el status, para que un día trabajado
      * y autorizado pero marcado "ausente" también pague.
      */
     private function calculateWeekendUnits(Collection $attendance, Collection $approvedAuthorizations, Employee $employee): int
     {
-        $hoursByDate = $attendance->mapWithKeys(fn ($r) => [
-            Carbon::parse($r->work_date)->toDateString() => $r->grossSpanHours()
-                ?? (float) ($r->worked_hours ?? 0) + (float) ($r->overtime_hours ?? 0),
-        ]);
+        $recordsByDate = $attendance->keyBy(fn ($r) => Carbon::parse($r->work_date)->toDateString());
 
-        $finDates = $approvedAuthorizations
-            ->filter(fn (Authorization $a) => $a->compensationType?->hasWeekendPullRule())
+        $finAuths = $approvedAuthorizations
+            ->filter(fn (Authorization $a) => $a->compensationType?->hasWeekendPullRule());
+
+        $finDates = $finAuths
             ->map(fn (Authorization $a) => Carbon::parse($a->date)->toDateString())
             ->unique();
+
+        $finHoursByDate = $finAuths
+            ->groupBy(fn (Authorization $a) => Carbon::parse($a->date)->toDateString())
+            ->map(fn (Collection $auths) => (float) $auths->max('hours'));
 
         $weekendUnitHours = $employee->department?->weekend_unit_hours;
 
@@ -1512,8 +1522,15 @@ class PayrollCalculatorService
         if ($weekendUnitHours && $weekendUnitHours > 0) {
             $units = 0;
             foreach ($finDates as $date) {
-                $hours = (float) $hoursByDate->get($date, 0);
-                $units += max(1, (int) floor($hours / $weekendUnitHours));
+                $record = $recordsByDate->get($date);
+                $gross = $record?->grossSpanHours();
+                if ($gross === null) {
+                    $units += max(1, (int) round((float) ($finHoursByDate->get($date) ?? 1)));
+
+                    continue;
+                }
+                $base = max(0.0, (float) $gross - (float) ($record->velada_hours ?? 0));
+                $units += max(1, (int) floor($base / $weekendUnitHours));
             }
 
             return $units;

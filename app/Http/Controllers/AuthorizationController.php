@@ -856,20 +856,30 @@ class AuthorizationController extends Controller
         // semana / comida por unidades de N horas, una jornada de fin de semana
         // de 12 h equivale a 2 unidades. Las horas se cuentan CORRIDAS de
         // entrada a salida, sin descontar comida (Dani 2026-08-19, caso
-        // Elizabeth: 6:55–19:00 = 12 h = 2 unidades) con floor — exactamente
-        // igual que la nómina y el reporte — para que la pantalla refleje el
-        // conteo real. Sin checada completa cae al neto worked + overtime.
+        // Elizabeth: 6:55–19:00 = 12 h = 2 unidades) MENOS las horas de velada
+        // — la velada se paga aparte y no genera unidades (Dani 2026-08-24,
+        // caso Miguel: 14 h − 4.5 de velada = 9.5 → 1) — con floor,
+        // exactamente igual que la nómina y el reporte. Sin checada completa
+        // valen las unidades CAPTURADAS en esta autorización (caso Elsa).
         $unitHours = $authorization->employee->department?->weekend_unit_hours;
         $pullRule = $authorization->compensationType?->attendance_pull_rule;
         $weekendUnits = null;
         $totalWeekendHours = 0.0;
-        if ($unitHours && $record && in_array($pullRule, [
+        $weekendVeladaHours = 0.0;
+        $weekendFromCapture = false;
+        if ($unitHours && in_array($pullRule, [
             CompensationType::PULL_RULE_WEEKEND,
             CompensationType::PULL_RULE_COMIDA,
         ], true)) {
-            $totalWeekendHours = $record->grossSpanHours()
-                ?? (float) ($record->worked_hours ?? 0) + (float) ($record->overtime_hours ?? 0);
-            $weekendUnits = (int) floor($totalWeekendHours / $unitHours);
+            $gross = $record?->grossSpanHours();
+            if ($gross === null) {
+                $weekendFromCapture = true;
+                $weekendUnits = max(1, (int) round((float) $authorization->hours));
+            } else {
+                $weekendVeladaHours = (float) ($record->velada_hours ?? 0);
+                $totalWeekendHours = max(0.0, (float) $gross - $weekendVeladaHours);
+                $weekendUnits = (int) floor($totalWeekendHours / $unitHours);
+            }
         }
 
         // Omisión de checada APROBADA del mismo día (Dani 2026-08-12): la falta
@@ -894,6 +904,8 @@ class AuthorizationController extends Controller
                 'units' => $weekendUnits,
                 'unit_hours' => (int) $unitHours,
                 'worked_hours' => round($totalWeekendHours, 2),
+                'velada_hours' => round($weekendVeladaHours, 2),
+                'from_capture' => $weekendFromCapture,
                 'label' => $pullRule === CompensationType::PULL_RULE_COMIDA ? 'comida(s)' : 'fin(es) de semana',
             ],
             'punches' => [
