@@ -858,16 +858,7 @@ class ZktecoSyncService
             $lunchDeviationMinutes = max(0, $attendance->actual_break_minutes - $daySchedule->break_minutes);
         }
 
-        $workedHours = max(0, $workedMinutes / 60);
-        $dailyHours = $daySchedule->daily_work_hours ?? 8;
-        $regularHours = min($workedHours, $dailyHours);
-        $overtimeHours = max(0, $workedHours - $dailyHours);
-
-        // Calculate velada split
-        $veladaCalculator = app(VeladaCalculatorService::class);
-        $veladaSplit = $veladaCalculator->calculate($attendance, $employee);
-
-        // Check for approved permission incidents (exit/entry)
+        // Check for approved permission incidents (exit/entry/ventana)
         $permissionHours = 0;
         $approvedPermission = Incident::where('employee_id', $employee->id)
             ->whereDate('start_date', '<=', $workDate->toDateString())
@@ -890,6 +881,62 @@ class ZktecoSyncService
             $hasApprovedExitPermission = $usesVacationHours || $permissionType->code === 'PSA';
             $hasApprovedEntryPermission = $usesVacationHours || $permissionType->code === 'PEN';
         }
+
+        // Permiso DENTRO de jornada (Dani 2026-08-24): una incidencia aprobada
+        // con hora inicio Y fin distintas define una VENTANA de permiso (p. ej.
+        // 13:00–15:00, el colaborador sale y regresa). La ventana:
+        //   - descuenta sus minutos de las horas trabajadas (el hueco no es
+        //     jornada ni genera TE fantasma; lo ya restado como comida no se
+        //     resta doble),
+        //   - descuenta del retardo la parte cubierta (permiso 08:00–10:00 y
+        //     llega 10:00 → sin retardo),
+        //   - descuenta de la salida temprana la parte cubierta (si NO regresa,
+        //     la salida temprana se mide desde el fin de la ventana — puede
+        //     seguir siendo falta).
+        // Las horas de la ventana quedan en permission_hours (pagadas: el tipo
+        // es is_paid y el día sigue 'present'). Fuera de turnos nocturnos.
+        $permissionWindow = $this->permissionWindowMinutes($approvedPermission);
+        if ($permissionWindow !== null && ! $isNightShift) {
+            [$winStart, $winEnd] = $permissionWindow;
+            $toMin = fn (string $time): int => ((int) substr($time, 0, 2)) * 60 + ((int) substr($time, 3, 2));
+
+            if ($lateMinutes > 0 && $entryTime && $checkInTime) {
+                $coveredLate = $this->minutesOverlap($winStart, $winEnd, $toMin($entryTime), $toMin($checkInTime));
+                $lateMinutes = max(0, $lateMinutes - $coveredLate);
+            }
+
+            if ($earlyDepartureMinutes > 0 && $checkOutTime && $exitTime) {
+                $coveredEarly = $this->minutesOverlap($winStart, $winEnd, $toMin($checkOutTime), $toMin($exitTime));
+                $earlyDepartureMinutes = max(0, $earlyDepartureMinutes - $coveredEarly);
+            }
+
+            if ($workedMinutes > 0 && $checkInTime && $checkOutTime) {
+                $inMin = $toMin($checkInTime);
+                $outMin = $toMin($checkOutTime);
+                if ($outMin < $inMin) {
+                    $outMin = 1440; // salida tras medianoche: la ventana es diurna
+                }
+                $gapInWorked = $this->minutesOverlap($winStart, $winEnd, $inMin, $outMin);
+                if ($attendance->lunch_out && $attendance->lunch_in) {
+                    $lunchOutT = $this->extractTime($attendance->lunch_out);
+                    $lunchInT = $this->extractTime($attendance->lunch_in);
+                    if ($lunchOutT && $lunchInT) {
+                        // La parte de la ventana ya restada como comida no se resta doble.
+                        $gapInWorked -= $this->minutesOverlap($winStart, $winEnd, $toMin($lunchOutT), $toMin($lunchInT));
+                    }
+                }
+                $workedMinutes = max(0, $workedMinutes - max(0, $gapInWorked));
+            }
+        }
+
+        $workedHours = max(0, $workedMinutes / 60);
+        $dailyHours = $daySchedule->daily_work_hours ?? 8;
+        $regularHours = min($workedHours, $dailyHours);
+        $overtimeHours = max(0, $workedHours - $dailyHours);
+
+        // Calculate velada split
+        $veladaCalculator = app(VeladaCalculatorService::class);
+        $veladaSplit = $veladaCalculator->calculate($attendance, $employee);
 
         $totalPayrollHours = $workedHours + $permissionHours;
 
@@ -1035,6 +1082,47 @@ class ZktecoSyncService
         $preserveStatus = $preserveStatus ?? ($attendance->manually_edited_at !== null);
 
         $this->calculateAttendanceMetrics($attendance, $preserveStatus);
+    }
+
+    /**
+     * Ventana de permiso dentro de jornada de una incidencia aprobada, en
+     * minutos del día [inicio, fin], o null si la incidencia no define una
+     * ventana real (sin horas, horas iguales — PSA/PEN capturan una sola — o
+     * un rango invertido que cruzaría medianoche).
+     *
+     * @return array{0: int, 1: int}|null
+     */
+    private function permissionWindowMinutes(?Incident $incident): ?array
+    {
+        if (! $incident || ! $incident->start_time || ! $incident->end_time) {
+            return null;
+        }
+
+        $start = $this->extractTime($incident->start_time);
+        $end = $this->extractTime($incident->end_time);
+        if (! $start || ! $end || $start === $end) {
+            return null;
+        }
+
+        $toMin = fn (string $time): int => ((int) substr($time, 0, 2)) * 60 + ((int) substr($time, 3, 2));
+        $startMin = $toMin($start);
+        $endMin = $toMin($end);
+
+        return $endMin > $startMin ? [$startMin, $endMin] : null;
+    }
+
+    /**
+     * Minutos de traslape entre dos rangos [aStart, aEnd) y [bStart, bEnd)
+     * expresados en minutos del día. 0 si no se tocan o si algún rango es
+     * inválido (fin antes del inicio).
+     */
+    private function minutesOverlap(int $aStart, int $aEnd, int $bStart, int $bEnd): int
+    {
+        if ($aEnd <= $aStart || $bEnd <= $bStart) {
+            return 0;
+        }
+
+        return max(0, min($aEnd, $bEnd) - max($aStart, $bStart));
     }
 
     /**

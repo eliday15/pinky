@@ -53,14 +53,27 @@ const hasTimeRange = computed(() => {
 
 const permissionDate = ref('');
 const permissionTime = ref('');
+const permissionEndTime = ref('');
+
+// Permiso DENTRO de jornada (PDJ, Dani 2026-08-24): sale y REGRESA, así que
+// captura dos horas (salida y regreso). PSA/PEN siguen con una sola.
+const isWindowPermission = computed(() => selectedIncidentType.value?.code === 'PDJ');
+
+const windowHours = computed(() => {
+    if (!isWindowPermission.value || !permissionTime.value || !permissionEndTime.value) return null;
+    const [sh, sm] = permissionTime.value.split(':').map(Number);
+    const [eh, em] = permissionEndTime.value.split(':').map(Number);
+    const minutes = (eh * 60 + em) - (sh * 60 + sm);
+    return minutes > 0 ? Math.round((minutes / 60) * 100) / 100 : null;
+});
 
 /** Sync permission date/time to form fields (skipped for uses_vacation_hours types). */
-watch([permissionDate, permissionTime], ([date, time]) => {
+watch([permissionDate, permissionTime, permissionEndTime], ([date, time, endTime]) => {
     if (date && hasTimeRange.value && !usesVacationHours.value) {
         form.start_date = date;
         form.end_date = date;
         form.start_time = time || '';
-        form.end_time = time || '';
+        form.end_time = isWindowPermission.value ? (endTime || '') : (time || '');
     }
 });
 
@@ -493,8 +506,8 @@ const submit = () => {
                 </div>
                 </div>
 
-                <!-- Permission type: single date + time -->
-                <div v-if="hasTimeRange && !usesVacationHours" class="grid grid-cols-2 gap-6">
+                <!-- Permission type: single date + time (PDJ: salida Y regreso) -->
+                <div v-if="hasTimeRange && !usesVacationHours" :class="isWindowPermission ? 'grid grid-cols-3 gap-6' : 'grid grid-cols-2 gap-6'">
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">
                             Fecha <span class="text-red-500">*</span>
@@ -511,7 +524,7 @@ const submit = () => {
                     </div>
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">
-                            {{ selectedIncidentType?.code === 'PSA' ? 'Hora de Salida' : 'Hora de Entrada' }} <span class="text-red-500">*</span>
+                            {{ isWindowPermission ? 'Hora de Salida' : (selectedIncidentType?.code === 'PSA' ? 'Hora de Salida' : 'Hora de Entrada') }} <span class="text-red-500">*</span>
                         </label>
                         <input
                             v-model="permissionTime"
@@ -523,7 +536,24 @@ const submit = () => {
                             {{ form.errors.start_time }}
                         </p>
                         <p class="mt-1 text-xs text-gray-500">
-                            {{ selectedIncidentType?.code === 'PSA' ? 'Hora a la que se permite salir' : 'Hora a la que se permite entrar' }}
+                            {{ isWindowPermission ? 'Hora a la que sale del área' : (selectedIncidentType?.code === 'PSA' ? 'Hora a la que se permite salir' : 'Hora a la que se permite entrar') }}
+                        </p>
+                    </div>
+                    <div v-if="isWindowPermission">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">
+                            Hora de Regreso <span class="text-red-500">*</span>
+                        </label>
+                        <input
+                            v-model="permissionEndTime"
+                            type="time"
+                            class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                            :class="{ 'border-red-500': form.errors.end_time }"
+                        />
+                        <p v-if="form.errors.end_time" class="mt-1 text-sm text-red-600">
+                            {{ form.errors.end_time }}
+                        </p>
+                        <p class="mt-1 text-xs text-gray-500">
+                            Hora a la que regresa a trabajar{{ windowHours ? ` — ${windowHours} h de permiso` : '' }}
                         </p>
                     </div>
                 </div>

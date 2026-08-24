@@ -210,6 +210,18 @@ class IncidentController extends Controller
             ],
         ]);
 
+        // Permiso dentro de jornada (PDJ, Dani 2026-08-24): exige salida Y
+        // regreso el mismo día, con el regreso después de la salida — la
+        // ventana define las horas de permiso que la asistencia descuenta.
+        if ($incidentType?->code === 'PDJ') {
+            if (empty($validated['start_time']) || empty($validated['end_time'])) {
+                return back()->withErrors(['end_time' => 'El permiso dentro de jornada requiere hora de salida y hora de regreso.'])->withInput();
+            }
+            if ($validated['end_time'] <= $validated['start_time']) {
+                return back()->withErrors(['end_time' => 'La hora de regreso debe ser posterior a la hora de salida.'])->withInput();
+            }
+        }
+
         // Auto-calculate hours from start/end time if not provided
         if (! empty($validated['start_time']) && ! empty($validated['end_time']) && empty($validated['hours'])) {
             $start = Carbon::parse($validated['start_time']);
@@ -603,6 +615,20 @@ class IncidentController extends Controller
         if ($wasApproved && ((int) $validated['employee_id'] !== (int) $incident->employee_id
             || (int) $validated['incident_type_id'] !== (int) $incident->incident_type_id)) {
             return redirect()->back()->with('error', 'En una incidencia aprobada solo se corrigen fechas, horas y motivo. Para cambiar de empleado o de tipo, elimínala (devuelve el saldo) y captúrala de nuevo.');
+        }
+
+        // Permiso dentro de jornada (PDJ): mismas reglas que al capturar —
+        // salida Y regreso, con el regreso posterior.
+        $updateTypeForWindow = IncidentType::find($validated['incident_type_id']);
+        if ($updateTypeForWindow?->code === 'PDJ') {
+            if (empty($validated['start_time']) || empty($validated['end_time'])) {
+                return back()->withErrors(['end_time' => 'El permiso dentro de jornada requiere hora de salida y hora de regreso.'])->withInput();
+            }
+            if ($validated['end_time'] <= $validated['start_time']) {
+                return back()->withErrors(['end_time' => 'La hora de regreso debe ser posterior a la hora de salida.'])->withInput();
+            }
+            // El rango de horas cambió: las horas se rederivan de la ventana.
+            $validated['hours'] = null;
         }
 
         // Auto-calculate hours from start/end time if not provided

@@ -5,6 +5,8 @@ import { formatDateTime as fmtDateTime } from '@/utils/date';
 
 const props = defineProps({
     record: Object,
+    // Permiso con ventana horaria (PDJ) aprobado del día: { type_name, start, end, hours }.
+    windowPermission: { type: Object, default: null },
 });
 
 const statusColors = {
@@ -77,6 +79,18 @@ const formatHours = (hours) => {
         </div>
 
         <div class="max-w-4xl space-y-6">
+            <!-- Permiso con ventana horaria aprobado (PDJ): el hueco entre
+                 checadas de esa franja es permiso, no salida. -->
+            <div v-if="windowPermission" class="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+                <p class="text-sm font-medium text-indigo-800">
+                    {{ windowPermission.type_name || 'Permiso' }} aprobado: {{ windowPermission.start }}–{{ windowPermission.end }}
+                    <span v-if="windowPermission.hours">({{ windowPermission.hours }} h)</span>
+                </p>
+                <p class="mt-1 text-xs text-indigo-700">
+                    Las checadas dentro de esa franja son del permiso, no una salida: esas horas no cuentan como trabajadas ni generan retardo, salida temprana o tiempo extra.
+                </p>
+            </div>
+
             <!-- Employee Info Card -->
             <div class="bg-white rounded-lg shadow p-6">
                 <div class="flex items-center">

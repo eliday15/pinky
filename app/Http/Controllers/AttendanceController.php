@@ -375,8 +375,29 @@ class AttendanceController extends Controller
     {
         $attendance->load(['employee.department', 'employee.position', 'employee.schedule']);
 
+        // Permiso con ventana horaria APROBADO del día (PDJ, Dani 2026-08-24):
+        // se muestra como banner para que el hueco entre checadas se lea como
+        // permiso y no como salida.
+        $windowPermission = Incident::query()
+            ->where('employee_id', $attendance->employee_id)
+            ->whereDate('start_date', '<=', $attendance->work_date)
+            ->whereDate('end_date', '>=', $attendance->work_date)
+            ->where('status', 'approved')
+            ->whereNotNull('start_time')
+            ->whereNotNull('end_time')
+            ->whereColumn('start_time', '!=', 'end_time')
+            ->whereHas('incidentType', fn ($q) => $q->where('category', 'permission'))
+            ->with('incidentType')
+            ->first();
+
         return Inertia::render('Attendance/Show', [
             'record' => $attendance,
+            'windowPermission' => $windowPermission === null ? null : [
+                'type_name' => $windowPermission->incidentType?->name,
+                'start' => Carbon::parse($windowPermission->start_time)->format('H:i'),
+                'end' => Carbon::parse($windowPermission->end_time)->format('H:i'),
+                'hours' => (float) ($windowPermission->hours ?? 0),
+            ],
         ]);
     }
 
