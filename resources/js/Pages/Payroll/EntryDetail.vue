@@ -19,9 +19,15 @@ const viewingCash = computed(() => props.canal === 'efectivo');
 const viewingTransfer = computed(() => props.canal === 'transfer');
 const fullView = computed(() => !viewingCash.value && !viewingTransfer.value);
 
-const typeInfo = computed(() =>
-    periodTypeInfo(props.entry.calculation_breakdown?.scope?.period_type || props.entry.payroll_period?.type)
-);
+const typeInfo = computed(() => {
+    const scope = props.entry.calculation_breakdown?.scope ?? {};
+    // Pago unificado: el recibo trae la semana y los extras del mes juntos.
+    if (scope.unified) {
+        return periodTypeInfo('unified');
+    }
+
+    return periodTypeInfo(scope.period_type || props.entry.payroll_period?.type);
+});
 
 const formatDate = (date) => fmtDate(date, {
     day: 'numeric',
@@ -149,6 +155,50 @@ const deductionDetail = computed(() => {
     return rows;
 });
 
+// Detalle de la incapacidad: días pagados × sueldo diario (el resto de los días
+// de incapacidad no se pagan, los cubre el IMSS).
+const sickLeaveDetail = computed(() => {
+    const days = Number(breakdown.incidents?.sick_leave_paid_days ?? props.entry.sick_leave_days ?? 0);
+    const daily = Number(breakdown.rates?.daily_salary ?? props.entry.daily_salary ?? 0);
+    if (!days) return '';
+    return daily > 0 ? `${num(days)} día(s) × ${formatCurrency(daily)}` : `${num(days)} día(s)`;
+});
+
+const vacationDetail = computed(() => {
+    const days = Number(props.entry.vacation_days_paid ?? 0);
+    return days > 0 ? `${num(days)} día(s)` : '';
+});
+
+// Qué hay DENTRO de "Bonos" (el campo bonuses es la suma de todos). Se desglosa
+// para que el renglón se explique solo; el sobrante sin identificar se muestra
+// como "Otros bonos" en vez de esconderse.
+const bonusLines = computed(() => {
+    const b = breakdown.bonuses ?? {};
+    const ns = breakdown.night_shifts ?? {};
+    const rows = [];
+    const punctuality = money(b.punctuality ?? props.entry.punctuality_bonus);
+    const punctualDays = Number(props.entry.punctuality_days ?? breakdown.attendance?.punctual_days ?? 0);
+    if (punctuality > 0) {
+        rows.push({ label: 'Puntualidad', detail: punctualDays > 0 ? `${num(punctualDays)} día(s)` : '', amount: punctuality });
+    }
+    if (money(b.weekly ?? props.entry.weekly_bonus) > 0) {
+        rows.push({ label: 'Bono semanal (asistencia perfecta)', detail: '', amount: money(b.weekly ?? props.entry.weekly_bonus) });
+    }
+    if (money(b.monthly ?? props.entry.monthly_bonus) > 0) {
+        rows.push({ label: 'Bono mensual (asistencia perfecta)', detail: '', amount: money(b.monthly ?? props.entry.monthly_bonus) });
+    }
+    if (money(ns.bonus ?? props.entry.night_shift_bonus) > 0) {
+        rows.push({ label: 'Bono nocturno', detail: '', amount: money(ns.bonus ?? props.entry.night_shift_bonus) });
+    }
+    if (money(ns.dinner_allowance ?? props.entry.dinner_allowance) > 0) {
+        rows.push({ label: 'Cena', detail: '', amount: money(ns.dinner_allowance ?? props.entry.dinner_allowance) });
+    }
+    const shown = rows.reduce((s, r) => s + r.amount, 0);
+    const rest = money(props.entry.bonuses) - shown;
+    if (Math.abs(rest) >= 0.005) rows.push({ label: 'Otros bonos', detail: '', amount: rest });
+    return rows;
+});
+
 const transferLines = computed(() => {
     if (paysBaseInCash.value) return [];
     const lines = [];
@@ -211,11 +261,19 @@ const efectivoLines = computed(() => {
         if (c.via_transfer) continue;
         lines.push({ label: c.name, detail: conceptDetail(c), amount: money(c.amount) });
     }
-    if (money(props.entry.vacation_pay) > 0) lines.push({ label: 'Vacaciones', detail: '', amount: money(props.entry.vacation_pay) });
+    if (money(props.entry.vacation_pay) > 0) lines.push({ label: 'Vacaciones', detail: vacationDetail.value, amount: money(props.entry.vacation_pay) });
     // Prima vacacional de los empleados de EFECTIVO: se paga en la mensual (los
     // formalizados la cobran por transferencia, ver transferLines).
     if (paysBaseInCash.value && money(props.entry.vacation_premium_pay) > 0) lines.push({ label: 'Prima vacacional', detail: '', amount: money(props.entry.vacation_premium_pay) });
-    if (money(props.entry.bonuses) > 0) lines.push({ label: 'Bonos', detail: '', amount: money(props.entry.bonuses) });
+    // Incapacidad con goce: días pagados × sueldo diario. Sin este renglón su
+    // importe caía en el residual y se leía como "redondeo" (caso Guadalupe,
+    // 26 días de incapacidad = $7,248.80 sin explicar).
+    if (money(props.entry.sick_leave_pay) > 0) {
+        lines.push({ label: 'Incapacidad', detail: sickLeaveDetail.value, amount: money(props.entry.sick_leave_pay) });
+    }
+    if (money(props.entry.bonuses) > 0) {
+        lines.push({ label: 'Bonos', detail: '', amount: money(props.entry.bonuses), children: bonusLines.value });
+    }
     if (paysBaseInCash.value && money(props.entry.deductions) > 0) {
         lines.push({ label: 'Deducciones (faltas)', detail: '', amount: -money(props.entry.deductions), isDeduction: true });
     }
@@ -224,8 +282,16 @@ const efectivoLines = computed(() => {
 
 // Suma exacta de los renglones de efectivo (= entry.cash_amount). El cobro se
 // redondea al peso (period_amount), por eso el redondeo se muestra aparte.
+// Conceptos "es sueldo" que NO se pagaron porque el recibo ya trae el sueldo
+// base (personal en periodo de prueba). Se listan para que se vea por qué.
+const suppressedSalaryConcepts = computed(() => breakdown.suppressed_base_salary_concepts ?? []);
+
 const efectivoSubtotal = computed(() => efectivoLines.value.reduce((s, l) => s + l.amount, 0));
 const pesoRounding = computed(() => Number(props.cashSplit?.period_amount ?? 0) - efectivoSubtotal.value);
+// El cobro se redondea al peso, así que el residual normal son centavos. Un
+// residual de pesos significa que a los renglones les falta un concepto: se
+// nombra "Sin desglosar" y se pinta en ámbar en vez de llamarle "redondeo".
+const roundingIsCents = computed(() => Math.abs(pesoRounding.value) < 1);
 </script>
 
 <template>
@@ -477,6 +543,14 @@ const pesoRounding = computed(() => Number(props.cashSplit?.period_amount ?? 0) 
                                         {{ l.amount < 0 ? '-' : '' }}{{ formatCurrency(Math.abs(l.amount)) }}
                                     </td>
                                 </tr>
+                                <!-- Qué hay dentro del renglón (ej. los bonos) -->
+                                <tr v-for="(c, ci) in (l.children || [])" :key="`c-${i}-${ci}`" class="text-xs text-gray-500">
+                                    <td class="py-1 pl-6">
+                                        {{ c.label }}
+                                        <span v-if="c.detail" class="text-gray-400 ml-1">({{ c.detail }})</span>
+                                    </td>
+                                    <td class="py-1 text-right">{{ formatCurrency(c.amount) }}</td>
+                                </tr>
                                 <!-- Detalle de la falta: qué días y por qué se descuenta -->
                                 <template v-if="l.isDeduction">
                                     <tr v-for="(d, di) in deductionDetail" :key="`d-${i}-${di}`" class="text-xs text-red-500/80">
@@ -527,6 +601,14 @@ const pesoRounding = computed(() => Number(props.cashSplit?.period_amount ?? 0) 
                                         {{ l.amount < 0 ? '-' : '' }}{{ formatCurrency(Math.abs(l.amount)) }}
                                     </td>
                                 </tr>
+                                <!-- Qué hay dentro del renglón (ej. los bonos) -->
+                                <tr v-for="(c, ci) in (l.children || [])" :key="`c-${i}-${ci}`" class="text-xs text-gray-500">
+                                    <td class="py-1 pl-6">
+                                        {{ c.label }}
+                                        <span v-if="c.detail" class="text-gray-400 ml-1">({{ c.detail }})</span>
+                                    </td>
+                                    <td class="py-1 text-right">{{ formatCurrency(c.amount) }}</td>
+                                </tr>
                                 <!-- Detalle de la falta: qué días y por qué se descuenta -->
                                 <template v-if="l.isDeduction">
                                     <tr v-for="(d, di) in deductionDetail" :key="`d-${i}-${di}`" class="text-xs text-red-500/80">
@@ -538,14 +620,21 @@ const pesoRounding = computed(() => Number(props.cashSplit?.period_amount ?? 0) 
                             <tr v-if="!efectivoLines.length">
                                 <td colspan="2" class="py-2 text-sm text-gray-400">Sin efectivo este periodo.</td>
                             </tr>
+                            <!-- Concepto de sueldo no pagado: ya viene en el sueldo base -->
+                            <tr v-for="(c, si) in suppressedSalaryConcepts" :key="`s-${si}`" class="text-xs text-gray-400">
+                                <td class="py-1">
+                                    {{ c.name }} — no se paga: {{ c.reason }}
+                                </td>
+                                <td class="py-1 text-right">{{ formatCurrency(0) }}</td>
+                            </tr>
                         </tbody>
                         <tfoot>
                             <tr class="border-t-2 border-gray-200">
                                 <td class="py-3 font-semibold text-gray-800">Efectivo de este periodo</td>
                                 <td class="py-3 text-right font-semibold text-gray-800">{{ formatCurrency(efectivoSubtotal) }}</td>
                             </tr>
-                            <tr v-if="Math.abs(pesoRounding) >= 0.005" class="text-gray-400">
-                                <td class="py-1">Redondeo al peso</td>
+                            <tr v-if="Math.abs(pesoRounding) >= 0.005" :class="roundingIsCents ? 'text-gray-400' : 'text-amber-600 font-medium'">
+                                <td class="py-1">{{ roundingIsCents ? 'Redondeo al peso' : 'Sin desglosar (revisar)' }}</td>
                                 <td class="py-1 text-right">{{ pesoRounding >= 0 ? '+' : '-' }}{{ formatCurrency(Math.abs(pesoRounding)) }}</td>
                             </tr>
                             <tr v-if="cashSplit.opening_balance > 0" class="text-amber-600">
