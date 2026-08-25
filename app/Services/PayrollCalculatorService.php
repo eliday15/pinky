@@ -1536,36 +1536,36 @@ class PayrollCalculatorService
             return $units;
         }
 
-        // Los demás deptos (Dani 2026-07-07): 1 fin de semana por cada día FIN
-        // autorizado donde se trabajaron al menos T horas (7 por omisión). Por
-        // debajo de T no hay fin de semana (esas horas van como tiempo extra), y
-        // más de T sigue siendo 1 solo fin de semana (el excedente es tiempo
-        // extra aparte). Se reconfirma el umbral aquí aunque el pull ya lo filtra.
+        // Los demás deptos (Dani 2026-07-07, ampliada 2026-08-25 caso Angelica/
+        // Saldos): por cada día FIN autorizado con al menos T horas (7 por
+        // omisión) hay 1 fin de semana, y al llegar a 12 h corridas el fin se
+        // paga DOBLE — el excedente sobre T se sigue pagando como tiempo extra
+        // aparte (a diferencia de Almacén PT, donde las unidades absorben todo).
+        // Por debajo de T no hay fin de semana (esas horas van como tiempo
+        // extra). Se reconfirma el umbral aquí aunque el pull ya lo filtra.
         $threshold = $employee->weekendUnitThreshold();
         if ($threshold === null) {
             return 0;
         }
 
         // El umbral se compara contra las horas CORRIDAS de entrada a salida,
-        // sin descontar comida (Dani 2026-07-08). Un día FIN autorizado sin
-        // checada completa (empleado exento, salida no marcada, día
-        // sincronizado como ausente) cuenta 1: la autorización aprobada es la
-        // evidencia cuando no hay horas que medir.
-        $grossByDate = $attendance->mapWithKeys(fn ($r) => [
-            Carbon::parse($r->work_date)->toDateString() => $r->grossSpanHours(),
-        ]);
-
+        // sin descontar comida (Dani 2026-07-08) pero MENOS la velada — la
+        // velada se paga aparte y no genera fines (misma regla que Almacén).
+        // Un día FIN autorizado sin checada completa (empleado exento, salida
+        // no marcada, día sincronizado como ausente) vale lo CAPTURADO en la
+        // autorización (mínimo 1): la autorización aprobada es la evidencia
+        // cuando no hay horas que medir.
         $units = 0;
         foreach ($finDates as $date) {
-            $gross = $grossByDate->get($date);
+            $record = $recordsByDate->get($date);
+            $gross = $record?->grossSpanHours();
             if ($gross === null) {
-                $units++;
+                $units += max(1, (int) round((float) ($finHoursByDate->get($date) ?? 1)));
 
                 continue;
             }
-            if ((float) $gross >= $threshold) {
-                $units++;
-            }
+            $base = max(0.0, (float) $gross - (float) ($record->velada_hours ?? 0));
+            $units += (int) ($employee->weekendUnitsForGrossHours($base) ?? 0);
         }
 
         return $units;

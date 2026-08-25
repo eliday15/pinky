@@ -137,17 +137,19 @@ class WeekendUnitsTest extends FeatureTestCase
         $this->assertEqualsWithDelta(12.0, $report['rows'][0]['totals']['weekend_worked_hours'], 0.01);
     }
 
-    public function test_report_keeps_hours_for_departments_without_the_rule(): void
+    public function test_report_counts_threshold_department_fines_with_double_at_twelve(): void
     {
-        $dept = Department::factory()->create(['name' => 'Producción', 'code' => 'PROD']); // sin regla
+        // Deptos de umbral (Dani 2026-08-25, caso Angelica/Saldos): el reporte
+        // expone el conteo REAL de fines — 12 h corridas = fin DOBLE.
+        $dept = Department::factory()->create(['name' => 'Producción', 'code' => 'PROD']); // sin regla de bloques
         $employee = Employee::factory()->create(['department_id' => $dept->id, 'status' => 'active']);
-        $this->seedWeekendWork($employee, $this->weekendCompType());
+        $this->seedWeekendWork($employee, $this->weekendCompType()); // 12 h corridas
 
         $report = app(WeeklyOvertimeReportService::class)
             ->buildReport($dept, Carbon::parse('2026-03-09'));
 
         $this->assertNull($report['weekend_unit_hours']);
-        $this->assertNull($report['totals']['weekend_units']);
+        $this->assertSame(2, $report['totals']['weekend_units'], '12 h corridas en depto de umbral = fin doble');
     }
 
     public function test_payroll_pays_weekend_by_units_for_almacen_pt(): void
@@ -565,6 +567,109 @@ class WeekendUnitsTest extends FeatureTestCase
         $entry = app(PayrollCalculatorService::class)
             ->calculateEmployeePayroll($period, $employee->fresh());
         $this->assertEqualsWithDelta(400.0, (float) $entry->weekend_pay, 0.01); // 2 × 200
+    }
+
+    public function test_threshold_department_case_angelica_double_fin_and_captured_comidas(): void
+    {
+        // Caso Angelica Rangel (Saldos, Dani 2026-08-25): sábado 12.38 h
+        // corridas con FIN y COM capturados con 2 ("doble") + domingo 7.26 h
+        // con FIN y COM de 1. Nómina y reporte: 3 fines (2 + 1, el sábado
+        // dobla por llegar a 12 h) y 3 comidas (la COM vale su cantidad
+        // capturada). El TE del finde (excedente sobre 7) no cambia.
+        $dept = Department::factory()->create(['name' => 'Saldos', 'code' => 'SALDOS']); // umbral, sin bloques
+        $employee = Employee::factory()->create(['department_id' => $dept->id, 'status' => 'active']);
+        $fin = $this->weekendCompType(200.0);
+        $com = $this->comidaCompType(50.0);
+        $employee->compensationTypes()->attach($fin->id, ['is_active' => true]);
+        $employee->compensationTypes()->attach($com->id, ['is_active' => true]);
+
+        foreach ([
+            [self::SATURDAY, '05:41:00', '18:04:00', 9.0, 2.88, 2], // 12.38 h corridas
+            ['2026-03-15', '07:50:00', '15:05:00', 6.75, 0.0, 1],   // 7.25 h corridas
+        ] as [$date, $in, $out, $worked, $ot, $capturedUnits]) {
+            AttendanceRecord::factory()->create([
+                'employee_id' => $employee->id,
+                'work_date' => $date,
+                'check_in' => $in,
+                'check_out' => $out,
+                'worked_hours' => $worked,
+                'overtime_hours' => $ot,
+                'lunch_out' => null,
+                'lunch_in' => null,
+                'actual_break_minutes' => 0,
+                'status' => 'present',
+                'is_weekend_work' => true,
+            ]);
+            foreach ([$fin, $com] as $ct) {
+                Authorization::factory()->create([
+                    'employee_id' => $employee->id,
+                    'date' => $date,
+                    'type' => Authorization::TYPE_SPECIAL,
+                    'compensation_type_id' => $ct->id,
+                    'hours' => $capturedUnits,
+                    'status' => Authorization::STATUS_APPROVED,
+                ]);
+            }
+        }
+
+        $report = app(WeeklyOvertimeReportService::class)
+            ->buildReport($dept, Carbon::parse('2026-03-09'));
+        $this->assertSame(3, $report['totals']['weekend_units'], 'sábado doble (12.38 h) + domingo = 3 fines');
+        $this->assertSame(3, $report['rows'][0]['totals']['comida_count'], 'la COM capturada con 2 vale 2 comidas');
+
+        $period = PayrollPeriod::factory()->monthly()->create([
+            'start_date' => '2026-03-01',
+            'end_date' => '2026-03-31',
+            'payment_date' => '2026-04-03',
+        ]);
+        $entry = app(PayrollCalculatorService::class)
+            ->calculateEmployeePayroll($period, $employee->fresh());
+        $this->assertEqualsWithDelta(600.0, (float) $entry->weekend_pay, 0.01, '3 fines × $200');
+    }
+
+    public function test_threshold_department_incomplete_checada_uses_captured_units(): void
+    {
+        // Umbral + checada sin salida: la autorización aprobada es la
+        // evidencia — valen sus unidades capturadas (misma regla que Almacén).
+        $dept = Department::factory()->create(['name' => 'Saldos', 'code' => 'SALDOS2']);
+        $employee = Employee::factory()->create(['department_id' => $dept->id, 'status' => 'active']);
+        $fin = $this->weekendCompType(200.0);
+        $employee->compensationTypes()->attach($fin->id, ['is_active' => true]);
+
+        AttendanceRecord::factory()->create([
+            'employee_id' => $employee->id,
+            'work_date' => self::SATURDAY,
+            'check_in' => '18:30:00',
+            'check_out' => null,
+            'worked_hours' => 0,
+            'overtime_hours' => 0,
+            'lunch_out' => null,
+            'lunch_in' => null,
+            'actual_break_minutes' => 0,
+            'status' => 'present',
+            'is_weekend_work' => true,
+        ]);
+        Authorization::factory()->create([
+            'employee_id' => $employee->id,
+            'date' => self::SATURDAY,
+            'type' => Authorization::TYPE_SPECIAL,
+            'compensation_type_id' => $fin->id,
+            'hours' => 2,
+            'status' => Authorization::STATUS_APPROVED,
+        ]);
+
+        $report = app(WeeklyOvertimeReportService::class)
+            ->buildReport($dept, Carbon::parse('2026-03-09'));
+        $this->assertSame(2, $report['totals']['weekend_units']);
+
+        $period = PayrollPeriod::factory()->monthly()->create([
+            'start_date' => '2026-03-01',
+            'end_date' => '2026-03-31',
+            'payment_date' => '2026-04-03',
+        ]);
+        $entry = app(PayrollCalculatorService::class)
+            ->calculateEmployeePayroll($period, $employee->fresh());
+        $this->assertEqualsWithDelta(400.0, (float) $entry->weekend_pay, 0.01, '2 unidades capturadas × $200');
     }
 
     public function test_normal_department_pays_one_weekend_unit_at_threshold(): void

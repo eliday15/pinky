@@ -67,9 +67,11 @@ class DefaultTemplate extends AbstractOvertimeReportTemplate
                 $total .= ' (+'.$this->formatHours($rowPend).' x aprobar)';
             }
             $line[] = $total;
-            $line[] = ! empty($report['weekend_unit_hours'])
-                ? $row['totals']['weekend_units']
-                : $this->formatHours($row['totals']['weekend_hours']);
+            // Conteo REAL de fines (regla de bloques en Almacén; T+ = 1 y 12 h =
+            // doble en los demás, Dani 2026-08-25) — lo mismo que paga la
+            // nómina. El fallback a horas capturadas queda para reportes viejos.
+            $line[] = $row['totals']['weekend_units']
+                ?? $this->formatHours($row['totals']['weekend_hours']);
             $line[] = $row['totals']['comida_count'];
             $line[] = $row['totals']['velada_count'];
             $line[] = $row['totals']['cena_count'];

@@ -852,14 +852,13 @@ class AuthorizationController extends Controller
             ->whereDate('work_date', $dateString)
             ->first();
 
-        // Conteo por unidades (Almacén PT): cuando el depto cuenta el fin de
-        // semana / comida por unidades de N horas, una jornada de fin de semana
-        // de 12 h equivale a 2 unidades. Las horas se cuentan CORRIDAS de
-        // entrada a salida, sin descontar comida (Dani 2026-08-19, caso
-        // Elizabeth: 6:55–19:00 = 12 h = 2 unidades) MENOS las horas de velada
-        // — la velada se paga aparte y no genera unidades (Dani 2026-08-24,
-        // caso Miguel: 14 h − 4.5 de velada = 9.5 → 1) — con floor,
-        // exactamente igual que la nómina y el reporte. Sin checada completa
+        // Conteo de fines/comidas del día, igual que la nómina y el reporte.
+        // Almacén PT (weekend_unit_hours): floor de horas CORRIDAS de entrada a
+        // salida sin descontar comida (Dani 2026-08-19, Elizabeth: 12 h = 2)
+        // MENOS la velada, que se paga aparte (Dani 2026-08-24, Miguel: 14 −
+        // 4.5 = 9.5 → 1). Deptos de UMBRAL (Dani 2026-08-25, Angelica/Saldos):
+        // T+ h = 1 fin y 12 h = fin DOBLE (el excedente sobre T sigue como TE);
+        // la comida vale su cantidad capturada. En ambos, sin checada completa
         // valen las unidades CAPTURADAS en esta autorización (caso Elsa).
         $unitHours = $authorization->employee->department?->weekend_unit_hours;
         $pullRule = $authorization->compensationType?->attendance_pull_rule;
@@ -867,18 +866,30 @@ class AuthorizationController extends Controller
         $totalWeekendHours = 0.0;
         $weekendVeladaHours = 0.0;
         $weekendFromCapture = false;
-        if ($unitHours && in_array($pullRule, [
-            CompensationType::PULL_RULE_WEEKEND,
-            CompensationType::PULL_RULE_COMIDA,
-        ], true)) {
+        $isWeekendPull = $pullRule === CompensationType::PULL_RULE_WEEKEND;
+        $isComidaPull = $pullRule === CompensationType::PULL_RULE_COMIDA;
+        if ($isWeekendPull || $isComidaPull) {
             $gross = $record?->grossSpanHours();
-            if ($gross === null) {
+            if ($unitHours) {
+                if ($gross === null) {
+                    $weekendFromCapture = true;
+                    $weekendUnits = max(1, (int) round((float) $authorization->hours));
+                } else {
+                    $weekendVeladaHours = (float) ($record->velada_hours ?? 0);
+                    $totalWeekendHours = max(0.0, (float) $gross - $weekendVeladaHours);
+                    $weekendUnits = (int) floor($totalWeekendHours / $unitHours);
+                }
+            } elseif ($isComidaPull) {
+                // Comida en depto de umbral: vale su cantidad capturada.
+                $weekendFromCapture = true;
+                $weekendUnits = max(1, (int) round((float) $authorization->hours));
+            } elseif ($gross === null) {
                 $weekendFromCapture = true;
                 $weekendUnits = max(1, (int) round((float) $authorization->hours));
             } else {
                 $weekendVeladaHours = (float) ($record->velada_hours ?? 0);
                 $totalWeekendHours = max(0.0, (float) $gross - $weekendVeladaHours);
-                $weekendUnits = (int) floor($totalWeekendHours / $unitHours);
+                $weekendUnits = $authorization->employee->weekendUnitsForGrossHours($totalWeekendHours);
             }
         }
 
@@ -903,6 +914,9 @@ class AuthorizationController extends Controller
             'weekendUnits' => $weekendUnits === null ? null : [
                 'units' => $weekendUnits,
                 'unit_hours' => (int) $unitHours,
+                'mode' => $unitHours ? 'blocks' : 'threshold',
+                'threshold' => $unitHours ? null : $authorization->employee->weekendUnitThreshold(),
+                'double_at' => Employee::WEEKEND_DOUBLE_THRESHOLD_HOURS,
                 'worked_hours' => round($totalWeekendHours, 2),
                 'velada_hours' => round($weekendVeladaHours, 2),
                 'from_capture' => $weekendFromCapture,

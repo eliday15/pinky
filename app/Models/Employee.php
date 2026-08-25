@@ -505,6 +505,11 @@ class Employee extends Model
     /** Horas que, por omisión, valen 1 "fin de semana" en un depto normal. */
     public const WEEKEND_UNIT_DEFAULT_HOURS = 7;
 
+    /** Horas corridas a partir de las cuales el fin de semana se paga DOBLE en
+     *  deptos de umbral (Dani 2026-08-25: "si llegan a cumplir las 12 horas,
+     *  que se pague doble el fin de semana"). */
+    public const WEEKEND_DOUBLE_THRESHOLD_HOURS = 12.0;
+
     /**
      * Umbral (en horas) del FIN DE SEMANA para deptos que NO pagan por unidades
      * fijas (todos menos Almacén PT). Regla de Dani 2026-07-07:
@@ -525,6 +530,27 @@ class Employee extends Model
         }
 
         return (float) ($this->department?->weekend_overtime_after_hours ?? self::WEEKEND_UNIT_DEFAULT_HOURS);
+    }
+
+    /**
+     * Fines de semana que gana un día con estas horas CORRIDAS en un depto de
+     * UMBRAL (sin weekend_unit_hours). Regla de Dani 2026-08-25 (caso Angelica,
+     * Saldos): T horas o más = 1 fin de semana (el excedente sobre T se paga
+     * como tiempo extra, eso no cambia); al llegar a 12 h el fin se paga DOBLE.
+     * Por debajo de T no hay fin de semana. Devuelve null en deptos por
+     * unidades (Almacén PT), donde rige floor(horas/unidad).
+     */
+    public function weekendUnitsForGrossHours(float $grossHours): ?int
+    {
+        $threshold = $this->weekendUnitThreshold();
+        if ($threshold === null) {
+            return null;
+        }
+        if ($grossHours < $threshold) {
+            return 0;
+        }
+
+        return $grossHours >= self::WEEKEND_DOUBLE_THRESHOLD_HOURS ? 2 : 1;
     }
 
     /**

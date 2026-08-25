@@ -138,7 +138,7 @@ const excelHref = computed(() => route('reports.overtime-weekly.export.excel', e
                 <p class="text-xs text-gray-500">Pendientes por aprobar</p>
             </div>
             <div class="bg-white rounded-lg shadow p-3 text-center">
-                <p class="text-2xl font-bold text-amber-600">{{ report.weekend_unit_hours ? report.totals.weekend_units : report.totals.weekend_hours + 'h' }}</p>
+                <p class="text-2xl font-bold text-amber-600">{{ report.totals.weekend_units ?? (report.totals.weekend_hours + 'h') }}</p>
                 <p class="text-xs text-gray-500">{{ report.weekend_unit_hours ? 'Fines de Semana' : 'Fin de Semana' }}</p>
             </div>
             <div class="bg-white rounded-lg shadow p-3 text-center">

@@ -226,22 +226,32 @@ class WeeklyOvertimeReportService
             $weeklyPending += $day['pending_overtime_hours'];
             $veladaCount += $day['velada_marker'];
             $cenaCount += $day['cena_marker'];
-            $comidaCount += $day['comida_marker'];
+            // Cantidad capturada por día (COM con 2 = 2 comidas); Almacén PT lo
+            // sobreescribe abajo con las unidades (comida = fines).
+            $comidaCount += $day['comida_units'] ?? $day['comida_marker'];
 
-            // Unidades de fin de semana POR DÍA autorizado (Almacén): cada día de
-            // fin de semana con autorización FIN cuenta al menos 1, aunque trabaje
-            // < 1 unidad (regla de Dani 2026-06-28: "aunque se presenten 1 hora es
-            // un fin de semana"); 12 h ÷ 6 = 2 sobre horas corridas MENOS velada.
-            // Sin checada completa valen las unidades capturadas en el FIN
-            // (Dani 2026-08-24). Coincide con la nómina (calculateWeekendUnits).
-            if ($weekendUnitHours && $day['has_weekend_auth']) {
-                $weekendUnitsAccum += ! empty($day['weekend_gross_missing'])
-                    ? max(1, (int) round((float) ($day['weekend_captured_units'] ?? 1)))
-                    : max(1, (int) floor($day['weekend_worked_hours'] / $weekendUnitHours));
+            // Unidades de fin de semana POR DÍA autorizado. Almacén PT: cada día
+            // FIN cuenta al menos 1, aunque trabaje < 1 unidad (Dani 2026-06-28);
+            // 12 h ÷ 6 = 2 sobre horas corridas MENOS velada. Deptos de umbral
+            // (Dani 2026-08-25, caso Angelica/Saldos): T+ h = 1 fin, 12 h = fin
+            // DOBLE (el excedente sobre T sigue como TE). En ambos, sin checada
+            // completa valen las unidades capturadas en el FIN (Dani 2026-08-24).
+            // Coincide con la nómina (calculateWeekendUnits).
+            if ($day['has_weekend_auth']) {
+                if (! empty($day['weekend_gross_missing'])) {
+                    $weekendUnitsAccum += max(1, (int) round((float) ($day['weekend_captured_units'] ?? 1)));
+                } elseif ($weekendUnitHours) {
+                    $weekendUnitsAccum += max(1, (int) floor($day['weekend_worked_hours'] / $weekendUnitHours));
+                } else {
+                    $weekendUnitsAccum += (int) ($employee->weekendUnitsForGrossHours((float) $day['weekend_worked_hours']) ?? 0);
+                }
             }
         }
 
-        $weekendUnits = $weekendUnitHours ? $weekendUnitsAccum : null;
+        // Todos los deptos exponen su conteo de fines (Almacén por bloques;
+        // umbral por la regla T/12) — la columna FIN muestra el conteo real
+        // que paga la nómina, no la suma de lo capturado.
+        $weekendUnits = $weekendUnitsAccum;
         // Conceptos extra y observaciones: SOLO aprobados (las pendientes
         // capturadas viven exclusivamente en la parte ámbar "por aprobar").
         $approvedOnly = $authorizations->filter(
@@ -308,6 +318,7 @@ class WeeklyOvertimeReportService
             'has_weekend_auth' => false,
             'weekend_gross_missing' => false,
             'weekend_captured_units' => 0.0,
+            'comida_units' => 0,
             'worked_hours' => 0.0,
             'detected_overtime_hours' => 0.0,
             'pending_overtime_hours' => 0.0,
@@ -453,6 +464,13 @@ class WeeklyOvertimeReportService
             'velada_marker' => $veladaMarker,
             'cena_marker' => $cenaMarker,
             'comida_marker' => $comidaMarker,
+            // Cantidad de comidas del día (deptos de umbral): la fila COM
+            // capturada con 2 vale 2 comidas (Dani 2026-08-25, caso Angelica —
+            // el sábado de fin doble lleva su comida doble). Mínimo 1 por día
+            // con COM aprobada. En Almacén PT no se usa (ahí comida = unidades).
+            'comida_units' => $comidaMarker
+                ? max(1, (int) round((float) $approvedByCode->get(self::COMIDA_CODE, collect())->max('hours')))
+                : 0,
         ];
     }
 
@@ -504,6 +522,9 @@ class WeeklyOvertimeReportService
             'velada_marker' => $approvedByCode->has(self::VELADA_CODE) ? 1 : 0,
             'cena_marker' => $approvedByCode->has(self::CENA_CODE) ? 1 : 0,
             'comida_marker' => $approvedByCode->has(self::COMIDA_CODE) ? 1 : 0,
+            'comida_units' => $approvedByCode->has(self::COMIDA_CODE)
+                ? max(1, (int) round((float) $approvedByCode->get(self::COMIDA_CODE, collect())->max('hours')))
+                : 0,
         ]);
     }
 
@@ -701,10 +722,10 @@ class WeeklyOvertimeReportService
             'total_hours' => round($totalHours, 2),
             'weekend_hours' => round($weekendHours, 2),
             'weekend_worked_hours' => round($weekendWorked, 2),
-            // Suma de las unidades por empleado (cada una ya a floor), no se
-            // recalcula desde el total de horas: floor no es aditivo y mezclaría
-            // empleados. Consistente con la nómina y con cada fila.
-            'weekend_units' => $weekendUnitHours ? $weekendUnits : null,
+            // Suma de las unidades por empleado (cada una ya a floor/regla T-12),
+            // no se recalcula desde el total de horas: floor no es aditivo y
+            // mezclaría empleados. Consistente con la nómina y con cada fila.
+            'weekend_units' => $weekendUnits,
             'detected_hours' => round($detectedHours, 2),
             'pending_hours' => round($pendingHours, 2),
             'velada_count' => $veladaCount,

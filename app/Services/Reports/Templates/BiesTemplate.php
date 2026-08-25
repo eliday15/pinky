@@ -54,7 +54,7 @@ class BiesTemplate extends AbstractOvertimeReportTemplate
             'CENA '.$this->formatDate($report['week_start']),
             fn ($row) => $row['totals']['cena_count'],
         );
-        $rows[] = $this->buildTotalRow($report, 'FIN DE SEMANA', fn ($row) => $row['totals']['weekend_hours']);
+        $rows[] = $this->buildTotalRow($report, 'FIN DE SEMANA', fn ($row) => $row['totals']['weekend_units'] ?? $row['totals']['weekend_hours']);
         $rows[] = $this->buildTotalRow($report, 'COMIDA', fn ($row) => $row['totals']['comida_count']);
 
         return $rows;

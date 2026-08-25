@@ -667,10 +667,16 @@ class CompensationRateResolverService
 
             // Per-day concepts pay one day per approved authorization row
             // (1 row = 1 day). Partial approval rejects whole rows, never
-            // fractions of a day.
+            // fractions of a day. EXCEPCIÓN — la COMIDA del fin de semana en
+            // deptos de umbral paga la CANTIDAD capturada en la fila (Dani
+            // 2026-08-25, caso Angelica/Saldos: COM capturada con 2 en un
+            // sábado de fin doble = 2 comidas), mínimo 1.
             [$hours, $days] = match ($compType->application_mode) {
                 CompensationType::APPLICATION_PER_HOUR => [(float) $auth->hours, 0.0],
-                CompensationType::APPLICATION_PER_DAY => [0.0, 1.0],
+                CompensationType::APPLICATION_PER_DAY => [
+                    0.0,
+                    $compType->hasComidaPullRule() ? max(1.0, round((float) $auth->hours)) : 1.0,
+                ],
                 default => [0.0, 0.0],
             };
 

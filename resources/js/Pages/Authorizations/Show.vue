@@ -221,15 +221,18 @@ const submitReject = () => {
                                     </dd>
                                 </div>
                                 <div v-if="weekendUnits">
-                                    <dt class="text-sm font-medium text-gray-500">Unidades (Almacén PT)</dt>
+                                    <dt class="text-sm font-medium text-gray-500">{{ weekendUnits.mode === 'blocks' ? 'Unidades (Almacén PT)' : 'Conteo del día' }}</dt>
                                     <dd class="mt-1 text-sm font-semibold text-pink-700">
                                         {{ weekendUnits.units }} {{ weekendUnits.label }}
                                     </dd>
                                     <dd v-if="weekendUnits.from_capture" class="mt-0.5 text-xs text-gray-500">
-                                        Sin checada completa: valen las unidades capturadas en esta autorización
+                                        {{ weekendUnits.mode === 'threshold' && weekendUnits.label === 'comida(s)' ? 'La comida vale su cantidad capturada' : 'Sin checada completa: valen las unidades capturadas en esta autorización' }}
+                                    </dd>
+                                    <dd v-else-if="weekendUnits.mode === 'blocks'" class="mt-0.5 text-xs text-gray-500">
+                                        {{ weekendUnits.worked_hours }} h corridas de entrada a salida (sin descontar comida<template v-if="weekendUnits.velada_hours">, menos {{ weekendUnits.velada_hours }} h de velada</template>) ÷ {{ weekendUnits.unit_hours }} h por unidad (se trunca, no se redondea)
                                     </dd>
                                     <dd v-else class="mt-0.5 text-xs text-gray-500">
-                                        {{ weekendUnits.worked_hours }} h corridas de entrada a salida (sin descontar comida<template v-if="weekendUnits.velada_hours">, menos {{ weekendUnits.velada_hours }} h de velada</template>) ÷ {{ weekendUnits.unit_hours }} h por unidad (se trunca, no se redondea)
+                                        {{ weekendUnits.worked_hours }} h corridas de entrada a salida (sin descontar comida<template v-if="weekendUnits.velada_hours">, menos {{ weekendUnits.velada_hours }} h de velada</template>): {{ weekendUnits.threshold }} h o más = 1 fin de semana, {{ weekendUnits.double_at }} h = doble; el excedente sobre {{ weekendUnits.threshold }} h se paga como tiempo extra
                                     </dd>
                                 </div>
                                 <div>

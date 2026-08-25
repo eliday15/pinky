@@ -50,7 +50,7 @@ class CorteTemplate extends AbstractOvertimeReportTemplate
             }
 
             $line[] = $this->formatHours($row['totals']['total_hours']);
-            $line[] = $this->formatHours($row['totals']['weekend_hours']);
+            $line[] = $row['totals']['weekend_units'] ?? $this->formatHours($row['totals']['weekend_hours']);
             $line[] = $row['totals']['comida_count'];
             $line[] = $row['totals']['velada_count'];
             $line[] = $row['totals']['cena_count'];
