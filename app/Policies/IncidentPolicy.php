@@ -102,6 +102,17 @@ class IncidentPolicy
             return $user->hasPermissionTo('incidents.view_all');
         }
 
+        // Permisos (PEN/PSA/PDJ y horas a cuenta) — Dani 2026-08-26: Admin/RRHH
+        // también los elimina APROBADOS. El borrado revierte su efecto completo:
+        // la asistencia se recalcula (el retardo/falta que el permiso perdonó
+        // vuelve) y las horas de bolsa se devuelven si aplica
+        // (IncidentController::destroy). Es la vía de corrección de un permiso
+        // capturado mal.
+        if ($incident->status === 'approved'
+            && ($incident->incidentType?->category) === 'permission') {
+            return $user->hasPermissionTo('incidents.view_all');
+        }
+
         // Los vales de conversión "a cuenta de horas" (HxV) sí pueden borrarse
         // aunque estén aprobados: el borrado devuelve las horas no gastadas a la
         // bolsa (IncidentController::destroy) y es la vía de corrección, ya que

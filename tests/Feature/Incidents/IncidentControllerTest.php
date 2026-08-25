@@ -1099,13 +1099,13 @@ class IncidentControllerTest extends FeatureTestCase
 
     public function test_destroy_approved_non_vacation_incident_is_blocked_for_everyone(): void
     {
-        // Para tipos que NO descuentan vacaciones, una aprobada sigue sin
-        // poderse borrar (ni el admin): el status guard de la policy manda.
-        // Las hojas de vacaciones son la excepción desde 2026-08-12 (el admin
-        // las borra y el destroy devuelve los días) — eso se cubre en
-        // VacationIncidentAdminEditTest.
+        // Para tipos que NO descuentan vacaciones NI son permisos, una aprobada
+        // sigue sin poderse borrar (ni el admin): el status guard de la policy
+        // manda. Las hojas de vacaciones (2026-08-12) y los permisos
+        // (2026-08-26) son las excepciones — cubiertas en
+        // VacationIncidentAdminEditTest e IncidentAttendanceRecalcTest.
         $this->actingAsAdmin();
-        $type = IncidentType::factory()->create();
+        $type = IncidentType::factory()->create(['category' => 'absence']);
         $employee = $this->makeEmployee(['vacation_days_used' => 5]);
         $incident = Incident::factory()->approved()->create([
             'employee_id' => $employee->id,

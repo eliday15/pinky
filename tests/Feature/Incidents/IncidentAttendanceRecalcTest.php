@@ -161,12 +161,36 @@ class IncidentAttendanceRecalcTest extends FeatureTestCase
         $this->assertSame('present', $record->status, 'la incidencia auto-aprobada surte efecto de inmediato');
     }
 
-    public function test_deleting_approved_incident_is_forbidden_by_policy(): void
+    public function test_admin_deletes_approved_permission_and_attendance_reverts(): void
     {
-        // IncidentPolicy::delete solo permite borrar PENDIENTES: una aprobada
-        // ya surtió efecto (saldo de vacaciones, asistencia) y no se elimina
-        // por la UI. El recálculo defensivo en destroy() queda para el caso
-        // de que la policy cambie.
+        // Dani 2026-08-26: Admin/RRHH puede eliminar un PERMISO aprobado
+        // (PEN/PSA/PDJ) capturado mal — el borrado recalcula la asistencia y
+        // el retardo que el permiso perdonaba vuelve a aparecer.
+        $employee = $this->employee();
+        $record = $this->lateRecord($employee);
+        $type = $this->penType();
+        $incident = Incident::factory()->approved()->create([
+            'employee_id' => $employee->id,
+            'incident_type_id' => $type->id,
+            'start_date' => '2026-06-03',
+            'end_date' => '2026-06-03',
+            'days_count' => 1,
+            'hours' => 1.0,
+        ]);
+
+        // Con el permiso aprobado vigente, el día quedó 'present'.
+        app(ZktecoSyncService::class)->recalculateAttendanceRecord($record);
+        $this->assertSame('present', $record->fresh()->status);
+
+        $this->actingAsAdmin();
+        $this->delete(route('incidents.destroy', $incident))->assertRedirect();
+
+        $this->assertNotNull($incident->fresh()->deleted_at);
+        $this->assertSame('late', $record->fresh()->status, 'sin el permiso, el retardo se restaura');
+    }
+
+    public function test_supervisor_cannot_delete_approved_permission(): void
+    {
         $employee = $this->employee();
         $incident = Incident::factory()->approved()->create([
             'employee_id' => $employee->id,
@@ -176,8 +200,31 @@ class IncidentAttendanceRecalcTest extends FeatureTestCase
             'days_count' => 1,
         ]);
 
-        $this->actingAsAdmin();
+        $this->actingAsSupervisor();
+        $this->delete(route('incidents.destroy', $incident))->assertForbidden();
+        $this->assertNull($incident->fresh()->deleted_at);
+    }
 
+    public function test_deleting_approved_non_permission_incident_stays_forbidden(): void
+    {
+        // Las aprobadas que NO son permisos ni hojas de vacaciones (p. ej. una
+        // incapacidad) siguen sin poder borrarse: ya surtieron efecto y su
+        // corrección va por otra vía.
+        $employee = $this->employee();
+        $sickType = IncidentType::factory()->create([
+            'category' => 'sick_leave',
+            'affects_attendance' => true,
+            'is_active' => true,
+        ]);
+        $incident = Incident::factory()->approved()->create([
+            'employee_id' => $employee->id,
+            'incident_type_id' => $sickType->id,
+            'start_date' => '2026-06-03',
+            'end_date' => '2026-06-03',
+            'days_count' => 1,
+        ]);
+
+        $this->actingAsAdmin();
         $this->delete(route('incidents.destroy', $incident))->assertForbidden();
         $this->assertNull($incident->fresh()->deleted_at);
     }
