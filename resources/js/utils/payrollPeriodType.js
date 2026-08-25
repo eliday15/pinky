@@ -23,6 +23,13 @@ const TONES = {
         dot: 'bg-green-400',
         chip: 'bg-green-100 text-green-700',
     },
+    pink: {
+        box: 'bg-pink-50 border-pink-200',
+        title: 'text-pink-800',
+        text: 'text-pink-700',
+        dot: 'bg-pink-400',
+        chip: 'bg-pink-100 text-pink-700',
+    },
     gray: {
         box: 'bg-gray-50 border-gray-200',
         title: 'text-gray-800',
@@ -57,6 +64,21 @@ const PERIOD_TYPE_INFO = {
         ],
         tone: TONES.green,
     },
+    unified: {
+        label: 'Semanal + Mes',
+        short: 'Sueldo base + extras del mes',
+        title: 'Nomina unificada — Sueldo base + extras del mes',
+        description:
+            'Un solo pago: el sueldo base de la semana y los extras del mes juntos en el mismo recibo.',
+        pays: [
+            'Sueldo base (dias trabajados) y descuento por faltas',
+            'Horas extra y velada del mes',
+            'Festivos y fin de semana',
+            'Cena, comida y otros conceptos',
+            'Vacaciones y bonos',
+        ],
+        tone: TONES.pink,
+    },
     biweekly: {
         label: 'Quincenal',
         short: 'Paga todo junto (modo anterior)',
@@ -76,4 +98,19 @@ const PERIOD_TYPE_INFO = {
  */
 export function periodTypeInfo(type) {
     return PERIOD_TYPE_INFO[type] || PERIOD_TYPE_INFO.biweekly;
+}
+
+/**
+ * Descriptor de un periodo concreto: una nomina semanal con rango de extras es
+ * el pago UNIFICADO (semana + mes en un solo recibo).
+ *
+ * @param {{type?: string, extras_start_date?: string|null, extras_end_date?: string|null}} period
+ * @returns {{label: string, short: string, title: string, description: string, pays: string[], tone: object}}
+ */
+export function periodInfo(period) {
+    if (period?.extras_start_date && period?.extras_end_date) {
+        return PERIOD_TYPE_INFO.unified;
+    }
+
+    return periodTypeInfo(period?.type);
 }

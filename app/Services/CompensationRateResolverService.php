@@ -581,6 +581,7 @@ class CompensationRateResolverService
             'amount' => $amount,
             'authorization_type' => $compType->authorization_type,
             'attendance_pull_rule' => $compType->attendance_pull_rule,
+            'is_base_salary_concept' => (bool) $compType->is_base_salary_concept,
             'source' => $source,
         ];
     }
@@ -738,6 +739,7 @@ class CompensationRateResolverService
                 'amount' => $amount,
                 'authorization_type' => $compType->authorization_type,
                 'attendance_pull_rule' => $compType->attendance_pull_rule,
+                'is_base_salary_concept' => (bool) $compType->is_base_salary_concept,
                 'source' => 'authorization',
                 'authorization_id' => $auth->id,
             ];
@@ -802,6 +804,7 @@ class CompensationRateResolverService
                 'amount' => $amount,
                 'authorization_type' => $compType->authorization_type,
                 'attendance_pull_rule' => $compType->attendance_pull_rule,
+                'is_base_salary_concept' => (bool) $compType->is_base_salary_concept,
                 'source' => 'recurring',
             ];
         }

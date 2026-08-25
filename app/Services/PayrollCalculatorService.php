@@ -103,14 +103,18 @@ class PayrollCalculatorService
         // Precarga en LOTE lo que calculateEmployeePayroll consultaba por
         // empleado. El finally garantiza que el contexto no sobreviva al
         // periodo (los caminos de un solo empleado siguen consultando directo).
-        $this->periodContext = $this->buildPeriodContext($period, $employees);
+        if ($period->isUnified()) {
+            $this->calculateUnifiedPeriod($period, $employees);
+        } else {
+            $this->periodContext = $this->buildPeriodContext($period, $employees);
 
-        try {
-            foreach ($employees as $employee) {
-                $this->calculateEmployeePayroll($period, $employee);
+            try {
+                foreach ($employees as $employee) {
+                    $this->calculateEmployeePayroll($period, $employee);
+                }
+            } finally {
+                $this->periodContext = null;
             }
-        } finally {
-            $this->periodContext = null;
         }
 
         // El recálculo completo deja el periodo al día: limpia la marca de
@@ -123,11 +127,63 @@ class PayrollCalculatorService
     }
 
     /**
+     * Pago UNIFICADO (Elias 2026-08-25): un solo recibo con el sueldo de la
+     * SEMANA y los extras del MES.
+     *
+     * Se calcula en DOS pasadas con la lógica de siempre —la semanal sobre
+     * start/end y la mensual sobre el rango de extras— y se suman en una sola
+     * entrada. Así el dinero es idéntico al de las dos nóminas separadas de
+     * antes (mismas reglas, mismas retenciones); lo único que cambia es que se
+     * paga junto. Cada pasada trae su propio contexto en lote porque los rangos
+     * de fechas son distintos.
+     *
+     * @param  \Illuminate\Support\Collection<int, Employee>  $employees
+     */
+    private function calculateUnifiedPeriod(PayrollPeriod $period, Collection $employees): void
+    {
+        $baseView = $period->calculationView('base');
+        $extrasView = $period->calculationView('extras');
+
+        $baseAttributes = [];
+
+        $this->periodContext = $this->buildPeriodContext($baseView, $employees);
+        try {
+            foreach ($employees as $employee) {
+                $baseAttributes[$employee->id] = $this->computeEntryAttributes($baseView, $employee);
+            }
+        } finally {
+            $this->periodContext = null;
+        }
+
+        $this->periodContext = $this->buildPeriodContext($extrasView, $employees);
+        try {
+            foreach ($employees as $employee) {
+                $base = $baseAttributes[$employee->id] ?? [];
+                $extras = $this->computeEntryAttributes(
+                    $extrasView,
+                    $employee,
+                    (float) ($base['regular_pay'] ?? 0) > 0,
+                );
+
+                PayrollEntry::updateOrCreate(
+                    [
+                        'payroll_period_id' => $period->id,
+                        'employee_id' => $employee->id,
+                    ],
+                    $this->mergeUnifiedAttributes($base, $extras, $period),
+                );
+            }
+        } finally {
+            $this->periodContext = null;
+        }
+    }
+
+    /**
      * Precarga en 4 consultas lo que el cálculo necesita de TODOS los
      * empleados del periodo (asistencia, incidencias aprobadas, autorizaciones
      * aprobadas/pagadas y festivos), agrupado por empleado. Las condiciones
      * replican EXACTAMENTE las consultas por-empleado de
-     * calculateEmployeePayroll — solo cambia el número de viajes a la base.
+     * computeEntryAttributes — solo cambia el número de viajes a la base.
      *
      * Las FRT mensuales se generan ANTES de leer incidencias (en lote), igual
      * que en el camino por-empleado, para que una FRT recién creada que caiga
@@ -186,6 +242,7 @@ class PayrollCalculatorService
             authorizationsByEmployee: $authorizationsByEmployee,
             holidays: $holidays,
             monthlyIncidentsEnsured: true,
+            scope: $period->calculationScope,
         );
     }
 
@@ -194,6 +251,54 @@ class PayrollCalculatorService
      */
     public function calculateEmployeePayroll(PayrollPeriod $period, Employee $employee): PayrollEntry
     {
+        return PayrollEntry::updateOrCreate(
+            [
+                'payroll_period_id' => $period->id,
+                'employee_id' => $employee->id,
+            ],
+            $this->entryAttributesFor($period, $employee),
+        );
+    }
+
+    /**
+     * Atributos del recibo de un empleado, SIN persistir.
+     *
+     * En un periodo normal es una sola pasada. En el UNIFICADO son dos (semana
+     * + mes) sumadas: ver calculateUnifiedPeriod.
+     *
+     * @return array<string, mixed>
+     */
+    private function entryAttributesFor(PayrollPeriod $period, Employee $employee): array
+    {
+        if (! $period->isUnified()) {
+            return $this->computeEntryAttributes($period, $employee);
+        }
+
+        $base = $this->computeEntryAttributes($period->calculationView('base'), $employee);
+        $extras = $this->computeEntryAttributes(
+            $period->calculationView('extras'),
+            $employee,
+            (float) ($base['regular_pay'] ?? 0) > 0,
+        );
+
+        return $this->mergeUnifiedAttributes($base, $extras, $period);
+    }
+
+    /**
+     * Calcula (sin guardar) los atributos del recibo de un empleado en el
+     * periodo/alcance dado.
+     *
+     * @param  bool  $suppressBaseSalaryConcepts  El sueldo base ya se le pagó en
+     *                                            la otra pasada del pago unificado:
+     *                                            los conceptos marcados "es sueldo"
+     *                                            no se vuelven a pagar aquí.
+     * @return array<string, mixed>
+     */
+    private function computeEntryAttributes(
+        PayrollPeriod $period,
+        Employee $employee,
+        bool $suppressBaseSalaryConcepts = false,
+    ): array {
         // Ensure compensation types are loaded for rate resolution
         if (! $employee->relationLoaded('compensationTypes')) {
             $employee->load(['compensationTypes' => fn ($q) => $q->wherePivot('is_active', true)]);
@@ -204,7 +309,9 @@ class PayrollCalculatorService
 
         // Contexto del periodo (cálculo en lote): datos ya precargados por
         // buildPeriodContext. Null en el camino de un solo empleado.
-        $ctx = ($this->periodContext && $this->periodContext->periodId === $period->id)
+        $ctx = ($this->periodContext
+            && $this->periodContext->periodId === $period->id
+            && $this->periodContext->scope === $period->calculationScope)
             ? $this->periodContext
             : null;
 
@@ -399,6 +506,37 @@ class PayrollCalculatorService
             ? round($absenceDeductionDays * $dailySalary * $restDayFactor, 2)
             : 0.0;
 
+        // ---- Conceptos que SON el sueldo (Elias 2026-08-25) ----
+        // Algunos sueldos (los del personal en periodo de prueba, por ejemplo)
+        // se capturan como concepto. Si el periodo ya le está pagando sueldo
+        // BASE a este empleado, el concepto no se vuelve a pagar: manda el
+        // sueldo base. Si no cobra base (sueldo diario en 0), el concepto sigue
+        // siendo su único pago y se paga igual que siempre.
+        $suppressSalaryConcepts = $suppressBaseSalaryConcepts || ($payBase && $regularPay > 0);
+        $suppressedSalaryConcepts = [];
+        $dropSalaryConcepts = function (array $concepts) use ($suppressSalaryConcepts, &$suppressedSalaryConcepts): array {
+            if (! $suppressSalaryConcepts) {
+                return $concepts;
+            }
+
+            $kept = [];
+            foreach ($concepts as $concept) {
+                if (! empty($concept['is_base_salary_concept'])) {
+                    $suppressedSalaryConcepts[] = [
+                        'code' => $concept['code'] ?? null,
+                        'name' => $concept['name'] ?? null,
+                        'amount' => (float) ($concept['amount'] ?? 0),
+                        'reason' => 'El periodo ya paga el sueldo base',
+                    ];
+
+                    continue;
+                }
+                $kept[] = $concept;
+            }
+
+            return $kept;
+        };
+
         // ---- EXTRAS (monthly): overtime, velada, holiday, weekend, special
         // concepts, vacations and bonuses. Computed only when the period pays
         // extras so a weekly period never charges them. ----
@@ -536,7 +674,7 @@ class PayrollCalculatorService
                 $allowedPaymentPeriods,
             );
 
-            $compensationConcepts = $compensationPayments['concepts'];
+            $compensationConcepts = $dropSalaryConcepts($compensationPayments['concepts']);
 
             // Route each concept to its stored pay bucket. Overtime/velada
             // match by code; holiday/weekend/special match by the comp
@@ -755,12 +893,12 @@ class PayrollCalculatorService
         // con los descuentos autorizados (monto único con cantidad negativa).
         $conceptDeductions = $authorizedConceptDeductions;
         if ($useCompTypes && $allowedPaymentPeriods !== []) {
-            $recurringConcepts = $this->resolver->calculateRecurringConcepts(
+            $recurringConcepts = $dropSalaryConcepts($this->resolver->calculateRecurringConcepts(
                 $employee,
                 $hourlyRate,
                 $dailySalary,
                 $allowedPaymentPeriods,
-            );
+            ));
             foreach ($recurringConcepts as $concept) {
                 if ($concept['amount'] < 0) {
                     $conceptDeductions += abs($concept['amount']);
@@ -1028,6 +1166,9 @@ class PayrollCalculatorService
                 'absence_deduction_days' => $absenceDeductionDays,
             ],
             'compensation_concepts' => $compensationConcepts,
+            // Conceptos "es sueldo" que NO se pagaron porque el periodo ya le
+            // pagó el sueldo base (evita el doble sueldo del personal de prueba).
+            'suppressed_base_salary_concepts' => $suppressedSalaryConcepts,
             'scope' => [
                 'period_type' => $period->type,
                 'pays_base' => $payBase,
@@ -1075,63 +1216,173 @@ class PayrollCalculatorService
             'employer_costs' => $employerCosts,
         ];
 
-        // Create or update payroll entry
-        return PayrollEntry::updateOrCreate(
-            [
-                'payroll_period_id' => $period->id,
-                'employee_id' => $employee->id,
-            ],
-            [
-                'hourly_rate' => $hourlyRate,
-                'daily_salary' => $dailySalary,
-                'overtime_multiplier' => $overtimeMultiplier,
-                'holiday_multiplier' => $holidayMultiplier,
-                'regular_hours' => $payBase ? $metrics['regular_hours'] : 0,
-                'overtime_hours' => $payExtras ? $metrics['overtime_hours'] : 0,
-                'overtime_authorized_hours' => $payExtras ? $veladaMetrics['overtime_authorized_hours'] : 0,
-                'velada_hours' => $payExtras ? $veladaMetrics['velada_hours'] : 0,
-                'velada_authorized_hours' => $payExtras ? $veladaMetrics['velada_authorized_hours'] : 0,
-                'velada_multiplier' => $veladaMultiplier,
-                'velada_pay' => $veladaPay,
-                'velada_days' => $payExtras ? $nightShiftMetrics['night_shift_days'] : 0,
-                'holiday_hours' => $payExtras ? $metrics['holiday_hours'] : 0,
-                'weekend_hours' => $payExtras ? $metrics['weekend_hours'] : 0,
-                'night_shift_hours' => $payExtras ? $nightShiftMetrics['night_shift_hours'] : 0,
-                'days_worked' => $payBase ? $metrics['days_worked'] : 0,
-                'days_absent' => $payBase ? ($metrics['days_absent'] + $lateAbsencesGenerated + $incidentAbsenceDeductionDays) : 0,
-                'days_late' => $payBase ? $metrics['days_late'] : 0,
-                'punctuality_days' => $payExtras ? $metrics['punctual_days'] : 0,
-                'night_shift_days' => $payExtras ? $nightShiftMetrics['night_shift_days'] : 0,
-                'late_absences_generated' => $lateAbsencesGenerated,
-                'vacation_days_paid' => $payBase ? $incidentMetrics['vacation_days'] : 0,
-                'sick_leave_days' => $payExtras ? $incidentMetrics['sick_leave_days'] : 0,
-                'regular_pay' => $basePay,
-                'overtime_pay' => $overtimePay,
-                'holiday_pay' => $holidayPay,
-                'weekend_pay' => $weekendPay,
-                'other_compensation_pay' => $otherCompensationPay,
-                'vacation_pay' => $vacationPay,
-                'vacation_premium_pay' => $vacationPremiumPay,
-                'sick_leave_pay' => $sickLeavePay,
-                'punctuality_bonus' => $punctualityBonus,
-                'dinner_allowance' => $dinnerAllowance,
-                'night_shift_bonus' => $nightShiftBonusPay,
-                'weekly_bonus' => $weeklyBonus,
-                'monthly_bonus' => $monthlyBonus,
-                'bonuses' => $totalBonuses,
-                'deductions' => round($deductions + $appliedConceptDeduction, 2),
-                'isr_amount' => $fiscalDeductions['isr'],
-                'imss_amount' => $fiscalDeductions['imss'],
-                'infonavit_amount' => $fiscalDeductions['infonavit'],
-                'subsidy_amount' => $fiscalDeductions['subsidy'],
-                'net_adjustment' => $netAdjustment,
-                'gross_pay' => $grossPay,
-                'net_pay' => $netPay,
-                'cash_amount' => $cashAmount,
-                'bank_amount' => $bankAmount,
-                'calculation_breakdown' => $breakdown,
-            ]
+        // Atributos del recibo (los persiste calculateEmployeePayroll; en el
+        // pago unificado se suman antes las dos pasadas).
+        return [
+            'hourly_rate' => $hourlyRate,
+            'daily_salary' => $dailySalary,
+            'overtime_multiplier' => $overtimeMultiplier,
+            'holiday_multiplier' => $holidayMultiplier,
+            'regular_hours' => $payBase ? $metrics['regular_hours'] : 0,
+            'overtime_hours' => $payExtras ? $metrics['overtime_hours'] : 0,
+            'overtime_authorized_hours' => $payExtras ? $veladaMetrics['overtime_authorized_hours'] : 0,
+            'velada_hours' => $payExtras ? $veladaMetrics['velada_hours'] : 0,
+            'velada_authorized_hours' => $payExtras ? $veladaMetrics['velada_authorized_hours'] : 0,
+            'velada_multiplier' => $veladaMultiplier,
+            'velada_pay' => $veladaPay,
+            'velada_days' => $payExtras ? $nightShiftMetrics['night_shift_days'] : 0,
+            'holiday_hours' => $payExtras ? $metrics['holiday_hours'] : 0,
+            'weekend_hours' => $payExtras ? $metrics['weekend_hours'] : 0,
+            'night_shift_hours' => $payExtras ? $nightShiftMetrics['night_shift_hours'] : 0,
+            'days_worked' => $payBase ? $metrics['days_worked'] : 0,
+            'days_absent' => $payBase ? ($metrics['days_absent'] + $lateAbsencesGenerated + $incidentAbsenceDeductionDays) : 0,
+            'days_late' => $payBase ? $metrics['days_late'] : 0,
+            'punctuality_days' => $payExtras ? $metrics['punctual_days'] : 0,
+            'night_shift_days' => $payExtras ? $nightShiftMetrics['night_shift_days'] : 0,
+            'late_absences_generated' => $lateAbsencesGenerated,
+            'vacation_days_paid' => $payBase ? $incidentMetrics['vacation_days'] : 0,
+            'sick_leave_days' => $payExtras ? $incidentMetrics['sick_leave_days'] : 0,
+            'regular_pay' => $basePay,
+            'overtime_pay' => $overtimePay,
+            'holiday_pay' => $holidayPay,
+            'weekend_pay' => $weekendPay,
+            'other_compensation_pay' => $otherCompensationPay,
+            'vacation_pay' => $vacationPay,
+            'vacation_premium_pay' => $vacationPremiumPay,
+            'sick_leave_pay' => $sickLeavePay,
+            'punctuality_bonus' => $punctualityBonus,
+            'dinner_allowance' => $dinnerAllowance,
+            'night_shift_bonus' => $nightShiftBonusPay,
+            'weekly_bonus' => $weeklyBonus,
+            'monthly_bonus' => $monthlyBonus,
+            'bonuses' => $totalBonuses,
+            'deductions' => round($deductions + $appliedConceptDeduction, 2),
+            'isr_amount' => $fiscalDeductions['isr'],
+            'imss_amount' => $fiscalDeductions['imss'],
+            'infonavit_amount' => $fiscalDeductions['infonavit'],
+            'subsidy_amount' => $fiscalDeductions['subsidy'],
+            'net_adjustment' => $netAdjustment,
+            'gross_pay' => $grossPay,
+            'net_pay' => $netPay,
+            'cash_amount' => $cashAmount,
+            'bank_amount' => $bankAmount,
+            'calculation_breakdown' => $breakdown,
+        ];
+    }
+
+    /**
+     * Campos del recibo que NO se suman entre las dos pasadas del pago
+     * unificado: son tasas/multiplicadores del empleado, idénticos en ambas.
+     *
+     * @var list<string>
+     */
+    private const UNIFIED_RATE_FIELDS = [
+        'hourly_rate',
+        'daily_salary',
+        'overtime_multiplier',
+        'holiday_multiplier',
+        'velada_multiplier',
+    ];
+
+    /**
+     * Suma las dos pasadas del pago unificado (semana + mes) en un solo recibo.
+     *
+     * Sumar es exacto porque cada pasada deja en CERO lo que le toca a la otra
+     * (la semanal no cobra extras y la mensual no paga base ni retenciones):
+     * el resultado es, peso por peso, lo que antes se pagaba en dos nóminas.
+     *
+     * @param  array<string, mixed>  $base
+     * @param  array<string, mixed>  $extras
+     * @return array<string, mixed>
+     */
+    private function mergeUnifiedAttributes(array $base, array $extras, PayrollPeriod $period): array
+    {
+        $merged = $base;
+
+        foreach ($extras as $key => $value) {
+            if ($key === 'calculation_breakdown' || in_array($key, self::UNIFIED_RATE_FIELDS, true)) {
+                continue;
+            }
+
+            $merged[$key] = round((float) ($base[$key] ?? 0) + (float) $value, 2);
+        }
+
+        $merged['calculation_breakdown'] = $this->mergeUnifiedBreakdown(
+            $base['calculation_breakdown'] ?? [],
+            $extras['calculation_breakdown'] ?? [],
+            $period,
         );
+
+        return $merged;
+    }
+
+    /**
+     * Une los desgloses de las dos pasadas conservando, bloque por bloque, el
+     * alcance dueño de cada dato: la asistencia/faltas/retenciones vienen de la
+     * SEMANA y las horas extra/velada/bonos del MES — exactamente el mismo
+     * reparto que hacen las columnas del recibo.
+     *
+     * @param  array<string, mixed>  $base
+     * @param  array<string, mixed>  $extras
+     * @return array<string, mixed>
+     */
+    private function mergeUnifiedBreakdown(array $base, array $extras, PayrollPeriod $period): array
+    {
+        $merged = $base;
+
+        // Bloques que son íntegros de la pasada de EXTRAS.
+        foreach (['unauthorized', 'night_shifts', 'velada', 'bonuses'] as $block) {
+            if (array_key_exists($block, $extras)) {
+                $merged[$block] = $extras[$block];
+            }
+        }
+
+        // Horas de extras dentro del bloque de asistencia (las horas regulares,
+        // los días trabajados y la puntualidad los aporta cada dueño).
+        foreach (['overtime_hours', 'holiday_hours', 'weekend_hours', 'punctual_days'] as $key) {
+            $merged['attendance'][$key] = $extras['attendance'][$key] ?? ($base['attendance'][$key] ?? 0);
+        }
+        $merged['attendance']['records_extras'] = $extras['attendance']['records'] ?? 0;
+
+        // Incapacidad: la paga la pasada de extras.
+        foreach (['sick_leave_days', 'sick_leave_paid_days'] as $key) {
+            $merged['incidents'][$key] = $extras['incidents'][$key] ?? ($base['incidents'][$key] ?? 0);
+        }
+
+        $merged['compensation_concepts'] = array_merge(
+            $base['compensation_concepts'] ?? [],
+            $extras['compensation_concepts'] ?? [],
+        );
+        $merged['suppressed_base_salary_concepts'] = array_merge(
+            $base['suppressed_base_salary_concepts'] ?? [],
+            $extras['suppressed_base_salary_concepts'] ?? [],
+        );
+
+        // Dinero: las dos pasadas suman.
+        $calculations = $base['calculations'] ?? [];
+        foreach (($extras['calculations'] ?? []) as $key => $value) {
+            $calculations[$key] = round((float) ($calculations[$key] ?? 0) + (float) $value, 2);
+        }
+        $merged['calculations'] = $calculations;
+
+        $merged['scope'] = [
+            'period_type' => $base['scope']['period_type'] ?? $period->type,
+            // Pago UNIFICADO: la vista lo anuncia como "semana + extras del mes".
+            'unified' => true,
+            'pays_base' => true,
+            'pays_extras' => true,
+            'week_days' => $base['scope']['week_days'] ?? 0.0,
+            'base_range' => [
+                'start' => $period->start_date?->toDateString(),
+                'end' => $period->end_date?->toDateString(),
+            ],
+            'extras_range' => [
+                'start' => $period->extras_start_date?->toDateString(),
+                'end' => $period->extras_end_date?->toDateString(),
+            ],
+        ];
+
+        return $merged;
     }
 
     /**

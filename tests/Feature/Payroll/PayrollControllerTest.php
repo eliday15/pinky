@@ -386,6 +386,8 @@ class PayrollControllerTest extends FeatureTestCase
                     ->where('approve', true)
                     ->where('export', true)
                     ->where('payCash', true)
+                    // Unificar el mensual con su semana (un solo pago).
+                    ->where('unify', true)
                     // Entregar el efectivo es exclusivo del superadmin.
                     ->where('deliverCash', false)));
     }

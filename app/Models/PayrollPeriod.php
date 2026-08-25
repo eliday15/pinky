@@ -47,6 +47,8 @@ class PayrollPeriod extends Model
         'department_id',
         'start_date',
         'end_date',
+        'extras_start_date',
+        'extras_end_date',
         'payment_date',
         'status',
         'requires_recalculation',
@@ -66,6 +68,8 @@ class PayrollPeriod extends Model
     protected $casts = [
         'start_date' => 'date:Y-m-d',
         'end_date' => 'date:Y-m-d',
+        'extras_start_date' => 'date:Y-m-d',
+        'extras_end_date' => 'date:Y-m-d',
         'payment_date' => 'date:Y-m-d',
         'requires_recalculation' => 'boolean',
         'recalculation_flagged_at' => 'datetime',
@@ -173,10 +177,79 @@ class PayrollPeriod extends Model
     /**
      * ¿Este periodo paga los EXTRAS (mensual/quincenal legacy): horas extra,
      * velada, festivo, fin de semana, conceptos especiales, vacaciones y bonos?
+     *
+     * Un periodo UNIFICADO (semanal con rango de extras) también los paga: es
+     * el pago único de Elias 2026-08-25 — la semana y el mes en un solo recibo.
      */
     public function paysExtras(): bool
     {
-        return in_array($this->type, ['monthly', 'biweekly'], true);
+        return in_array($this->type, ['monthly', 'biweekly'], true) || $this->isUnified();
+    }
+
+    /**
+     * ¿Es un pago UNIFICADO? El sueldo base corre sobre la semana del periodo
+     * (start_date/end_date) y los EXTRAS sobre el rango del mes
+     * (extras_start_date/extras_end_date), en un solo recibo y un solo pago.
+     */
+    public function isUnified(): bool
+    {
+        return $this->extras_start_date !== null && $this->extras_end_date !== null;
+    }
+
+    /**
+     * ¿Este periodo puede absorber los extras de un mes (unificarse)?
+     *
+     * Solo una nómina BASE todavía editable y con el efectivo sin cerrar: si ya
+     * se aprobó, se pagó o se preparó el efectivo, los montos están en la calle
+     * y meterle los extras cambiaría lo que ya se contó.
+     */
+    public function canAbsorbExtras(): bool
+    {
+        // Solo la SEMANAL: la quincenal legada ya paga todo junto, unificarle
+        // extras la haría pagar el mes dos veces.
+        return $this->type === 'weekly'
+            && ! $this->isUnified()
+            && $this->canEdit()
+            && ! $this->isCashClosed();
+    }
+
+    /**
+     * Alcance de cálculo de esta instancia ('base' | 'extras'), presente solo en
+     * las VISTAS que arma calculationView() para el cálculo unificado. Nunca se
+     * persiste: es una marca en memoria.
+     */
+    public ?string $calculationScope = null;
+
+    /**
+     * Vista NO persistida del periodo acotada a un alcance, para calcular el
+     * pago unificado en dos pasadas con la MISMA lógica de siempre:
+     *
+     *  - 'base':   se comporta como la nómina semanal (sueldo base de la semana).
+     *  - 'extras': se comporta como la nómina mensual sobre el rango de extras.
+     *
+     * Conserva id/departamento para que el contexto en lote y el alcance por
+     * departamento sigan aplicando. Jamás se guarda.
+     */
+    public function calculationView(string $scope): self
+    {
+        $view = new self;
+        $view->exists = true;
+        $view->forceFill([
+            'id' => $this->id,
+            'name' => $this->name,
+            'department_id' => $this->department_id,
+            'payment_date' => $this->payment_date,
+            'status' => $this->status,
+            'type' => $scope === 'extras' ? 'monthly' : $this->type,
+            'start_date' => $scope === 'extras' ? $this->extras_start_date : $this->start_date,
+            'end_date' => $scope === 'extras' ? $this->extras_end_date : $this->end_date,
+            'extras_start_date' => null,
+            'extras_end_date' => null,
+        ]);
+        $view->syncOriginal();
+        $view->calculationScope = $scope;
+
+        return $view;
     }
 
     /**

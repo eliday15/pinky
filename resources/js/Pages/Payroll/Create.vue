@@ -135,7 +135,7 @@ const submit = () => {
                         :class="{ 'border-red-500': form.errors.type }"
                     >
                         <option value="weekly">Semanal — sueldo base (7 dias)</option>
-                        <option value="monthly">Mensual — extras</option>
+                        <option value="monthly">Mensual — extras (se unen a la semana que se paga igual)</option>
                         <option value="biweekly">Quincenal — todo junto (modo anterior)</option>
                     </select>
                     <p v-if="form.errors.type" class="mt-1 text-sm text-red-600">{{ form.errors.type }}</p>
@@ -158,8 +158,24 @@ const submit = () => {
                     </div>
                 </div>
 
+                <!-- Aviso: el mensual se paga JUNTO con la semana (un solo pago) -->
+                <div v-if="form.type === 'monthly'" class="bg-pink-50 border border-pink-200 rounded-lg p-4">
+                    <p class="text-sm font-semibold text-pink-800">Se paga junto con la semana</p>
+                    <p class="mt-1 text-sm text-pink-700">
+                        Los extras de este mes se agregan a la nómina <span class="font-semibold">semanal que termina el mismo día</span>
+                        ({{ form.end_date ? formatDateForName(form.end_date) : 'la fecha fin' }}), para que sea
+                        <span class="font-semibold">un solo pago</span> y un solo recibo — no una nómina aparte.
+                        <span v-if="separatePayrollDepartments.length">
+                            {{ separatePayrollDepartments.join(', ') }} no lleva mensual: se queda solo con su semana.
+                        </span>
+                    </p>
+                    <p class="mt-1 text-xs text-pink-600">
+                        Si esa semana todavía no existe (o ya se aprobó/pagó), se genera la nómina mensual por separado como antes.
+                    </p>
+                </div>
+
                 <!-- Aviso: se generan todas las nóminas de un jalón -->
-                <div v-if="separatePayrollDepartments.length" class="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+                <div v-if="separatePayrollDepartments.length && form.type !== 'monthly'" class="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
                     <p class="text-sm font-semibold text-indigo-800">
                         Se generarán {{ payrollsToGenerate.length }} nóminas de un jalón
                     </p>

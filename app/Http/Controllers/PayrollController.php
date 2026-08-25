@@ -93,6 +93,13 @@ class PayrollController extends Controller
 
     /**
      * Store a new payroll period and trigger calculation.
+     *
+     * PAGO UNIFICADO (Elias 2026-08-25): un alta MENSUAL ya no crea un periodo
+     * aparte que se pagaría por separado el mismo día. Sus extras se pegan a la
+     * nómina SEMANAL que se paga junto (la que termina el mismo día), y el
+     * trabajador recibe UN solo pago con la semana y el mes. Los departamentos
+     * con nómina propia (Taller) no llevan mensual: se quedan solo con su
+     * semana, así que un alta mensual ni los toca.
      */
     public function store(Request $request): RedirectResponse
     {
@@ -108,33 +115,87 @@ class PayrollController extends Controller
             'payment_date' => ['required', 'date', 'after_or_equal:end_date'],
         ]);
 
+        $isMonthly = $validated['type'] === 'monthly';
+
         // "De un jalón": un solo alta genera la nómina GENERAL más una por cada
         // departamento con nómina propia (p. ej. Taller), todas con las mismas
         // fechas/tipo. Los alcances que ya existan para esas fechas se saltan
-        // (así se puede completar los que falten sin duplicar).
-        $scopes = collect([['id' => null, 'name' => 'General']])
-            ->merge(
-                Department::separatePayroll()->orderBy('name')->get(['id', 'name'])
-                    ->map(fn ($d) => ['id' => $d->id, 'name' => $d->name])
+        // (así se puede completar los que falten sin duplicar). En un alta
+        // MENSUAL los departamentos con nómina propia quedan fuera: no llevan
+        // extras del mes, solo su semana.
+        $separateDepartments = Department::separatePayroll()->orderBy('name')->get(['id', 'name']);
+        $scopes = collect([['id' => null, 'name' => 'General', 'separate' => false]]);
+        if (! $isMonthly) {
+            $scopes = $scopes->merge(
+                $separateDepartments->map(fn ($d) => ['id' => $d->id, 'name' => $d->name, 'separate' => true])
             );
+        }
 
         $created = collect();
+        $unified = collect();
+        $absorbed = collect();
         $skipped = collect();
+        $toCalculate = collect();
 
         foreach ($scopes as $scope) {
+            if ($isMonthly) {
+                // La semana que se paga junto con este mes: misma fecha de fin y
+                // todavía editable (sin aprobar/pagar y con el efectivo abierto).
+                $week = PayrollPeriod::where('department_id', $scope['id'])
+                    ->where('type', 'weekly')
+                    ->whereDate('end_date', $validated['end_date'])
+                    ->orderByDesc('id')
+                    ->get()
+                    ->first(fn (PayrollPeriod $p) => $p->canAbsorbExtras());
+
+                if ($week) {
+                    $week->update([
+                        'extras_start_date' => $validated['start_date'],
+                        'extras_end_date' => $validated['end_date'],
+                    ]);
+                    $unified->push($week);
+                    $toCalculate->push($week);
+
+                    AuditLog::record(
+                        module: AuditLog::MODULE_PAYROLL,
+                        action: AuditLog::ACTION_UPDATE,
+                        model: $week,
+                        description: "Unifico los extras del {$validated['start_date']} al {$validated['end_date']} en la nomina {$week->name} (un solo pago)",
+                        subjectLabel: $week->name,
+                        metadata: [
+                            'extras_start_date' => $validated['start_date'],
+                            'extras_end_date' => $validated['end_date'],
+                            'scope' => $scope['name'],
+                        ],
+                    );
+
+                    continue;
+                }
+            }
+
             // El traslape solo cuenta DENTRO de la misma categoría: la nómina
             // BASE (weekly/biweekly = sueldo − faltas) y la de EXTRAS (monthly =
             // conceptos del mes) del mismo periodo son independientes por diseño
             // y deben poder convivir. Dos base que se traslapan sí es error
-            // (doble sueldo), igual dos mensuales. Traslape de intervalos real
-            // (cubre también el periodo que ENGLOBA a otro).
-            $isMonthly = $validated['type'] === 'monthly';
-            $overlap = PayrollPeriod::where('department_id', $scope['id'])
-                ->when($isMonthly, fn ($q) => $q->where('type', 'monthly'))
-                ->when(! $isMonthly, fn ($q) => $q->where('type', '!=', 'monthly'))
-                ->where('start_date', '<=', $validated['end_date'])
-                ->where('end_date', '>=', $validated['start_date'])
-                ->exists();
+            // (doble sueldo), igual dos que pagan extras. Traslape de intervalos
+            // real (cubre también el periodo que ENGLOBA a otro). Una semana
+            // UNIFICADA cuenta como nómina de extras por su rango de extras.
+            $overlap = $isMonthly
+                ? PayrollPeriod::where('department_id', $scope['id'])
+                    ->where(function ($q) use ($validated) {
+                        $q->where(fn ($q2) => $q2->where('type', 'monthly')
+                            ->where('start_date', '<=', $validated['end_date'])
+                            ->where('end_date', '>=', $validated['start_date']))
+                            ->orWhere(fn ($q2) => $q2->whereNotNull('extras_start_date')
+                                ->where('extras_start_date', '<=', $validated['end_date'])
+                                ->where('extras_end_date', '>=', $validated['start_date']));
+                    })
+                    ->exists()
+                : PayrollPeriod::where('department_id', $scope['id'])
+                    ->where('type', '!=', 'monthly')
+                    ->where('start_date', '<=', $validated['end_date'])
+                    ->where('end_date', '>=', $validated['start_date'])
+                    ->exists();
 
             if ($overlap) {
                 $skipped->push($scope['name']);
@@ -149,7 +210,48 @@ class PayrollController extends Controller
                 'status' => 'draft',
                 'created_by' => auth()->id(),
             ]);
+
+            // Al dar de alta la SEMANA, si ya existe un mensual suelto que se
+            // paga con ella (mismo fin), se absorbe: sus extras pasan a la
+            // semana y el periodo mensual desaparece, para que sea UN solo pago.
+            // Los departamentos con nómina propia no absorben nada: no llevan
+            // extras del mes.
+            if ($validated['type'] === 'weekly' && ! $scope['separate']) {
+                $pendingMonthly = PayrollPeriod::where('department_id', $scope['id'])
+                    ->where('type', 'monthly')
+                    ->whereDate('end_date', $validated['end_date'])
+                    ->orderByDesc('id')
+                    ->get()
+                    ->first(fn (PayrollPeriod $m) => $m->canEdit() && ! $m->isCashClosed());
+
+                if ($pendingMonthly) {
+                    $period->update([
+                        'extras_start_date' => $pendingMonthly->start_date,
+                        'extras_end_date' => $pendingMonthly->end_date,
+                    ]);
+
+                    $absorbedName = $pendingMonthly->name;
+                    $pendingMonthly->entries()->delete();
+                    $pendingMonthly->delete();
+                    $absorbed->push($absorbedName);
+
+                    AuditLog::record(
+                        module: AuditLog::MODULE_PAYROLL,
+                        action: AuditLog::ACTION_DELETE,
+                        model: null,
+                        description: "Absorbio la nomina {$absorbedName} en {$period->name}: los extras del mes se pagan junto con la semana",
+                        subjectLabel: $absorbedName,
+                        metadata: [
+                            'absorbed_into' => $period->id,
+                            'extras_start_date' => $period->extras_start_date?->toDateString(),
+                            'extras_end_date' => $period->extras_end_date?->toDateString(),
+                        ],
+                    );
+                }
+            }
+
             $created->push($period);
+            $toCalculate->push($period);
 
             AuditLog::record(
                 module: AuditLog::MODULE_PAYROLL,
@@ -161,7 +263,7 @@ class PayrollController extends Controller
             );
         }
 
-        if ($created->isEmpty()) {
+        if ($toCalculate->isEmpty()) {
             return redirect()->back()
                 ->withErrors(['start_date' => 'Ya existe(n) la(s) nomina(s) '.$skipped->implode(', ').' que se traslapan con estas fechas.'])
                 ->withInput();
@@ -169,7 +271,7 @@ class PayrollController extends Controller
 
         // Calcular cada una de inmediato (best-effort): si una falla queda en
         // draft para recalcular a mano y no tumba a las demás.
-        foreach ($created as $period) {
+        foreach ($toCalculate as $period) {
             try {
                 $this->calculator->calculatePeriod($period);
             } catch (\Throwable $e) {
@@ -178,17 +280,109 @@ class PayrollController extends Controller
             }
         }
 
-        $msg = 'Se generaron '.$created->count().' nómina(s): '.$created->pluck('name')->implode(', ').'.';
-        if ($skipped->isNotEmpty()) {
-            $msg .= ' Ya existían: '.$skipped->implode(', ').'.';
+        $parts = [];
+        if ($created->isNotEmpty()) {
+            $parts[] = 'Se generaron '.$created->count().' nómina(s): '.$created->pluck('name')->implode(', ').'.';
         }
+        if ($unified->isNotEmpty()) {
+            $parts[] = 'Los extras del mes se unificaron en '.$unified->pluck('name')->implode(', ')
+                .': se pagan junto con la semana, en un solo pago.';
+        }
+        if ($absorbed->isNotEmpty()) {
+            $parts[] = 'Se absorbió '.$absorbed->implode(', ').' para que sea un solo pago.';
+        }
+        if ($isMonthly && $separateDepartments->isNotEmpty()) {
+            $parts[] = $separateDepartments->pluck('name')->implode(', ').' no lleva mensual: se queda solo con su semana.';
+        }
+        if ($skipped->isNotEmpty()) {
+            $parts[] = 'Ya existían: '.$skipped->implode(', ').'.';
+        }
+        $msg = implode(' ', $parts);
 
         // Una sola → a su detalle; varias → a la lista para verlas todas.
-        if ($created->count() === 1) {
-            return redirect()->route('payroll.show', $created->first())->with('success', $msg);
+        if ($toCalculate->count() === 1) {
+            return redirect()->route('payroll.show', $toCalculate->first())->with('success', $msg);
         }
 
         return redirect()->route('payroll.index')->with('success', $msg);
+    }
+
+    /**
+     * La nómina SEMANAL que puede pagar los extras de este periodo mensual: la
+     * del mismo alcance que termina el mismo día y todavía se puede tocar.
+     *
+     * Es lo que permite unificar una mensual que ya se generó por separado, sin
+     * borrarla y volverla a capturar.
+     */
+    private function weekThatCanAbsorb(PayrollPeriod $monthly): ?PayrollPeriod
+    {
+        if ($monthly->type !== 'monthly' || ! $monthly->canEdit() || $monthly->isCashClosed()) {
+            return null;
+        }
+
+        // Los departamentos con nómina propia (Taller) no llevan extras del mes.
+        if ($monthly->department_id !== null && $monthly->department?->has_separate_payroll) {
+            return null;
+        }
+
+        return PayrollPeriod::where('department_id', $monthly->department_id)
+            ->where('type', 'weekly')
+            ->whereDate('end_date', $monthly->end_date->toDateString())
+            ->orderByDesc('id')
+            ->get()
+            ->first(fn (PayrollPeriod $p) => $p->canAbsorbExtras());
+    }
+
+    /**
+     * Unifica una nómina MENSUAL ya generada con la semana que se paga el mismo
+     * día: sus extras pasan a la semana (un solo pago, un solo recibo) y el
+     * periodo mensual desaparece.
+     */
+    public function unifyWithWeek(PayrollPeriod $payroll): RedirectResponse
+    {
+        if (! auth()->user()->hasPermissionTo('payroll.create')) {
+            abort(403);
+        }
+
+        $week = $this->weekThatCanAbsorb($payroll);
+
+        if (! $week) {
+            return redirect()->back()->with(
+                'error',
+                'No hay una nómina semanal que termine el '.$payroll->end_date->format('d/m/Y')
+                .' y que todavía se pueda modificar (sin aprobar, sin pagar y con el efectivo abierto).',
+            );
+        }
+
+        $monthlyName = $payroll->name;
+
+        $week->update([
+            'extras_start_date' => $payroll->start_date,
+            'extras_end_date' => $payroll->end_date,
+        ]);
+
+        $payroll->entries()->delete();
+        $payroll->delete();
+
+        $this->calculator->calculatePeriod($week);
+
+        AuditLog::record(
+            module: AuditLog::MODULE_PAYROLL,
+            action: AuditLog::ACTION_UPDATE,
+            model: $week,
+            description: "Unifico la nomina {$monthlyName} en {$week->name}: los extras del mes se pagan junto con la semana",
+            subjectLabel: $week->name,
+            metadata: [
+                'absorbed' => $monthlyName,
+                'extras_start_date' => $week->extras_start_date?->toDateString(),
+                'extras_end_date' => $week->extras_end_date?->toDateString(),
+            ],
+        );
+
+        return redirect()->route('payroll.show', $week)->with(
+            'success',
+            "Listo: los extras de {$monthlyName} ahora se pagan junto con {$week->name}, en un solo pago.",
+        );
     }
 
     /**
@@ -218,16 +412,22 @@ class PayrollController extends Controller
         // quien puede aprobar y con nómina aprobada).
         $cfdiStatus = app(\App\Services\Cfdi\PayrollCfdiService::class)->periodStatus($payroll);
 
+        // Nómina mensual que todavía se puede unificar con su semana: se ofrece
+        // el botón para pagarlas juntas sin borrar y recapturar.
+        $unifiableWeek = $this->weekThatCanAbsorb($payroll);
+
         return Inertia::render('Payroll/Show', [
             'period' => $payroll,
             'entries' => $entries,
             'summary' => $summary,
             'cfdi' => $cfdiStatus,
+            'unifiableWeek' => $unifiableWeek?->only(['id', 'name']),
             'can' => [
                 'viewComplete' => $user->hasPermissionTo('payroll.view_complete'),
                 'calculate' => $user->hasPermissionTo('payroll.calculate'),
                 'approve' => $user->hasPermissionTo('payroll.approve'),
                 'export' => $user->hasPermissionTo('payroll.export'),
+                'unify' => $user->hasPermissionTo('payroll.create'),
                 'payCash' => $user->hasPermissionTo('payroll.pay_cash'),
                 // Preparar/entregar el efectivo es exclusivo del custodio (superadmin).
                 'deliverCash' => $user->hasPermissionTo('payroll.cash.deliver'),
@@ -1229,7 +1429,9 @@ class PayrollController extends Controller
         // Sanitize period name for filename, tagging the period type so a
         // weekly (base) export is not confused with a monthly (extras) one.
         $periodName = preg_replace('/[^a-zA-Z0-9_-]/', '_', $payroll->name);
-        $typeTag = ['weekly' => 'semanal', 'monthly' => 'mensual', 'biweekly' => 'quincenal'][$payroll->type] ?? $payroll->type;
+        $typeTag = $payroll->isUnified()
+            ? 'unificada'
+            : (['weekly' => 'semanal', 'monthly' => 'mensual', 'biweekly' => 'quincenal'][$payroll->type] ?? $payroll->type);
         $filename = "prenomina_{$typeTag}_{$periodName}_{$payroll->start_date->format('Y-m-d')}.{$format}";
 
         AuditLog::record(

@@ -27,6 +27,7 @@ const form = useForm({
     priority: 0,
     payment_period: 'monthly',
     is_recurring: false,
+    is_base_salary_concept: false,
     pays_via_transfer: false,
     sat_perception_code: '',
     employee_ids: [],
@@ -292,6 +293,26 @@ const submit = () => {
                             </label>
                             <p v-if="form.errors.is_recurring" class="mt-1 text-sm text-red-600">
                                 {{ form.errors.is_recurring }}
+                            </p>
+                        </div>
+
+                        <div>
+                            <label class="flex items-start gap-2">
+                                <input
+                                    v-model="form.is_base_salary_concept"
+                                    type="checkbox"
+                                    class="mt-0.5 rounded border-gray-300 text-pink-600 focus:ring-pink-500"
+                                />
+                                <span class="text-sm text-gray-700">
+                                    <span class="font-medium">Es el sueldo del empleado</span> — con esto marcado, el
+                                    concepto NO se paga cuando la nómina ya le está pagando su sueldo base (manda el
+                                    sueldo base). Úsalo en los sueldos capturados como concepto (p. ej. el personal en
+                                    periodo de prueba) para que el pago unificado no los pague dos veces. Si el empleado
+                                    no cobra sueldo base, el concepto se le sigue pagando igual.
+                                </span>
+                            </label>
+                            <p v-if="form.errors.is_base_salary_concept" class="mt-1 text-sm text-red-600">
+                                {{ form.errors.is_base_salary_concept }}
                             </p>
                         </div>
 

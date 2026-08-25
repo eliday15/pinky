@@ -23,6 +23,7 @@ final class PayrollPeriodCalculationContext
      * @param  Collection  $authorizationsByEmployee  employee_id => Collection<Authorization> (aprobadas/pagadas, con compensationType)
      * @param  Collection  $holidays  Festivos dentro del periodo
      * @param  bool  $monthlyIncidentsEnsured  Las FRT mensuales ya se generaron en lote para todos
+     * @param  string|null  $scope  Alcance del pago unificado ('base'|'extras'); null = periodo normal
      */
     public function __construct(
         public readonly int $periodId,
@@ -31,5 +32,6 @@ final class PayrollPeriodCalculationContext
         public readonly Collection $authorizationsByEmployee,
         public readonly Collection $holidays,
         public readonly bool $monthlyIncidentsEnsured,
+        public readonly ?string $scope = null,
     ) {}
 }

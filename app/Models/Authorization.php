@@ -314,9 +314,20 @@ class Authorization extends Model
 
         return PayrollPeriod::query()
             ->whereIn('status', ['approved', 'paid'])
-            ->whereIn('type', $kinds)
-            ->whereDate('start_date', '<=', $dateStr)
-            ->whereDate('end_date', '>=', $dateStr)
+            ->where(function ($q) use ($kinds, $dateStr, $pp) {
+                $q->where(fn ($q2) => $q2->whereIn('type', $kinds)
+                    ->whereDate('start_date', '<=', $dateStr)
+                    ->whereDate('end_date', '>=', $dateStr));
+
+                // Pago UNIFICADO: la semana que además pagó los extras del mes
+                // congela los conceptos de esas fechas igual que lo hacía la
+                // nómina mensual que sustituye.
+                if ($pp !== 'weekly') {
+                    $q->orWhere(fn ($q2) => $q2->whereNotNull('extras_start_date')
+                        ->whereDate('extras_start_date', '<=', $dateStr)
+                        ->whereDate('extras_end_date', '>=', $dateStr));
+                }
+            })
             ->where(fn ($q) => $separate
                 ? $q->where('department_id', $dept->id)
                 : $q->whereNull('department_id'))

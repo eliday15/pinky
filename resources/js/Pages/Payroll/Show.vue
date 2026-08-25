@@ -4,7 +4,7 @@ import TwoFactorModal from '@/Components/TwoFactorModal.vue';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import { ref, computed } from 'vue';
 import { formatDate as fmtDate } from '@/utils/date';
-import { periodTypeInfo } from '@/utils/payrollPeriodType';
+import { periodInfo } from '@/utils/payrollPeriodType';
 
 const props = defineProps({
     period: Object,
@@ -12,17 +12,34 @@ const props = defineProps({
     summary: Object,
     can: Object,
     cfdi: Object, // { stamped, pending, error, canceled, stampable }
+    // Nómina semanal con la que ESTA mensual se puede unificar (un solo pago),
+    // o null si no hay ninguna que se pueda tocar. { id, name }
+    unifiableWeek: { type: Object, default: null },
 });
 
 // Timbrado CFDI: disparar el timbrado del periodo aprobado.
 const stampCfdi = () => {
     router.post(route('payroll.cfdi.stamp', props.period.id), {}, { preserveScroll: true });
 };
+// Unifica esta nómina mensual con la semana que se paga el mismo día: los
+// extras del mes pasan a la semana y esta desaparece (un solo pago).
+const unifying = ref(false);
+const unifyWithWeek = () => {
+    if (!props.unifiableWeek) return;
+    if (!confirm(`Los extras de "${props.period.name}" se van a pagar junto con "${props.unifiableWeek.name}" (un solo pago) y esta nómina mensual desaparece. ¿Continuar?`)) {
+        return;
+    }
+    unifying.value = true;
+    router.post(route('payroll.unify', props.period.id), {}, {
+        onFinish: () => { unifying.value = false; },
+    });
+};
+
 const cancelCfdi = () => {
     router.post(route('payroll.cfdi.cancel', props.period.id), {}, { preserveScroll: true });
 };
 
-const typeInfo = computed(() => periodTypeInfo(props.period.type));
+const typeInfo = computed(() => periodInfo(props.period));
 
 const hasTwoFactor = computed(() => usePage().props.auth.has_two_factor);
 const showApproveModal = ref(false);
@@ -206,6 +223,11 @@ const closeCash = () => {
                     </div>
                     <p class="text-gray-600 mt-1">
                         {{ formatDate(period.start_date) }} - {{ formatDate(period.end_date) }}
+                        <span class="text-gray-400">(sueldo base)</span>
+                    </p>
+                    <!-- Pago unificado: los extras del mes van en este mismo pago -->
+                    <p v-if="period.extras_start_date" class="text-pink-600 mt-1">
+                        + extras del mes: {{ formatDate(period.extras_start_date) }} - {{ formatDate(period.extras_end_date) }}
                     </p>
                     <p class="text-sm text-gray-500 mt-1">
                         Fecha de pago: {{ formatDate(period.payment_date) }}
@@ -226,6 +248,15 @@ const closeCash = () => {
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
                         </svg>
                         {{ calculating ? 'Calculando nómina…' : 'Calcular Nomina' }}
+                    </button>
+                    <button
+                        v-if="can?.unify && unifiableWeek"
+                        @click="unifyWithWeek"
+                        :disabled="unifying"
+                        class="px-4 py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700 disabled:opacity-60"
+                        :title="`Los extras del mes se pagan junto con ${unifiableWeek.name}`"
+                    >
+                        {{ unifying ? 'Unificando…' : `Unificar con ${unifiableWeek.name}` }}
                     </button>
                     <button
                         v-if="can?.approve && period.status === 'review'"

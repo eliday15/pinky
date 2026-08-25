@@ -70,6 +70,19 @@ class PayrollPeriodFactory extends Factory
     }
 
     /**
+     * Pago UNIFICADO: además de su semana, el periodo paga los EXTRAS del rango
+     * dado (un solo recibo con la semana y el mes).
+     */
+    public function unified(string $extrasStart, string $extrasEnd): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'type' => 'weekly',
+            'extras_start_date' => $extrasStart,
+            'extras_end_date' => $extrasEnd,
+        ]);
+    }
+
+    /**
      * Acota el periodo a un departamento (nómina propia, p. ej. Taller).
      */
     public function forDepartment(Department|int $department): static

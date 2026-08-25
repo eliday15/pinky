@@ -47,8 +47,16 @@ class PayrollInvalidationService
             return;
         }
 
-        $periods = PayrollPeriod::where('start_date', '<=', $endDate)
-            ->where('end_date', '>=', $startDate)
+        // Un periodo UNIFICADO (semana + extras del mes) también se ve afectado
+        // por un cambio dentro de su rango de EXTRAS, aunque caiga fuera de su
+        // semana: si no, el cambio del mes pasaría inadvertido.
+        $periods = PayrollPeriod::where(function ($q) use ($startDate, $endDate) {
+            $q->where(fn ($q2) => $q2->where('start_date', '<=', $endDate)
+                ->where('end_date', '>=', $startDate))
+                ->orWhere(fn ($q2) => $q2->whereNotNull('extras_start_date')
+                    ->where('extras_start_date', '<=', $endDate)
+                    ->where('extras_end_date', '>=', $startDate));
+        })
             ->whereIn('status', ['draft', 'calculating', 'review', 'approved'])
             ->when(
                 $employee->department?->has_separate_payroll,

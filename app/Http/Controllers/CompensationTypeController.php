@@ -103,6 +103,7 @@ class CompensationTypeController extends Controller
             'priority' => ['integer', 'min:0'],
             'payment_period' => ['nullable', Rule::in([CompensationType::PAYMENT_PERIOD_WEEKLY, CompensationType::PAYMENT_PERIOD_MONTHLY])],
             'is_recurring' => ['boolean'],
+            'is_base_salary_concept' => ['boolean'],
             'pays_via_transfer' => ['boolean'],
             'sat_perception_code' => ['nullable', 'string', 'max:3'],
             'position_ids' => ['nullable', 'array'],
@@ -126,7 +127,7 @@ class CompensationTypeController extends Controller
                 'name', 'code', 'description', 'calculation_type',
                 'percentage_value', 'fixed_amount', 'is_active',
                 'application_mode', 'authorization_type', 'attendance_pull_rule', 'priority',
-                'payment_period', 'is_recurring', 'pays_via_transfer', 'sat_perception_code',
+                'payment_period', 'is_recurring', 'is_base_salary_concept', 'pays_via_transfer', 'sat_perception_code',
             ])->toArray()
         );
 
@@ -198,6 +199,7 @@ class CompensationTypeController extends Controller
             'priority' => ['integer', 'min:0'],
             'payment_period' => ['nullable', Rule::in([CompensationType::PAYMENT_PERIOD_WEEKLY, CompensationType::PAYMENT_PERIOD_MONTHLY])],
             'is_recurring' => ['boolean'],
+            'is_base_salary_concept' => ['boolean'],
             'pays_via_transfer' => ['boolean'],
             'sat_perception_code' => ['nullable', 'string', 'max:3'],
             'position_ids' => ['nullable', 'array'],
@@ -221,7 +223,7 @@ class CompensationTypeController extends Controller
                 'name', 'code', 'description', 'calculation_type',
                 'percentage_value', 'fixed_amount', 'is_active',
                 'application_mode', 'authorization_type', 'attendance_pull_rule', 'priority',
-                'payment_period', 'is_recurring', 'pays_via_transfer', 'sat_perception_code',
+                'payment_period', 'is_recurring', 'is_base_salary_concept', 'pays_via_transfer', 'sat_perception_code',
             ])->toArray()
         );
 

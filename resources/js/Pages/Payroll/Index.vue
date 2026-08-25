@@ -3,7 +3,7 @@ import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import { computed } from 'vue';
 import { formatDate as fmtDate } from '@/utils/date';
-import { periodTypeInfo } from '@/utils/payrollPeriodType';
+import { periodInfo } from '@/utils/payrollPeriodType';
 
 const props = defineProps({
     periods: Object,
@@ -115,11 +115,15 @@ const deletePeriod = (period) => {
                                 <p class="text-xs text-gray-500">
                                     {{ formatDate(period.start_date) }} - {{ formatDate(period.end_date) }}
                                 </p>
+                                <!-- Pago unificado: además de la semana, paga los extras del mes -->
+                                <p v-if="period.extras_start_date" class="text-xs text-pink-600">
+                                    + extras {{ formatDate(period.extras_start_date) }} - {{ formatDate(period.extras_end_date) }}
+                                </p>
                             </div>
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            <p class="font-medium text-gray-900">{{ periodTypeInfo(period.type).label }}</p>
-                            <p class="text-xs text-gray-400">{{ periodTypeInfo(period.type).short }}</p>
+                            <p class="font-medium text-gray-900">{{ periodInfo(period).label }}</p>
+                            <p class="text-xs text-gray-400">{{ periodInfo(period).short }}</p>
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                             {{ formatDate(period.payment_date) }}
