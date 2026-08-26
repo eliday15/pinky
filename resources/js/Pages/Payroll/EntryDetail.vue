@@ -661,8 +661,10 @@ const roundingIsCents = computed(() => Math.abs(pesoRounding.value) < 1);
                                     <tr v-for="(o, oi) in overtimeShortfalls" :key="`o-${i}-${oi}`" class="text-xs text-amber-700">
                                         <td class="py-1 pl-6" colspan="2">
                                             {{ formatDayLabel(o.date) }}: aprobadas {{ o.authorized_hours }} h, pagadas {{ o.paid_hours }} h —
-                                            <template v-if="o.overlapping">hay autorizaciones con el horario encimado, esa ventana se paga una sola vez.</template>
-                                            <template v-else>la checada solo respalda {{ o.paid_hours }} h.</template>
+                                            la checada solo respalda {{ o.paid_hours }} h.
+                                            <template v-if="o.overlapping">
+                                                Además, ese día hay autorizaciones con el horario encimado: revisa las ventanas.
+                                            </template>
                                         </td>
                                     </tr>
                                 </template>

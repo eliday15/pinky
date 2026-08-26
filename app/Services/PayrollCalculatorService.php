@@ -1447,10 +1447,12 @@ class PayrollCalculatorService
      * Días con TIEMPO EXTRA aprobado que la nómina no paga completo, con el
      * motivo (Elias 2026-08-26).
      *
-     * La nómina paga el tiempo extra que la CHECADA respalda (mín. entre lo
-     * autorizado y lo medido) y nunca paga dos veces la misma ventana. Las dos
-     * reglas son correctas, pero invisibles: quien ve "8 horas aprobadas" y un
-     * recibo de 6.5 no tiene forma de saber cuál se recortó ni por qué.
+     * La nómina paga el tiempo extra que la CHECADA respalda: el mínimo entre lo
+     * autorizado del día y lo medido fuera de horario. La regla es correcta pero
+     * invisible — quien ve "8 horas aprobadas" y un recibo de 6.5 no tiene forma
+     * de saber cuál se recortó ni por qué. El tope es por HORAS del día, no por
+     * ventana: si además hay autorizaciones con el horario encimado se avisa
+     * aparte, porque suele ser señal de una captura mal hecha.
      *
      * @param  Collection<int, Authorization>  $approvedAuthorizations
      * @param  Collection<int, mixed>  $attendance
@@ -1499,9 +1501,9 @@ class PayrollCalculatorService
     }
 
     /**
-     * ¿Hay dos autorizaciones del mismo día con el horario encimado? Esa ventana
-     * se paga UNA sola vez (regla anti doble pago), así que la suma de lo
-     * capturado siempre va a ser mayor que lo pagado.
+     * ¿Hay dos autorizaciones del mismo día con el horario encimado? No cambia
+     * el pago (el tope es por horas del día), pero casi siempre significa que
+     * una de las dos se capturó con la ventana equivocada.
      *
      * @param  Collection<int, Authorization>  $auths
      */

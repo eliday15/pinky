@@ -101,10 +101,11 @@ class OvertimeShortfallExplanationTest extends FeatureTestCase
         $this->assertFalse($shortfalls[0]['overlapping'], 'no hay ventanas encimadas');
     }
 
-    public function test_the_receipt_flags_overlapping_windows_paid_once(): void
+    public function test_the_receipt_flags_overlapping_windows(): void
     {
-        // Caso Juan Carlos: 16:30-20:00 (3.5 h) y 16:30-17:30 (1 h) el mismo día
-        // — la segunda vive dentro de la primera y no se paga dos veces.
+        // Caso Juan Carlos: 16:30-20:00 (3.5 h) y 16:30-17:30 (1 h) el mismo día.
+        // El tope es por HORAS (lo que la checada respalda), no por ventana; el
+        // traslape se avisa aparte porque suele ser una captura mal hecha.
         $employee = $this->employee();
         $this->overtime($employee, 3.5, '16:30', '20:00');
         $this->overtime($employee, 1.0, '16:30', '17:30');
@@ -115,7 +116,7 @@ class OvertimeShortfallExplanationTest extends FeatureTestCase
         $shortfalls = $entry->calculation_breakdown['overtime']['shortfalls'] ?? [];
         $this->assertCount(1, $shortfalls);
         $this->assertEqualsWithDelta(4.5, $shortfalls[0]['authorized_hours'], 0.01, 'lo capturado suma 4.5');
-        $this->assertEqualsWithDelta(3.5, $shortfalls[0]['paid_hours'], 0.01, 'la ventana se paga una vez');
+        $this->assertEqualsWithDelta(3.5, $shortfalls[0]['paid_hours'], 0.01, 'se paga lo que la checada respalda');
         $this->assertTrue($shortfalls[0]['overlapping'], 'se avisa que están encimadas');
     }
 
