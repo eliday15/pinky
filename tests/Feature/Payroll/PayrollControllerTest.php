@@ -104,6 +104,36 @@ class PayrollControllerTest extends FeatureTestCase
     // create
     // ---------------------------------------------------------------------
 
+    public function test_index_lists_the_most_recent_periods_first(): void
+    {
+        // Elias 2026-08-26: "que siempre aparezcan arriba las nuevas y con
+        // fechas más recientes". Manda la fecha de FIN, no la de inicio: el mes
+        // que termina el 23 de agosto va antes que la semana que cerró el 18,
+        // aunque el mes haya empezado en julio.
+        $vieja = PayrollPeriod::factory()->weekly()->create([
+            'name' => 'Semana 12 ago - 18 ago',
+            'start_date' => '2026-08-12',
+            'end_date' => '2026-08-18',
+            'payment_date' => '2026-08-21',
+        ]);
+        $mes = PayrollPeriod::factory()->monthly()->create([
+            'name' => 'Mes 29 jul - 23 ago',
+            'start_date' => '2026-07-29',
+            'end_date' => '2026-08-23',
+            'payment_date' => '2026-08-28',
+        ]);
+
+        $this->actingAsAdmin();
+
+        $this->get(route('payroll.index'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Payroll/Index')
+                ->where('periods.data.0.id', $mes->id)
+                ->where('periods.data.1.id', $vieja->id)
+                ->etc());
+    }
+
     public function test_create_renders_inertia_page_with_suggested_dates_for_admin(): void
     {
         $this->actingAsAdmin();

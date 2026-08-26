@@ -83,14 +83,23 @@ class UnifiedPayrollPeriodTest extends FeatureTestCase
         ], $attributes));
     }
 
-    private function postMonthly(): \Illuminate\Testing\TestResponse
+    private function postMonthly(array $extra = []): \Illuminate\Testing\TestResponse
     {
-        return $this->post(route('payroll.store'), [
+        return $this->post(route('payroll.store'), array_merge([
             'name' => 'Mes 27 jul - 23 ago',
             'type' => 'monthly',
             'start_date' => self::MONTH_START,
             'end_date' => self::MONTH_END,
             'payment_date' => self::PAYMENT_DATE,
+        ], $extra));
+    }
+
+    /** El alta mensual del formulario: además del mes manda la semana que se paga con él. */
+    private function postMonthlyWithWeek(): \Illuminate\Testing\TestResponse
+    {
+        return $this->postMonthly([
+            'week_start_date' => self::WEEK_START,
+            'week_end_date' => self::WEEK_END,
         ]);
     }
 
@@ -196,6 +205,71 @@ class UnifiedPayrollPeriodTest extends FeatureTestCase
                 "el cálculo en lote coincide con el individual en {$field}",
             );
         }
+    }
+
+    public function test_monthly_creates_the_week_already_unified_when_it_does_not_exist_yet(): void
+    {
+        // Caso real (Elias 2026-08-26): borraron la semana y generaron el mes.
+        // El alta manda el rango de la semana, así que la nómina nace UNIFICADA
+        // (sueldo de la semana + extras del mes) en vez de una mensual suelta
+        // que dejaría todo en efectivo y $0 en transferencia.
+        $employee = $this->employee();
+        $this->monthOfWork($employee);
+        $this->actingAsAdmin();
+
+        $this->postMonthlyWithWeek()->assertSessionHasNoErrors();
+
+        $this->assertSame(0, PayrollPeriod::where('type', 'monthly')->count(), 'no nace una mensual suelta');
+        $period = PayrollPeriod::whereNull('department_id')->firstOrFail();
+        $this->assertTrue($period->isUnified());
+        $this->assertSame(self::WEEK_START, $period->start_date->toDateString(), 'la base corre sobre la semana');
+        $this->assertSame(self::MONTH_START, $period->extras_start_date->toDateString());
+        $this->assertSame('Semana 17 ago - 23 ago', $period->name, 'se nombra como la semana que es');
+
+        $entry = $period->entries()->where('employee_id', $employee->id)->firstOrFail();
+        $this->assertEqualsWithDelta(5600.00, (float) $entry->regular_pay, 0.01, 'sí paga sueldo base');
+        $this->assertEqualsWithDelta(1200.00, (float) $entry->overtime_pay, 0.01, 'y los extras del mes');
+    }
+
+    public function test_monthly_also_generates_the_week_for_departments_with_their_own_payroll(): void
+    {
+        // Taller no lleva extras del mes, pero SÍ tiene que salir su semana en
+        // el mismo alta: antes se quedaba sin nómina.
+        $taller = Department::factory()->separatePayroll()->create(['name' => 'Taller Adriana']);
+        $tallerEmployee = Employee::factory()->create([
+            'status' => 'active', 'daily_salary' => 800.00, 'hourly_rate' => 100.00,
+            'hire_date' => '2025-01-01', 'department_id' => $taller->id,
+        ]);
+        $this->monthOfWork($tallerEmployee);
+        $general = $this->employee();
+        $this->monthOfWork($general);
+        $this->actingAsAdmin();
+
+        $this->postMonthlyWithWeek()->assertSessionHasNoErrors();
+
+        $tallerPeriod = PayrollPeriod::where('department_id', $taller->id)->firstOrFail();
+        $this->assertSame('weekly', $tallerPeriod->type);
+        $this->assertFalse($tallerPeriod->isUnified(), 'Taller no lleva extras del mes');
+        $this->assertSame('Semana 17 ago - 23 ago - Taller Adriana', $tallerPeriod->name);
+        $this->assertSame(self::WEEK_START, $tallerPeriod->start_date->toDateString());
+
+        $entry = $tallerPeriod->entries()->where('employee_id', $tallerEmployee->id)->firstOrFail();
+        $this->assertEqualsWithDelta(5600.00, (float) $entry->regular_pay, 0.01, 'Taller cobra su semana');
+        $this->assertEqualsWithDelta(0.00, (float) $entry->overtime_pay, 0.01, 'sin extras del mes');
+    }
+
+    public function test_monthly_with_week_range_still_unifies_into_an_existing_week(): void
+    {
+        // Si la semana YA existe manda ella: no se duplica ni se crea otra.
+        $employee = $this->employee();
+        $this->monthOfWork($employee);
+        $week = $this->weeklyPeriod();
+        $this->actingAsAdmin();
+
+        $this->postMonthlyWithWeek()->assertSessionHasNoErrors();
+
+        $this->assertSame(1, PayrollPeriod::count(), 'sigue habiendo una sola nómina general');
+        $this->assertTrue($week->refresh()->isUnified());
     }
 
     public function test_monthly_does_not_touch_departments_with_their_own_payroll(): void

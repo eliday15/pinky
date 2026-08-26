@@ -45,7 +45,7 @@ describe('Nomina unificada (semana + extras del mes)', () => {
     });
 
     /** Llena el alta de nómina y la envía. */
-    async function createPeriod({ typeText, name, start, end, payment }) {
+    async function createPeriod({ typeText, name, start, end, payment, weekStart }) {
         await goto(page, '/payroll/create');
         await waitForInertia(page);
 
@@ -57,6 +57,9 @@ describe('Nomina unificada (semana + extras del mes)', () => {
         await page.evaluate(() => new Promise(r => setTimeout(r, 250)));
         assert.ok(await fillFieldByLabel(page, 'Fecha de Pago', payment), 'fecha de pago');
         assert.ok(await fillFieldByLabel(page, 'Nombre del Periodo', name), 'nombre');
+        if (weekStart) {
+            assert.ok(await fillFieldByLabel(page, 'Semana: Desde', weekStart), 'semana desde');
+        }
 
         await page.click('button[type="submit"]');
         await waitForInertia(page);

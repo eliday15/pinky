@@ -8,6 +8,12 @@ import { periodTypeInfo } from '@/utils/payrollPeriodType';
 
 const props = defineProps({
     suggestedDates: Object,
+    // Día en que arranca la siguiente semana (el día después del último periodo
+    // base de la general). Rellena el rango de semana del alta MENSUAL.
+    nextWeekStart: {
+        type: String,
+        default: null,
+    },
     // Nombres de departamentos con nómina propia (p. ej. ["Taller"]). Al crear,
     // el sistema genera la General MÁS una por cada uno, de un jalón.
     separatePayrollDepartments: {
@@ -53,6 +59,11 @@ const form = useForm({
     start_date: mondayOf(today()),
     end_date: addDaysToDate(mondayOf(today()), 6),
     payment_date: addDaysToDate(mondayOf(today()), 7),
+    // Solo se usa en un alta MENSUAL: la semana que se paga junto con el mes.
+    // La general sale UNIFICADA (sueldo de la semana + extras del mes) y los
+    // departamentos con nómina propia (Taller) salen con esta semana nada más.
+    week_start_date: props.nextWeekStart || '',
+    week_end_date: '',
 });
 
 const periodDays = computed(() => {
@@ -80,6 +91,22 @@ watch(() => form.end_date, () => {
         form.payment_date = addDaysToDate(form.end_date, 1);
     }
 });
+
+// La semana que se paga con el mes termina el mismo día que el mes (es la
+// última semana del periodo). Se mantiene en sincronía sola; el inicio queda
+// editable por si la semana arrancó a media semana.
+watch([() => form.end_date, () => form.type], () => {
+    if (form.type !== 'monthly' || !form.end_date) return;
+
+    form.week_end_date = form.end_date;
+    // Arranque: donde quedó la semana anterior. Si eso cae DESPUÉS del fin del
+    // mes (la semana de este pago ya está generada), se propone una semana
+    // normal de 7 días — el sistema usará de todos modos la semana que ya
+    // existe, estas fechas solo entran si hay que crearla.
+    if (!form.week_start_date || form.week_start_date > form.week_end_date) {
+        form.week_start_date = addDaysToDate(form.week_end_date, -6);
+    }
+}, { immediate: true });
 
 const formatDateForName = (date) => fmtDate(date, {
     day: 'numeric',
@@ -169,8 +196,29 @@ const submit = () => {
                             {{ separatePayrollDepartments.join(', ') }} no lleva mensual: se queda solo con su semana.
                         </span>
                     </p>
-                    <p class="mt-1 text-xs text-pink-600">
-                        Si esa semana todavía no existe (o ya se aprobó/pagó), se genera la nómina mensual por separado como antes.
+                    <div class="mt-4 grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-pink-800 mb-1">Semana: Desde</label>
+                            <input
+                                v-model="form.week_start_date"
+                                type="date"
+                                class="w-full rounded-lg border-pink-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                            />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-pink-800 mb-1">Semana: Hasta</label>
+                            <input
+                                v-model="form.week_end_date"
+                                type="date"
+                                class="w-full rounded-lg border-pink-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
+                            />
+                        </div>
+                    </div>
+                    <p class="mt-2 text-xs text-pink-600">
+                        Si esa semana ya está generada, los extras se le pegan a ella y estas fechas no se usan.
+                        Si no existe, se crea con este rango: la General nace unificada (sueldo de la semana + extras del mes)
+                        y {{ separatePayrollDepartments.length ? separatePayrollDepartments.join(', ') : 'los departamentos con nómina propia' }}
+                        sale con esta semana nada más.
                     </p>
                 </div>
 

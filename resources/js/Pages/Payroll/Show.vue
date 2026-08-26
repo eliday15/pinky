@@ -223,7 +223,7 @@ const closeCash = () => {
                     </div>
                     <p class="text-gray-600 mt-1">
                         {{ formatDate(period.start_date) }} - {{ formatDate(period.end_date) }}
-                        <span class="text-gray-400">(sueldo base)</span>
+                        <span v-if="period.extras_start_date" class="text-gray-400">(sueldo base)</span>
                     </p>
                     <!-- Pago unificado: los extras del mes van en este mismo pago -->
                     <p v-if="period.extras_start_date" class="text-pink-600 mt-1">
