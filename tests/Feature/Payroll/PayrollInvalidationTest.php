@@ -284,15 +284,19 @@ class PayrollInvalidationTest extends FeatureTestCase
 
         $record->refresh();
 
-        // 08:40-19:00 − 60 break = 9h20 → 80 min extra → escalera 1.0h.
+        // 08:40-19:00 − 60 break = 9h20 → 80 min extra por total. Regla de
+        // Luis 2026-08-26 (caso Diana): el tope al pago también mide por
+        // HORARIO — la salida 19:00 respalda 2 h tras las 17:00, así que el
+        // retardo de entrada (ya castigado como retardo) no se come el TE:
+        // pagan las 2.0 h autorizadas, no 1.0.
         $this->assertSame('late', $record->status, 'manual edit wins: el status del editor se preserva');
         $this->assertEqualsWithDelta(8.00, (float) $record->worked_hours, 0.01, 'horas regulares canónicas');
         $this->assertEqualsWithDelta(1.33, (float) $record->overtime_hours, 0.02, 'extra exacto detectado');
-        $this->assertEqualsWithDelta(1.00, (float) $record->overtime_authorized_hours, 0.01, 'autorizadas recalculadas (escalera), ya no obsoletas');
+        $this->assertEqualsWithDelta(2.00, (float) $record->overtime_authorized_hours, 0.01, 'la ventana respaldada por horario paga completa');
         $this->assertSame(30, (int) $record->late_minutes, 'retardo recalculado con la fórmula canónica');
 
-        // Y la nómina draft quedó al día: 1.0h × 100 × 1.5 = 150.
+        // Y la nómina draft quedó al día: 2.0h × 100 × 1.5 = 300.
         $entry = $period->entries()->where('employee_id', $employee->id)->first();
-        $this->assertEqualsWithDelta(150.00, (float) $entry->overtime_pay, 0.01);
+        $this->assertEqualsWithDelta(300.00, (float) $entry->overtime_pay, 0.01);
     }
 }

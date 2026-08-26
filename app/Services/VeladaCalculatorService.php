@@ -109,10 +109,23 @@ class VeladaCalculatorService
         $extraHours = max(0, $extraBase - $dailyHours);
 
         if ($extraHours <= 0) {
+            // TE aprobado con la VENTANA respaldada por la checada aunque el
+            // TOTAL del día no supere la jornada (Luis 2026-08-26, caso Diana:
+            // entró tarde — el retardo ya se castiga como retardo — y salió
+            // después de su hora; la tarde autorizada sí se trabajó). El tope
+            // usa la MISMA vara que el reporte y la aprobación: entrada
+            // temprana + salida tardía contra el HORARIO, con escalera
+            // (detectOvertimeHours). Fuera de fin de semana (ahí rige el
+            // umbral) y solo topando a lo autorizado.
+            $overtimeAuthorized = $this->getAuthorizedHours($record->employee_id, $dateStr, Authorization::TYPE_OVERTIME);
+            $scheduleBacked = ($overtimeAuthorized > 0 && ! $record->is_weekend_work)
+                ? $this->rounding->detectOvertimeHours($record, $daySchedule, $dateStr)
+                : 0.0;
+
             return [
                 'overtime_hours' => 0,
                 'velada_hours' => $veladaOverride ?? 0,
-                'overtime_authorized' => 0,
+                'overtime_authorized' => round(min($scheduleBacked, $overtimeAuthorized), 2),
                 'velada_authorized' => $veladaOverride ?? 0,
             ];
         }
@@ -171,6 +184,19 @@ class VeladaCalculatorService
         // escalera del reporte semanal, para que reporte y nómina nunca
         // diverjan. La velada se paga por horas exactas en ventana (VEL).
         $overtimePayable = $this->rounding->roundMinutes((int) round($overtimeHours * 60));
+
+        // El tope al pago también mide por HORARIO (Luis 2026-08-26, caso
+        // Diana): si la checada respalda la ventana fuera de horario (salió
+        // tarde / entró temprano) el retardo del día no se come el TE. Se toma
+        // la MAYOR de las dos medidas — nunca paga menos que antes — y solo
+        // fuera de fin de semana y sin velada en juego (la noche tiene su
+        // propio pago y este detector la contaría como salida tardía).
+        if ($overtimeAuthorized > 0 && $veladaHours <= 0 && ! $record->is_weekend_work) {
+            $overtimePayable = max(
+                $overtimePayable,
+                $this->rounding->detectOvertimeHours($record, $daySchedule, $dateStr),
+            );
+        }
 
         return [
             'overtime_hours' => round($overtimeHours, 2),
