@@ -59,11 +59,6 @@ const form = useForm({
     start_date: mondayOf(today()),
     end_date: addDaysToDate(mondayOf(today()), 6),
     payment_date: addDaysToDate(mondayOf(today()), 7),
-    // Solo se usa en un alta MENSUAL: la semana que se paga junto con el mes.
-    // La general sale UNIFICADA (sueldo de la semana + extras del mes) y los
-    // departamentos con nómina propia (Taller) salen con esta semana nada más.
-    week_start_date: props.nextWeekStart || '',
-    week_end_date: '',
 });
 
 const periodDays = computed(() => {
@@ -92,21 +87,21 @@ watch(() => form.end_date, () => {
     }
 });
 
-// La semana que se paga con el mes termina el mismo día que el mes (es la
-// última semana del periodo). Se mantiene en sincronía sola; el inicio queda
-// editable por si la semana arrancó a media semana.
-watch([() => form.end_date, () => form.type], () => {
-    if (form.type !== 'monthly' || !form.end_date) return;
+// La semana cuyo SUELDO se paga junto con este mes: arranca donde terminó la
+// semana anterior y cierra con el mes. Se deduce de las fechas (el backend hace
+// el mismo cálculo, por alcance); aquí solo se muestra para que se vea qué va a
+// salir antes de generar.
+const weekPaidWithMonth = computed(() => {
+    if (form.type !== 'monthly' || !form.end_date) return null;
 
-    form.week_end_date = form.end_date;
-    // Arranque: donde quedó la semana anterior. Si eso cae DESPUÉS del fin del
-    // mes (la semana de este pago ya está generada), se propone una semana
-    // normal de 7 días — el sistema usará de todos modos la semana que ya
-    // existe, estas fechas solo entran si hay que crearla.
-    if (!form.week_start_date || form.week_start_date > form.week_end_date) {
-        form.week_start_date = addDaysToDate(form.week_end_date, -6);
+    const sevenDayStart = addDaysToDate(form.end_date, -6);
+    let start = props.nextWeekStart || sevenDayStart;
+    if (start > form.end_date || start < sevenDayStart) {
+        start = sevenDayStart;
     }
-}, { immediate: true });
+
+    return { start, end: form.end_date };
+});
 
 const formatDateForName = (date) => fmtDate(date, {
     day: 'numeric',
@@ -187,38 +182,21 @@ const submit = () => {
 
                 <!-- Aviso: el mensual se paga JUNTO con la semana (un solo pago) -->
                 <div v-if="form.type === 'monthly'" class="bg-pink-50 border border-pink-200 rounded-lg p-4">
-                    <p class="text-sm font-semibold text-pink-800">Se paga junto con la semana</p>
+                    <p class="text-sm font-semibold text-pink-800">Un solo pago: el mes y la semana juntos</p>
                     <p class="mt-1 text-sm text-pink-700">
-                        Los extras de este mes se agregan a la nómina <span class="font-semibold">semanal que termina el mismo día</span>
-                        ({{ form.end_date ? formatDateForName(form.end_date) : 'la fecha fin' }}), para que sea
-                        <span class="font-semibold">un solo pago</span> y un solo recibo — no una nómina aparte.
+                        La nómina <span class="font-semibold">General</span> sale con todos los cargos del mes
+                        <span v-if="form.start_date && form.end_date" class="font-semibold">({{ formatDateForName(form.start_date) }} - {{ formatDateForName(form.end_date) }})</span>
+                        <span v-if="weekPaidWithMonth">
+                            más el sueldo de la semana
+                            <span class="font-semibold">{{ formatDateForName(weekPaidWithMonth.start) }} - {{ formatDateForName(weekPaidWithMonth.end) }}</span>
+                        </span>, en el mismo recibo.
                         <span v-if="separatePayrollDepartments.length">
-                            {{ separatePayrollDepartments.join(', ') }} no lleva mensual: se queda solo con su semana.
+                            {{ separatePayrollDepartments.join(', ') }} no lleva mensual: sale con esa semana nada más.
                         </span>
                     </p>
-                    <div class="mt-4 grid grid-cols-2 gap-4">
-                        <div>
-                            <label class="block text-sm font-medium text-pink-800 mb-1">Semana: Desde</label>
-                            <input
-                                v-model="form.week_start_date"
-                                type="date"
-                                class="w-full rounded-lg border-pink-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                            />
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-pink-800 mb-1">Semana: Hasta</label>
-                            <input
-                                v-model="form.week_end_date"
-                                type="date"
-                                class="w-full rounded-lg border-pink-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                            />
-                        </div>
-                    </div>
                     <p class="mt-2 text-xs text-pink-600">
-                        Si esa semana ya está generada, los extras se le pegan a ella y estas fechas no se usan.
-                        Si no existe, se crea con este rango: la General nace unificada (sueldo de la semana + extras del mes)
-                        y {{ separatePayrollDepartments.length ? separatePayrollDepartments.join(', ') : 'los departamentos con nómina propia' }}
-                        sale con esta semana nada más.
+                        La semana sale sola de las fechas: arranca donde terminó la anterior y cierra con el mes.
+                        Si esa semana ya está generada, los cargos del mes se le agregan a ella.
                     </p>
                 </div>
 

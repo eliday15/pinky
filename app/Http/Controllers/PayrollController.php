@@ -121,6 +121,44 @@ class PayrollController extends Controller
     }
 
     /**
+     * La SEMANA que se paga junto con un mes: la última del periodo mensual.
+     *
+     * Se deduce de las fechas (Elias 2026-08-26: "debe depender de las fechas"):
+     * arranca donde terminó el último periodo base de ese alcance —así respeta
+     * las semanas cortas de transición, p. ej. 19–23 ago cuando la anterior
+     * cerró el 18— y termina el mismo día que el mes.
+     *
+     * Devuelve NULL cuando esa semana no se puede deducir con certeza (no hay
+     * periodo base previo, o el hueco es de más de una semana): ahí el sistema
+     * NO se inventa una semana; genera la mensual sola, como antes.
+     *
+     * @return array{0: string, 1: string}|null [inicio, fin] en Y-m-d
+     */
+    private function weekPaidWithMonth(?int $departmentId, string $monthEnd): ?array
+    {
+        $end = Carbon::parse($monthEnd)->startOfDay();
+
+        $lastBase = PayrollPeriod::where('department_id', $departmentId)
+            ->where('type', '!=', 'monthly')
+            ->whereDate('end_date', '<', $end->toDateString())
+            ->orderByDesc('end_date')
+            ->first();
+
+        if (! $lastBase) {
+            return null;
+        }
+
+        $start = Carbon::parse($lastBase->end_date)->startOfDay()->addDay();
+
+        // Solo la semana que sigue de verdad: hasta 7 días y cerrando con el mes.
+        if ($start->gt($end) || $start->lt($end->copy()->subDays(6))) {
+            return null;
+        }
+
+        return [$start->toDateString(), $end->toDateString()];
+    }
+
+    /**
      * Store a new payroll period and trigger calculation.
      *
      * PAGO UNIFICADO (Elias 2026-08-25): un alta MENSUAL ya no crea un periodo
@@ -128,8 +166,8 @@ class PayrollController extends Controller
      * junto con la SEMANA que se paga ese día:
      *
      *  - Si esa semana ya existe (y todavía se puede tocar), se le pegan.
-     *  - Si no existe, el alta la crea ya unificada — para eso el formulario
-     *    manda el rango de la semana (week_start_date / week_end_date).
+     *  - Si no existe, el alta la crea ya unificada. Su rango sale SOLO de las
+     *    fechas (ver weekPaidWithMonth): no hay nada que capturar.
      *
      * Los departamentos con nómina propia (Taller) no llevan extras del mes:
      * de un alta mensual salen con SU SEMANA nada más.
@@ -152,9 +190,11 @@ class PayrollController extends Controller
         ]);
 
         $isMonthly = $validated['type'] === 'monthly';
-        $weekStart = $isMonthly ? ($validated['week_start_date'] ?? null) : null;
-        $weekEnd = $weekStart ? ($validated['week_end_date'] ?? $validated['end_date']) : null;
-        $weekName = $weekStart ? $this->weekPeriodName($weekStart, $weekEnd) : null;
+        // El rango de la semana que se paga con el mes se deduce de las fechas;
+        // el formulario puede mandarlo para forzar otro (no lo hace hoy).
+        $weekOverride = ($validated['week_start_date'] ?? null)
+            ? [$validated['week_start_date'], $validated['week_end_date'] ?? $validated['end_date']]
+            : null;
         unset($validated['week_start_date'], $validated['week_end_date']);
 
         // "De un jalón": un solo alta genera la nómina GENERAL más una por cada
@@ -211,11 +251,16 @@ class PayrollController extends Controller
                 // Taller (nómina propia): no lleva extras del mes. De este alta
                 // sale únicamente SU SEMANA, la que se paga ese mismo día.
                 if ($scope['separate']) {
-                    if (! $weekStart || $baseOverlaps($scope['id'], $weekStart, $weekEnd)) {
+                    $week = $weekOverride ?? $this->weekPaidWithMonth($scope['id'], $validated['end_date']);
+
+                    if (! $week || $baseOverlaps($scope['id'], $week[0], $week[1])) {
                         $skipped->push($scope['name']);
 
                         continue;
                     }
+
+                    [$weekStart, $weekEnd] = $week;
+                    $weekName = $this->weekPeriodName($weekStart, $weekEnd);
 
                     $period = PayrollPeriod::create([
                         'name' => $weekName.' - '.$scope['name'],
@@ -274,11 +319,16 @@ class PayrollController extends Controller
 
                 // Esa semana todavía no existe: se crea YA UNIFICADA (sueldo de
                 // la semana + extras del mes en un solo pago).
-                if ($weekStart
+                $week = $weekOverride ?? $this->weekPaidWithMonth($scope['id'], $validated['end_date']);
+                [$weekStart, $weekEnd] = $week ?? [null, null];
+
+                if ($week
                     && ! $baseOverlaps($scope['id'], $weekStart, $weekEnd)
                     && ! $extrasOverlaps($scope['id'], $validated['start_date'], $validated['end_date'])) {
                     $period = PayrollPeriod::create([
-                        'name' => $weekName,
+                        // Conserva el nombre capturado ("Mes 29 jul - 23 ago"):
+                        // es la nómina del mes, que además trae la semana.
+                        'name' => $validated['name'],
                         'type' => 'weekly',
                         'department_id' => $scope['id'],
                         'start_date' => $weekStart,

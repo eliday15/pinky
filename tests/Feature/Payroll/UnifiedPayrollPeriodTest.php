@@ -207,6 +207,72 @@ class UnifiedPayrollPeriodTest extends FeatureTestCase
         }
     }
 
+    public function test_monthly_derives_the_week_from_the_dates_by_itself(): void
+    {
+        // "Debe depender de las fechas" (Elias 2026-08-26): el alta mensual no
+        // pide nada más. La semana que se paga con el mes arranca donde terminó
+        // la anterior y cierra con el mes — aunque sea una semana corta.
+        PayrollPeriod::factory()->weekly()->paid()->create([
+            'name' => 'Semana 10 ago - 16 ago',
+            'start_date' => '2026-08-10',
+            'end_date' => '2026-08-16',
+            'payment_date' => '2026-08-17',
+        ]);
+        $employee = $this->employee();
+        $this->monthOfWork($employee);
+        $this->actingAsAdmin();
+
+        $this->postMonthly()->assertSessionHasNoErrors();
+
+        $period = PayrollPeriod::whereNull('department_id')->where('status', '!=', 'paid')->firstOrFail();
+        $this->assertTrue($period->isUnified(), 'nace unificada sin capturar la semana');
+        $this->assertSame(self::WEEK_START, $period->start_date->toDateString(), 'la semana arranca donde cerró la anterior');
+        $this->assertSame(self::WEEK_END, $period->end_date->toDateString());
+
+        $entry = $period->entries()->where('employee_id', $employee->id)->firstOrFail();
+        // Sueldo de la semana + extras del mes en el MISMO recibo.
+        $this->assertEqualsWithDelta(5600.00, (float) $entry->regular_pay, 0.01);
+        $this->assertEqualsWithDelta(1200.00, (float) $entry->overtime_pay, 0.01);
+    }
+
+    public function test_monthly_derives_each_scope_week_including_taller(): void
+    {
+        // Cada alcance toma SU semana: la general la suya y Taller la suya, que
+        // sale solo con el sueldo de la semana (sin extras del mes).
+        $taller = Department::factory()->separatePayroll()->create(['name' => 'Taller Adriana']);
+        foreach ([null, $taller->id] as $departmentId) {
+            PayrollPeriod::factory()->weekly()->paid()->create([
+                'name' => 'Semana 10 ago - 16 ago',
+                'department_id' => $departmentId,
+                'start_date' => '2026-08-10',
+                'end_date' => '2026-08-16',
+                'payment_date' => '2026-08-17',
+            ]);
+        }
+        $general = $this->employee();
+        $this->monthOfWork($general);
+        $tallerEmployee = Employee::factory()->create([
+            'status' => 'active', 'daily_salary' => 800.00, 'hourly_rate' => 100.00,
+            'hire_date' => '2025-01-01', 'department_id' => $taller->id,
+        ]);
+        $this->monthOfWork($tallerEmployee);
+        $this->actingAsAdmin();
+
+        $this->postMonthly()->assertSessionHasNoErrors();
+
+        $generalPeriod = PayrollPeriod::whereNull('department_id')->where('status', '!=', 'paid')->firstOrFail();
+        $tallerPeriod = PayrollPeriod::where('department_id', $taller->id)->where('status', '!=', 'paid')->firstOrFail();
+
+        $this->assertTrue($generalPeriod->isUnified(), 'la general suma semana + mes');
+        $this->assertFalse($tallerPeriod->isUnified(), 'Taller solo la semana');
+        $this->assertSame(self::WEEK_START, $tallerPeriod->start_date->toDateString());
+        $this->assertSame('Semana 17 ago - 23 ago - Taller Adriana', $tallerPeriod->name);
+
+        $tallerEntry = $tallerPeriod->entries()->where('employee_id', $tallerEmployee->id)->firstOrFail();
+        $this->assertEqualsWithDelta(5600.00, (float) $tallerEntry->regular_pay, 0.01);
+        $this->assertEqualsWithDelta(0.00, (float) $tallerEntry->overtime_pay, 0.01);
+    }
+
     public function test_monthly_creates_the_week_already_unified_when_it_does_not_exist_yet(): void
     {
         // Caso real (Elias 2026-08-26): borraron la semana y generaron el mes.
@@ -224,7 +290,7 @@ class UnifiedPayrollPeriodTest extends FeatureTestCase
         $this->assertTrue($period->isUnified());
         $this->assertSame(self::WEEK_START, $period->start_date->toDateString(), 'la base corre sobre la semana');
         $this->assertSame(self::MONTH_START, $period->extras_start_date->toDateString());
-        $this->assertSame('Semana 17 ago - 23 ago', $period->name, 'se nombra como la semana que es');
+        $this->assertSame('Mes 27 jul - 23 ago', $period->name, 'conserva el nombre capturado: es la nómina del mes');
 
         $entry = $period->entries()->where('employee_id', $employee->id)->firstOrFail();
         $this->assertEqualsWithDelta(5600.00, (float) $entry->regular_pay, 0.01, 'sí paga sueldo base');

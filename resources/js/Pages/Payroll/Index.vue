@@ -112,12 +112,13 @@ const deletePeriod = (period) => {
                                         General
                                     </span>
                                 </div>
+                                <!-- Pago unificado: manda el rango del MES (es la
+                                     nómina del mes, que además trae la semana). -->
                                 <p class="text-xs text-gray-500">
-                                    {{ formatDate(period.start_date) }} - {{ formatDate(period.end_date) }}
+                                    {{ formatDate(period.extras_start_date || period.start_date) }} - {{ formatDate(period.end_date) }}
                                 </p>
-                                <!-- Pago unificado: además de la semana, paga los extras del mes -->
                                 <p v-if="period.extras_start_date" class="text-xs text-pink-600">
-                                    + extras {{ formatDate(period.extras_start_date) }} - {{ formatDate(period.extras_end_date) }}
+                                    incluye el sueldo de la semana {{ formatDate(period.start_date) }} - {{ formatDate(period.end_date) }}
                                 </p>
                             </div>
                         </td>

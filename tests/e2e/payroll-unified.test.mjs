@@ -96,9 +96,9 @@ describe('Nomina unificada (semana + extras del mes)', () => {
         await screenshot(page, 'unified-03-lista');
 
         assert.ok(!body.includes('Mes 27 jul - 23 ago'), 'no nace una nomina mensual aparte');
-        assert.ok(body.includes('Semanal + Mes'), 'la semana se marca como pago unificado');
-        assert.ok(body.includes('Sueldo base + extras del mes'), 'dice lo que paga');
-        assert.ok(body.includes('+ extras'), 'muestra el rango de extras');
+        assert.ok(body.includes('Mensual + Semana'), 'la nomina se marca como pago unificado');
+        assert.ok(body.includes('Extras del mes + sueldo de la semana'), 'dice lo que paga');
+        assert.ok(body.includes('incluye el sueldo de la semana'), 'muestra la semana que trae dentro');
     });
 
     it('3. El periodo explica que paga la semana y los extras del mes', async () => {
@@ -109,9 +109,9 @@ describe('Nomina unificada (semana + extras del mes)', () => {
         await screenshot(page, 'unified-04-periodo');
 
         const body = await getBodyText(page);
-        assert.ok(body.includes('extras del mes'), 'el encabezado muestra el rango de extras');
+        assert.ok(body.includes('Incluye el sueldo de la semana'), 'el encabezado muestra la semana que trae dentro');
         assert.ok(
-            body.includes('Nomina unificada') || body.includes('Semanal + Mes'),
+            body.includes('Nomina unificada') || body.includes('Mensual + Semana'),
             'se anuncia como nomina unificada',
         );
         assert.ok(/\/payroll\/\d+$/.test(getPath(page)), `esta en el detalle del periodo (${getPath(page)})`);

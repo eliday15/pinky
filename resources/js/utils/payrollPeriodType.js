@@ -65,17 +65,17 @@ const PERIOD_TYPE_INFO = {
         tone: TONES.green,
     },
     unified: {
-        label: 'Semanal + Mes',
-        short: 'Sueldo base + extras del mes',
-        title: 'Nomina unificada — Sueldo base + extras del mes',
+        label: 'Mensual + Semana',
+        short: 'Extras del mes + sueldo de la semana',
+        title: 'Nomina unificada — Extras del mes + sueldo de la semana',
         description:
-            'Un solo pago: el sueldo base de la semana y los extras del mes juntos en el mismo recibo.',
+            'Un solo pago: todos los cargos del mes y el sueldo de la semana juntos en el mismo recibo.',
         pays: [
-            'Sueldo base (dias trabajados) y descuento por faltas',
             'Horas extra y velada del mes',
             'Festivos y fin de semana',
             'Cena, comida y otros conceptos',
             'Vacaciones y bonos',
+            'Sueldo base de la semana y descuento por faltas',
         ],
         tone: TONES.pink,
     },
