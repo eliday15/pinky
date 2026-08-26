@@ -56,6 +56,25 @@ const form = useForm({
     ...(props.canManageApprovers ? { approver_ids: initialApproverIds } : {}),
 });
 
+// Lo que costaría marcar "Recurrente": monto × empleados inscritos, con los
+// números de este concepto. Ver la consecuencia antes de guardar es lo que evita
+// el "peso fantasma" que se coló en Descuento Infonavit (Elias 2026-08-26).
+const recurringPreviewAmount = computed(() => {
+    const fixed = Number(form.fixed_amount || 0);
+    if (form.calculation_type === 'percentage') {
+        return `${Number(form.percentage_value || 0)}% del sueldo diario`;
+    }
+
+    return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(fixed);
+});
+
+const recurringPreviewEmployees = computed(() => {
+    const n = (form.employee_ids || []).length;
+    if (!n) return 'cada empleado que le inscribas';
+
+    return n === 1 ? '1 empleado inscrito' : `${n} empleados inscritos`;
+});
+
 const applicationModeOptions = [
     { value: 'per_hour', label: 'Por Hora' },
     { value: 'per_day', label: 'Por Dia' },
@@ -314,6 +333,19 @@ const submit = () => {
                             <p v-if="form.errors.is_recurring" class="mt-1 text-sm text-red-600">
                                 {{ form.errors.is_recurring }}
                             </p>
+                            <!-- Consecuencia de "Recurrente", con números, ANTES de guardar -->
+                            <div v-if="form.is_recurring" class="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-3">
+                                <p class="text-sm text-amber-800">
+                                    Cada periodo {{ form.payment_period === 'weekly' ? 'semanal' : 'mensual' }} se le va a pagar
+                                    <span class="font-semibold">{{ recurringPreviewAmount }}</span> automáticamente a
+                                    <span class="font-semibold">{{ recurringPreviewEmployees }}</span>, sin autorización.
+                                </p>
+                                <p class="mt-1 text-xs text-amber-700">
+                                    Si este concepto es para capturar cantidades (un descuento de -763, un bono por piezas),
+                                    déjalo apagado: el monto es el precio de cada unidad, no un pago por periodo.
+                                </p>
+                            </div>
+
                         </div>
 
                         <div>

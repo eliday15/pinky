@@ -612,6 +612,11 @@ class PayrollController extends Controller
             ->values()
             ->all();
 
+        // Autorizaciones APROBADAS que ninguna nómina paga (falta el periodo del
+        // alcance que les toca). El agujero por el que Taller se quedó sin sus
+        // conceptos mensuales al dejar de llevar mensual.
+        $unpaidAuthorizations = app(\App\Services\UnpaidAuthorizationAuditService::class)->forPeriod($payroll);
+
         return Inertia::render('Payroll/Show', [
             'period' => $payroll,
             'entries' => $entries,
@@ -619,6 +624,7 @@ class PayrollController extends Controller
             'cfdi' => $cfdiStatus,
             'unifiableWeek' => $unifiableWeek?->only(['id', 'name']),
             'zeroAmountAlerts' => $zeroAmountAlerts,
+            'unpaidAuthorizationAlerts' => $unpaidAuthorizations,
             'can' => [
                 'viewComplete' => $user->hasPermissionTo('payroll.view_complete'),
                 'calculate' => $user->hasPermissionTo('payroll.calculate'),

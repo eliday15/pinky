@@ -18,6 +18,9 @@ const props = defineProps({
     // Conceptos capturados y aprobados que pagaron $0 porque el concepto no
     // tiene monto configurado. [{ employee, concept, quantity, date }]
     zeroAmountAlerts: { type: Array, default: () => [] },
+    // Autorizaciones aprobadas que ninguna nómina paga (falta el periodo del
+    // alcance que les toca). [{ employee, concept, date, kind, reason }]
+    unpaidAuthorizationAlerts: { type: Array, default: () => [] },
 });
 
 // Timbrado CFDI: disparar el timbrado del periodo aprobado.
@@ -394,6 +397,24 @@ const closeCash = () => {
                     <span class="font-medium">{{ a.employee }}</span> — {{ a.concept }}
                     <span v-if="a.quantity"> (cantidad capturada: {{ a.quantity }})</span>
                     <span v-if="a.date" class="text-amber-600"> · {{ formatDate(a.date) }}</span>
+                </li>
+            </ul>
+        </div>
+
+        <!-- Aprobado y sin nómina que lo pague -->
+        <div v-if="unpaidAuthorizationAlerts.length" class="border border-amber-300 bg-amber-50 rounded-lg p-4 mb-6">
+            <p class="text-sm font-semibold text-amber-800">
+                {{ unpaidAuthorizationAlerts.length }} autorización(es) aprobada(s) que ninguna nómina paga
+            </p>
+            <p class="mt-1 text-sm text-amber-700">
+                Están aprobadas y caen en estas fechas, pero su concepto se paga en un periodo que no existe.
+                Genera la nómina que falta (o cambia el "¿Cuándo se paga?" del concepto) y vuelve a calcular.
+            </p>
+            <ul class="mt-2 space-y-1">
+                <li v-for="(a, idx) in unpaidAuthorizationAlerts" :key="idx" class="text-sm text-amber-800">
+                    <span class="font-medium">{{ a.employee }}</span> — {{ a.concept }}
+                    <span class="text-amber-600">· {{ formatDate(a.date) }}</span>
+                    <span class="text-amber-600"> · {{ a.reason }}</span>
                 </li>
             </ul>
         </div>
