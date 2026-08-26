@@ -158,10 +158,11 @@ class UnbackedDayAuthorizedConceptsTest extends FeatureTestCase
         $this->assertEqualsWithDelta(472.00, (float) $entry->weekend_pay, 0.01);
     }
 
-    public function test_fin_below_threshold_with_complete_punches_still_pays_zero(): void
+    public function test_fin_below_threshold_with_complete_punches_still_pays_the_approved_weekend(): void
     {
-        // Con checada completa la regla de Dani sigue: < 7 h = 0 fines de
-        // semana (esas horas van como tiempo extra).
+        // Elias 2026-08-26: un FIN aprobado se paga aunque la checada no llegue
+        // a las 7 h — antes esas horas iban como tiempo extra y el fin aprobado
+        // no aparecía en el recibo (caso Orlando).
         $employee = $this->employeeIn($this->thresholdDepartment());
         $fin = $this->finTypeFor($employee);
         $this->approvedConcept($employee, $fin, self::SATURDAY);
@@ -178,7 +179,41 @@ class UnbackedDayAuthorizedConceptsTest extends FeatureTestCase
 
         $entry = $this->calculator()->calculateEmployeePayroll($this->monthly(), $employee);
 
-        $this->assertEqualsWithDelta(0.00, (float) $entry->weekend_pay, 0.01, '5 h medidas < 7: sin fin de semana');
+        $this->assertEqualsWithDelta(472.00, (float) $entry->weekend_pay, 0.01, 'aprobado = se paga, aunque midan 5 h');
+    }
+
+    public function test_two_approved_weekends_pay_two_even_if_one_is_short(): void
+    {
+        // Caso Orlando (Elias 2026-08-26): dos fines aprobados —uno de 7 h 33 y
+        // otro de 6 h 41— y el recibo solo mostraba uno. Ahora se pagan los dos.
+        $employee = $this->employeeIn($this->thresholdDepartment());
+        $fin = $this->finTypeFor($employee);
+
+        $this->approvedConcept($employee, $fin, self::SATURDAY);
+        $this->approvedConcept($employee, $fin, self::SUNDAY);
+
+        AttendanceRecord::factory()->for($employee)->create([
+            'work_date' => self::SATURDAY,
+            'check_in' => '05:59:00',
+            'check_out' => '13:32:00', // 7 h 33 → llega al umbral
+            'status' => 'present',
+            'worked_hours' => 7.05,
+            'overtime_hours' => 0,
+            'is_weekend_work' => true,
+        ]);
+        AttendanceRecord::factory()->for($employee)->create([
+            'work_date' => self::SUNDAY,
+            'check_in' => '05:52:00',
+            'check_out' => '12:33:00', // 6 h 41 → NO llega al umbral
+            'status' => 'present',
+            'worked_hours' => 6.18,
+            'overtime_hours' => 0,
+            'is_weekend_work' => true,
+        ]);
+
+        $entry = $this->calculator()->calculateEmployeePayroll($this->monthly(), $employee);
+
+        $this->assertEqualsWithDelta(944.00, (float) $entry->weekend_pay, 0.01, 'los dos fines aprobados se pagan');
     }
 
     public function test_fin_at_threshold_with_complete_punches_pays_one(): void

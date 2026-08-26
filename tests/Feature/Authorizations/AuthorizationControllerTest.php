@@ -2327,12 +2327,13 @@ class AuthorizationControllerTest extends FeatureTestCase
             ->assertJsonCount(0, 'suggestions');
     }
 
-    public function test_suggest_bulk_weekend_pull_respects_threshold_for_normal_departments(): void
+    public function test_suggest_bulk_weekend_pull_offers_every_worked_weekend_day(): void
     {
-        // Dani 2026-07-07: en deptos que NO pagan por unidades fijas, el "fin de
-        // semana" solo se ofrece cuando se trabajaron >= 7 h; por debajo de eso el
-        // fin de semana no aplica (esas horas van como Hora Extra). Almacén PT
-        // (weekend_unit_hours) lo ofrece con cualquier hora trabajada.
+        // Elias 2026-08-26: el fin de semana se ofrece por cada día trabajado en
+        // fin de semana, con las horas que sean — quien lo aprueba decide, y lo
+        // aprobado se paga (antes, por debajo de 7 h ni se ofrecía, así que un
+        // fin aprobado a mano quedaba sin pagarse). Las horas siguen decidiendo
+        // el doble (12 h) y, en Almacén PT, el número de unidades.
         $this->actingAsAdmin();
         $fin = CompensationType::factory()->create([
             'name' => 'Fin de semana',
@@ -2371,8 +2372,10 @@ class AuthorizationControllerTest extends FeatureTestCase
             'compensation_type_id' => $fin->id,
         ]));
 
-        // Depto normal, < 7 h → no ofrece fin de semana.
-        $pull($shortEmp)->assertOk()->assertJsonCount(0, 'suggestions');
+        // Depto normal, < 7 h → también lo ofrece (1 fin).
+        $pull($shortEmp)->assertOk()
+            ->assertJsonCount(1, 'suggestions')
+            ->assertJsonPath('suggestions.0.kind', 'weekend');
 
         // Depto normal, >= 7 h → sí ofrece 1 fin de semana.
         $pull($longEmp)->assertOk()

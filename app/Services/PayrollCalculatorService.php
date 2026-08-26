@@ -518,6 +518,10 @@ class PayrollCalculatorService
         // (caso Descuento Infonavit 2026-08-26): se reportan en el recibo en vez
         // de desaparecer sin avisar.
         $unpaidZeroAmountConcepts = [];
+        // Fines de semana autorizados que no llegaron al umbral (se explican en
+        // el recibo en vez de dejar la pregunta "¿por qué solo aparece uno?").
+        $weekendUnits = 0;
+        $weekendNotCounted = [];
         $dropSalaryConcepts = function (array $concepts) use ($suppressSalaryConcepts, &$suppressedSalaryConcepts): array {
             if (! $suppressSalaryConcepts) {
                 return $concepts;
@@ -656,7 +660,9 @@ class PayrollCalculatorService
             // de Dani 2026-06-28); 12 h = 2. Se calcula desde las autorizaciones
             // (no del status) para que un sábado marcado "ausente" pero trabajado
             // y autorizado sí pague.
-            $weekendUnits = $this->calculateWeekendUnits($attendance, $approvedAuthorizations, $employee);
+            $weekendResult = $this->calculateWeekendUnits($attendance, $approvedAuthorizations, $employee);
+            $weekendUnits = $weekendResult['units'];
+            $weekendNotCounted = $weekendResult['not_counted'];
 
             $compensationPayments = $this->resolver->calculateAllCompensation(
                 $employee,
@@ -1146,6 +1152,11 @@ class PayrollCalculatorService
                 'multiplier' => $useCompTypes ? null : $veladaMultiplier,
                 'pay' => $veladaPay,
             ],
+            'weekend' => [
+                'units' => $weekendUnits,
+                // Días FIN aprobados que no contaron (y por qué).
+                'not_counted' => $weekendNotCounted,
+            ],
             'bonuses' => [
                 'punctuality' => $punctualityBonus,
                 'weekly' => $weeklyBonus,
@@ -1339,7 +1350,7 @@ class PayrollCalculatorService
         $merged = $base;
 
         // Bloques que son íntegros de la pasada de EXTRAS.
-        foreach (['unauthorized', 'night_shifts', 'velada', 'bonuses'] as $block) {
+        foreach (['unauthorized', 'night_shifts', 'velada', 'weekend', 'bonuses'] as $block) {
             if (array_key_exists($block, $extras)) {
                 $merged[$block] = $extras[$block];
             }
@@ -1763,8 +1774,13 @@ class PayrollCalculatorService
      * Se basa en las autorizaciones, no en el status, para que un día trabajado
      * y autorizado pero marcado "ausente" también pague.
      */
-    private function calculateWeekendUnits(Collection $attendance, Collection $approvedAuthorizations, Employee $employee): int
+    private function calculateWeekendUnits(Collection $attendance, Collection $approvedAuthorizations, Employee $employee): array
     {
+        // Días FIN autorizados que NO generaron fin de semana (no llegaron al
+        // umbral de horas corridas). Se reportan en el recibo: un fin aprobado
+        // que no aparece siempre termina en pregunta (Elias 2026-08-26, caso
+        // Orlando: sábado de 6 h 41 min contra el mínimo de 7 h).
+        $notCounted = [];
         $recordsByDate = $attendance->keyBy(fn ($r) => Carbon::parse($r->work_date)->toDateString());
 
         $finAuths = $approvedAuthorizations
@@ -1796,7 +1812,7 @@ class PayrollCalculatorService
                 $units += max(1, (int) floor($base / $weekendUnitHours));
             }
 
-            return $units;
+            return ['units' => $units, 'not_counted' => $notCounted];
         }
 
         // Los demás deptos (Dani 2026-07-07, ampliada 2026-08-25 caso Angelica/
@@ -1808,7 +1824,7 @@ class PayrollCalculatorService
         // extra). Se reconfirma el umbral aquí aunque el pull ya lo filtra.
         $threshold = $employee->weekendUnitThreshold();
         if ($threshold === null) {
-            return 0;
+            return ['units' => 0, 'not_counted' => $notCounted];
         }
 
         // El umbral se compara contra las horas CORRIDAS de entrada a salida,
@@ -1828,10 +1844,20 @@ class PayrollCalculatorService
                 continue;
             }
             $base = max(0.0, (float) $gross - (float) ($record->velada_hours ?? 0));
-            $units += (int) ($employee->weekendUnitsForGrossHours($base) ?? 0);
+            $dayUnits = (int) ($employee->weekendUnitsForGrossHours($base) ?? 0);
+            $units += $dayUnits;
+
+            if ($dayUnits === 0) {
+                $notCounted[] = [
+                    'date' => $date,
+                    'gross_hours' => round($base, 2),
+                    'threshold' => round((float) $threshold, 2),
+                    'reason' => 'No llego al minimo de horas corridas; esas horas se pagan como tiempo extra',
+                ];
+            }
         }
 
-        return $units;
+        return ['units' => $units, 'not_counted' => $notCounted];
     }
 
     private function calculateIncidentMetrics(

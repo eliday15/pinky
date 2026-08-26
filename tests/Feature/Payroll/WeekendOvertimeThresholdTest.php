@@ -88,17 +88,18 @@ class WeekendOvertimeThresholdTest extends FeatureTestCase
         $this->assertEqualsWithDelta(4.0, (float) $split['overtime_authorized'], 0.01);
     }
 
-    public function test_weekend_below_threshold_is_all_overtime(): void
+    public function test_weekend_below_threshold_is_absorbed_by_the_weekend_not_paid_as_overtime(): void
     {
-        // 6 h CORRIDAS (08:00–14:00) en fin de semana, umbral 7 → no gana fin
-        // de semana, las 6 h corridas son tiempo extra.
+        // 6 h CORRIDAS (08:00–14:00) en fin de semana, umbral 7. Desde Elias
+        // 2026-08-26 el día autorizado SÍ gana su fin de semana, así que esas
+        // horas ya están pagadas por él: no se cobran otra vez como extra.
         $e = $this->employeeIn(null);
         $rec = $this->record($e, self::SATURDAY, true, checkOut: '14:00:00', worked: 5, overtime: 0);
         $this->approveOvertime($e, self::SATURDAY);
 
         $split = app(VeladaCalculatorService::class)->calculate($rec->fresh(), $e->fresh());
 
-        $this->assertEqualsWithDelta(6.0, (float) $split['overtime_authorized'], 0.01);
+        $this->assertEqualsWithDelta(0.0, (float) $split['overtime_authorized'], 0.01);
     }
 
     public function test_weekend_exactly_at_threshold_pays_no_overtime(): void
@@ -161,10 +162,14 @@ class WeekendOvertimeThresholdTest extends FeatureTestCase
         $this->assertEqualsWithDelta(7.0, (float) $this->employeeIn(null)->weekendUnitThreshold(), 0.01, 'Normal: 7 por omisión');
         $this->assertEqualsWithDelta(5.0, (float) $this->employeeIn(5)->weekendUnitThreshold(), 0.01, 'Config: respeta el valor');
 
+        // Elias 2026-08-26: el día FIN autorizado gana fin de semana siempre;
+        // las horas solo deciden si vale doble (12 h).
         $normal = $this->employeeIn(null);
         $this->assertTrue($normal->qualifiesForWeekendUnit(7.0), '7 h gana fin de semana');
         $this->assertTrue($normal->qualifiesForWeekendUnit(9.5), '9.5 h gana fin de semana');
-        $this->assertFalse($normal->qualifiesForWeekendUnit(6.99), '6.99 h no gana fin de semana');
+        $this->assertTrue($normal->qualifiesForWeekendUnit(6.99), '6.99 h aprobado también gana su fin');
+        $this->assertSame(1, $normal->weekendUnitsForGrossHours(6.99), 'un fin, aunque no llegue al umbral');
+        $this->assertSame(2, $normal->weekendUnitsForGrossHours(12.0), '12 h corridas = fin doble');
         $this->assertFalse($this->employeeIn(null, weekendUnitHours: 6)->qualifiesForWeekendUnit(10.0), 'Almacén no usa este umbral');
     }
 
@@ -187,9 +192,10 @@ class WeekendOvertimeThresholdTest extends FeatureTestCase
             ->assertJsonPath('eligible_count', 1);
     }
 
-    public function test_pull_below_threshold_suggests_all_hours(): void
+    public function test_pull_below_threshold_suggests_nothing_the_weekend_covers_it(): void
     {
-        // Menos de 7 h: todo es tiempo extra → sugiere las 5 h.
+        // Menos de 7 h: el fin de semana absorbe el día completo (Elias
+        // 2026-08-26), así que no hay tiempo extra que sugerir.
         $this->actingAsAdmin();
         $e = $this->employeeIn(null);
         $this->record($e, self::SATURDAY, true, checkOut: '13:00:00', worked: 5, overtime: 0);
@@ -201,7 +207,6 @@ class WeekendOvertimeThresholdTest extends FeatureTestCase
             'type' => Authorization::TYPE_OVERTIME,
         ]))
             ->assertOk()
-            ->assertJsonPath('suggestions.0.hours', '5.00')
-            ->assertJsonPath('eligible_count', 1);
+            ->assertJsonPath('eligible_count', 0);
     }
 }

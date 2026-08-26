@@ -254,7 +254,14 @@ const efectivoLines = computed(() => {
     if (money(props.entry.overtime_pay) > 0) lines.push({ label: 'Horas extra', detail: '', amount: money(props.entry.overtime_pay) });
     if (money(props.entry.holiday_pay) > 0) lines.push({ label: 'Días festivos', detail: '', amount: money(props.entry.holiday_pay) });
     if (money(props.entry.velada_pay) > 0) lines.push({ label: 'Velada', detail: '', amount: money(props.entry.velada_pay) });
-    if (money(props.entry.weekend_pay) > 0) lines.push({ label: 'Fin de semana', detail: '', amount: money(props.entry.weekend_pay) });
+    if (money(props.entry.weekend_pay) > 0) {
+        lines.push({
+            label: 'Fin de semana',
+            detail: weekendUnits.value > 0 ? `${weekendUnits.value} fin(es) de semana` : '',
+            amount: money(props.entry.weekend_pay),
+            weekendNote: true,
+        });
+    }
     for (const c of otrosConceptos.value) {
         // Las percepciones por transferencia (cumpleaños, aguinaldo) van en la
         // transferencia del formalizado, no aquí.
@@ -289,6 +296,12 @@ const suppressedSalaryConcepts = computed(() => breakdown.suppressed_base_salary
 // Capturado y aprobado, pero pagó $0 porque el concepto no tiene monto: se
 // muestra para que no se pierda en silencio (caso Descuento Infonavit).
 const unpaidZeroAmountConcepts = computed(() => breakdown.unpaid_zero_amount_concepts ?? []);
+
+// Fines de semana AUTORIZADOS que no contaron porque el día no llegó al mínimo
+// de horas corridas. Se explican debajo del renglón de Fin de semana para que
+// no quede la duda de "tenía dos aprobados y solo aparece uno".
+const weekendNotCounted = computed(() => breakdown.weekend?.not_counted ?? []);
+const weekendUnits = computed(() => Number(breakdown.weekend?.units ?? 0));
 
 const efectivoSubtotal = computed(() => efectivoLines.value.reduce((s, l) => s + l.amount, 0));
 const pesoRounding = computed(() => Number(props.cashSplit?.period_amount ?? 0) - efectivoSubtotal.value);
@@ -618,6 +631,15 @@ const roundingIsCents = computed(() => Math.abs(pesoRounding.value) < 1);
                                     <tr v-for="(d, di) in deductionDetail" :key="`d-${i}-${di}`" class="text-xs text-red-500/80">
                                         <td class="py-1 pl-6">{{ d.label }}</td>
                                         <td class="py-1 text-right">-{{ formatCurrency(Math.abs(d.amount)) }}</td>
+                                    </tr>
+                                </template>
+                                <!-- Fin de semana aprobado que NO contó: por qué -->
+                                <template v-if="l.weekendNote">
+                                    <tr v-for="(w, wi) in weekendNotCounted" :key="`w-${i}-${wi}`" class="text-xs text-amber-700">
+                                        <td class="py-1 pl-6" colspan="2">
+                                            {{ formatDayLabel(w.date) }}: {{ w.gross_hours }} h corridas — no cuenta como fin de semana
+                                            (el mínimo son {{ w.threshold }} h); esas horas se pagan como tiempo extra.
+                                        </td>
                                     </tr>
                                 </template>
                             </template>

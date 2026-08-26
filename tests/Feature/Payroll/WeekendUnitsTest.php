@@ -696,11 +696,12 @@ class WeekendUnitsTest extends FeatureTestCase
         $this->assertEqualsWithDelta(200.0, (float) $entry->weekend_pay, 0.01); // 1 × 200
     }
 
-    public function test_normal_department_below_threshold_pays_no_weekend_unit(): void
+    public function test_normal_department_below_threshold_still_pays_the_approved_weekend(): void
     {
-        // < 7 h CORRIDAS (08:00–13:00, Dani 2026-07-08) no gana fin de semana
-        // aunque exista un FIN aprobado (defensa: la nómina reconfirma el
-        // umbral). Esas horas van como tiempo extra, no aquí.
+        // Elias 2026-08-26 (caso Orlando): un FIN APROBADO se paga aunque el día
+        // no llegue a las 7 h corridas — "si ya lo aprobé debe funcionar, si no
+        // se contradice la autorización con lo que se paga". Antes esas horas
+        // iban como tiempo extra y el fin aprobado no aparecía.
         $dept = Department::factory()->create(['name' => 'Calidad', 'code' => 'CAL']);
         $employee = Employee::factory()->create(['department_id' => $dept->id, 'status' => 'active']);
 
@@ -717,7 +718,7 @@ class WeekendUnitsTest extends FeatureTestCase
         $entry = app(PayrollCalculatorService::class)
             ->calculateEmployeePayroll($period, $employee->fresh());
 
-        $this->assertEqualsWithDelta(0.0, (float) $entry->weekend_pay, 0.01);
+        $this->assertEqualsWithDelta(200.0, (float) $entry->weekend_pay, 0.01, 'el fin aprobado se paga completo');
     }
 
     public function test_normal_department_report_overtime_uses_weekend_threshold(): void

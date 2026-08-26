@@ -512,12 +512,16 @@ class Employee extends Model
 
     /**
      * Umbral (en horas) del FIN DE SEMANA para deptos que NO pagan por unidades
-     * fijas (todos menos Almacén PT). Regla de Dani 2026-07-07:
+     * fijas (todos menos Almacén PT).
      *
-     * - Menos de T horas trabajadas en fin de semana: NO cuenta fin de semana,
-     *   todo es tiempo extra.
-     * - Exactamente T: 1 fin de semana (sin tiempo extra).
-     * - Más de T: 1 fin de semana + las horas por encima de T como tiempo extra.
+     * Desde Elias 2026-08-26 el umbral YA NO decide si hay fin de semana —un día
+     * FIN autorizado siempre cuenta, "si ya lo aprobé debe funcionar, si no se
+     * contradice la autorización con lo que se paga"—; decide dónde empieza el
+     * tiempo extra de ese día:
+     *
+     * - El fin de semana absorbe las primeras T horas corridas.
+     * - Las horas por encima de T se pagan como tiempo extra.
+     * - Al llegar a 12 h corridas el fin se paga DOBLE (Dani 2026-08-25).
      *
      * T = departments.weekend_overtime_after_hours si está configurado (p. ej.
      * Saldos = 7), o 7 por omisión. Almacén PT (weekend_unit_hours) devuelve
@@ -533,21 +537,21 @@ class Employee extends Model
     }
 
     /**
-     * Fines de semana que gana un día con estas horas CORRIDAS en un depto de
-     * UMBRAL (sin weekend_unit_hours). Regla de Dani 2026-08-25 (caso Angelica,
-     * Saldos): T horas o más = 1 fin de semana (el excedente sobre T se paga
-     * como tiempo extra, eso no cambia); al llegar a 12 h el fin se paga DOBLE.
-     * Por debajo de T no hay fin de semana. Devuelve null en deptos por
-     * unidades (Almacén PT), donde rige floor(horas/unidad).
+     * Fines de semana que gana un día FIN AUTORIZADO con estas horas CORRIDAS,
+     * en un depto de UMBRAL (sin weekend_unit_hours).
+     *
+     * Un día autorizado SIEMPRE cuenta 1 (Elias 2026-08-26, caso Orlando: dos
+     * fines aprobados y solo se pagaba uno porque el sábado fue de 6 h 41 contra
+     * el mínimo de 7 — una autorización aprobada que no se paga se contradice
+     * sola). Al llegar a 12 h corridas se paga DOBLE (Dani 2026-08-25, caso
+     * Angelica). Devuelve null en deptos por unidades (Almacén PT), donde rige
+     * floor(horas/unidad).
      */
     public function weekendUnitsForGrossHours(float $grossHours): ?int
     {
         $threshold = $this->weekendUnitThreshold();
         if ($threshold === null) {
             return null;
-        }
-        if ($grossHours < $threshold) {
-            return 0;
         }
 
         return $grossHours >= self::WEEKEND_DOUBLE_THRESHOLD_HOURS ? 2 : 1;
@@ -556,32 +560,28 @@ class Employee extends Model
     /**
      * Umbral de tiempo extra del fin de semana para un total de horas trabajadas.
      *
-     * El "fin de semana" absorbe las primeras T horas: si trabajó T o más, el
-     * tiempo extra empieza tras T (y gana 1 fin de semana); si trabajó menos de
-     * T, no gana fin de semana y TODO es tiempo extra (umbral 0). Almacén PT
-     * (paga por unidades) devuelve NULL — aquí el fin de semana no genera OT.
+     * El "fin de semana" absorbe SIEMPRE las primeras T horas y el tiempo extra
+     * empieza tras T (Elias 2026-08-26). Antes, un día por debajo de T no ganaba
+     * fin de semana y todas sus horas eran tiempo extra; ahora el día autorizado
+     * sí gana su fin, así que esas horas ya están pagadas por él y no se cobran
+     * otra vez como extra. Almacén PT (paga por unidades) devuelve NULL — ahí el
+     * fin de semana no genera OT.
      *
      * @param  float  $workedHours  Total de horas trabajadas ese día de fin de semana.
      */
     public function weekendOvertimeThresholdForHours(float $workedHours): ?float
     {
-        $threshold = $this->weekendUnitThreshold();
-        if ($threshold === null) {
-            return null;
-        }
-
-        return $workedHours >= $threshold ? $threshold : 0.0;
+        return $this->weekendUnitThreshold();
     }
 
     /**
-     * ¿Este total de horas de fin de semana gana 1 "fin de semana"? Solo en
-     * deptos que NO pagan por unidades fijas y cuando alcanza el umbral T.
+     * ¿Un día FIN autorizado de este empleado gana "fin de semana"? Sí siempre
+     * en deptos de umbral (Elias 2026-08-26: aprobado = se paga); las horas solo
+     * deciden si vale doble. Almacén PT paga por unidades, no por esta vía.
      */
     public function qualifiesForWeekendUnit(float $workedHours): bool
     {
-        $threshold = $this->weekendUnitThreshold();
-
-        return $threshold !== null && $workedHours >= $threshold;
+        return $this->weekendUnitThreshold() !== null;
     }
 
     /**
