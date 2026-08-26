@@ -514,6 +514,10 @@ class PayrollCalculatorService
         // siendo su único pago y se paga igual que siempre.
         $suppressSalaryConcepts = $suppressBaseSalaryConcepts || ($payBase && $regularPay > 0);
         $suppressedSalaryConcepts = [];
+        // Conceptos CAPTURADOS que no pagaron nada porque su monto está en $0
+        // (caso Descuento Infonavit 2026-08-26): se reportan en el recibo en vez
+        // de desaparecer sin avisar.
+        $unpaidZeroAmountConcepts = [];
         $dropSalaryConcepts = function (array $concepts) use ($suppressSalaryConcepts, &$suppressedSalaryConcepts): array {
             if (! $suppressSalaryConcepts) {
                 return $concepts;
@@ -675,6 +679,7 @@ class PayrollCalculatorService
             );
 
             $compensationConcepts = $dropSalaryConcepts($compensationPayments['concepts']);
+            $unpaidZeroAmountConcepts = $compensationPayments['zero_amount'] ?? [];
 
             // Route each concept to its stored pay bucket. Overtime/velada
             // match by code; holiday/weekend/special match by the comp
@@ -1169,6 +1174,9 @@ class PayrollCalculatorService
             // Conceptos "es sueldo" que NO se pagaron porque el periodo ya le
             // pagó el sueldo base (evita el doble sueldo del personal de prueba).
             'suppressed_base_salary_concepts' => $suppressedSalaryConcepts,
+            // Conceptos capturados y aprobados que pagaron $0 porque el concepto
+            // no tiene monto configurado: hay que corregir el catálogo.
+            'unpaid_zero_amount_concepts' => $unpaidZeroAmountConcepts,
             'scope' => [
                 'period_type' => $period->type,
                 'pays_base' => $payBase,
@@ -1356,6 +1364,10 @@ class PayrollCalculatorService
         $merged['suppressed_base_salary_concepts'] = array_merge(
             $base['suppressed_base_salary_concepts'] ?? [],
             $extras['suppressed_base_salary_concepts'] ?? [],
+        );
+        $merged['unpaid_zero_amount_concepts'] = array_merge(
+            $base['unpaid_zero_amount_concepts'] ?? [],
+            $extras['unpaid_zero_amount_concepts'] ?? [],
         );
 
         // Dinero: las dos pasadas suman.

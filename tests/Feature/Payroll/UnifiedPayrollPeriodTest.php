@@ -3,11 +3,13 @@
 namespace Tests\Feature\Payroll;
 
 use App\Models\AttendanceRecord;
+use App\Models\Authorization;
 use App\Models\CompensationType;
 use App\Models\Department;
 use App\Models\Employee;
 use App\Models\PayrollEntry;
 use App\Models\PayrollPeriod;
+use App\Models\User;
 use App\Services\PayrollCalculatorService;
 use App\Services\PayrollInvalidationService;
 use Tests\FeatureTestCase;
@@ -588,6 +590,83 @@ class UnifiedPayrollPeriodTest extends FeatureTestCase
         $entry = $this->calculator()->calculateEmployeePayroll($month, $employee);
 
         $this->assertEqualsWithDelta(3500.00, (float) $entry->other_compensation_pay, 0.01);
+    }
+
+    public function test_a_captured_discount_with_a_zero_amount_concept_is_reported_not_swallowed(): void
+    {
+        // Caso Descuento Infonavit (Elias 2026-08-26): el concepto quedó con
+        // Monto Fijo en $0, así que el descuento capturado (-763 × $0) sumaba
+        // cero y desaparecía sin avisar. Ahora el recibo y la nómina lo avisan.
+        $employee = $this->employee();
+        $descuento = CompensationType::factory()->fixed(0)->create([
+            'name' => 'Descuento Infonavit',
+            'code' => 'DI',
+            'application_mode' => CompensationType::APPLICATION_ONE_TIME,
+            'payment_period' => CompensationType::PAYMENT_PERIOD_WEEKLY,
+            'authorization_type' => Authorization::TYPE_SPECIAL,
+        ]);
+        $employee->compensationTypes()->attach($descuento->id, ['is_active' => true]);
+
+        Authorization::factory()->for($employee)->create([
+            'type' => Authorization::TYPE_SPECIAL,
+            'compensation_type_id' => $descuento->id,
+            'date' => '2026-08-21',
+            'hours' => -763.00,
+            'status' => Authorization::STATUS_APPROVED,
+            'approved_by' => User::factory(),
+        ]);
+
+        $week = $this->weeklyPeriod();
+        $this->calculator()->calculatePeriod($week);
+
+        $entry = $week->entries()->where('employee_id', $employee->id)->firstOrFail();
+        $unpaid = $entry->calculation_breakdown['unpaid_zero_amount_concepts'] ?? [];
+
+        $this->assertCount(1, $unpaid, 'el descuento capturado queda reportado');
+        $this->assertSame('DI', $unpaid[0]['code']);
+        $this->assertEqualsWithDelta(-763.00, (float) $unpaid[0]['quantity'], 0.01);
+
+        // Y la nómina lo avisa arriba, con nombre y concepto.
+        $this->actingAsAdmin();
+        $this->get(route('payroll.show', $week))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->where('zeroAmountAlerts.0.employee', $employee->full_name)
+                ->where('zeroAmountAlerts.0.concept', 'Descuento Infonavit')
+                ->etc());
+    }
+
+    public function test_the_same_discount_pays_when_the_concept_has_its_amount(): void
+    {
+        // Con el concepto en $1 (así está diseñado: la cantidad son los pesos),
+        // el descuento sí se aplica y no hay aviso.
+        $employee = $this->employee();
+        $descuento = CompensationType::factory()->fixed(1)->create([
+            'name' => 'Descuento Infonavit',
+            'code' => 'DI',
+            'application_mode' => CompensationType::APPLICATION_ONE_TIME,
+            'payment_period' => CompensationType::PAYMENT_PERIOD_WEEKLY,
+            'authorization_type' => Authorization::TYPE_SPECIAL,
+        ]);
+        $employee->compensationTypes()->attach($descuento->id, ['is_active' => true]);
+
+        Authorization::factory()->for($employee)->create([
+            'type' => Authorization::TYPE_SPECIAL,
+            'compensation_type_id' => $descuento->id,
+            'date' => '2026-08-21',
+            'hours' => -763.00,
+            'status' => Authorization::STATUS_APPROVED,
+            'approved_by' => User::factory(),
+        ]);
+
+        $week = $this->weeklyPeriod();
+        $this->calculator()->calculatePeriod($week);
+
+        $entry = $week->entries()->where('employee_id', $employee->id)->firstOrFail();
+
+        $this->assertSame([], $entry->calculation_breakdown['unpaid_zero_amount_concepts'] ?? [], 'sin aviso');
+        // El descuento sale del efectivo (topado a lo disponible).
+        $this->assertEqualsWithDelta(763.00, (float) $entry->deductions, 0.01, 'se descuenta');
     }
 
     public function test_a_change_inside_the_extras_range_flags_the_unified_period(): void

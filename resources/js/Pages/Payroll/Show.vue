@@ -15,6 +15,9 @@ const props = defineProps({
     // Nómina semanal con la que ESTA mensual se puede unificar (un solo pago),
     // o null si no hay ninguna que se pueda tocar. { id, name }
     unifiableWeek: { type: Object, default: null },
+    // Conceptos capturados y aprobados que pagaron $0 porque el concepto no
+    // tiene monto configurado. [{ employee, concept, quantity, date }]
+    zeroAmountAlerts: { type: Array, default: () => [] },
 });
 
 // Timbrado CFDI: disparar el timbrado del periodo aprobado.
@@ -375,6 +378,24 @@ const closeCash = () => {
                     pídele al super admin que cierre y prepare el efectivo (es quien lo custodia).
                 </template>
             </p>
+        </div>
+
+        <!-- Capturado pero NO pagado: el concepto está en $0 -->
+        <div v-if="zeroAmountAlerts.length" class="border border-amber-300 bg-amber-50 rounded-lg p-4 mb-6">
+            <p class="text-sm font-semibold text-amber-800">
+                {{ zeroAmountAlerts.length }} concepto(s) capturado(s) NO se pagaron: el concepto está en $0
+            </p>
+            <p class="mt-1 text-sm text-amber-700">
+                Se autorizaron pero su concepto no tiene monto configurado, así que sumaron cero.
+                Corrige el monto en Compensaciones y vuelve a calcular la nómina.
+            </p>
+            <ul class="mt-2 space-y-1">
+                <li v-for="(a, idx) in zeroAmountAlerts" :key="idx" class="text-sm text-amber-800">
+                    <span class="font-medium">{{ a.employee }}</span> — {{ a.concept }}
+                    <span v-if="a.quantity"> (cantidad capturada: {{ a.quantity }})</span>
+                    <span v-if="a.date" class="text-amber-600"> · {{ formatDate(a.date) }}</span>
+                </li>
+            </ul>
         </div>
 
         <!-- What this period pays -->

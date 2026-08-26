@@ -594,12 +594,31 @@ class PayrollController extends Controller
         // el botón para pagarlas juntas sin borrar y recapturar.
         $unifiableWeek = $this->weekThatCanAbsorb($payroll);
 
+        // Conceptos CAPTURADOS y aprobados que pagaron $0 porque su concepto no
+        // tiene monto configurado. Antes solo quedaban en un log: el pago salía
+        // silenciosamente incompleto (caso Descuento Infonavit, Elias
+        // 2026-08-26). Ahora la nómina lo avisa arriba, con nombre y apellido.
+        $zeroAmountAlerts = $entries
+            ->flatMap(function (PayrollEntry $entry) {
+                $rows = $entry->calculation_breakdown['unpaid_zero_amount_concepts'] ?? [];
+
+                return collect($rows)->map(fn ($row) => [
+                    'employee' => $entry->employee?->full_name,
+                    'concept' => $row['name'] ?? $row['code'] ?? 'Concepto',
+                    'quantity' => $row['quantity'] ?? null,
+                    'date' => $row['date'] ?? null,
+                ]);
+            })
+            ->values()
+            ->all();
+
         return Inertia::render('Payroll/Show', [
             'period' => $payroll,
             'entries' => $entries,
             'summary' => $summary,
             'cfdi' => $cfdiStatus,
             'unifiableWeek' => $unifiableWeek?->only(['id', 'name']),
+            'zeroAmountAlerts' => $zeroAmountAlerts,
             'can' => [
                 'viewComplete' => $user->hasPermissionTo('payroll.view_complete'),
                 'calculate' => $user->hasPermissionTo('payroll.calculate'),

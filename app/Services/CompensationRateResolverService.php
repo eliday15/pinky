@@ -410,6 +410,7 @@ class CompensationRateResolverService
             $concepts[] = $concept;
         }
         $total += $generic['total'];
+        $zeroAmount = $generic['zero_amount'] ?? [];
 
         // Fin de semana por unidades (Almacén PT): el # de unidades lo calcula la
         // nómina por cada día de fin de semana autorizado (al menos 1 por día,
@@ -459,6 +460,9 @@ class CompensationRateResolverService
         return [
             'total' => round($total, 2),
             'concepts' => $concepts,
+            // Capturados que NO pagaron nada (concepto sin monto): la nómina los
+            // enseña en vez de tragárselos.
+            'zero_amount' => $zeroAmount,
         ];
     }
 
@@ -606,7 +610,8 @@ class CompensationRateResolverService
      *                   a weekend premium on a day already paid as holiday)
      *
      * Returns:
-     *     Array with 'concepts' and 'total'
+     *     Array con 'concepts', 'total' y 'zero_amount' (los capturados que no
+     *     pagaron nada porque su concepto no tiene monto configurado).
      */
     private function payAuthorizationConcepts(
         Employee $employee,
@@ -621,6 +626,7 @@ class CompensationRateResolverService
     ): array {
         $concepts = [];
         $total = 0.0;
+        $zeroAmount = [];
         $holidaySet = array_flip($holidayDates);
 
         foreach ($authorizations as $auth) {
@@ -722,6 +728,19 @@ class CompensationRateResolverService
                     'application_mode' => $compType->application_mode,
                 ]);
 
+                // Capturado pero sin monto: se reporta para que la nómina lo
+                // enseñe (Elias 2026-08-26, caso Descuento Infonavit con Monto
+                // Fijo en $0: los descuentos de −763 y −302 se multiplicaban por
+                // cero y desaparecían sin avisar).
+                $zeroAmount[] = [
+                    'code' => $compType->code,
+                    'name' => $compType->name,
+                    'quantity' => round($quantity, 2),
+                    'date' => Carbon::parse($auth->date)->toDateString(),
+                    'authorization_id' => $auth->id,
+                    'reason' => 'El concepto no tiene monto configurado (esta en $0)',
+                ];
+
                 continue;
             }
 
@@ -749,6 +768,7 @@ class CompensationRateResolverService
         return [
             'concepts' => $concepts,
             'total' => round($total, 2),
+            'zero_amount' => $zeroAmount,
         ];
     }
 

@@ -286,6 +286,10 @@ const efectivoLines = computed(() => {
 // base (personal en periodo de prueba). Se listan para que se vea por qué.
 const suppressedSalaryConcepts = computed(() => breakdown.suppressed_base_salary_concepts ?? []);
 
+// Capturado y aprobado, pero pagó $0 porque el concepto no tiene monto: se
+// muestra para que no se pierda en silencio (caso Descuento Infonavit).
+const unpaidZeroAmountConcepts = computed(() => breakdown.unpaid_zero_amount_concepts ?? []);
+
 const efectivoSubtotal = computed(() => efectivoLines.value.reduce((s, l) => s + l.amount, 0));
 const pesoRounding = computed(() => Number(props.cashSplit?.period_amount ?? 0) - efectivoSubtotal.value);
 // El cobro se redondea al peso, así que el residual normal son centavos. Un
@@ -619,6 +623,15 @@ const roundingIsCents = computed(() => Math.abs(pesoRounding.value) < 1);
                             </template>
                             <tr v-if="!efectivoLines.length">
                                 <td colspan="2" class="py-2 text-sm text-gray-400">Sin efectivo este periodo.</td>
+                            </tr>
+                            <!-- Capturado pero sin monto configurado: pagó $0 -->
+                            <tr v-for="(z, zi) in unpaidZeroAmountConcepts" :key="`z-${zi}`" class="text-xs text-amber-700 bg-amber-50">
+                                <td class="py-1">
+                                    ⚠ {{ z.name }}
+                                    <span v-if="z.quantity"> ({{ z.quantity }})</span>
+                                    — capturado pero NO pagado: {{ z.reason }}
+                                </td>
+                                <td class="py-1 text-right">{{ formatCurrency(0) }}</td>
                             </tr>
                             <!-- Concepto de sueldo no pagado: ya viene en el sueldo base -->
                             <tr v-for="(c, si) in suppressedSalaryConcepts" :key="`s-${si}`" class="text-xs text-gray-400">
