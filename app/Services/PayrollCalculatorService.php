@@ -479,6 +479,25 @@ class PayrollCalculatorService
             $baseEndDate = $startDate->copy()->addDays(6);
         }
         $weekDays = $payBase ? $this->paidCalendarDays($employee, $baseStartDate, $baseEndDate) : 0;
+
+        // Prorrateo por ALTA o BAJA dentro de la semana: es la razón más común de
+        // un sueldo base "corto" y no se veía por ningún lado (Elias 2026-08-26,
+        // caso Juan José López: entró el 24 y la nómina le pagaba 2 días sin
+        // decir por qué). Se guarda la fecha que recorta para que el recibo la
+        // explique.
+        $baseStartsOn = null;
+        $baseEndsOn = null;
+        if ($payBase) {
+            $hire = $employee->hire_date ? Carbon::parse($employee->hire_date)->startOfDay() : null;
+            if ($hire && $hire->gt($baseStartDate->copy()->startOfDay()) && $hire->lte($baseEndDate->copy()->startOfDay())) {
+                $baseStartsOn = $hire->toDateString();
+            }
+
+            $termination = $employee->termination_date ? Carbon::parse($employee->termination_date)->startOfDay() : null;
+            if ($termination && $termination->lt($baseEndDate->copy()->startOfDay()) && $termination->gte($baseStartDate->copy()->startOfDay())) {
+                $baseEndsOn = $termination->toDateString();
+            }
+        }
         $daysPaidElsewhere = $payBase
             ? ($incidentMetrics['sick_leave_days']
                 + $incidentMetrics['permission_unpaid_days'])
@@ -1188,6 +1207,9 @@ class PayrollCalculatorService
             'base' => [
                 // Días calendario pagados del periodo (séptimo día incluido).
                 'week_days' => $weekDays,
+                // Fechas que RECORTAN la semana: alta o baja dentro del rango.
+                'starts_on' => $baseStartsOn,
+                'ends_on' => $baseEndsOn,
                 // Días restados del base por pagarse aparte o no pagarse.
                 'days_paid_elsewhere' => $daysPaidElsewhere,
                 'base_paid_days' => $basePaidDays,

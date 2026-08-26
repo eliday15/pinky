@@ -100,6 +100,11 @@ class WeeklyBaseFullWeekTest extends FeatureTestCase
 
         // Ventana base 1-7; acotada al ingreso (4) → 4,5,6,7 = 4 días.
         $this->assertEqualsWithDelta(4000.00, (float) $entry->regular_pay, 0.01, 'prorrateo por alta se conserva');
+
+        // Y el recibo dice POR QUÉ son 4 días y no 7 (Elias 2026-08-26, caso
+        // Juan José López: "en nómina solo le paga 2 días" — había entrado el 24).
+        $this->assertSame('2026-07-04', $entry->calculation_breakdown['base']['starts_on'] ?? null);
+        $this->assertNull($entry->calculation_breakdown['base']['ends_on'] ?? null);
     }
 
     public function test_monthly_period_base_is_unaffected(): void

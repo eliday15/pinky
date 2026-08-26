@@ -97,7 +97,18 @@ const paysBaseInCash = computed(() => !!props.cashSplit?.pays_base_in_cash);
 const baseDetail = computed(() => {
     const days = breakdown.base?.base_paid_days ?? 0;
     const daily = Number(breakdown.rates?.daily_salary ?? props.entry.daily_salary ?? 0);
-    return daily > 0 ? `${num(days)} días × ${formatCurrency(daily)}` : `${num(days)} días`;
+    let detail = daily > 0 ? `${num(days)} días × ${formatCurrency(daily)}` : `${num(days)} días`;
+
+    // Semana recortada por alta o baja: la razón más común de un sueldo base
+    // "corto", y antes había que adivinarla.
+    if (breakdown.base?.starts_on) {
+        detail += ` — entró el ${formatShortDay(breakdown.base.starts_on)}`;
+    }
+    if (breakdown.base?.ends_on) {
+        detail += ` — baja el ${formatShortDay(breakdown.base.ends_on)}`;
+    }
+
+    return detail;
 });
 
 // --- Detalle de la deducción por falta (qué días y por qué) ---
