@@ -506,6 +506,15 @@ class PayrollCalculatorService
             ? round($absenceDeductionDays * $dailySalary * $restDayFactor, 2)
             : 0.0;
 
+        // ---- Tiempo extra aprobado que NO se paga completo ----
+        // Elias 2026-08-26 (caso Juan Carlos Ponce: "tiene aprobadas 8 horas"):
+        // el recibo pagaba 6.5 sin decir por qué. Se compara, día por día, lo
+        // APROBADO contra lo que paga la nómina y se explica la diferencia:
+        // ventanas encimadas (se paga una sola vez) o checada que respalda menos.
+        $overtimeShortfalls = $payExtras
+            ? $this->overtimeShortfalls($approvedAuthorizations, $attendance)
+            : [];
+
         // ---- Conceptos que SON el sueldo (Elias 2026-08-25) ----
         // Algunos sueldos (los del personal en periodo de prueba, por ejemplo)
         // se capturan como concepto. Si el periodo ya le está pagando sueldo
@@ -1152,6 +1161,10 @@ class PayrollCalculatorService
                 'multiplier' => $useCompTypes ? null : $veladaMultiplier,
                 'pay' => $veladaPay,
             ],
+            'overtime' => [
+                // Días con tiempo extra aprobado que la nómina no paga completo.
+                'shortfalls' => $overtimeShortfalls,
+            ],
             'weekend' => [
                 'units' => $weekendUnits,
                 // Días FIN aprobados que no contaron (y por qué).
@@ -1350,7 +1363,7 @@ class PayrollCalculatorService
         $merged = $base;
 
         // Bloques que son íntegros de la pasada de EXTRAS.
-        foreach (['unauthorized', 'night_shifts', 'velada', 'weekend', 'bonuses'] as $block) {
+        foreach (['unauthorized', 'night_shifts', 'velada', 'overtime', 'weekend', 'bonuses'] as $block) {
             if (array_key_exists($block, $extras)) {
                 $merged[$block] = $extras[$block];
             }
@@ -1406,6 +1419,92 @@ class PayrollCalculatorService
         ];
 
         return $merged;
+    }
+
+    /**
+     * Días con TIEMPO EXTRA aprobado que la nómina no paga completo, con el
+     * motivo (Elias 2026-08-26).
+     *
+     * La nómina paga el tiempo extra que la CHECADA respalda (mín. entre lo
+     * autorizado y lo medido) y nunca paga dos veces la misma ventana. Las dos
+     * reglas son correctas, pero invisibles: quien ve "8 horas aprobadas" y un
+     * recibo de 6.5 no tiene forma de saber cuál se recortó ni por qué.
+     *
+     * @param  Collection<int, Authorization>  $approvedAuthorizations
+     * @param  Collection<int, mixed>  $attendance
+     * @return list<array{date: string, authorized_hours: float, paid_hours: float, overlapping: bool}>
+     */
+    private function overtimeShortfalls(Collection $approvedAuthorizations, Collection $attendance): array
+    {
+        $recordsByDate = $attendance->keyBy(fn ($r) => Carbon::parse($r->work_date)->toDateString());
+
+        $byDate = $approvedAuthorizations
+            ->filter(fn (Authorization $a) => $a->type === Authorization::TYPE_OVERTIME
+                && ! ($a->compensationType?->hasWeekendPullRule()))
+            ->groupBy(fn (Authorization $a) => Carbon::parse($a->date)->toDateString());
+
+        $shortfalls = [];
+
+        foreach ($byDate as $date => $auths) {
+            $authorized = round((float) $auths->sum('hours'), 2);
+            if ($authorized <= 0) {
+                continue;
+            }
+
+            $record = $recordsByDate->get($date);
+            $measurable = $record && $record->check_in && $record->check_out;
+            $unbacked = $auths->contains(fn (Authorization $a) => (bool) $a->is_unbacked_extra);
+
+            // Sin checada completa (o marcado "extra fuera de checada") manda la
+            // autorización: ahí no hay recorte que explicar.
+            $paid = ($unbacked || ! $measurable)
+                ? $authorized
+                : round((float) ($record->overtime_authorized_hours ?? 0), 2);
+
+            if ($paid + 0.01 >= $authorized) {
+                continue;
+            }
+
+            $shortfalls[] = [
+                'date' => $date,
+                'authorized_hours' => $authorized,
+                'paid_hours' => $paid,
+                'overlapping' => $this->hasOverlappingWindows($auths),
+            ];
+        }
+
+        return $shortfalls;
+    }
+
+    /**
+     * ¿Hay dos autorizaciones del mismo día con el horario encimado? Esa ventana
+     * se paga UNA sola vez (regla anti doble pago), así que la suma de lo
+     * capturado siempre va a ser mayor que lo pagado.
+     *
+     * @param  Collection<int, Authorization>  $auths
+     */
+    private function hasOverlappingWindows(Collection $auths): bool
+    {
+        // start_time/end_time están casteados a datetime:H:i — se comparan como
+        // "HH:MM" para que el traslape no dependa de la fecha del cast.
+        $ranges = $auths
+            ->filter(fn (Authorization $a) => $a->start_time && $a->end_time)
+            ->map(fn (Authorization $a) => [
+                $a->start_time instanceof Carbon ? $a->start_time->format('H:i') : substr((string) $a->start_time, 0, 5),
+                $a->end_time instanceof Carbon ? $a->end_time->format('H:i') : substr((string) $a->end_time, 0, 5),
+            ])
+            ->values()
+            ->all();
+
+        foreach ($ranges as $i => [$startA, $endA]) {
+            foreach (array_slice($ranges, $i + 1) as [$startB, $endB]) {
+                if ($startA < $endB && $startB < $endA) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /**

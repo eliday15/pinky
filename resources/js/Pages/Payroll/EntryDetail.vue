@@ -251,7 +251,14 @@ const efectivoLines = computed(() => {
     if (paysBaseInCash.value && money(props.entry.regular_pay) !== 0) {
         lines.push({ label: 'Sueldo base', detail: baseDetail.value, amount: money(props.entry.regular_pay) });
     }
-    if (money(props.entry.overtime_pay) > 0) lines.push({ label: 'Horas extra', detail: '', amount: money(props.entry.overtime_pay) });
+    if (money(props.entry.overtime_pay) > 0) {
+        lines.push({
+            label: 'Horas extra',
+            detail: num(props.entry.overtime_authorized_hours) > 0 ? `${num(props.entry.overtime_authorized_hours)} h pagadas` : '',
+            amount: money(props.entry.overtime_pay),
+            overtimeNote: true,
+        });
+    }
     if (money(props.entry.holiday_pay) > 0) lines.push({ label: 'Días festivos', detail: '', amount: money(props.entry.holiday_pay) });
     if (money(props.entry.velada_pay) > 0) lines.push({ label: 'Velada', detail: '', amount: money(props.entry.velada_pay) });
     if (money(props.entry.weekend_pay) > 0) {
@@ -302,6 +309,11 @@ const unpaidZeroAmountConcepts = computed(() => breakdown.unpaid_zero_amount_con
 // no quede la duda de "tenía dos aprobados y solo aparece uno".
 const weekendNotCounted = computed(() => breakdown.weekend?.not_counted ?? []);
 const weekendUnits = computed(() => Number(breakdown.weekend?.units ?? 0));
+
+// Días con tiempo extra APROBADO que no se paga completo, con el motivo: la
+// ventana encimada se paga una sola vez, y lo que la checada no respalda no se
+// paga. Se explica debajo del renglón de Horas extra.
+const overtimeShortfalls = computed(() => breakdown.overtime?.shortfalls ?? []);
 
 const efectivoSubtotal = computed(() => efectivoLines.value.reduce((s, l) => s + l.amount, 0));
 const pesoRounding = computed(() => Number(props.cashSplit?.period_amount ?? 0) - efectivoSubtotal.value);
@@ -631,6 +643,16 @@ const roundingIsCents = computed(() => Math.abs(pesoRounding.value) < 1);
                                     <tr v-for="(d, di) in deductionDetail" :key="`d-${i}-${di}`" class="text-xs text-red-500/80">
                                         <td class="py-1 pl-6">{{ d.label }}</td>
                                         <td class="py-1 text-right">-{{ formatCurrency(Math.abs(d.amount)) }}</td>
+                                    </tr>
+                                </template>
+                                <!-- Tiempo extra aprobado que no se paga completo: por qué -->
+                                <template v-if="l.overtimeNote">
+                                    <tr v-for="(o, oi) in overtimeShortfalls" :key="`o-${i}-${oi}`" class="text-xs text-amber-700">
+                                        <td class="py-1 pl-6" colspan="2">
+                                            {{ formatDayLabel(o.date) }}: aprobadas {{ o.authorized_hours }} h, pagadas {{ o.paid_hours }} h —
+                                            <template v-if="o.overlapping">hay autorizaciones con el horario encimado, esa ventana se paga una sola vez.</template>
+                                            <template v-else>la checada solo respalda {{ o.paid_hours }} h.</template>
+                                        </td>
                                     </tr>
                                 </template>
                                 <!-- Fin de semana aprobado que NO contó: por qué -->
