@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Authorization;
+use App\Models\CheckOmission;
 use App\Models\CompensationType;
 use App\Models\Employee;
 use App\Models\PayrollPeriod;
@@ -84,6 +85,84 @@ class UnpaidAuthorizationAuditService
                 'reason' => $kind === CompensationType::PAYMENT_PERIOD_WEEKLY
                     ? 'Su concepto se paga con el sueldo base y no hay nomina de esas fechas que lo cubra'
                     : 'Su concepto se paga con los extras del mes y no hay nomina de esas fechas que los pague',
+            ];
+        }
+
+        return $alerts;
+    }
+
+    /**
+     * Empleados cuya semana se recortó por su FECHA DE ALTA y que, aun así,
+     * tienen omisiones o autorizaciones APROBADAS de días anteriores a esa
+     * fecha (Elias/Luis 2026-08-26, caso Juan José López: nuevo, apenas dado de
+     * alta en el checador, con omisiones aprobadas del 19, 20 y 21 y una fecha
+     * de ingreso del 24 — la nómina le pagaba 2 días).
+     *
+     * Trabajó esos días según lo aprobado, pero la nómina no puede pagarlos
+     * porque, para el sistema, todavía no existía. Casi siempre significa que la
+     * fecha de ingreso está mal capturada.
+     *
+     * @return list<array{employee: string, hire_date: string, approved_before: int, first_date: string}>
+     */
+    public function hireDateConflicts(PayrollPeriod $period): array
+    {
+        if (! $period->paysBase()) {
+            return [];
+        }
+
+        $baseStart = Carbon::parse($period->start_date)->startOfDay();
+        $baseEnd = $period->type === 'weekly'
+            ? $baseStart->copy()->addDays(6)
+            : Carbon::parse($period->end_date)->startOfDay();
+
+        $employees = Employee::active()
+            ->whereIn('id', $this->employeeIdsInScope($period))
+            ->whereNotNull('hire_date')
+            ->whereBetween('hire_date', [$baseStart->toDateString(), $baseEnd->toDateString()])
+            ->get(['id', 'full_name', 'hire_date']);
+
+        if ($employees->isEmpty()) {
+            return [];
+        }
+
+        $alerts = [];
+
+        foreach ($employees as $employee) {
+            $hire = Carbon::parse($employee->hire_date)->startOfDay();
+            if (! $hire->gt($baseStart)) {
+                continue;
+            }
+
+            $window = [$baseStart->toDateString(), $hire->copy()->subDay()->toDateString()];
+
+            $omissionDates = CheckOmission::query()
+                ->where('employee_id', $employee->id)
+                ->where('status', CheckOmission::STATUS_APPROVED)
+                ->whereBetween('work_date', $window)
+                ->orderBy('work_date')
+                ->pluck('work_date');
+
+            $authorizationDates = Authorization::query()
+                ->where('employee_id', $employee->id)
+                ->whereIn('status', [Authorization::STATUS_APPROVED, Authorization::STATUS_PAID])
+                ->whereBetween('date', $window)
+                ->orderBy('date')
+                ->pluck('date');
+
+            $dates = $omissionDates->concat($authorizationDates)
+                ->map(fn ($d) => Carbon::parse($d)->toDateString())
+                ->sort()
+                ->values();
+
+            if ($dates->isEmpty()) {
+                continue;
+            }
+
+            $alerts[] = [
+                'employee' => $employee->full_name,
+                'hire_date' => $hire->toDateString(),
+                'approved_before' => $dates->count(),
+                'first_date' => $dates->first(),
             ];
         }
 

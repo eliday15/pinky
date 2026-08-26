@@ -615,7 +615,13 @@ class PayrollController extends Controller
         // Autorizaciones APROBADAS que ninguna nómina paga (falta el periodo del
         // alcance que les toca). El agujero por el que Taller se quedó sin sus
         // conceptos mensuales al dejar de llevar mensual.
-        $unpaidAuthorizations = app(\App\Services\UnpaidAuthorizationAuditService::class)->forPeriod($payroll);
+        $audit = app(\App\Services\UnpaidAuthorizationAuditService::class);
+        $unpaidAuthorizations = $audit->forPeriod($payroll);
+
+        // Nuevos con la fecha de ingreso posterior a días que ya tienen algo
+        // aprobado: la semana les sale corta y casi siempre es la fecha mal
+        // capturada (caso Juan José López, Luis 2026-08-26).
+        $hireDateAlerts = $audit->hireDateConflicts($payroll);
 
         return Inertia::render('Payroll/Show', [
             'period' => $payroll,
@@ -625,6 +631,7 @@ class PayrollController extends Controller
             'unifiableWeek' => $unifiableWeek?->only(['id', 'name']),
             'zeroAmountAlerts' => $zeroAmountAlerts,
             'unpaidAuthorizationAlerts' => $unpaidAuthorizations,
+            'hireDateAlerts' => $hireDateAlerts,
             'can' => [
                 'viewComplete' => $user->hasPermissionTo('payroll.view_complete'),
                 'calculate' => $user->hasPermissionTo('payroll.calculate'),

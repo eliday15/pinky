@@ -3,6 +3,7 @@
 namespace Tests\Feature\Payroll;
 
 use App\Models\Authorization;
+use App\Models\CheckOmission;
 use App\Models\CompensationType;
 use App\Models\Department;
 use App\Models\Employee;
@@ -145,6 +146,45 @@ class UnpaidAuthorizationAuditTest extends FeatureTestCase
             ->assertInertia(fn ($page) => $page
                 ->where('unpaidAuthorizationAlerts.0.employee', $employee->full_name)
                 ->etc());
+    }
+
+    public function test_a_new_hire_with_approved_days_before_the_hire_date_is_reported(): void
+    {
+        // Caso Juan José López (Luis 2026-08-26): nuevo, apenas dado de alta en
+        // el checador, con omisiones aprobadas del 19, 20 y 21 y fecha de
+        // ingreso el 24 — la nómina le pagaba 2 días de la semana 19-25.
+        $employee = Employee::factory()->create([
+            'status' => 'active',
+            'hire_date' => '2026-08-21',
+        ]);
+
+        foreach (['2026-08-17', '2026-08-18'] as $date) {
+            CheckOmission::create([
+                'employee_id' => $employee->id,
+                'work_date' => $date,
+                'reason' => CheckOmission::REASON_OTHER,
+                'comments' => 'Nuevo empleado',
+                'status' => CheckOmission::STATUS_APPROVED,
+                'created_by' => User::factory()->create()->id,
+            ]);
+        }
+
+        $alerts = $this->audit()->hireDateConflicts($this->weekly());
+
+        $this->assertCount(1, $alerts);
+        $this->assertSame($employee->full_name, $alerts[0]['employee']);
+        $this->assertSame('2026-08-21', $alerts[0]['hire_date']);
+        $this->assertSame(2, $alerts[0]['approved_before']);
+        $this->assertSame('2026-08-17', $alerts[0]['first_date']);
+    }
+
+    public function test_a_new_hire_without_anything_approved_before_is_not_reported(): void
+    {
+        // Alta a media semana sin días aprobados antes: es un prorrateo normal,
+        // no hay nada que revisar.
+        Employee::factory()->create(['status' => 'active', 'hire_date' => '2026-08-21']);
+
+        $this->assertSame([], $this->audit()->hireDateConflicts($this->weekly()));
     }
 
     public function test_employees_of_another_scope_are_not_reported(): void

@@ -21,6 +21,9 @@ const props = defineProps({
     // Autorizaciones aprobadas que ninguna nómina paga (falta el periodo del
     // alcance que les toca). [{ employee, concept, date, kind, reason }]
     unpaidAuthorizationAlerts: { type: Array, default: () => [] },
+    // Nuevos cuya semana se recortó por la fecha de alta aunque ya tenían días
+    // aprobados antes. [{ employee, hire_date, approved_before, first_date }]
+    hireDateAlerts: { type: Array, default: () => [] },
 });
 
 // Timbrado CFDI: disparar el timbrado del periodo aprobado.
@@ -397,6 +400,23 @@ const closeCash = () => {
                     <span class="font-medium">{{ a.employee }}</span> — {{ a.concept }}
                     <span v-if="a.quantity"> (cantidad capturada: {{ a.quantity }})</span>
                     <span v-if="a.date" class="text-amber-600"> · {{ formatDate(a.date) }}</span>
+                </li>
+            </ul>
+        </div>
+
+        <!-- Semana corta por la fecha de alta, con días ya aprobados antes -->
+        <div v-if="hireDateAlerts.length" class="border border-amber-300 bg-amber-50 rounded-lg p-4 mb-6">
+            <p class="text-sm font-semibold text-amber-800">
+                {{ hireDateAlerts.length }} empleado(s) con días aprobados ANTES de su fecha de ingreso
+            </p>
+            <p class="mt-1 text-sm text-amber-700">
+                La nómina solo paga desde la fecha de ingreso, así que su semana sale corta.
+                Si de verdad entraron antes, corrige la fecha en su ficha y vuelve a calcular.
+            </p>
+            <ul class="mt-2 space-y-1">
+                <li v-for="(a, idx) in hireDateAlerts" :key="idx" class="text-sm text-amber-800">
+                    <span class="font-medium">{{ a.employee }}</span> — ingreso {{ formatDate(a.hire_date) }},
+                    pero tiene {{ a.approved_before }} día(s) aprobado(s) desde el {{ formatDate(a.first_date) }}
                 </li>
             </ul>
         </div>
