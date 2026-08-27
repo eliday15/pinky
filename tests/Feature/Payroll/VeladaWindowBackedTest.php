@@ -148,6 +148,48 @@ class VeladaWindowBackedTest extends FeatureTestCase
         $this->assertLessThan(5.0, $split['overtime_authorized'], 'la parte en velada aprobada no paga doble como TE');
     }
 
+    public function test_velada_split_by_day_cut_completes_from_next_day_madrugada(): void
+    {
+        // Caso Policarpo dom 23/08: veló 22:00–05:02 pero el lunes también lo
+        // trabajó completo — las huellas de madrugada abrieron el récord del
+        // lunes y el domingo quedó con salida "22:00", velada 0, noche no
+        // pagada. Con la VEL aprobada, la madrugada del día siguiente completa
+        // la medición.
+        $e = $this->employee(unitDept: true);
+        $r = $this->record($e, self::DATE, '15:00:16', '22:00:07', weekend: true);
+        $next = date('Y-m-d', strtotime(self::DATE.' +1 day'));
+        AttendanceRecord::factory()->for($e)->create([
+            'work_date' => $next,
+            'check_in' => '05:02:11',
+            'check_out' => '17:30:41',
+            'lunch_out' => null,
+            'lunch_in' => null,
+            'actual_break_minutes' => 0,
+            'status' => 'present',
+            'raw_punches' => [
+                ['time' => '01:01:51', 'date' => $next, 'type' => 'punch'],
+                ['time' => '05:02:11', 'date' => $next, 'type' => 'in'],
+                ['time' => '17:30:41', 'date' => $next, 'type' => 'out'],
+            ],
+        ]);
+        $this->vel($e, self::DATE);
+
+        $split = app(VeladaCalculatorService::class)->calculate($r, $e);
+
+        $this->assertGreaterThan(6.5, $split['velada_hours'], 'la madrugada del día siguiente completa la velada partida');
+    }
+
+    public function test_no_approved_velada_means_no_next_day_borrowing(): void
+    {
+        // Sin VEL aprobada, salir a las 22:00 no toma nada del día siguiente.
+        $e = $this->employee(unitDept: true);
+        $r = $this->record($e, self::DATE, '15:00:16', '22:00:07', weekend: true);
+
+        $split = app(VeladaCalculatorService::class)->calculate($r, $e);
+
+        $this->assertEqualsWithDelta(0.0, $split['velada_hours'], 0.01);
+    }
+
     public function test_overlapping_captures_do_not_double_the_backing(): void
     {
         // Caso Martin 07/08: dos capturas encimadas (17:30–19:00 y 17:30–19:02).

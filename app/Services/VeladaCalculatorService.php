@@ -153,6 +153,9 @@ class VeladaCalculatorService
             $veladaInWindow = ($veladaStart && $veladaEnd)
                 ? max(0, (min($checkOut->getTimestamp(), $veladaEnd->getTimestamp()) - max($checkIn->getTimestamp(), $veladaStart->getTimestamp())) / 3600)
                 : 0.0;
+            if ($veladaAuthorized > 0) {
+                $veladaInWindow += $this->nextDayMadrugadaVeladaHours($record, $checkOut, $veladaStart, $veladaEnd);
+            }
 
             $windowGuardOff = $record->is_weekend_work && $weekendOtThreshold !== null;
             $scheduleBacked = ($overtimeAuthorized > 0 && ! $record->is_weekend_work)
@@ -202,6 +205,17 @@ class VeladaCalculatorService
         // escalera del reporte semanal, para que reporte y nómina nunca
         // diverjan. La velada se paga por horas exactas en ventana (VEL).
         $overtimePayable = $this->rounding->roundMinutes((int) round($overtimeHours * 60));
+
+        // Velada partida por el corte de día (Luis 2026-08-27, caso Policarpo
+        // dom 23/08): cuando el día siguiente también se trabaja completo, las
+        // huellas de madrugada de la velada abren el récord de D+1 y el día D
+        // se queda sin su noche (salió "22:00" y la velada real terminó 05:02
+        // del lunes). Si hay VELADA APROBADA y la medición no llegó al fin de
+        // la ventana, la madrugada del día siguiente la completa — anclada a
+        // huellas reales.
+        if ($veladaAuthorized > 0) {
+            $veladaHours += $this->nextDayMadrugadaVeladaHours($record, $checkOut, $veladaStart, $veladaEnd);
+        }
 
         // El tope al pago también mide por VENTANAS (Luis 2026-08-26/27,
         // casos Diana/Pamela/Eva/Policarpo): la unión de las ventanas de TE
@@ -365,6 +379,51 @@ class VeladaCalculatorService
         // Escalera de la empresa (igual que el reporte y el resto del pago):
         // 31 min respaldados = 0.5 h, no 0.52.
         return $this->rounding->roundMinutes((int) round(max(0, $seconds) / 60));
+    }
+
+    /**
+     * Horas de velada que quedaron en la MADRUGADA del día siguiente (Luis
+     * 2026-08-27, caso Policarpo dom 23/08): la velada 22:00–05:02 se parte
+     * por el corte de día cuando D+1 también se trabaja — la huella de las
+     * 05:02 abre el récord del lunes y el domingo se queda sin su noche. Con
+     * VELADA APROBADA (el llamador lo garantiza) y la medición del día corta,
+     * las huellas crudas de madrugada del récord de D+1 (hasta el fin de la
+     * ventana + 30 min) completan la medición. 0 si el día ya llegó al fin de
+     * la ventana o no hay huellas de madrugada en D+1.
+     */
+    private function nextDayMadrugadaVeladaHours(AttendanceRecord $record, Carbon $checkOut, ?Carbon $veladaStart, ?Carbon $veladaEnd): float
+    {
+        if (! $veladaStart || ! $veladaEnd || $checkOut->gte($veladaEnd)) {
+            return 0.0;
+        }
+
+        $nextDate = $record->work_date->copy()->addDay()->toDateString();
+        $next = AttendanceRecord::where('employee_id', $record->employee_id)
+            ->whereDate('work_date', $nextDate)
+            ->first();
+        if (! $next) {
+            return 0.0;
+        }
+
+        $lastMadrugada = null;
+        $limit = $veladaEnd->copy()->addMinutes(30);
+        foreach (($next->raw_punches ?? []) as $punch) {
+            if (($punch['date'] ?? null) !== $nextDate || empty($punch['time'])) {
+                continue;
+            }
+            $stamp = Carbon::parse($nextDate.' '.$punch['time']);
+            if ($stamp->lte($limit) && ($lastMadrugada === null || $stamp->gt($lastMadrugada))) {
+                $lastMadrugada = $stamp;
+            }
+        }
+        if ($lastMadrugada === null) {
+            return 0.0;
+        }
+
+        $from = max($checkOut->getTimestamp(), $veladaStart->getTimestamp());
+        $to = min($lastMadrugada->getTimestamp(), $veladaEnd->getTimestamp());
+
+        return round(max(0, ($to - $from) / 3600), 2);
     }
 
     private function getAuthorizedHours(int $employeeId, $date, string $type): float
