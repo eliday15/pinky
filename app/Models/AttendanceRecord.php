@@ -183,10 +183,30 @@ class AttendanceRecord extends Model
         $date = \Carbon\Carbon::parse($this->work_date)->toDateString();
         $in = \Carbon\Carbon::parse($date.' '.\Carbon\Carbon::parse($this->check_in)->format('H:i:s'));
         $out = \Carbon\Carbon::parse($date.' '.\Carbon\Carbon::parse($this->check_out)->format('H:i:s'));
-        if ($out->lt($in)) {
+        if ($out->lt($in) || $this->outPunchCrossesMidnight()) {
             $out->addDay();
         }
 
         return round(abs($in->diffInMinutes($out)) / 60, 4);
+    }
+
+    /**
+     * ¿La huella de SALIDA es del día siguiente al del registro? Las huellas
+     * crudas guardan su fecha real; comparar solo las HORAS falla en el caso
+     * límite de una velada que termina pasada la hora de entrada del día
+     * anterior (Luis 2026-08-27, caso Miguel: entró 05:00 y su velada terminó
+     * 05:08 del día siguiente — 05:08 > 05:00, así que la comparación de horas
+     * no detectaba el cruce y el día quedaba de 7 minutos, marcado ausente).
+     */
+    public function outPunchCrossesMidnight(): bool
+    {
+        $workDate = \Carbon\Carbon::parse($this->work_date)->toDateString();
+        foreach (($this->raw_punches ?? []) as $punch) {
+            if (($punch['type'] ?? null) === 'out' && ! empty($punch['date'])) {
+                return $punch['date'] > $workDate;
+            }
+        }
+
+        return false;
     }
 }

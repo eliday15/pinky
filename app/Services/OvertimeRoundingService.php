@@ -67,7 +67,7 @@ class OvertimeRoundingService
         // siguiente. Sin esto, una salida de madrugada (05:12) se leía como del
         // mismo día — anterior al horario de salida — y el tiempo extra detectado
         // salía en 0, bloqueando la aprobación (Elias 2026-08-03, Almacén PT).
-        if ($checkOut->lt($checkIn)) {
+        if ($checkOut->lt($checkIn) || $record->outPunchCrossesMidnight()) {
             $checkOut->addDay();
         }
 

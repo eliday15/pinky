@@ -798,7 +798,11 @@ class ZktecoSyncService
             // día que en realidad se trabajó completo (Elias 2026-08-03, Almacén PT).
             if ($checkInTime) {
                 $actualEntry = Carbon::parse($dateStr.' '.$checkInTime);
-                if ($actualExit->lt($actualEntry)) {
+                // La fecha REAL de la huella de salida manda (caso Miguel
+                // 2026-08-27): una velada que termina 05:08 tras entrar 05:00
+                // no cruza medianoche por comparación de horas y el día quedaba
+                // en 7 minutos, marcado ausente.
+                if ($actualExit->lt($actualEntry) || $attendance->outPunchCrossesMidnight()) {
                     $actualExit->addDay();
                 }
             }
@@ -819,8 +823,9 @@ class ZktecoSyncService
             $checkIn = Carbon::parse($dateStr.' '.$checkInTime);
             $checkOut = Carbon::parse($dateStr.' '.$checkOutTime);
 
-            // Handle midnight crossing for night shifts
-            if ($checkOut->lt($checkIn)) {
+            // Handle midnight crossing for night shifts. La fecha real de la
+            // huella de salida manda (caso Miguel 2026-08-27, ver arriba).
+            if ($checkOut->lt($checkIn) || $attendance->outPunchCrossesMidnight()) {
                 $checkOut->addDay();
             }
 

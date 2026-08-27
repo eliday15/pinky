@@ -62,8 +62,11 @@ class VeladaCalculatorService
         $checkIn = Carbon::parse($dateStr . ' ' . Carbon::parse($record->check_in)->format('H:i:s'));
         $checkOut = Carbon::parse($dateStr . ' ' . Carbon::parse($record->check_out)->format('H:i:s'));
 
-        // Handle midnight crossing
-        if ($checkOut->lt($checkIn)) {
+        // Handle midnight crossing. La comparación de horas falla cuando la
+        // velada termina pasada la hora de entrada del día anterior (caso
+        // Miguel 2026-08-27: 05:00 → 05:08 del día siguiente); la fecha real
+        // de la huella de salida es la autoridad.
+        if ($checkOut->lt($checkIn) || $record->outPunchCrossesMidnight()) {
             $checkOut->addDay();
         }
 
