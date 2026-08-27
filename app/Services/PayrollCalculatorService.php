@@ -117,6 +117,21 @@ class PayrollCalculatorService
             }
         }
 
+        // Un empleado dado de BAJA después de generar el periodo dejaba su
+        // entry huérfana pagando extras (Luis 2026-08-27, caso Dulce Rocio:
+        // baja del 18/08 capturada tras calcular la unificada — la nómina le
+        // seguía pagando $117 de extras). La regla del negocio es que la baja
+        // sale de la nómina y TODO lo suyo va por finiquito: el recálculo
+        // completo elimina las entries de quien ya no está en el universo del
+        // periodo (si se reactiva, el siguiente recálculo la repone). Con el
+        // EFECTIVO ya cerrado no se toca nada: los pagos físicos ya existen y
+        // quitar la entry desquiciaría el corte.
+        if ($period->cash_closed_at === null) {
+            $period->entries()
+                ->whereNotIn('employee_id', $employees->pluck('id'))
+                ->delete();
+        }
+
         // El recálculo completo deja el periodo al día: limpia la marca de
         // invalidación (DECISIONES §7) y regresa a revisión.
         $period->update([
