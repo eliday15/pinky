@@ -162,7 +162,7 @@ class VeladaCalculatorService
                 ? $this->rounding->detectOvertimeHours($record, $daySchedule, $dateStr)
                 : 0.0;
             $windowBacked = ($overtimeAuthorized > 0 && ! $windowGuardOff)
-                ? $this->windowBackedOvertimeHours($record, $checkIn, $checkOut, $veladaStart, $veladaEnd, $veladaAuthorized > 0)
+                ? $this->windowBackedOvertimeHours($record, $checkIn, $checkOut)
                 : 0.0;
 
             return [
@@ -236,7 +236,7 @@ class VeladaCalculatorService
             if (! ($record->is_weekend_work && $weekendOtThreshold !== null)) {
                 $overtimePayable = max(
                     $overtimePayable,
-                    $this->windowBackedOvertimeHours($record, $checkIn, $checkOut, $veladaStart, $veladaEnd, $veladaAuthorized > 0),
+                    $this->windowBackedOvertimeHours($record, $checkIn, $checkOut),
                 );
             }
         }
@@ -319,18 +319,14 @@ class VeladaCalculatorService
      * respalda (Luis 2026-08-27). Se mide sobre la UNIÓN de las ventanas
      * (dos capturas encimadas no suman doble — el guard de encimados avisa
      * aparte) recortada al span [check_in, check_out] ya con el cruce de
-     * medianoche resuelto. Si el día tiene VELADA aprobada, la parte de la
-     * unión dentro de la ventana de velada se descuenta: esa hora paga como
-     * velada, no dos veces. Sin velada aprobada no hay doble pago y el TE
-     * aprobado que cubre la noche paga completo como TE.
+     * medianoche resuelto. La velada NO descuenta: paga monto fijo por noche,
+     * así que el TE aprobado que pisa su ventana no cobra doble nada (regla
+     * madre de Luis 2026-08-27: lo que el sistema dejó aprobar, se paga).
      */
     private function windowBackedOvertimeHours(
         AttendanceRecord $record,
         Carbon $checkIn,
         Carbon $checkOut,
-        ?Carbon $veladaStart,
-        ?Carbon $veladaEnd,
-        bool $veladaAuthorized,
     ): float {
         $dateStr = $record->work_date->toDateString();
 
@@ -368,12 +364,16 @@ class VeladaCalculatorService
             }
         }
 
+        // REGLA MADRE (Luis 2026-08-27): "si el sistema ya me dejó aprobar, se
+        // tiene que reflejar en el pago". La velada paga MONTO FIJO POR NOCHE,
+        // no por horas — descontar del TE la parte que pisa la ventana de
+        // velada no lo compensaba nada (sábado 02/08 en Almacén PT: TE
+        // 18:30–22:30 aprobado + velada, y la media hora 22:00–22:30 se
+        // recortaba). El anti-doble real es la unión de ventanas de TE
+        // (encimados) y el dedup de captura; lo aprobado y respaldado paga.
         $seconds = 0;
         foreach ($merged as [$s, $e]) {
             $seconds += $e - $s;
-            if ($veladaAuthorized && $veladaStart && $veladaEnd) {
-                $seconds -= max(0, min($e, $veladaEnd->getTimestamp()) - max($s, $veladaStart->getTimestamp()));
-            }
         }
 
         // Escalera de la empresa (igual que el reporte y el resto del pago):

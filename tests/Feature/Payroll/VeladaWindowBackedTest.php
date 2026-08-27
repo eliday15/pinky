@@ -133,10 +133,11 @@ class VeladaWindowBackedTest extends FeatureTestCase
         $this->assertEqualsWithDelta(3.5, $split['overtime_authorized'], 0.01);
     }
 
-    public function test_overtime_overlapping_approved_velada_is_trimmed(): void
+    public function test_overtime_overlapping_velada_window_pays_full(): void
     {
-        // TE aprobado hasta dentro de la ventana de velada (22:00+) CON velada
-        // aprobada: la parte en ventana paga como velada, no dos veces.
+        // REGLA MADRE (Luis 2026-08-27, sábado 02/08 Almacén PT): el TE
+        // aprobado que pisa la ventana de velada paga COMPLETO — la velada
+        // paga monto fijo por noche, así que no hay doble pago que evitar.
         $e = $this->employee();
         $r = $this->record($e, self::WEEKDAY, '08:00:00', '23:30:00');
         $this->ot($e, self::WEEKDAY, 6.0, '17:30', '23:30');
@@ -144,8 +145,7 @@ class VeladaWindowBackedTest extends FeatureTestCase
 
         $split = app(VeladaCalculatorService::class)->calculate($r, $e);
 
-        // Ventana 17:30–23:30 = 6 h, menos 22:00–23:30 (1.5 en velada) = 4.5.
-        $this->assertLessThan(5.0, $split['overtime_authorized'], 'la parte en velada aprobada no paga doble como TE');
+        $this->assertEqualsWithDelta(6.0, $split['overtime_authorized'], 0.01, 'lo aprobado y respaldado paga completo');
     }
 
     public function test_velada_split_by_day_cut_completes_from_next_day_madrugada(): void
