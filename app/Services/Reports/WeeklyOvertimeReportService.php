@@ -255,7 +255,7 @@ class WeeklyOvertimeReportService
         // Conceptos extra y observaciones: SOLO aprobados (las pendientes
         // capturadas viven exclusivamente en la parte ámbar "por aprobar").
         $approvedOnly = $authorizations->filter(
-            fn (Authorization $a) => $a->status !== Authorization::STATUS_PENDING
+            fn (Authorization $a) => in_array($a->status, [Authorization::STATUS_APPROVED, Authorization::STATUS_PAID], true)
         );
         $extraConcepts = $this->buildExtraConcepts($approvedOnly, $employee);
 
@@ -348,7 +348,7 @@ class WeeklyOvertimeReportService
         // "pendiente por aprobar" es exclusivamente LO CAPTURADO por el
         // encargado que espera aprobación — jamás lo detectado del checador.
         $approvedByCode = $dayAuthorizations
-            ->filter(fn (Authorization $a) => $a->status !== Authorization::STATUS_PENDING)
+            ->filter(fn (Authorization $a) => in_array($a->status, [Authorization::STATUS_APPROVED, Authorization::STATUS_PAID], true))
             ->groupBy(fn (Authorization $a) => $this->normalizeCode($a->compensationType?->code));
 
         // El excedente aprobado "fuera de checada" (is_unbacked_extra, split de
@@ -491,7 +491,7 @@ class WeeklyOvertimeReportService
         // Semántica única (Luis 2026-08-12): lo oficial sale SOLO de lo
         // aprobado; el pendiente es exclusivamente lo capturado sin aprobar.
         $approvedByCode = $dayAuthorizations
-            ->filter(fn (Authorization $a) => $a->status !== Authorization::STATUS_PENDING)
+            ->filter(fn (Authorization $a) => in_array($a->status, [Authorization::STATUS_APPROVED, Authorization::STATUS_PAID], true))
             ->groupBy(fn (Authorization $a) => $this->normalizeCode($a->compensationType?->code));
 
         $overtimeHours = 0.0;

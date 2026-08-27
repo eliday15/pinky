@@ -111,29 +111,11 @@ class VeladaCalculatorService
 
         $extraHours = max(0, $extraBase - $dailyHours);
 
-        if ($extraHours <= 0) {
-            // TE aprobado con la VENTANA respaldada por la checada aunque el
-            // TOTAL del día no supere la jornada (Luis 2026-08-26, caso Diana:
-            // entró tarde — el retardo ya se castiga como retardo — y salió
-            // después de su hora; la tarde autorizada sí se trabajó). El tope
-            // usa la MISMA vara que el reporte y la aprobación: entrada
-            // temprana + salida tardía contra el HORARIO, con escalera
-            // (detectOvertimeHours). Fuera de fin de semana (ahí rige el
-            // umbral) y solo topando a lo autorizado.
-            $overtimeAuthorized = $this->getAuthorizedHours($record->employee_id, $dateStr, Authorization::TYPE_OVERTIME);
-            $scheduleBacked = ($overtimeAuthorized > 0 && ! $record->is_weekend_work)
-                ? $this->rounding->detectOvertimeHours($record, $daySchedule, $dateStr)
-                : 0.0;
-
-            return [
-                'overtime_hours' => 0,
-                'velada_hours' => $veladaOverride ?? 0,
-                'overtime_authorized' => round(min($scheduleBacked, $overtimeAuthorized), 2),
-                'velada_authorized' => $veladaOverride ?? 0,
-            ];
-        }
-
-        // Split extra hours into overtime vs velada. Velada window [start, end):
+        // Velada window [start, end) — se construye ANTES del early-return
+        // porque una velada PURA (entrar solo a velar: 22:00–05:00 con neto
+        // menor que la jornada) también debe medirse (caso Policarpo dom
+        // 2026-08-16: 7 h en ventana y velada_hours quedaba en 0, la noche
+        // aprobada no contaba ni pagaba).
         if ($veladaStartMin === $veladaEndMin) {
             // No velada window configured.
             $veladaStart = null;
@@ -153,6 +135,39 @@ class VeladaCalculatorService
                 $veladaStart->addDay();
                 $veladaEnd->addDay();
             }
+        }
+
+        if ($extraHours <= 0) {
+            // TE aprobado con las VENTANAS respaldadas por la checada aunque el
+            // TOTAL del día no supere la jornada (Luis 2026-08-26/27, casos
+            // Diana, Pamela, Eva): el retardo ya se castiga como retardo — la
+            // ventana autorizada que las huellas cubren se paga. El respaldo se
+            // mide por la UNIÓN de las ventanas aprobadas contra el span
+            // checado (windowBackedOvertimeHours), y también con la vara del
+            // reporte (entrada temprana + salida tardía por horario). Siempre
+            // topado a lo autorizado. Y la velada se mide por su VENTANA: una
+            // velada pura no genera "extra" pero sí es velada.
+            $overtimeAuthorized = $this->getAuthorizedHours($record->employee_id, $dateStr, Authorization::TYPE_OVERTIME);
+            $veladaAuthorized = $this->getAuthorizedHours($record->employee_id, $dateStr, Authorization::TYPE_NIGHT_SHIFT);
+
+            $veladaInWindow = ($veladaStart && $veladaEnd)
+                ? max(0, (min($checkOut->getTimestamp(), $veladaEnd->getTimestamp()) - max($checkIn->getTimestamp(), $veladaStart->getTimestamp())) / 3600)
+                : 0.0;
+
+            $windowGuardOff = $record->is_weekend_work && $weekendOtThreshold !== null;
+            $scheduleBacked = ($overtimeAuthorized > 0 && ! $record->is_weekend_work)
+                ? $this->rounding->detectOvertimeHours($record, $daySchedule, $dateStr)
+                : 0.0;
+            $windowBacked = ($overtimeAuthorized > 0 && ! $windowGuardOff)
+                ? $this->windowBackedOvertimeHours($record, $checkIn, $checkOut, $veladaStart, $veladaEnd, $veladaAuthorized > 0)
+                : 0.0;
+
+            return [
+                'overtime_hours' => 0,
+                'velada_hours' => $veladaOverride ?? round($veladaInWindow, 2),
+                'overtime_authorized' => round(min(max($scheduleBacked, $windowBacked), $overtimeAuthorized), 2),
+                'velada_authorized' => $veladaOverride ?? round(min($veladaInWindow, $veladaAuthorized), 2),
+            ];
         }
 
         $overtimeHours = 0;
@@ -188,17 +203,28 @@ class VeladaCalculatorService
         // diverjan. La velada se paga por horas exactas en ventana (VEL).
         $overtimePayable = $this->rounding->roundMinutes((int) round($overtimeHours * 60));
 
-        // El tope al pago también mide por HORARIO (Luis 2026-08-26, caso
-        // Diana): si la checada respalda la ventana fuera de horario (salió
-        // tarde / entró temprano) el retardo del día no se come el TE. Se toma
-        // la MAYOR de las dos medidas — nunca paga menos que antes — y solo
-        // fuera de fin de semana y sin velada en juego (la noche tiene su
-        // propio pago y este detector la contaría como salida tardía).
-        if ($overtimeAuthorized > 0 && $veladaHours <= 0 && ! $record->is_weekend_work) {
-            $overtimePayable = max(
-                $overtimePayable,
-                $this->rounding->detectOvertimeHours($record, $daySchedule, $dateStr),
-            );
+        // El tope al pago también mide por VENTANAS (Luis 2026-08-26/27,
+        // casos Diana/Pamela/Eva/Policarpo): la unión de las ventanas de TE
+        // aprobadas que el span checado respalda — descontando la parte en
+        // ventana de velada SOLO si hay velada aprobada ese día (esa hora ya
+        // paga como velada; sin velada aprobada no hay doble y el TE paga
+        // completo). Se toma la MAYOR de las medidas — nunca paga menos que
+        // antes — y se mantiene la vara del reporte (horario) fuera de finde y
+        // sin velada. En finde de deptos de umbral rige el umbral (sin tope
+        // por ventanas).
+        if ($overtimeAuthorized > 0) {
+            if ($veladaHours <= 0 && ! $record->is_weekend_work) {
+                $overtimePayable = max(
+                    $overtimePayable,
+                    $this->rounding->detectOvertimeHours($record, $daySchedule, $dateStr),
+                );
+            }
+            if (! ($record->is_weekend_work && $weekendOtThreshold !== null)) {
+                $overtimePayable = max(
+                    $overtimePayable,
+                    $this->windowBackedOvertimeHours($record, $checkIn, $checkOut, $veladaStart, $veladaEnd, $veladaAuthorized > 0),
+                );
+            }
         }
 
         return [
@@ -274,6 +300,73 @@ class VeladaCalculatorService
      * @param string $type The authorization type
      * @return float Total authorized hours
      */
+    /**
+     * Horas de las VENTANAS de TE aprobadas del día que el span checado
+     * respalda (Luis 2026-08-27). Se mide sobre la UNIÓN de las ventanas
+     * (dos capturas encimadas no suman doble — el guard de encimados avisa
+     * aparte) recortada al span [check_in, check_out] ya con el cruce de
+     * medianoche resuelto. Si el día tiene VELADA aprobada, la parte de la
+     * unión dentro de la ventana de velada se descuenta: esa hora paga como
+     * velada, no dos veces. Sin velada aprobada no hay doble pago y el TE
+     * aprobado que cubre la noche paga completo como TE.
+     */
+    private function windowBackedOvertimeHours(
+        AttendanceRecord $record,
+        Carbon $checkIn,
+        Carbon $checkOut,
+        ?Carbon $veladaStart,
+        ?Carbon $veladaEnd,
+        bool $veladaAuthorized,
+    ): float {
+        $dateStr = $record->work_date->toDateString();
+
+        $windows = Authorization::where('employee_id', $record->employee_id)
+            ->whereDate('date', $dateStr)
+            ->where('type', Authorization::TYPE_OVERTIME)
+            ->whereIn('status', [Authorization::STATUS_APPROVED, Authorization::STATUS_PAID])
+            ->where('is_unbacked_extra', false)
+            ->get(['start_time', 'end_time'])
+            ->filter(fn (Authorization $a) => $a->start_time && $a->end_time)
+            ->map(function (Authorization $a) use ($dateStr, $checkIn, $checkOut) {
+                $start = Carbon::parse($dateStr.' '.$a->start_time->format('H:i:s'));
+                $end = Carbon::parse($dateStr.' '.$a->end_time->format('H:i:s'));
+                if ($end->lte($start)) {
+                    $end->addDay();
+                }
+
+                // Recorte al span checado.
+                $s = max($start->getTimestamp(), $checkIn->getTimestamp());
+                $e = min($end->getTimestamp(), $checkOut->getTimestamp());
+
+                return $e > $s ? [$s, $e] : null;
+            })
+            ->filter()
+            ->sortBy(fn (array $w) => $w[0])
+            ->values();
+
+        // Unión de intervalos: los encimados no suman doble.
+        $merged = [];
+        foreach ($windows as [$s, $e]) {
+            if ($merged !== [] && $s <= $merged[count($merged) - 1][1]) {
+                $merged[count($merged) - 1][1] = max($merged[count($merged) - 1][1], $e);
+            } else {
+                $merged[] = [$s, $e];
+            }
+        }
+
+        $seconds = 0;
+        foreach ($merged as [$s, $e]) {
+            $seconds += $e - $s;
+            if ($veladaAuthorized && $veladaStart && $veladaEnd) {
+                $seconds -= max(0, min($e, $veladaEnd->getTimestamp()) - max($s, $veladaStart->getTimestamp()));
+            }
+        }
+
+        // Escalera de la empresa (igual que el reporte y el resto del pago):
+        // 31 min respaldados = 0.5 h, no 0.52.
+        return $this->rounding->roundMinutes((int) round(max(0, $seconds) / 60));
+    }
+
     private function getAuthorizedHours(int $employeeId, $date, string $type): float
     {
         return (float) Authorization::where('employee_id', $employeeId)
