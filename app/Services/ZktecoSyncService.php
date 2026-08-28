@@ -470,38 +470,52 @@ class ZktecoSyncService
             foreach ($sortedDates as $date) {
                 $punches = $dates[$date];
 
-                // Check if all punches are in early morning (00:00-06:00)
-                $allEarlyMorning = true;
-                $hasLateNight = false;
+                // Huellas de madrugada (00:00–06:00) del día: son la SALIDA de la
+                // velada del día anterior si éste tuvo huella nocturna (≥ 20:00)
+                // y la madrugada la continúa (< 12 h después de la última huella
+                // de esa noche). Antes solo se fusionaba cuando TODO el día era
+                // madrugada; si D+1 también se trabajaba completo (Luis
+                // 2026-08-27, Almacén PT — Luis Ortega, Policarpo, Miguel), la
+                // huella de las 05:00 se quedaba en D+1 como "entrada" y la
+                // velada de D perdía su cierre (noche aprobada sin pagar). Ahora
+                // se mueven SOLO las huellas de madrugada que continúan la
+                // noche; las demás siguen siendo el día D+1.
+                $previousDate = Carbon::parse($date)->subDay()->toDateString();
+                if (! isset($grouped[$userId][$previousDate])) {
+                    continue;
+                }
 
+                $prevPunches = $grouped[$userId][$previousDate];
+                $lastNight = null;
+                foreach ($prevPunches as $punch) {
+                    $stamp = Carbon::parse($punch['timestamp']);
+                    if ($stamp->hour >= 20 && ($lastNight === null || $stamp->gt($lastNight))) {
+                        $lastNight = $stamp;
+                    }
+                }
+                if ($lastNight === null) {
+                    continue;
+                }
+
+                $moved = [];
+                $kept = [];
                 foreach ($punches as $punch) {
-                    $hour = Carbon::parse($punch['timestamp'])->hour;
-                    if ($hour >= 6) {
-                        $allEarlyMorning = false;
+                    $stamp = Carbon::parse($punch['timestamp']);
+                    $isMadrugada = $stamp->hour < 6;
+                    $continuesNight = $isMadrugada && $stamp->diffInHours($lastNight) < 12;
+                    if ($continuesNight) {
+                        $moved[] = $punch;
+                    } else {
+                        $kept[] = $punch;
                     }
                 }
 
-                // If all punches are early morning, check if previous day has late night punches
-                if ($allEarlyMorning) {
-                    $previousDate = Carbon::parse($date)->subDay()->toDateString();
-
-                    if (isset($grouped[$userId][$previousDate])) {
-                        $prevPunches = $grouped[$userId][$previousDate];
-                        $hasLateNightPrev = false;
-
-                        foreach ($prevPunches as $punch) {
-                            $hour = Carbon::parse($punch['timestamp'])->hour;
-                            if ($hour >= 20) {
-                                $hasLateNightPrev = true;
-                                break;
-                            }
-                        }
-
-                        // If previous day has late night punches, merge current day's early morning punches
-                        if ($hasLateNightPrev) {
-                            $grouped[$userId][$previousDate] = array_merge($prevPunches, $punches);
-                            unset($grouped[$userId][$date]);
-                        }
+                if ($moved !== []) {
+                    $grouped[$userId][$previousDate] = array_merge($prevPunches, $moved);
+                    if ($kept === []) {
+                        unset($grouped[$userId][$date]);
+                    } else {
+                        $grouped[$userId][$date] = $kept;
                     }
                 }
             }
@@ -582,7 +596,7 @@ class ZktecoSyncService
         // entrada real es la de las 11:32 (retardo), no las 02:12 (presente). Las
         // checadas previas quedan en raw_punches como badges, no como la entrada.
         // No aplica a turnos nocturnos/velada (su entrada ES de madrugada).
-        $entryIndex = $this->resolveEntryIndex($punches, $date, $daySchedule, $isNightShift);
+        $entryIndex = $this->resolveEntryIndex($punches, $date, $daySchedule, $isNightShift, (int) $employee->id);
 
         // Simple logic: first = in, last = out (arrancando en la entrada resuelta).
         $firstPunch = $punches[$entryIndex];
@@ -1306,7 +1320,7 @@ class ZktecoSyncService
      * @param  object|null  $daySchedule  Horario efectivo del día
      * @param  bool  $isNightShift  Si el turno es nocturno/velada
      */
-    private function resolveEntryIndex(array $punches, string $date, ?object $daySchedule, bool $isNightShift): int
+    private function resolveEntryIndex(array $punches, string $date, ?object $daySchedule, bool $isNightShift, int $employeeId = 0): int
     {
         if ($isNightShift || ! $daySchedule || empty($daySchedule->entry_time)) {
             return 0;
@@ -1314,6 +1328,17 @@ class ZktecoSyncService
 
         $shiftStart = Carbon::parse($date.' '.Carbon::parse($daySchedule->entry_time)->format('H:i:s'));
         $cutoff = $shiftStart->copy()->subHours(self::MADRUGADA_ENTRY_GAP_HOURS);
+
+        // TE MATUTINO capturado/aprobado (Elias 2026-08-13 / Luis 2026-08-27,
+        // Almacén PT): "muchas veces hacen horas extras antes de su horario
+        // que no son veladas". Si hay una autorización de TE ese día cuya
+        // ventana arranca antes del turno, la checada de madrugada que cae en
+        // esa ventana (±30 min) SÍ es la entrada — la regla de madrugada solo
+        // protege contra badges sin respaldo. Sin captura, la regla de siempre.
+        $preShiftStart = $this->earliestPreShiftOvertimeStart($employeeId, $date, $shiftStart);
+        if ($preShiftStart !== null) {
+            $cutoff = $preShiftStart->copy()->subMinutes(30);
+        }
 
         // Cota superior: la entrada no puede ser una checada POSTERIOR al fin del
         // turno (esa es una salida). Sin esta cota, un día con solo checada de
@@ -1334,6 +1359,36 @@ class ZktecoSyncService
         }
 
         return 0;
+    }
+
+    /**
+     * Inicio de la ventana de TE más temprana capturada (pendiente o
+     * aprobada) para ese día que arranque ANTES del turno, o null si no hay.
+     * Es lo que vuelve "entrada" a una checada de madrugada respaldada.
+     */
+    private function earliestPreShiftOvertimeStart(int $employeeId, string $date, Carbon $shiftStart): ?Carbon
+    {
+        if ($employeeId <= 0) {
+            return null;
+        }
+
+        $starts = \App\Models\Authorization::query()
+            ->where('employee_id', $employeeId)
+            ->whereDate('date', $date)
+            ->where('type', \App\Models\Authorization::TYPE_OVERTIME)
+            ->whereIn('status', [
+                \App\Models\Authorization::STATUS_PENDING,
+                \App\Models\Authorization::STATUS_APPROVED,
+                \App\Models\Authorization::STATUS_PAID,
+            ])
+            ->whereNotNull('start_time')
+            ->get(['start_time'])
+            ->map(fn ($a) => Carbon::parse($date.' '.Carbon::parse($a->start_time)->format('H:i:s')))
+            ->filter(fn (Carbon $c) => $c->lt($shiftStart))
+            ->sort()
+            ->values();
+
+        return $starts->first();
     }
 
     /**
