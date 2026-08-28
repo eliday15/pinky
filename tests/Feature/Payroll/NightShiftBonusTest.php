@@ -79,6 +79,47 @@ class NightShiftBonusTest extends FeatureTestCase
         $this->assertSame(1, (int) $entry->night_shift_days);
     }
 
+    public function test_approved_night_without_checkout_is_paid_by_authorization(): void
+    {
+        // Regla madre (Luis 2026-08-27, caso Luis Ortega 09/08): entró 22:00 a
+        // velar y el reloj no registró su salida. Sin checada completa no hay
+        // noche que medir: la autorización aprobada es la evidencia (misma
+        // regla que el tiempo extra desde 2026-07-08).
+        $employee = $this->employee();
+        $this->approvedNightShift($employee, '2026-06-04');
+        AttendanceRecord::factory()->for($employee)->create([
+            'work_date' => '2026-06-04',
+            'check_in' => '22:00:14',
+            'check_out' => null,
+            'status' => 'present',
+            'velada_hours' => 0.00,
+        ]);
+
+        $entry = $this->calculator()->calculateEmployeePayroll($this->monthlyPeriod(), $employee);
+
+        $this->assertSame(1, (int) $entry->night_shift_days, 'la noche aprobada sin salida checada se paga por autorización');
+    }
+
+    public function test_approved_night_with_full_checada_that_contradicts_it_is_not_paid(): void
+    {
+        // Checada COMPLETA que dice que salió antes de la ventana de velada
+        // (18:45): el reloj prueba que no hubo noche — la aprobación sola no
+        // basta. Vía autoservible: rechazar, o corregir la checada.
+        $employee = $this->employee();
+        $this->approvedNightShift($employee, '2026-06-04');
+        AttendanceRecord::factory()->for($employee)->create([
+            'work_date' => '2026-06-04',
+            'check_in' => '08:43:35',
+            'check_out' => '18:45:58',
+            'status' => 'present',
+            'velada_hours' => 0.00,
+        ]);
+
+        $entry = $this->calculator()->calculateEmployeePayroll($this->monthlyPeriod(), $employee);
+
+        $this->assertSame(0, (int) $entry->night_shift_days);
+    }
+
     public function test_no_bonus_without_real_velada_in_attendance(): void
     {
         $employee = $this->employee();
@@ -98,17 +139,18 @@ class NightShiftBonusTest extends FeatureTestCase
         $this->assertSame(0, (int) $entry->night_shift_days);
     }
 
-    public function test_no_bonus_without_attendance_record(): void
+    public function test_approved_night_without_attendance_record_is_paid_by_authorization(): void
     {
+        // Volteado a propósito (regla madre de Luis 2026-08-27): antes una
+        // aprobada sin fila de asistencia pagaba 0. Sin timecard no hay noche
+        // que medir — la aprobación es la evidencia (casos Lucina, Veronica:
+        // exentas de checar / sin huellas con velada aprobada).
         $employee = $this->employee();
-
-        // Autorización aprobada pero el empleado ni checó ese día.
         $this->approvedNightShift($employee, '2026-06-05');
 
         $entry = $this->calculator()->calculateEmployeePayroll($this->monthlyPeriod(), $employee);
 
-        $this->assertEqualsWithDelta(0.00, (float) $entry->night_shift_bonus, 0.01);
-        $this->assertEqualsWithDelta(0.00, (float) $entry->dinner_allowance, 0.01);
+        $this->assertSame(1, (int) $entry->night_shift_days, 'sin fila de asistencia la noche aprobada se paga');
     }
 
     public function test_bonus_suppressed_on_compensation_type_path(): void

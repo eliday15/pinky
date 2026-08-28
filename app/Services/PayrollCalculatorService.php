@@ -1709,11 +1709,28 @@ class PayrollCalculatorService
             ->unique()
             ->all();
 
-        // Noches pagables: fechas únicas autorizadas ∩ fechas con velada real
+        // Fechas SIN checada completa (sin fila, sin entrada o sin salida): ahí
+        // no hay noche que medir y la autorización aprobada es la evidencia —
+        // la misma regla que ya rige el tiempo extra (Dani 2026-07-08, caso
+        // Julissa) y la regla madre de Luis 2026-08-27 ("si el sistema me
+        // dejó aprobar, se refleja en el pago"). Caso Luis Ortega 09/08:
+        // entró 22:00 a velar y el reloj no registró su salida — la noche
+        // aprobada se pagaba en cero. Una noche con checada COMPLETA que la
+        // contradice (salió antes de la ventana) sigue sin pagar: el reloj
+        // prueba que no hubo velada.
+        $measurable = $attendance
+            ->filter(fn ($record) => $record->check_in && $record->check_out)
+            ->map(fn ($record) => Carbon::parse($record->work_date)->toDateString())
+            ->unique()
+            ->all();
+
+        // Noches pagables: aprobadas con velada real, o aprobadas sin timecard
+        // medible.
         $nightShiftDays = $approvedNightShifts
             ->map(fn ($authorization) => Carbon::parse($authorization->date)->toDateString())
             ->unique()
-            ->filter(fn ($date) => in_array($date, $veladaWorkedDates, true))
+            ->filter(fn ($date) => in_array($date, $veladaWorkedDates, true)
+                || ! in_array($date, $measurable, true))
             ->count();
 
         return [
