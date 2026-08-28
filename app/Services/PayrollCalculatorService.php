@@ -557,6 +557,10 @@ class PayrollCalculatorService
         // siendo su único pago y se paga igual que siempre.
         $suppressSalaryConcepts = $suppressBaseSalaryConcepts || ($payBase && $regularPay > 0);
         $suppressedSalaryConcepts = [];
+        // Prima vacacional capturada A MANO en el rango (cualquier estado:
+        // capturarla es decidir manejarla por fuera de la automática).
+        $manualPremium = $this->manualVacationPremiumLabel($employee, $startDate, $endDate);
+        $suppressedVacationPremium = null;
         // Conceptos CAPTURADOS que no pagaron nada porque su monto está en $0
         // (caso Descuento Infonavit 2026-08-26): se reportan en el recibo en vez
         // de desaparecer sin avisar.
@@ -782,6 +786,21 @@ class PayrollCalculatorService
                 $vacationPremiumPay = 0.0;
             }
 
+            // Prima vacacional MANEJADA A MANO (Luis 2026-08-28, caso Sonia
+            // Reyes / Gabriela): si Luis capturó un concepto "Prima Vacacional"
+            // para el empleado en el rango — aprobado, en $0 o rechazado —, esa
+            // captura es la decisión de pagarla (o no) por su cuenta, y la
+            // prima AUTOMÁTICA por días de vacaciones no debe salir además.
+            // Antes rechazarla / ponerla en ceros no tocaba la automática y
+            // el recibo la seguía mostrando. Se reporta en el detalle.
+            if ($vacationPremiumPay > 0 && $manualPremium !== null) {
+                $suppressedVacationPremium = [
+                    'amount' => $vacationPremiumPay,
+                    'reason' => 'prima vacacional capturada a mano ('.$manualPremium.') — la automática por días de vacaciones no se suma',
+                ];
+                $vacationPremiumPay = 0.0;
+            }
+
             // Incapacidades (DECISIONES §4): con goce se pagan; sin goce el
             // día simplemente no se paga (vía horas), sin deducción extra.
             $sickLeavePay = $incidentMetrics['sick_leave_paid_days'] * $dailySalary;
@@ -822,6 +841,14 @@ class PayrollCalculatorService
             // Prima vacacional (en la mensual se suprimió arriba para no doblar).
             $weeklyVacationPremium = round($incidentMetrics['vacation_days'] * $dailySalary
                 * ((float) ($employee->vacation_premium_percentage ?? 0) / 100), 2);
+            // Manejada a mano (ver arriba): la automática no se suma.
+            if ($weeklyVacationPremium > 0 && $manualPremium !== null) {
+                $suppressedVacationPremium = [
+                    'amount' => $weeklyVacationPremium,
+                    'reason' => 'prima vacacional capturada a mano ('.$manualPremium.') — la automática por días de vacaciones no se suma',
+                ];
+                $weeklyVacationPremium = 0.0;
+            }
             if ($weeklyVacationPremium > 0) {
                 $vacationPremiumPay += $weeklyVacationPremium;
                 $transferExtras += $weeklyVacationPremium;
@@ -1238,6 +1265,9 @@ class PayrollCalculatorService
             // Conceptos capturados y aprobados que pagaron $0 porque el concepto
             // no tiene monto configurado: hay que corregir el catálogo.
             'unpaid_zero_amount_concepts' => $unpaidZeroAmountConcepts,
+            // Prima automática por vacaciones NO sumada porque hay una prima
+            // capturada a mano en el rango (Luis 2026-08-28).
+            'suppressed_vacation_premium' => $suppressedVacationPremium,
             'scope' => [
                 'period_type' => $period->type,
                 'pays_base' => $payBase,
@@ -1426,6 +1456,9 @@ class PayrollCalculatorService
             $base['suppressed_base_salary_concepts'] ?? [],
             $extras['suppressed_base_salary_concepts'] ?? [],
         );
+        $merged['suppressed_vacation_premium'] = $extras['suppressed_vacation_premium']
+            ?? $base['suppressed_vacation_premium']
+            ?? null;
         $merged['unpaid_zero_amount_concepts'] = array_merge(
             $base['unpaid_zero_amount_concepts'] ?? [],
             $extras['unpaid_zero_amount_concepts'] ?? [],
@@ -1690,6 +1723,35 @@ class PayrollCalculatorService
      * @param  Collection  $attendance  Attendance records of the period
      * @return array Night shift metrics
      */
+    /**
+     * Etiqueta de la prima vacacional capturada A MANO para el empleado en el
+     * rango ("aprobada \$0", "rechazada", ...), o null si no hay ninguna.
+     * Cualquier estado cuenta: capturar el concepto es la decisión de
+     * manejar la prima por fuera de la automática (Luis 2026-08-28).
+     */
+    private function manualVacationPremiumLabel(Employee $employee, Carbon $startDate, Carbon $endDate): ?string
+    {
+        $manual = Authorization::query()
+            ->where('employee_id', $employee->id)
+            ->whereDate('date', '>=', $startDate->toDateString())
+            ->whereDate('date', '<=', $endDate->toDateString())
+            ->whereHas('compensationType', fn ($q) => $q->where('name', 'like', '%prima vacacional%'))
+            ->orderByDesc('date')
+            ->first(['status', 'hours']);
+
+        if ($manual === null) {
+            return null;
+        }
+
+        $status = match ($manual->status) {
+            Authorization::STATUS_APPROVED, Authorization::STATUS_PAID => 'aprobada',
+            Authorization::STATUS_REJECTED => 'rechazada',
+            default => $manual->status,
+        };
+
+        return $status.' por $'.number_format((float) $manual->hours, 2);
+    }
+
     private function calculateNightShiftMetrics(Collection $approvedAuthorizations, Collection $attendance): array
     {
         $nightShiftBonus = (float) SystemSetting::get('night_shift_bonus', 100);

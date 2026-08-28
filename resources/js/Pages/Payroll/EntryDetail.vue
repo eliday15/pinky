@@ -315,6 +315,11 @@ const suppressedSalaryConcepts = computed(() => breakdown.suppressed_base_salary
 // muestra para que no se pierda en silencio (caso Descuento Infonavit).
 const unpaidZeroAmountConcepts = computed(() => breakdown.unpaid_zero_amount_concepts ?? []);
 
+// Prima vacacional automática que NO se sumó porque hay una capturada a mano
+// (aprobada, en $0 o rechazada) en el rango — se explica para que no parezca
+// que "sigue apareciendo" (Luis 2026-08-28).
+const suppressedVacationPremium = computed(() => breakdown.suppressed_vacation_premium ?? null);
+
 // Fines de semana AUTORIZADOS que no contaron porque el día no llegó al mínimo
 // de horas corridas. Se explican debajo del renglón de Fin de semana para que
 // no quede la duda de "tenía dos aprobados y solo aparece uno".
@@ -687,6 +692,13 @@ const roundingIsCents = computed(() => Math.abs(pesoRounding.value) < 1);
                                     ⚠ {{ z.name }}
                                     <span v-if="z.quantity"> ({{ z.quantity }})</span>
                                     — capturado pero NO pagado: {{ z.reason }}
+                                </td>
+                                <td class="py-1 text-right">{{ formatCurrency(0) }}</td>
+                            </tr>
+                            <!-- Prima automática por vacaciones NO sumada: hay una prima capturada a mano -->
+                            <tr v-if="suppressedVacationPremium" class="text-xs text-gray-400">
+                                <td class="py-1">
+                                    Prima vacacional automática — no se suma: {{ suppressedVacationPremium.reason }}
                                 </td>
                                 <td class="py-1 text-right">{{ formatCurrency(0) }}</td>
                             </tr>

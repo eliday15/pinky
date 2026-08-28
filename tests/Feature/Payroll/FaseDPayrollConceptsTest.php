@@ -3,6 +3,8 @@
 namespace Tests\Feature\Payroll;
 
 use App\Models\AttendanceRecord;
+use App\Models\Authorization;
+use App\Models\CompensationType;
 use App\Models\Employee;
 use App\Models\Incident;
 use App\Models\IncidentType;
@@ -129,6 +131,56 @@ class FaseDPayrollConceptsTest extends FeatureTestCase
         // 4800; sin deducción.
         $this->assertEqualsWithDelta(4800.00, (float) $entry->regular_pay, 0.01, 'base = 800 × (7 − 1 permiso sin goce)');
         $this->assertEqualsWithDelta(0.00, (float) $entry->deductions, 0.01, 'permiso sin goce: el día no se paga, sin castigo del séptimo día');
+    }
+
+    public function test_manual_prima_capture_suppresses_automatic_vacation_premium(): void
+    {
+        // Luis 2026-08-28 (caso Sonia Reyes): ya había pagado la prima por
+        // fuera, capturó el concepto "Prima Vacacional" en $0 (y a Gabriela
+        // se lo rechazó) y la prima AUTOMÁTICA por días de vacaciones seguía
+        // saliendo en el recibo. Capturar la manual — en cualquier estado — es
+        // decidir manejarla a mano: la automática no se suma y el detalle
+        // explica por qué.
+        $employee = $this->employee(['vacation_premium_percentage' => 25.00]);
+        $vac = $this->typeWithCode('VAC', [
+            'category' => 'vacation',
+            'is_paid' => true,
+            'deducts_vacation' => true,
+            'count_mode' => IncidentType::COUNT_WORKING_DAYS,
+        ]);
+        $this->approvedIncident($employee, $vac, '2026-06-01', '2026-06-05', 6);
+
+        $prima = CompensationType::updateOrCreate(['code' => 'PVVP'], [
+            'name' => 'Prima Vacacional VP',
+            'calculation_type' => 'fixed',
+            'fixed_amount' => 1.0,
+            'application_mode' => CompensationType::APPLICATION_ONE_TIME,
+            'authorization_type' => Authorization::TYPE_SPECIAL,
+            'is_active' => true,
+        ]);
+        foreach ([[Authorization::STATUS_REJECTED, 80.0], [Authorization::STATUS_APPROVED, 0.0]] as [$status, $hours]) {
+            $emp = $status === Authorization::STATUS_REJECTED ? $employee : $this->employee(['vacation_premium_percentage' => 25.00]);
+            if ($emp->id !== $employee->id) {
+                $this->approvedIncident($emp, $vac, '2026-06-01', '2026-06-05', 6);
+            }
+            Authorization::factory()->create([
+                'employee_id' => $emp->id,
+                'date' => '2026-06-10',
+                'type' => Authorization::TYPE_SPECIAL,
+                'compensation_type_id' => $prima->id,
+                'hours' => $hours,
+                'status' => $status,
+            ]);
+
+            $monthly = PayrollPeriod::factory()->monthly()->create([
+                'start_date' => '2026-06-01',
+                'end_date' => '2026-06-30',
+            ]);
+            $entry = $this->calculator()->calculateEmployeePayroll($monthly, $emp->fresh());
+
+            $this->assertEqualsWithDelta(0.00, (float) $entry->vacation_premium_pay, 0.01, "con prima manual {$status} la automática no se suma");
+            $this->assertNotNull($entry->calculation_breakdown['suppressed_vacation_premium'] ?? null, 'el detalle explica la supresión');
+        }
     }
 
     public function test_vacation_premium_is_paid_as_separate_concept(): void
