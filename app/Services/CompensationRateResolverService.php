@@ -348,7 +348,11 @@ class CompensationRateResolverService
         $veladaHours = (float) ($metrics['velada_hours'] ?? 0);
         $veladaDays = (int) ($metrics['velada_days'] ?? 0);
 
-        $veladaType = $explicitVelada->first()?->compensationType
+        $eligibleExplicitVelada = $explicitVelada->filter(fn (Authorization $authorization) =>
+            $authorization->compensationType
+            && $this->paymentPeriodAllowed($authorization->compensationType, $allowedPaymentPeriods)
+        );
+        $veladaType = $eligibleExplicitVelada->first()?->compensationType
             ?? $this->findApplicableType($employee, 'night_shift');
 
         if ($veladaType && ! $this->paymentPeriodAllowed($veladaType, $allowedPaymentPeriods)) {
@@ -374,13 +378,13 @@ class CompensationRateResolverService
                 'rate' => $rate,
                 'amount' => $amount,
                 'authorization_type' => $veladaType->authorization_type,
-                'source' => $explicitVelada->isNotEmpty() ? 'explicit_authorization' : 'auto_tier',
+                'source' => $eligibleExplicitVelada->isNotEmpty() ? 'explicit_authorization' : 'auto_tier',
             ];
             $total += $amount;
 
             // La velada es metric-gated: marca sus autorizaciones como pagadas
             // para que el pase genérico no las vuelva a pagar.
-            foreach ($explicitVelada as $auth) {
+            foreach ($eligibleExplicitVelada as $auth) {
                 $consumedAuthIds[] = $auth->id;
             }
         }

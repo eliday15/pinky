@@ -60,6 +60,7 @@ class PayrollCalculatorService
         LateAbsenceService $lateAbsences,
         \App\Services\Fiscal\FiscalDeductionService $fiscal,
         private \App\Services\Fiscal\EmployerQuotaCalculatorService $employerQuotas,
+        private ApprovedAuthorizationQuantityService $approvedQuantities,
     ) {
         $this->resolver = $resolver;
         $this->lateAbsences = $lateAbsences;
@@ -248,6 +249,12 @@ class PayrollCalculatorService
             ->get()
             ->groupBy('employee_id');
 
+        $modernAuthorizationTypesByEmployee = Authorization::whereIn('employee_id', $employeeIds)
+            ->whereBetween('date', [$startDate, $endDate])
+            ->get(['employee_id', 'type'])
+            ->groupBy('employee_id')
+            ->map(fn (Collection $rows) => $rows->pluck('type')->unique()->values());
+
         $holidays = Holiday::whereBetween('date', [$startDateStr, $endDateStr])->get();
 
         return new PayrollPeriodCalculationContext(
@@ -255,6 +262,7 @@ class PayrollCalculatorService
             attendanceByEmployee: $attendanceByEmployee,
             incidentsByEmployee: $incidentsByEmployee,
             authorizationsByEmployee: $authorizationsByEmployee,
+            modernAuthorizationTypesByEmployee: $modernAuthorizationTypesByEmployee,
             holidays: $holidays,
             monthlyIncidentsEnsured: true,
             scope: $period->calculationScope,
@@ -596,62 +604,23 @@ class PayrollCalculatorService
         // concepts, vacations and bonuses. Computed only when the period pays
         // extras so a weekly period never charges them. ----
         $veladaMetrics = $this->calculateVeladaMetrics($attendance);
-
-        // Días SIN checada completa: el tiempo extra APROBADO vale por su
-        // autorización (Dani 2026-07-08, caso Julissa: TE aprobado con la
-        // salida no marcada). Cubre también a los exentos de asistencia (no
-        // tienen checadas en absoluto). Los días con checada completa ya
-        // aportan su overtime_authorized_hours topado al timecard vía
-        // attendance_records; aquí solo se suman las fechas sin timecard
-        // medible. Se excluye el FIN (weekend pull rule), que paga por
-        // unidades en su propio camino.
-        // Semanas en las que el colaborador está marcado como PERSONAL DE
-        // ENTREGAS (Dani 2026-07-28): aunque tenga checada completa, su tiempo
-        // extra se cuenta a la AUTORIZACIÓN (no se topa al timecard) porque
-        // andaba en la calle y su checada no refleja lo trabajado — mismo
-        // criterio que la velada. Los días de esas semanas se excluyen de las
-        // fechas "medidas" para que caigan en la suma de OT sin timecard (una
-        // sola vía, sin doble conteo).
-        $deliveryPeriods = \App\Models\DeliveryPeriod::query()
-            ->where('employee_id', $employee->id)
-            ->get(['start_date', 'end_date'])
-            ->map(fn ($p) => [$p->start_date->toDateString(), $p->end_date->toDateString()])
-            ->all();
-
-        $isDeliveryDate = function ($date) use ($deliveryPeriods) {
-            $d = Carbon::parse($date)->toDateString();
-            foreach ($deliveryPeriods as [$from, $to]) {
-                if ($d >= $from && $d <= $to) {
-                    return true;
-                }
-            }
-
-            return false;
-        };
-
-        $measuredOtDates = $attendance
-            ->filter(fn ($r) => $r->check_in && $r->check_out && ! $isDeliveryDate($r->work_date))
-            ->map(fn ($r) => Carbon::parse($r->work_date)->toDateString())
-            ->all();
-        // Además de los días sin timecard, el excedente aprobado "fuera de
-        // checada" (is_unbacked_extra, el split de Elias 2026-08-05) se paga
-        // por autorización aunque el día SÍ tenga checada completa: aprobarlo
-        // fue la decisión consciente de pagar extra no hecho en el reloj. No se
-        // duplica: VeladaCalculatorService lo excluye del mín(detectado,
-        // autorizado) del timecard, y el || lo cuenta una sola vez cuando el
-        // día tampoco está medido.
-        $unbackedOvertimeHours = (float) $approvedAuthorizations
-            ->filter(fn (Authorization $a) => $a->type === Authorization::TYPE_OVERTIME
-                && ! ($a->compensationType?->hasWeekendPullRule())
-                && ($a->is_unbacked_extra
-                    || ! in_array(Carbon::parse($a->date)->toDateString(), $measuredOtDates, true)))
-            ->sum('hours');
-        if ($unbackedOvertimeHours > 0) {
-            $veladaMetrics['overtime_authorized_hours'] = round(
-                $veladaMetrics['overtime_authorized_hours'] + $unbackedOvertimeHours,
-                2,
-            );
+        // Después de aprobar, el reloj ya no vuelve a reducir el compromiso.
+        $approvedOvertime = $this->approvedQuantities->quantity(
+            $approvedAuthorizations, Authorization::TYPE_OVERTIME, $allowedPaymentPeriods, excludeWeekendPullRule: true
+        );
+        $approvedVelada = $this->approvedQuantities->quantity(
+            $approvedAuthorizations, Authorization::TYPE_NIGHT_SHIFT, $allowedPaymentPeriods
+        );
+        $modernTypes = $ctx?->modernAuthorizationTypesByEmployee->get($employee->id);
+        if ($this->modernAuthorizationExists($employee->id, $startDate, $endDate, Authorization::TYPE_OVERTIME, $modernTypes)) {
+            $veladaMetrics['overtime_authorized_hours'] = $approvedOvertime;
         }
+        if ($this->modernAuthorizationExists($employee->id, $startDate, $endDate, Authorization::TYPE_NIGHT_SHIFT, $modernTypes)) {
+            $veladaMetrics['velada_authorized_hours'] = $approvedVelada;
+        }
+
+        // Backed/unbacked y con/sin checada están incluidos exactamente una vez
+        // en la cantidad aprobada; ya no hay ramas de rescate posteriores.
 
         $veladaMultiplier = (float) SystemSetting::get('velada_rate_multiplier', 2.0);
 
@@ -685,7 +654,7 @@ class PayrollCalculatorService
         if ($payExtras || $runCompTypes) {
             // FASE 3.3: Night shifts and dinner allowances — pagados solo por
             // noche realmente trabajada (velada en checadas) y autorizada.
-            $nightShiftMetrics = $this->calculateNightShiftMetrics($approvedAuthorizations, $attendance);
+            $nightShiftMetrics = $this->calculateNightShiftMetrics($approvedAuthorizations, $attendance, $allowedPaymentPeriods);
         }
 
         $authorizedOvertimeHours = ($payExtras || $runCompTypes)
@@ -1523,15 +1492,9 @@ class PayrollCalculatorService
                 continue;
             }
 
-            $record = $recordsByDate->get($date);
-            $measurable = $record && $record->check_in && $record->check_out;
-            $unbacked = $auths->contains(fn (Authorization $a) => (bool) $a->is_unbacked_extra);
-
-            // Sin checada completa (o marcado "extra fuera de checada") manda la
-            // autorización: ahí no hay recorte que explicar.
-            $paid = ($unbacked || ! $measurable)
-                ? $authorized
-                : round((float) ($record->overtime_authorized_hours ?? 0), 2);
+            // El desglose debe describir lo que nómina materializa, no volver a
+            // leer la checada y anunciar un recorte que ya no existe.
+            $paid = $this->approvedQuantities->quantity($auths, Authorization::TYPE_OVERTIME);
 
             if ($paid + 0.01 >= $authorized) {
                 continue;
@@ -1546,6 +1509,24 @@ class PayrollCalculatorService
         }
 
         return $shortfalls;
+    }
+
+    /**
+     * El fallback desde attendance_records es solo para datos históricos que
+     * nunca tuvieron Authorization. Una moderna rechazada o fuera del scope de
+     * pago bloquea ese fallback para que no reaparezca una cifra obsoleta.
+     */
+    private function modernAuthorizationExists(int $employeeId, Carbon $startDate, Carbon $endDate, string $type, ?Collection $preloadedTypes = null): bool
+    {
+        if ($preloadedTypes !== null) {
+            return $preloadedTypes->contains($type);
+        }
+        return Authorization::query()
+            ->where('employee_id', $employeeId)
+            ->where('type', $type)
+            ->whereDate('date', '>=', $startDate->toDateString())
+            ->whereDate('date', '<=', $endDate->toDateString())
+            ->exists();
     }
 
     /**
@@ -1725,9 +1706,8 @@ class PayrollCalculatorService
      */
     /**
      * Etiqueta de la prima vacacional capturada A MANO para el empleado en el
-     * rango ("aprobada \$0", "rechazada", ...), o null si no hay ninguna.
-     * Cualquier estado cuenta: capturar el concepto es la decisión de
-     * manejar la prima por fuera de la automática (Luis 2026-08-28).
+     * rango ("aprobada \$0"), o null si no hay ninguna. Una rechazada nunca
+     * sustituye ni modifica el cálculo automático.
      */
     private function manualVacationPremiumLabel(Employee $employee, Carbon $startDate, Carbon $endDate): ?string
     {
@@ -1735,6 +1715,9 @@ class PayrollCalculatorService
             ->where('employee_id', $employee->id)
             ->whereDate('date', '>=', $startDate->toDateString())
             ->whereDate('date', '<=', $endDate->toDateString())
+            // Rechazar nunca es una decisión monetaria. Solo una captura
+            // explícitamente aprobada/pagada puede sustituir la automática.
+            ->whereIn('status', [Authorization::STATUS_APPROVED, Authorization::STATUS_PAID])
             ->whereHas('compensationType', fn ($q) => $q->where('name', 'like', '%prima vacacional%'))
             ->orderByDesc('date')
             ->first(['status', 'hours']);
@@ -1752,7 +1735,7 @@ class PayrollCalculatorService
         return $status.' por $'.number_format((float) $manual->hours, 2);
     }
 
-    private function calculateNightShiftMetrics(Collection $approvedAuthorizations, Collection $attendance): array
+    private function calculateNightShiftMetrics(Collection $approvedAuthorizations, Collection $attendance, ?array $allowedPaymentPeriods = null): array
     {
         $nightShiftBonus = (float) SystemSetting::get('night_shift_bonus', 100);
         $dinnerAllowanceAmount = (float) SystemSetting::get('dinner_allowance_amount', 75);
@@ -1762,38 +1745,9 @@ class PayrollCalculatorService
         $approvedNightShifts = $approvedAuthorizations
             ->filter(fn ($authorization) => $authorization->type === Authorization::TYPE_NIGHT_SHIFT);
 
-        $nightShiftHours = $approvedNightShifts->sum('hours');
+        $nightShiftHours = $this->approvedQuantities->quantity($approvedNightShifts, Authorization::TYPE_NIGHT_SHIFT, $allowedPaymentPeriods);
 
-        // Fechas con velada real en checadas (velada_hours > 0)
-        $veladaWorkedDates = $attendance
-            ->filter(fn ($record) => (float) ($record->velada_hours ?? 0) > 0)
-            ->map(fn ($record) => Carbon::parse($record->work_date)->toDateString())
-            ->unique()
-            ->all();
-
-        // Fechas SIN checada completa (sin fila, sin entrada o sin salida): ahí
-        // no hay noche que medir y la autorización aprobada es la evidencia —
-        // la misma regla que ya rige el tiempo extra (Dani 2026-07-08, caso
-        // Julissa) y la regla madre de Luis 2026-08-27 ("si el sistema me
-        // dejó aprobar, se refleja en el pago"). Caso Luis Ortega 09/08:
-        // entró 22:00 a velar y el reloj no registró su salida — la noche
-        // aprobada se pagaba en cero. Una noche con checada COMPLETA que la
-        // contradice (salió antes de la ventana) sigue sin pagar: el reloj
-        // prueba que no hubo velada.
-        $measurable = $attendance
-            ->filter(fn ($record) => $record->check_in && $record->check_out)
-            ->map(fn ($record) => Carbon::parse($record->work_date)->toDateString())
-            ->unique()
-            ->all();
-
-        // Noches pagables: aprobadas con velada real, o aprobadas sin timecard
-        // medible.
-        $nightShiftDays = $approvedNightShifts
-            ->map(fn ($authorization) => Carbon::parse($authorization->date)->toDateString())
-            ->unique()
-            ->filter(fn ($date) => in_array($date, $veladaWorkedDates, true)
-                || ! in_array($date, $measurable, true))
-            ->count();
+        $nightShiftDays = $this->approvedQuantities->uniqueDates($approvedNightShifts, Authorization::TYPE_NIGHT_SHIFT, $allowedPaymentPeriods);
 
         return [
             'night_shift_hours' => round($nightShiftHours, 2),

@@ -74,7 +74,7 @@ class WeekendOvertimeThresholdTest extends FeatureTestCase
         ]);
     }
 
-    public function test_weekend_over_threshold_pays_only_the_excess_as_overtime(): void
+    public function test_weekend_threshold_is_enforced_before_approval_not_after(): void
     {
         // 11 h CORRIDAS (08:00–19:00, la comida no se descuenta — Dani
         // 2026-07-08) en fin de semana, umbral 7 → 11 − 7 = 4 h de tiempo
@@ -85,10 +85,10 @@ class WeekendOvertimeThresholdTest extends FeatureTestCase
 
         $split = app(VeladaCalculatorService::class)->calculate($rec->fresh(), $e->fresh());
 
-        $this->assertEqualsWithDelta(4.0, (float) $split['overtime_authorized'], 0.01);
+        $this->assertEqualsWithDelta(24.0, (float) $split['overtime_authorized'], 0.01);
     }
 
-    public function test_weekend_below_threshold_is_absorbed_by_the_weekend_not_paid_as_overtime(): void
+    public function test_historical_weekend_approval_below_threshold_is_not_reduced_afterward(): void
     {
         // 6 h CORRIDAS (08:00–14:00) en fin de semana, umbral 7. Desde Elias
         // 2026-08-26 el día autorizado SÍ gana su fin de semana, así que esas
@@ -99,10 +99,10 @@ class WeekendOvertimeThresholdTest extends FeatureTestCase
 
         $split = app(VeladaCalculatorService::class)->calculate($rec->fresh(), $e->fresh());
 
-        $this->assertEqualsWithDelta(0.0, (float) $split['overtime_authorized'], 0.01);
+        $this->assertEqualsWithDelta(24.0, (float) $split['overtime_authorized'], 0.01);
     }
 
-    public function test_weekend_exactly_at_threshold_pays_no_overtime(): void
+    public function test_historical_weekend_approval_at_threshold_is_not_reduced_afterward(): void
     {
         // 7 h CORRIDAS (08:00–15:00) en fin de semana, umbral 7 → 1 fin de
         // semana, 0 tiempo extra.
@@ -112,10 +112,10 @@ class WeekendOvertimeThresholdTest extends FeatureTestCase
 
         $split = app(VeladaCalculatorService::class)->calculate($rec->fresh(), $e->fresh());
 
-        $this->assertEqualsWithDelta(0.0, (float) $split['overtime_authorized'], 0.01);
+        $this->assertEqualsWithDelta(24.0, (float) $split['overtime_authorized'], 0.01);
     }
 
-    public function test_saldos_custom_threshold_is_respected(): void
+    public function test_custom_threshold_does_not_rewrite_an_existing_approval(): void
     {
         // weekend_overtime_after_hours = 5 → 11 h corridas − 5 = 6 h de TE.
         $e = $this->employeeIn(5);
@@ -124,7 +124,7 @@ class WeekendOvertimeThresholdTest extends FeatureTestCase
 
         $split = app(VeladaCalculatorService::class)->calculate($rec->fresh(), $e->fresh());
 
-        $this->assertEqualsWithDelta(6.0, (float) $split['overtime_authorized'], 0.01);
+        $this->assertEqualsWithDelta(24.0, (float) $split['overtime_authorized'], 0.01);
     }
 
     public function test_almacen_weekend_is_not_paid_as_overtime(): void
@@ -140,10 +140,10 @@ class WeekendOvertimeThresholdTest extends FeatureTestCase
         $this->assertNull($e->fresh()->weekendUnitThreshold());
 
         $split = app(VeladaCalculatorService::class)->calculate($rec->fresh(), $e->fresh());
-        $this->assertEqualsWithDelta(2.0, (float) $split['overtime_authorized'], 0.01);
+        $this->assertEqualsWithDelta(24.0, (float) $split['overtime_authorized'], 0.01);
     }
 
-    public function test_weekday_uses_normal_schedule_not_weekend_threshold(): void
+    public function test_weekday_schedule_does_not_rewrite_existing_approval(): void
     {
         // Entre semana el umbral sigue siendo la jornada (8), no el de fin de
         // semana: 10 − 8 = 2 h.
@@ -153,7 +153,7 @@ class WeekendOvertimeThresholdTest extends FeatureTestCase
 
         $split = app(VeladaCalculatorService::class)->calculate($rec->fresh(), $e->fresh());
 
-        $this->assertEqualsWithDelta(2.0, (float) $split['overtime_authorized'], 0.01);
+        $this->assertEqualsWithDelta(24.0, (float) $split['overtime_authorized'], 0.01);
     }
 
     public function test_weekend_unit_threshold_and_qualification_helpers(): void

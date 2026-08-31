@@ -26,6 +26,7 @@ class VeladaCalculatorService
 {
     public function __construct(
         private readonly OvertimeRoundingService $rounding = new OvertimeRoundingService(),
+        private readonly ApprovedAuthorizationQuantityService $approvedQuantities = new ApprovedAuthorizationQuantityService(),
     ) {}
 
     /**
@@ -37,6 +38,9 @@ class VeladaCalculatorService
      */
     public function calculate(AttendanceRecord $record, Employee $employee): array
     {
+        $dateStr = $record->work_date->toDateString();
+        $approvedOvertime = $this->getAuthorizedHours($record->employee_id, $dateStr, Authorization::TYPE_OVERTIME);
+        $approvedVelada = $this->getAuthorizedHours($record->employee_id, $dateStr, Authorization::TYPE_NIGHT_SHIFT);
         // Personal de entregas marcado en la semana (Dani 2026-07-28): la velada
         // AUTORIZADA se paga completa aunque la checada no la capture — andan en
         // la calle repartiendo y no alcanzan a checar la noche. null = no marcado
@@ -47,7 +51,7 @@ class VeladaCalculatorService
             return [
                 'overtime_hours' => 0,
                 'velada_hours' => $veladaOverride ?? 0,
-                'overtime_authorized' => 0,
+                'overtime_authorized' => $approvedOvertime,
                 'velada_authorized' => $veladaOverride ?? 0,
             ];
         }
@@ -58,7 +62,6 @@ class VeladaCalculatorService
         // para que una BD nueva use la misma ventana en todos lados).
         [$veladaStartMin, $veladaEndMin] = $this->resolveVeladaWindow($employee);
 
-        $dateStr = $record->work_date->toDateString();
         $checkIn = Carbon::parse($dateStr . ' ' . Carbon::parse($record->check_in)->format('H:i:s'));
         $checkOut = Carbon::parse($dateStr . ' ' . Carbon::parse($record->check_out)->format('H:i:s'));
 
@@ -168,8 +171,8 @@ class VeladaCalculatorService
             return [
                 'overtime_hours' => 0,
                 'velada_hours' => $veladaOverride ?? round($veladaInWindow, 2),
-                'overtime_authorized' => round(min(max($scheduleBacked, $windowBacked), $overtimeAuthorized), 2),
-                'velada_authorized' => $veladaOverride ?? round(min($veladaInWindow, $veladaAuthorized), 2),
+                'overtime_authorized' => $approvedOvertime,
+                'velada_authorized' => $veladaOverride ?? round(min($veladaInWindow, $approvedVelada), 2),
             ];
         }
 
@@ -247,8 +250,8 @@ class VeladaCalculatorService
             // se paga/reporta la autorizada completa (misma cifra en velada_hours
             // y velada_authorized para que reporte y recibo coincidan).
             'velada_hours' => $veladaOverride ?? round($veladaHours, 2),
-            'overtime_authorized' => round(min($overtimePayable, $overtimeAuthorized), 2),
-            'velada_authorized' => $veladaOverride ?? round(min($veladaHours, $veladaAuthorized), 2),
+            'overtime_authorized' => $approvedOvertime,
+            'velada_authorized' => $veladaOverride ?? round(min($veladaHours, $approvedVelada), 2),
         ];
     }
 
@@ -428,14 +431,13 @@ class VeladaCalculatorService
 
     private function getAuthorizedHours(int $employeeId, $date, string $type): float
     {
-        return (float) Authorization::where('employee_id', $employeeId)
+        $authorizations = Authorization::where('employee_id', $employeeId)
             ->whereDate('date', Carbon::parse($date)->toDateString())
             ->where('type', $type)
             ->whereIn('status', [Authorization::STATUS_APPROVED, Authorization::STATUS_PAID])
-            // El excedente aprobado "fuera de checada" se paga por su propia vía
-            // en la nómina (sin tope al detectado); aquí se excluye para que el
-            // mín(detectado, autorizado) no lo cuente dos veces.
-            ->where('is_unbacked_extra', false)
-            ->sum('hours');
+            ->with('compensationType')
+            ->get();
+
+        return $this->approvedQuantities->quantity($authorizations, $type);
     }
 }

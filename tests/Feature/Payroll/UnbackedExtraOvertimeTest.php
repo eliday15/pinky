@@ -114,7 +114,7 @@ class UnbackedExtraOvertimeTest extends FeatureTestCase
 
         $split = app(VeladaCalculatorService::class)->calculate($record, $employee);
 
-        $this->assertEqualsWithDelta(1.0, $split['overtime_authorized'], 0.01, 'el excedente marcado no entra al tope del timecard');
+        $this->assertEqualsWithDelta(6.0, $split['overtime_authorized'], 0.01, 'todo lo aprobado se materializa una vez, incluido el override fuera de checada');
     }
 
     public function test_approved_flagged_extra_pays_beyond_timecard_cap(): void

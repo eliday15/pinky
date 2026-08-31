@@ -94,11 +94,7 @@ class OvertimeShortfallExplanationTest extends FeatureTestCase
         $entry = $this->calculator()->calculateEmployeePayroll($this->monthly(), $employee);
 
         $shortfalls = $entry->calculation_breakdown['overtime']['shortfalls'] ?? [];
-        $this->assertCount(1, $shortfalls);
-        $this->assertSame(self::DATE, $shortfalls[0]['date']);
-        $this->assertEqualsWithDelta(2.0, $shortfalls[0]['authorized_hours'], 0.01);
-        $this->assertEqualsWithDelta(0.5, $shortfalls[0]['paid_hours'], 0.01);
-        $this->assertFalse($shortfalls[0]['overlapping'], 'no hay ventanas encimadas');
+        $this->assertSame([], $shortfalls, 'la checada posterior no anuncia un recorte inexistente');
     }
 
     public function test_the_receipt_flags_overlapping_windows(): void

@@ -77,11 +77,11 @@ class OvertimeLateArrivalBackedWindowTest extends FeatureTestCase
         $this->assertEqualsWithDelta(0.5, (float) $record->overtime_authorized_hours, 0.01, 'el TE respaldado por la ventana se paga aunque el total no supere la jornada');
     }
 
-    public function test_cap_still_limits_inflated_authorization_to_backed_window(): void
+    public function test_approval_is_the_final_quantity_even_if_later_timecard_supports_less(): void
     {
-        // Autorización inflada (2 h) con salida 18:01: lo respaldado por
-        // horario son 31 min → 0.5. El tope sigue vivo — nunca se paga más
-        // de lo que la checada respalda.
+        // La validación del respaldo pertenece al acto de aprobación. Si una
+        // autorización histórica ya quedó aprobada en 2 h, recalcular el reloj
+        // no puede reescribir el compromiso a 0.5 h.
         $employee = $this->employeeWithDianaSchedule();
         $record = $this->lateDayRecord($employee, '08:36:00', '18:01:00');
         $this->approvedOvertime($employee, 2.0, '17:30', '19:30');
@@ -89,7 +89,7 @@ class OvertimeLateArrivalBackedWindowTest extends FeatureTestCase
         app(ZktecoSyncService::class)->recalculateAttendanceRecord($record);
         $record->refresh();
 
-        $this->assertEqualsWithDelta(0.5, (float) $record->overtime_authorized_hours, 0.01, 'el tope al respaldo por horario sigue aplicando');
+        $this->assertEqualsWithDelta(2.0, (float) $record->overtime_authorized_hours, 0.01);
     }
 
     public function test_no_authorization_still_pays_zero(): void

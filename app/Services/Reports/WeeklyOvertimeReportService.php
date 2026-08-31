@@ -407,16 +407,10 @@ class WeeklyOvertimeReportService
             }
         }
 
-        // Tope al timecard (auditoría #20 / DECISIONES derivadas): las horas
-        // autorizadas mostradas no pueden exceder lo realmente detectado en
-        // checadas — el mismo tope que aplica la nómina al pagar. Si se
-        // aprobaron más horas de las trabajadas, el reporte muestra lo
-        // pagable, no la autorización inflada.
-        // En semana de personal de entregas, lo autorizado NO se topa al
-        // timecard: se muestra completo (Dani 2026-07-28), igual que la nómina.
-        // Fuera de eso rige el tope al timecard (auditoría #20).
-        $overtimeHours = ($isDeliveryDay ? $authorizedOvertimeRaw : min($authorizedOvertimeRaw, $detectedHours))
-            + $unbackedExtraHours;
+        // La checada y su redondeo son barreras de APROBACIÓN. El reporte
+        // oficial muestra el compromiso ya aprobado, igual que el recibo; no
+        // vuelve a recortarlo por una relectura posterior del reloj.
+        $overtimeHours = $authorizedOvertimeRaw + $unbackedExtraHours;
         $veladaHours = $isDeliveryDay ? $authorizedVeladaRaw : min($authorizedVeladaRaw, (float) ($record->velada_hours ?? 0));
 
         $mHours = $isNightShift ? 0.0 : $overtimeHours;

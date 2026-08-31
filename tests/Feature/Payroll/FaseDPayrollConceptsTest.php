@@ -178,8 +178,13 @@ class FaseDPayrollConceptsTest extends FeatureTestCase
             ]);
             $entry = $this->calculator()->calculateEmployeePayroll($monthly, $emp->fresh());
 
-            $this->assertEqualsWithDelta(0.00, (float) $entry->vacation_premium_pay, 0.01, "con prima manual {$status} la automática no se suma");
-            $this->assertNotNull($entry->calculation_breakdown['suppressed_vacation_premium'] ?? null, 'el detalle explica la supresión');
+            if ($status === Authorization::STATUS_REJECTED) {
+                $this->assertGreaterThan(0, (float) $entry->vacation_premium_pay, 'rechazar nunca altera la prima automática');
+                $this->assertNull($entry->calculation_breakdown['suppressed_vacation_premium'] ?? null);
+            } else {
+                $this->assertEqualsWithDelta(0.00, (float) $entry->vacation_premium_pay, 0.01, 'la prima manual aprobada sustituye la automática');
+                $this->assertNotNull($entry->calculation_breakdown['suppressed_vacation_premium'] ?? null);
+            }
         }
     }
 

@@ -84,6 +84,9 @@ class OneTimeQuantityConceptTest extends FeatureTestCase
         $this->assertEqualsWithDelta(600.00, $concept['amount'], 0.01, '600 bonos × $1 must pay $600');
         $this->assertEqualsWithDelta(600.00, $concept['quantity'], 0.01);
         $this->assertEqualsWithDelta(600.00, $result['total'], 0.01);
+
+        $recalculated = $this->compensation($employee, [$auth->fresh()->load('compensationType')]);
+        $this->assertSame($result['total'], $recalculated['total'], 'recalcular materializa el mismo compromiso una sola vez');
     }
 
     public function test_one_time_concept_with_price_above_one_multiplies_correctly(): void

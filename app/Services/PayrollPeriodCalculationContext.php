@@ -30,6 +30,7 @@ final class PayrollPeriodCalculationContext
         public readonly Collection $attendanceByEmployee,
         public readonly Collection $incidentsByEmployee,
         public readonly Collection $authorizationsByEmployee,
+        public readonly Collection $modernAuthorizationTypesByEmployee,
         public readonly Collection $holidays,
         public readonly bool $monthlyIncidentsEnsured,
         public readonly ?string $scope = null,

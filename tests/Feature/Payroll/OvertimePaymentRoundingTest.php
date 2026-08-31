@@ -66,7 +66,7 @@ class OvertimePaymentRoundingTest extends FeatureTestCase
         ]);
     }
 
-    public function test_under_twentyfive_minutes_rounds_to_zero_even_if_authorized(): void
+    public function test_rounding_is_validation_before_approval_not_a_post_approval_cut(): void
     {
         $employee = $this->employee();
         // 08:00-17:24 − 60 break = 8h24m → 24 min extra → escalera: 0.
@@ -75,10 +75,10 @@ class OvertimePaymentRoundingTest extends FeatureTestCase
 
         $split = $this->calculator()->calculate($record, $employee);
 
-        $this->assertEqualsWithDelta(0.0, $split['overtime_authorized'], 0.01, '<25 min no es hora extra aunque esté autorizada');
+        $this->assertEqualsWithDelta(1.0, $split['overtime_authorized'], 0.01, 'una aprobación histórica de 1 h no se reabre al recalcular');
     }
 
-    public function test_twentyfive_minutes_already_pays_half_hour(): void
+    public function test_approved_hour_is_not_rounded_down_by_twentyfive_minute_timecard(): void
     {
         $employee = $this->employee();
         // 08:00-17:25 − 60 = 8h25m → 25 min extra → escalera: 0.5h (el .5 se
@@ -88,10 +88,10 @@ class OvertimePaymentRoundingTest extends FeatureTestCase
 
         $split = $this->calculator()->calculate($record, $employee);
 
-        $this->assertEqualsWithDelta(0.5, $split['overtime_authorized'], 0.01, '25 min ya otorga la media hora');
+        $this->assertEqualsWithDelta(1.0, $split['overtime_authorized'], 0.01);
     }
 
-    public function test_twentyfive_to_fortynine_minutes_pays_half_hour(): void
+    public function test_two_approved_hours_survive_a_forty_minute_timecard_recalculation(): void
     {
         $employee = $this->employee();
         // 08:00-17:40 − 60 = 8h40m → 40 min extra → escalera: 0.5h.
@@ -100,10 +100,10 @@ class OvertimePaymentRoundingTest extends FeatureTestCase
 
         $split = $this->calculator()->calculate($record, $employee);
 
-        $this->assertEqualsWithDelta(0.5, $split['overtime_authorized'], 0.01, '25-49 min → media hora');
+        $this->assertEqualsWithDelta(2.0, $split['overtime_authorized'], 0.01);
     }
 
-    public function test_fifty_to_fiftynine_minutes_pays_full_hour(): void
+    public function test_two_approved_hours_survive_a_fiftyfive_minute_timecard_recalculation(): void
     {
         $employee = $this->employee();
         // 08:00-17:55 − 60 = 8h55m → 55 min extra → escalera: 1.0h.
@@ -112,7 +112,7 @@ class OvertimePaymentRoundingTest extends FeatureTestCase
 
         $split = $this->calculator()->calculate($record, $employee);
 
-        $this->assertEqualsWithDelta(1.0, $split['overtime_authorized'], 0.01, '50-59 min → hora completa');
+        $this->assertEqualsWithDelta(2.0, $split['overtime_authorized'], 0.01);
     }
 
     public function test_bies_afternoon_velada_window_splits_extra_into_velada(): void
@@ -246,7 +246,7 @@ class OvertimePaymentRoundingTest extends FeatureTestCase
         $this->assertTrue($conBandera['includes_pending'], 'la bandera solo controla la impresión');
     }
 
-    public function test_weekly_report_caps_authorized_hours_at_timecard(): void
+    public function test_weekly_report_shows_materialized_approval_without_timecard_cut(): void
     {
         $department = Department::factory()->create(['name' => 'Corte', 'code' => 'CORTE']);
         $employee = Employee::factory()->create([
@@ -285,8 +285,8 @@ class OvertimePaymentRoundingTest extends FeatureTestCase
         $day = $report['rows'][0]['days']['2026-06-03'];
 
         $this->assertEqualsWithDelta(2.0, $day['detected_overtime_hours'], 0.01, 'detectadas por escalera: 120 min → 2h');
-        $this->assertEqualsWithDelta(2.0, $day['overtime_hours'], 0.01, 'las 5h aprobadas se topan a las 2h del timecard');
+        $this->assertEqualsWithDelta(5.0, $day['overtime_hours'], 0.01, 'el reporte concilia con las 5 h aprobadas/materializadas');
         $this->assertEqualsWithDelta(0.0, $day['pending_overtime_hours'], 0.01, 'nada pendiente: lo aprobado cubre lo detectado');
-        $this->assertEqualsWithDelta(2.0, $report['rows'][0]['totals']['total_hours'], 0.01);
+        $this->assertEqualsWithDelta(5.0, $report['rows'][0]['totals']['total_hours'], 0.01);
     }
 }

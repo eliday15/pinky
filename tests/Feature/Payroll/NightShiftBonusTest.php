@@ -100,11 +100,10 @@ class NightShiftBonusTest extends FeatureTestCase
         $this->assertSame(1, (int) $entry->night_shift_days, 'la noche aprobada sin salida checada se paga por autorización');
     }
 
-    public function test_approved_night_with_full_checada_that_contradicts_it_is_not_paid(): void
+    public function test_approved_night_is_not_reduced_by_later_timecard_reading(): void
     {
-        // Checada COMPLETA que dice que salió antes de la ventana de velada
-        // (18:45): el reloj prueba que no hubo noche — la aprobación sola no
-        // basta. Vía autoservible: rechazar, o corregir la checada.
+        // El reloj limita antes de aprobar. Una vez aprobada, releer una checada
+        // contradictoria no puede convertir el compromiso en cero.
         $employee = $this->employee();
         $this->approvedNightShift($employee, '2026-06-04');
         AttendanceRecord::factory()->for($employee)->create([
@@ -117,10 +116,10 @@ class NightShiftBonusTest extends FeatureTestCase
 
         $entry = $this->calculator()->calculateEmployeePayroll($this->monthlyPeriod(), $employee);
 
-        $this->assertSame(0, (int) $entry->night_shift_days);
+        $this->assertSame(1, (int) $entry->night_shift_days);
     }
 
-    public function test_no_bonus_without_real_velada_in_attendance(): void
+    public function test_approved_velada_is_materialized_even_when_timecard_has_zero_velada(): void
     {
         $employee = $this->employee();
 
@@ -134,9 +133,8 @@ class NightShiftBonusTest extends FeatureTestCase
 
         $entry = $this->calculator()->calculateEmployeePayroll($this->monthlyPeriod(), $employee);
 
-        $this->assertEqualsWithDelta(0.00, (float) $entry->night_shift_bonus, 0.01, 'sin velada trabajada no hay bono');
-        $this->assertEqualsWithDelta(0.00, (float) $entry->dinner_allowance, 0.01);
-        $this->assertSame(0, (int) $entry->night_shift_days);
+        $this->assertGreaterThan(0, (float) $entry->night_shift_bonus);
+        $this->assertSame(1, (int) $entry->night_shift_days);
     }
 
     public function test_approved_night_without_attendance_record_is_paid_by_authorization(): void
