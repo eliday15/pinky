@@ -935,6 +935,10 @@ class AuthorizationController extends Controller
                 'delete' => $user->can('delete', $authorization),
                 'approve' => $user->can('approve', $authorization),
                 'reject' => $user->can('reject', $authorization),
+                // Mantener paridad con Index: el detalle usa la misma acción
+                // approve() y debe permitir al admin declarar TE real sin
+                // respaldo de checada desde su propio modal.
+                'approve_unbacked' => $user->hasPermissionTo('authorizations.view_all'),
             ],
         ]);
     }

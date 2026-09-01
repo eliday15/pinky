@@ -59,11 +59,15 @@ const showApproveModal = ref(false);
 const approveForm = useForm({
     hours: defaultApproveHours(),
     two_factor_code: '',
+    as_unbacked_extra: false,
 });
 
 const openApprove = () => {
     approveForm.hours = defaultApproveHours();
     approveForm.two_factor_code = '';
+    // Esta decisión es explícita en cada aprobación; nunca conservarla al
+    // volver a abrir el modal.
+    approveForm.as_unbacked_extra = false;
     approveForm.clearErrors();
     showApproveModal.value = true;
 };
@@ -430,6 +434,26 @@ const submitReject = () => {
                             <p v-if="approveForm.errors.hours" class="mt-1 text-sm text-red-600">
                                 {{ approveForm.errors.hours }}
                             </p>
+                        </div>
+                        <!-- Paridad con la lista: solo admin y solo TE puede
+                             autorizar pago completo sin respaldo del reloj. -->
+                        <div
+                            v-if="can?.approve_unbacked && authorization.type === 'overtime' && !authorization.is_unbacked_extra"
+                            class="mb-4"
+                        >
+                            <label class="flex items-start gap-2 text-sm text-gray-700">
+                                <input
+                                    v-model="approveForm.as_unbacked_extra"
+                                    type="checkbox"
+                                    class="mt-0.5 rounded border-gray-300 text-pink-600 focus:ring-pink-500"
+                                />
+                                <span>
+                                    Extra fuera de checada: pagar completo aunque el reloj no lo respalde
+                                    <span class="block text-xs text-gray-400">
+                                        Para trabajo real sin marca. Sin tope de checadas y señalado en el reporte.
+                                    </span>
+                                </span>
+                            </label>
                         </div>
                         <div v-if="hasTwoFactor" class="mb-4">
                             <label class="block text-sm font-medium text-gray-700 mb-1">

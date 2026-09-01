@@ -25,6 +25,20 @@ use Tests\FeatureTestCase;
  */
 class ApproveUnbackedOverrideTest extends FeatureTestCase
 {
+    public function test_detail_approval_form_submits_the_unbacked_override_field(): void
+    {
+        $source = file_get_contents(resource_path('js/Pages/Authorizations/Show.vue'));
+
+        $this->assertIsString($source);
+        $this->assertMatchesRegularExpression(
+            '/useForm\(\{.*?as_unbacked_extra:\s*false,.*?\}\)/s',
+            $source,
+            'El campo debe pertenecer al useForm que Inertia envía al endpoint de aprobación.'
+        );
+        $this->assertStringContainsString('v-model="approveForm.as_unbacked_extra"', $source);
+        $this->assertStringContainsString('can?.approve_unbacked', $source);
+    }
+
     /** Aprobador admin con 2FA usable. Devuelve [User, codigoTotp]. */
     private function approver(): array
     {

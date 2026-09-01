@@ -1151,7 +1151,8 @@ class AuthorizationControllerTest extends FeatureTestCase
                 ->has('can.edit')
                 ->has('can.delete')
                 ->has('can.approve')
-                ->has('can.reject'));
+                ->has('can.reject')
+                ->where('can.approve_unbacked', true));
     }
 
     public function test_show_includes_original_system_punches_for_the_day(): void
