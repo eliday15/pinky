@@ -178,14 +178,103 @@ class FaseDPayrollConceptsTest extends FeatureTestCase
             ]);
             $entry = $this->calculator()->calculateEmployeePayroll($monthly, $emp->fresh());
 
-            if ($status === Authorization::STATUS_REJECTED) {
-                $this->assertGreaterThan(0, (float) $entry->vacation_premium_pay, 'rechazar nunca altera la prima automática');
-                $this->assertNull($entry->calculation_breakdown['suppressed_vacation_premium'] ?? null);
-            } else {
-                $this->assertEqualsWithDelta(0.00, (float) $entry->vacation_premium_pay, 0.01, 'la prima manual aprobada sustituye la automática');
-                $this->assertNotNull($entry->calculation_breakdown['suppressed_vacation_premium'] ?? null);
-            }
+            $this->assertEqualsWithDelta(0.00, (float) $entry->vacation_premium_pay, 0.01,
+                "capturar la prima manual {$status} suprime la automática");
+            $this->assertEqualsWithDelta(0.00, (float) $entry->other_compensation_pay, 0.01,
+                'una prima manual rechazada o en cero no se paga como otro concepto');
+            $this->assertNotNull($entry->calculation_breakdown['suppressed_vacation_premium'] ?? null,
+                'el detalle explica la supresión');
         }
+    }
+
+    public function test_rejected_manual_prima_suppresses_weekly_transfer_premium_without_being_paid(): void
+    {
+        $employee = $this->employee([
+            'daily_salary' => 800.00,
+            'vacation_premium_percentage' => 25.00,
+            'is_imss_enrolled' => true,
+            'imss_number' => '12345678901',
+            'is_trial_period' => false,
+        ]);
+        $this->assertFalse($employee->paysBaseInCash());
+
+        $vac = $this->typeWithCode('VAC', [
+            'category' => 'vacation',
+            'is_paid' => true,
+            'deducts_vacation' => true,
+            'count_mode' => IncidentType::COUNT_WORKING_DAYS,
+        ]);
+        $this->approvedIncident($employee, $vac, '2026-06-01', '2026-06-05', 6);
+
+        $prima = CompensationType::updateOrCreate(['code' => 'PVVP'], [
+            'name' => 'Prima Vacacional VP',
+            'calculation_type' => 'fixed',
+            'fixed_amount' => 1.0,
+            'application_mode' => CompensationType::APPLICATION_ONE_TIME,
+            'authorization_type' => Authorization::TYPE_SPECIAL,
+            'is_active' => true,
+        ]);
+        Authorization::factory()->create([
+            'employee_id' => $employee->id,
+            'date' => '2026-06-03',
+            'type' => Authorization::TYPE_SPECIAL,
+            'compensation_type_id' => $prima->id,
+            'hours' => 80.0,
+            'status' => Authorization::STATUS_REJECTED,
+        ]);
+
+        $weekly = PayrollPeriod::factory()->weekly()->create([
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-07',
+        ]);
+        $entry = $this->calculator()->calculateEmployeePayroll($weekly, $employee);
+
+        $this->assertEqualsWithDelta(0.00, (float) $entry->vacation_premium_pay, 0.01,
+            'la captura rechazada suprime también la prima automática semanal');
+        $this->assertEqualsWithDelta(0.00, (float) $entry->other_compensation_pay, 0.01,
+            'la captura rechazada no se paga como concepto');
+        $this->assertNotNull($entry->calculation_breakdown['suppressed_vacation_premium'] ?? null);
+    }
+
+    public function test_other_rejected_concept_neither_pays_nor_suppresses_vacation_premium(): void
+    {
+        $employee = $this->employee(['vacation_premium_percentage' => 25.00]);
+        $vac = $this->typeWithCode('VAC', [
+            'category' => 'vacation',
+            'is_paid' => true,
+            'deducts_vacation' => true,
+            'count_mode' => IncidentType::COUNT_WORKING_DAYS,
+        ]);
+        $this->approvedIncident($employee, $vac, '2026-06-01', '2026-06-05', 6);
+
+        $bonus = CompensationType::updateOrCreate(['code' => 'BONREJ'], [
+            'name' => 'Bono manual rechazado',
+            'calculation_type' => 'fixed',
+            'fixed_amount' => 500.0,
+            'application_mode' => CompensationType::APPLICATION_ONE_TIME,
+            'authorization_type' => Authorization::TYPE_SPECIAL,
+            'is_active' => true,
+        ]);
+        Authorization::factory()->create([
+            'employee_id' => $employee->id,
+            'date' => '2026-06-10',
+            'type' => Authorization::TYPE_SPECIAL,
+            'compensation_type_id' => $bonus->id,
+            'hours' => 1.0,
+            'status' => Authorization::STATUS_REJECTED,
+        ]);
+
+        $monthly = PayrollPeriod::factory()->monthly()->create([
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-30',
+        ]);
+        $entry = $this->calculator()->calculateEmployeePayroll($monthly, $employee);
+
+        $this->assertEqualsWithDelta(1200.00, (float) $entry->vacation_premium_pay, 0.01,
+            'solo un concepto Prima Vacacional suprime la prima automática');
+        $this->assertEqualsWithDelta(0.00, (float) $entry->other_compensation_pay, 0.01,
+            'el concepto rechazado no se paga');
+        $this->assertNull($entry->calculation_breakdown['suppressed_vacation_premium'] ?? null);
     }
 
     public function test_vacation_premium_is_paid_as_separate_concept(): void

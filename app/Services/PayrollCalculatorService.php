@@ -1706,8 +1706,11 @@ class PayrollCalculatorService
      */
     /**
      * Etiqueta de la prima vacacional capturada A MANO para el empleado en el
-     * rango ("aprobada \$0"), o null si no hay ninguna. Una rechazada nunca
-     * sustituye ni modifica el cálculo automático.
+     * rango ("aprobada \$0", "rechazada", ...), o null si no hay ninguna.
+     * Cualquier estado cuenta: capturar ESTE concepto significa que la prima
+     * se manejará por fuera de la automática. Esto no convierte una captura
+     * rechazada en percepción; el pago de conceptos sigue leyendo solamente
+     * las autorizaciones aprobadas/pagadas.
      */
     private function manualVacationPremiumLabel(Employee $employee, Carbon $startDate, Carbon $endDate): ?string
     {
@@ -1715,9 +1718,6 @@ class PayrollCalculatorService
             ->where('employee_id', $employee->id)
             ->whereDate('date', '>=', $startDate->toDateString())
             ->whereDate('date', '<=', $endDate->toDateString())
-            // Rechazar nunca es una decisión monetaria. Solo una captura
-            // explícitamente aprobada/pagada puede sustituir la automática.
-            ->whereIn('status', [Authorization::STATUS_APPROVED, Authorization::STATUS_PAID])
             ->whereHas('compensationType', fn ($q) => $q->where('name', 'like', '%prima vacacional%'))
             ->orderByDesc('date')
             ->first(['status', 'hours']);
