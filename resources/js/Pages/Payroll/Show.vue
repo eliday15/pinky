@@ -422,22 +422,42 @@ const closeCash = () => {
         </div>
 
         <!-- Aprobado y sin nómina que lo pague -->
-        <div v-if="unpaidAuthorizationAlerts.length" class="border border-amber-300 bg-amber-50 rounded-lg p-4 mb-6">
-            <p class="text-sm font-semibold text-amber-800">
-                {{ unpaidAuthorizationAlerts.length }} autorización(es) aprobada(s) que ninguna nómina paga
-            </p>
-            <p class="mt-1 text-sm text-amber-700">
-                Están aprobadas y caen en estas fechas, pero su concepto se paga en un periodo que no existe.
-                Genera la nómina que falta (o cambia el "¿Cuándo se paga?" del concepto) y vuelve a calcular.
-            </p>
-            <ul class="mt-2 space-y-1">
-                <li v-for="(a, idx) in unpaidAuthorizationAlerts" :key="idx" class="text-sm text-amber-800">
-                    <span class="font-medium">{{ a.employee }}</span> — {{ a.concept }}
-                    <span class="text-amber-600">· {{ formatDate(a.date) }}</span>
-                    <span class="text-amber-600"> · {{ a.reason }}</span>
-                </li>
-            </ul>
-        </div>
+        <details v-if="unpaidAuthorizationAlerts.length" class="group border border-amber-300 bg-amber-50 rounded-lg mb-6">
+            <summary class="flex items-start justify-between gap-4 p-4 cursor-pointer list-none select-none [&::-webkit-details-marker]:hidden">
+                <div>
+                    <p class="text-sm font-semibold text-amber-800">
+                        {{ unpaidAuthorizationAlerts.length }} autorización(es) aprobada(s) que ninguna nómina paga
+                    </p>
+                    <p class="mt-1 text-sm text-amber-700">
+                        Genera la nómina que falta o corrige el periodo de pago del concepto y vuelve a calcular.
+                    </p>
+                </div>
+                <span class="shrink-0 inline-flex items-center gap-1 text-sm font-medium text-amber-800">
+                    <span class="group-open:hidden">Ver detalles</span>
+                    <span class="hidden group-open:inline">Ocultar detalles</span>
+                    <svg
+                        class="w-4 h-4 transition-transform group-open:rotate-180"
+                        viewBox="0 0 20 20"
+                        fill="currentColor"
+                        aria-hidden="true"
+                    >
+                        <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.168l3.71-3.938a.75.75 0 1 1 1.08 1.04l-4.25 4.5a.75.75 0 0 1-1.08 0l-4.25-4.5a.75.75 0 0 1 .02-1.06Z" clip-rule="evenodd" />
+                    </svg>
+                </span>
+            </summary>
+            <div class="border-t border-amber-200 px-4 py-3">
+                <p class="text-sm text-amber-700">
+                    Están aprobadas y caen en estas fechas, pero su concepto se paga en un periodo que no existe.
+                </p>
+                <ul class="mt-2 max-h-80 overflow-y-auto space-y-1 pr-2">
+                    <li v-for="(a, idx) in unpaidAuthorizationAlerts" :key="idx" class="text-sm text-amber-800">
+                        <span class="font-medium">{{ a.employee }}</span> — {{ a.concept }}
+                        <span class="text-amber-600">· {{ formatDate(a.date) }}</span>
+                        <span class="text-amber-600"> · {{ a.reason }}</span>
+                    </li>
+                </ul>
+            </div>
+        </details>
 
         <!-- What this period pays -->
         <div class="border rounded-lg p-4 mb-6" :class="typeInfo.tone.box">
