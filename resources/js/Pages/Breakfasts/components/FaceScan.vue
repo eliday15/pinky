@@ -22,13 +22,13 @@ let intervalId = null;
 let referenceDescriptor = null;
 let consecutiveMatches = 0;
 let destroyed = false;
+let detectionInFlight = false;
 
 const MODELS_URI = '/models-face';
 const REQUIRED_CONSECUTIVE = 2;
 const REFERENCE_DETECTION_OPTIONS = [
-    { inputSize: 416, scoreThreshold: 0.5 },
-    { inputSize: 512, scoreThreshold: 0.35 },
-    { inputSize: 608, scoreThreshold: 0.25 },
+    { inputSize: 320, scoreThreshold: 0.15 },
+    { inputSize: 416, scoreThreshold: 0.1 },
 ];
 
 const stopAll = () => {
@@ -56,34 +56,39 @@ const captureSnapshot = () => {
 };
 
 const detectFrame = async () => {
-    if (destroyed || !video.value || video.value.readyState < 2) return;
+    if (destroyed || detectionInFlight || !video.value || video.value.readyState < 2) return;
+    detectionInFlight = true;
 
-    const detection = await faceapi
-        .detectSingleFace(video.value, new faceapi.TinyFaceDetectorOptions({ inputSize: 320 }))
-        .withFaceLandmarks()
-        .withFaceDescriptor();
+    try {
+        const detection = await faceapi
+            .detectSingleFace(video.value, new faceapi.TinyFaceDetectorOptions({ inputSize: 320 }))
+            .withFaceLandmarks()
+            .withFaceDescriptor();
 
-    if (destroyed) return;
+        if (destroyed) return;
 
-    if (!detection) {
-        consecutiveMatches = 0;
-        statusText.value = 'Acércate y mira a la cámara...';
-        return;
-    }
-
-    const distance = faceapi.euclideanDistance(referenceDescriptor, detection.descriptor);
-
-    if (distance <= props.maxDistance) {
-        consecutiveMatches += 1;
-        statusText.value = 'Verificando...';
-        if (consecutiveMatches >= REQUIRED_CONSECUTIVE) {
-            const snapshot = captureSnapshot();
-            stopAll();
-            emit('verified', { distance, snapshot });
+        if (!detection) {
+            consecutiveMatches = 0;
+            statusText.value = 'Acércate y mira a la cámara...';
+            return;
         }
-    } else {
-        consecutiveMatches = 0;
-        statusText.value = 'Rostro no reconocido, intenta de frente y con buena luz.';
+
+        const distance = faceapi.euclideanDistance(referenceDescriptor, detection.descriptor);
+
+        if (distance <= props.maxDistance) {
+            consecutiveMatches += 1;
+            statusText.value = 'Verificando...';
+            if (consecutiveMatches >= REQUIRED_CONSECUTIVE) {
+                const snapshot = captureSnapshot();
+                stopAll();
+                emit('verified', { distance, snapshot });
+            }
+        } else {
+            consecutiveMatches = 0;
+            statusText.value = 'Rostro no reconocido, intenta de frente y con buena luz.';
+        }
+    } finally {
+        detectionInFlight = false;
     }
 };
 
