@@ -548,6 +548,10 @@ const typeLabels = {
                                 <span class="font-medium">{{ auth.hours || 0 }}</span>
                                 <span class="text-gray-500 text-xs ml-1">{{ auth.hours == 1 ? 'dia' : 'dias' }}</span>
                             </template>
+                            <template v-else-if="auth.is_unit_based">
+                                <span class="font-medium">{{ auth.hours || 0 }}</span>
+                                <span class="text-gray-500 text-xs ml-1">unidades</span>
+                            </template>
                             <template v-else-if="auth.compensation_type?.application_mode === 'one_time'">
                                 <span class="font-medium">{{ auth.hours || 1 }}</span>
                                 <span class="text-gray-500 text-xs ml-1">{{ auth.hours == 1 ? 'bono' : 'bonos' }}</span>

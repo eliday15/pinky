@@ -697,22 +697,29 @@ class CompensationRateResolverService
             // (or an authorization with no quantity) keeps paying its fixed
             // amount exactly once, as before. A NEGATIVE quantity is a
             // deduction (descuento) and keeps its sign.
+            $hasOneTimeQuantity = $compType->application_mode === CompensationType::APPLICATION_ONE_TIME
+                && abs((float) $auth->hours) > 0;
             $quantity = 1.0;
-            if ($compType->application_mode === CompensationType::APPLICATION_ONE_TIME
-                && abs((float) $auth->hours) > 0) {
+            if ($hasOneTimeQuantity) {
                 $quantity = (float) $auth->hours;
             }
 
-            $amount = $compType->calculateCompensation(
-                $hourlyRate,
-                $dailySalary,
-                $hours,
-                $days,
-                $rate['percentage'],
-                $rate['fixed_amount'],
-            );
+            // Quantity-based fixed concepts are unit prices. Preserve the
+            // complete configured precision (e.g. $0.0055) and round only the
+            // final payout; calculateCompensation intentionally rounds ordinary
+            // monetary concepts to cents and would otherwise turn it into $0.01.
+            $amount = $hasOneTimeQuantity && $compType->calculation_type === 'fixed'
+                ? round((float) ($rate['fixed_amount'] ?? 0) * $quantity, 2)
+                : $compType->calculateCompensation(
+                    $hourlyRate,
+                    $dailySalary,
+                    $hours,
+                    $days,
+                    $rate['percentage'],
+                    $rate['fixed_amount'],
+                );
 
-            if ($quantity !== 1.0) {
+            if ($hasOneTimeQuantity && $compType->calculation_type !== 'fixed') {
                 $amount = round($amount * $quantity, 2);
             }
 

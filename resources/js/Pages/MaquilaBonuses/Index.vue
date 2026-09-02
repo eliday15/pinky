@@ -49,17 +49,20 @@ const guardarFiltro = (code) => {
 
 const money = (n) =>
     n == null ? '—' : new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n);
+const unitMoney = (n) => n == null ? '—' : new Intl.NumberFormat('es-MX', {
+    style: 'currency', currency: 'MXN', minimumFractionDigits: 2, maximumFractionDigits: 4,
+}).format(n);
 const num = (n) => (n == null ? '—' : new Intl.NumberFormat('es-MX').format(n));
 
-// Monto estimado por empleado asignado = cantidad × costo/unidad.
-const perEmployee = (c) =>
-    c.quantity != null && c.cost_per_unit != null ? c.quantity * c.cost_per_unit : null;
-// Total del concepto = por empleado × empleados asignados.
-const conceptTotal = (c) =>
-    perEmployee(c) != null ? perEmployee(c) * c.assigned_count : null;
+const rateRange = (c) => c.effective_unit_rate_min === c.effective_unit_rate_max
+    ? unitMoney(c.effective_unit_rate_min)
+    : `${unitMoney(c.effective_unit_rate_min)} – ${unitMoney(c.effective_unit_rate_max)}`;
+const payoutRange = (c) => c.estimated_payout_min === c.estimated_payout_max
+    ? money(c.estimated_payout_min)
+    : `${money(c.estimated_payout_min)} – ${money(c.estimated_payout_max)}`;
 
 const grandTotal = computed(() =>
-    props.concepts.reduce((acc, c) => acc + (conceptTotal(c) || 0), 0));
+    props.concepts.reduce((acc, c) => acc + (c.estimated_total || 0), 0));
 
 const anyConfigPending = computed(() =>
     props.concepts.some((c) => !c.exists || c.cost_per_unit === 0 || c.assigned_count === 0));
@@ -180,7 +183,7 @@ const anyConfigPending = computed(() =>
                         <tr class="text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                             <th class="px-4 py-3">Bono</th>
                             <th class="px-4 py-3 text-right">Cantidad del mes</th>
-                            <th class="px-4 py-3 text-right">Costo / unidad</th>
+                            <th class="px-4 py-3 text-right">Costo efectivo / unidad</th>
                             <th class="px-4 py-3 text-right">Empleados</th>
                             <th class="px-4 py-3 text-right">Total estimado</th>
                             <th class="px-4 py-3 text-center">Autorizaciones</th>
@@ -203,13 +206,17 @@ const anyConfigPending = computed(() =>
                                 {{ num(c.quantity) }}
                             </td>
                             <td class="px-4 py-3 text-right tabular-nums" :class="c.cost_per_unit === 0 ? 'text-yellow-600' : 'text-gray-700'">
-                                {{ money(c.cost_per_unit) }}
+                                <div>{{ rateRange(c) }}</div>
+                                <div v-if="c.assigned_count" class="text-[11px] text-gray-400">según tarifa de cada empleado</div>
                             </td>
                             <td class="px-4 py-3 text-right tabular-nums" :class="c.assigned_count === 0 ? 'text-yellow-600' : 'text-gray-700'">
                                 {{ c.assigned_count }}
                             </td>
                             <td class="px-4 py-3 text-right tabular-nums font-medium text-gray-900">
-                                {{ money(conceptTotal(c)) }}
+                                <div>{{ money(c.estimated_total) }}</div>
+                                <div v-if="c.assigned_count" class="text-[11px] font-normal text-gray-500">
+                                    {{ payoutRange(c) }} por empleado
+                                </div>
                             </td>
                             <td class="px-4 py-3 text-center text-xs">
                                 <span v-if="c.authorizations.pending" class="mr-1 rounded bg-amber-100 px-1.5 py-0.5 text-amber-800">{{ c.authorizations.pending }} pend.</span>

@@ -34,6 +34,7 @@ const hasTwoFactor = computed(() => usePage().props.auth.has_two_factor);
 /** Hour-based types use the escalonado select for partial approval; everything
  *  else (per_day / one_time quantities) uses a plain number input. */
 const isHoursType = computed(() => ['overtime', 'night_shift'].includes(props.authorization.type));
+const isUnitBased = computed(() => !!props.authorization.is_unit_based);
 
 /** Escalonado ladder: every half hour from 0.5h to 24h. */
 const hourStepOptions = computed(() => {
@@ -198,7 +199,7 @@ const submitReject = () => {
                                 <div>
                                     <dt class="text-sm font-medium text-gray-500">Tipo</dt>
                                     <dd class="mt-1 text-sm text-gray-900">
-                                        {{ typeLabels[authorization.type] || authorization.type }}
+                                        {{ authorization.compensation_type?.name || typeLabels[authorization.type] || authorization.type }}
                                     </dd>
                                 </div>
                                 <div>
@@ -219,9 +220,9 @@ const submitReject = () => {
                                     </dd>
                                 </div>
                                 <div v-if="authorization.hours">
-                                    <dt class="text-sm font-medium text-gray-500">Horas</dt>
+                                    <dt class="text-sm font-medium text-gray-500">{{ isUnitBased ? 'Cantidad' : 'Horas' }}</dt>
                                     <dd class="mt-1 text-sm text-gray-900">
-                                        {{ authorization.hours }} horas
+                                        {{ authorization.hours }} {{ isUnitBased ? 'unidades' : 'horas' }}
                                     </dd>
                                 </div>
                                 <div v-if="weekendUnits">
@@ -275,7 +276,7 @@ const submitReject = () => {
                 </div>
 
                 <!-- Checadas originales del sistema -->
-                <div class="bg-white rounded-lg shadow p-6">
+                <div v-if="!isUnitBased" class="bg-white rounded-lg shadow p-6">
                     <h3 class="text-lg font-semibold text-gray-800 mb-4">Checadas originales del sistema</h3>
                     <template v-if="punches && punches.found">
                         <dl class="grid grid-cols-2 gap-4 mb-4">

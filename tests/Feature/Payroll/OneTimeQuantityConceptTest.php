@@ -103,6 +103,37 @@ class OneTimeQuantityConceptTest extends FeatureTestCase
         $this->assertEqualsWithDelta(750.00, $concept['amount'], 0.01, '300 × $2.50 = $750');
     }
 
+    public function test_quantity_uses_full_unit_price_precision_and_rounds_only_final_payout(): void
+    {
+        $employee = Employee::factory()->create(['status' => 'active']);
+        $type = $this->oneTimeType(0.0055);
+        $employee->compensationTypes()->attach($type->id, ['is_active' => true]);
+
+        $auth = $this->approvedAuth($employee, $type, 210751);
+        $result = $this->compensation($employee, [$auth->load('compensationType')]);
+        $concept = collect($result['concepts'])->firstWhere('code', $type->code);
+
+        $this->assertSame(1159.13, $concept['amount']);
+        $this->assertSame(1159.13, $result['total']);
+    }
+
+    public function test_employee_unit_price_override_beats_global_price_for_quantity(): void
+    {
+        $employee = Employee::factory()->create(['status' => 'active']);
+        $type = $this->oneTimeType(0.0055);
+        $employee->compensationTypes()->attach($type->id, [
+            'is_active' => true,
+            'custom_fixed_amount' => 0.0075,
+        ]);
+
+        $auth = $this->approvedAuth($employee, $type, 1000);
+        $result = $this->compensation($employee, [$auth->load('compensationType')]);
+        $concept = collect($result['concepts'])->firstWhere('code', $type->code);
+
+        $this->assertSame(7.5, $concept['amount']);
+        $this->assertSame(0.0075, $concept['rate']['fixed_amount']);
+    }
+
     public function test_one_time_concept_without_quantity_pays_fixed_amount_once(): void
     {
         $employee = Employee::factory()->create(['status' => 'active']);

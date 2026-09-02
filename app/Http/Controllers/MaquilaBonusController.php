@@ -6,6 +6,7 @@ use App\Models\Authorization;
 use App\Models\CompensationType;
 use App\Services\MaquilaBonusAuthorizationService;
 use App\Services\MaquilaBonusMetricsService;
+use App\Services\CompensationRateResolverService;
 use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -29,6 +30,7 @@ class MaquilaBonusController extends Controller
     public function __construct(
         private readonly MaquilaBonusMetricsService $metrics,
         private readonly MaquilaBonusAuthorizationService $generator,
+        private readonly CompensationRateResolverService $rateResolver,
     ) {}
 
     public function index(Request $request): Response
@@ -113,6 +115,13 @@ class MaquilaBonusController extends Controller
         $codes = array_keys(MaquilaBonusMetricsService::catalog());
 
         $concepts = CompensationType::whereIn('code', $codes)
+            ->with([
+                'positions',
+                'departments',
+                'employees' => fn ($q) => $q
+                    ->where('employee_compensation_type.is_active', true)
+                    ->with(['compensationTypes', 'position', 'department']),
+            ])
             ->withCount([
                 'employees as assigned_count' => fn ($q) => $q->where('employee_compensation_type.is_active', true),
                 'approvers',
@@ -141,6 +150,22 @@ class MaquilaBonusController extends Controller
             $concept = $concepts->get($code);
             $counts = $concept ? ($statusCounts->get($concept->id) ?? collect()) : collect();
             $supportsCortador2 = in_array($code, $cortador2Codes, true);
+            $quantity = $quantities[$code] ?? null;
+            $employeeRates = $concept?->employees
+                ->map(function ($employee) use ($concept, $quantity) {
+                    $rate = $this->rateResolver->resolveRate($employee, $concept);
+                    $unitRate = (float) ($rate['fixed_amount'] ?? 0);
+
+                    return [
+                        'employee_id' => $employee->id,
+                        'name' => $employee->full_name,
+                        'unit_rate' => $unitRate,
+                        'estimated_payout' => $quantity === null ? null : round($unitRate * $quantity, 2),
+                    ];
+                })
+                ->values() ?? collect();
+            $unitRates = $employeeRates->pluck('unit_rate');
+            $payouts = $employeeRates->pluck('estimated_payout')->filter(fn ($value) => $value !== null);
 
             $rows[] = [
                 'code' => $code,
@@ -151,7 +176,13 @@ class MaquilaBonusController extends Controller
                 'cost_per_unit' => $concept ? (float) $concept->fixed_amount : null,
                 'assigned_count' => $concept->assigned_count ?? 0,
                 'approver_restricted' => ($concept->approvers_count ?? 0) > 0,
-                'quantity' => $quantities[$code] ?? null,
+                'quantity' => $quantity,
+                'effective_unit_rate_min' => $unitRates->isEmpty() ? null : (float) $unitRates->min(),
+                'effective_unit_rate_max' => $unitRates->isEmpty() ? null : (float) $unitRates->max(),
+                'estimated_payout_min' => $payouts->isEmpty() ? null : (float) $payouts->min(),
+                'estimated_payout_max' => $payouts->isEmpty() ? null : (float) $payouts->max(),
+                'estimated_total' => $payouts->isEmpty() ? null : round((float) $payouts->sum(), 2),
+                'employee_payouts' => $employeeRates->all(),
                 'supports_cortador2_filter' => $supportsCortador2,
                 'cortador2_name' => $supportsCortador2 ? $this->metrics->cortador2NameFor($code) : null,
                 'authorizations' => [

@@ -1185,6 +1185,44 @@ class AuthorizationControllerTest extends FeatureTestCase
                 ->has('punches.raw', 2));
     }
 
+    public function test_maquila_authorization_is_unit_based_and_suppresses_irrelevant_punches(): void
+    {
+        $this->actingAsAdmin();
+        $employee = Employee::factory()->create();
+        $type = CompensationType::factory()->create([
+            'name' => 'Maquila mandada',
+            'code' => 'MAQ_MANDADA',
+            'application_mode' => CompensationType::APPLICATION_ONE_TIME,
+        ]);
+        AttendanceRecord::factory()->create([
+            'employee_id' => $employee->id,
+            'work_date' => '2026-08-31',
+            'check_in' => '08:00:00',
+            'check_out' => '17:00:00',
+        ]);
+        $auth = Authorization::factory()->special()->create([
+            'employee_id' => $employee->id,
+            'requested_by' => User::factory()->create()->id,
+            'compensation_type_id' => $type->id,
+            'date' => '2026-08-31',
+            'hours' => 210751,
+            'bulk_group_id' => 'MAQBONO-2026-08',
+        ]);
+
+        $this->get(route('authorizations.show', $auth))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('authorization.is_unit_based', true)
+                ->where('authorization.compensation_type.name', 'Maquila mandada')
+                ->where('punches', null));
+
+        $this->get(route('authorizations.index'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('authorizations.data.0.is_unit_based', true)
+                ->where('authorizations.data.0.compensation_type.name', 'Maquila mandada'));
+    }
+
     public function test_show_surfaces_weekend_units_for_almacen_pt(): void
     {
         // Caso Miriam: Almacén PT, fin de semana de 13 h reales (8 base + 5

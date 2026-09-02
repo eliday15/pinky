@@ -121,6 +121,7 @@ class AuthorizationController extends Controller
         // already accounts for pending-vs-admin, ownership, team scope and the
         // paid lock, so the frontend doesn't have to duplicate that logic.
         $authorizations->through(function ($authorization) use ($user, $approvedOmissions) {
+            $authorization->is_unit_based = str_starts_with((string) $authorization->bulk_group_id, 'MAQBONO-');
             $authorization->can_approve = $user->can('approve', $authorization);
             // Per-row también para rechazar: un concepto con aprobadores
             // nombrados restringe ambas acciones, así que el botón global de
@@ -843,14 +844,18 @@ class AuthorizationController extends Controller
 
         $user = Auth::user();
         $authorization->load(['employee.department', 'requestedBy', 'approvedBy', 'attendanceRecord', 'compensationType']);
+        $isUnitBased = str_starts_with((string) $authorization->bulk_group_id, 'MAQBONO-');
+        $authorization->is_unit_based = $isUnitBased;
 
         // Checadas originales del sistema para el día de la autorización, para
         // que el revisor vea las marcas reales (entrada/salida emparejadas y
         // todas las marcas del día) sin salir de esta pantalla.
         $dateString = Carbon::parse($authorization->date)->toDateString();
-        $record = AttendanceRecord::where('employee_id', $authorization->employee_id)
-            ->whereDate('work_date', $dateString)
-            ->first();
+        $record = $isUnitBased
+            ? null
+            : AttendanceRecord::where('employee_id', $authorization->employee_id)
+                ->whereDate('work_date', $dateString)
+                ->first();
 
         // Conteo de fines/comidas del día, igual que la nómina y el reporte.
         // Almacén PT (weekend_unit_hours): floor de horas CORRIDAS de entrada a
@@ -922,7 +927,7 @@ class AuthorizationController extends Controller
                 'from_capture' => $weekendFromCapture,
                 'label' => $pullRule === CompensationType::PULL_RULE_COMIDA ? 'comida(s)' : 'fin(es) de semana',
             ],
-            'punches' => [
+            'punches' => $isUnitBased ? null : [
                 'found' => (bool) $record,
                 'check_in' => $record?->check_in,
                 'check_out' => $record?->check_out,
