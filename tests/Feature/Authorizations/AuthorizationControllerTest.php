@@ -1223,6 +1223,61 @@ class AuthorizationControllerTest extends FeatureTestCase
                 ->where('authorizations.data.0.compensation_type.name', 'Maquila mandada'));
     }
 
+    public function test_superadmin_sees_maquila_estimate_using_employee_custom_fixed_rate(): void
+    {
+        $this->actingAsSuperadmin();
+        $employee = Employee::factory()->create();
+        $type = CompensationType::factory()->fixed(0.0055)->create([
+            'name' => 'Maquila mandada',
+            'code' => 'MAQ_MANDADA',
+            'application_mode' => CompensationType::APPLICATION_ONE_TIME,
+        ]);
+        $employee->compensationTypes()->attach($type->id, [
+            'is_active' => true,
+            'custom_fixed_amount' => 0.0075,
+        ]);
+        $authorization = Authorization::factory()->special()->create([
+            'employee_id' => $employee->id,
+            'requested_by' => User::factory()->create()->id,
+            'compensation_type_id' => $type->id,
+            'hours' => 210751,
+            'bulk_group_id' => 'MAQBONO-2026-08',
+        ]);
+
+        $this->get(route('authorizations.show', $authorization))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('estimatedBonusAmount', 1580.63));
+    }
+
+    public function test_admin_does_not_receive_maquila_monetary_estimate(): void
+    {
+        $this->actingAsAdmin();
+        $employee = Employee::factory()->create();
+        $type = CompensationType::factory()->fixed(0.0055)->create([
+            'code' => 'MAQ_MANDADA',
+            'application_mode' => CompensationType::APPLICATION_ONE_TIME,
+        ]);
+        $employee->compensationTypes()->attach($type->id, [
+            'is_active' => true,
+            'custom_fixed_amount' => 0.0075,
+        ]);
+        $authorization = Authorization::factory()->special()->create([
+            'employee_id' => $employee->id,
+            'requested_by' => User::factory()->create()->id,
+            'compensation_type_id' => $type->id,
+            'hours' => 210751,
+            'bulk_group_id' => 'MAQBONO-2026-08',
+        ]);
+
+        $this->get(route('authorizations.show', $authorization))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->missing('estimatedBonusAmount')
+                ->missing('authorization.compensation_type.fixed_amount')
+                ->missing('authorization.compensation_type.percentage_value'));
+    }
+
     public function test_show_surfaces_weekend_units_for_almacen_pt(): void
     {
         // Caso Miriam: Almacén PT, fin de semana de 13 h reales (8 base + 5

@@ -14,8 +14,15 @@ const props = defineProps({
     // approved_at, approved_by } o null. La checada no respaldará estas horas,
     // pero la falta de marca ya está justificada.
     approvedOmission: { type: Object, default: null },
+    // Server only provides this sensitive payroll value to superadmins.
+    estimatedBonusAmount: { type: Number, default: null },
     can: Object,
 });
+
+const formatCurrency = (amount) => new Intl.NumberFormat('es-MX', {
+    style: 'currency',
+    currency: 'MXN',
+}).format(amount);
 
 /** Format a punch time as 12-hour es-MX with AM/PM (e.g. '10:04 p. m.'). */
 const fmtTime = (t) => formatTime12h(t);
@@ -223,6 +230,12 @@ const submitReject = () => {
                                     <dt class="text-sm font-medium text-gray-500">{{ isUnitBased ? 'Cantidad' : 'Horas' }}</dt>
                                     <dd class="mt-1 text-sm text-gray-900">
                                         {{ authorization.hours }} {{ isUnitBased ? 'unidades' : 'horas' }}
+                                    </dd>
+                                </div>
+                                <div v-if="isUnitBased && estimatedBonusAmount !== null">
+                                    <dt class="text-sm font-medium text-gray-500">Monto estimado</dt>
+                                    <dd class="mt-1 text-sm font-semibold text-emerald-700">
+                                        {{ formatCurrency(estimatedBonusAmount) }}
                                     </dd>
                                 </div>
                                 <div v-if="weekendUnits">

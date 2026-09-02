@@ -13,6 +13,7 @@ use App\Models\Department;
 use App\Models\Employee;
 use App\Models\SystemSetting;
 use App\Services\CompanionConceptService;
+use App\Services\CompensationRateResolverService;
 use App\Services\OvertimeRoundingService;
 use App\Services\PayrollInvalidationService;
 use App\Services\WeekendHolidayAutoApprovalService;
@@ -838,8 +839,10 @@ class AuthorizationController extends Controller
     /**
      * Display the specified authorization.
      */
-    public function show(Authorization $authorization): Response
-    {
+    public function show(
+        Authorization $authorization,
+        CompensationRateResolverService $rateResolver,
+    ): Response {
         $this->authorize('view', $authorization);
 
         $user = Auth::user();
@@ -908,6 +911,31 @@ class AuthorizationController extends Controller
             ->latest('approved_at')
             ->first();
 
+        // The unit price and resulting payroll amount are sensitive. Compute
+        // and serialize them only for the superadmin; other roles must not be
+        // able to recover the value from the Inertia payload.
+        $superadminProps = [];
+        if ($isUnitBased && $user->hasRole('superadmin') && $authorization->compensationType) {
+            $rate = $rateResolver->resolveRate(
+                $authorization->employee,
+                $authorization->compensationType,
+            );
+
+            if ($rate['fixed_amount'] !== null) {
+                $superadminProps['estimatedBonusAmount'] = round(
+                    (float) $authorization->hours * $rate['fixed_amount'],
+                    2,
+                );
+            }
+        }
+
+        if ($isUnitBased && ! $user->hasRole('superadmin') && $authorization->compensationType) {
+            $authorization->compensationType->makeHidden([
+                'fixed_amount',
+                'percentage_value',
+            ]);
+        }
+
         return Inertia::render('Authorizations/Show', [
             'authorization' => $authorization,
             'approvedOmission' => $approvedOmission === null ? null : [
@@ -945,6 +973,7 @@ class AuthorizationController extends Controller
                 // respaldo de checada desde su propio modal.
                 'approve_unbacked' => $user->hasPermissionTo('authorizations.view_all'),
             ],
+            ...$superadminProps,
         ]);
     }
 
