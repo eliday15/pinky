@@ -104,6 +104,7 @@ class PositionController extends Controller
             'compensation_type_ids.*' => ['exists:compensation_types,id'],
             'compensation_type_percentages' => ['nullable', 'array'],
             'compensation_type_fixed_amounts' => ['nullable', 'array'],
+            'compensation_type_fixed_amounts.*' => ['nullable', 'numeric', 'decimal:0,4', 'between:-99999999.9999,99999999.9999'],
         ]);
 
         // Validate no circular supervisor reference
@@ -206,6 +207,7 @@ class PositionController extends Controller
             'compensation_type_ids.*' => ['exists:compensation_types,id'],
             'compensation_type_percentages' => ['nullable', 'array'],
             'compensation_type_fixed_amounts' => ['nullable', 'array'],
+            'compensation_type_fixed_amounts.*' => ['nullable', 'numeric', 'decimal:0,4', 'between:-99999999.9999,99999999.9999'],
         ]);
 
         // Validate no circular supervisor reference

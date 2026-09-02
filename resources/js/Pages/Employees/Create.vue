@@ -1211,7 +1211,7 @@ watch(() => form.hire_date, onHireDateChange);
                                             :value="form.compensation_type_overrides[ct.id] || ct.fixed_amount"
                                             @input="form.compensation_type_overrides = { ...form.compensation_type_overrides, [ct.id]: parseFloat($event.target.value) || 0 }"
                                             type="number"
-                                            step="0.01"
+                                            step="0.0001"
                                             title="Un monto negativo se descuenta cada periodo (p. ej. Infonavit)"
                                             class="w-24 rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 text-sm"
                                         />

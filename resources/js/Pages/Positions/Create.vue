@@ -329,7 +329,7 @@ const submit = () => {
                                     <input
                                         v-model="form.compensation_type_fixed_amounts[ct.id]"
                                         type="number"
-                                        step="0.01"
+                                        step="0.0001"
                                         :placeholder="ct.fixed_amount || '0.00'"
                                         class="w-28 rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 text-sm"
                                     />

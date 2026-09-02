@@ -95,7 +95,7 @@ class CompensationTypeController extends Controller
             'percentage_value' => ['required_if:calculation_type,percentage', 'nullable', 'numeric', 'min:0.01', 'max:999.99'],
             // Permite montos NEGATIVOS: un monto negativo es una deducción
             // (Infonavit, préstamo) que resta del efectivo (Luis 2026-07-09).
-            'fixed_amount' => ['required_if:calculation_type,fixed', 'nullable', 'numeric', 'between:-999999.99,999999.99', 'not_in:0'],
+            'fixed_amount' => ['required_if:calculation_type,fixed', 'nullable', 'numeric', 'decimal:0,4', 'between:-99999999.9999,99999999.9999', 'not_in:0'],
             'is_active' => ['boolean'],
             'application_mode' => ['required', Rule::in(['per_hour', 'per_day', 'one_time'])],
             'authorization_type' => ['nullable', Rule::in(['overtime', 'night_shift', 'holiday_worked', 'special'])],
@@ -110,14 +110,17 @@ class CompensationTypeController extends Controller
             'position_ids.*' => ['exists:positions,id'],
             'position_percentages' => ['nullable', 'array'],
             'position_fixed_amounts' => ['nullable', 'array'],
+            'position_fixed_amounts.*' => ['nullable', 'numeric', 'decimal:0,4', 'between:-99999999.9999,99999999.9999'],
             'department_ids' => ['nullable', 'array'],
             'department_ids.*' => ['exists:departments,id'],
             'department_percentages' => ['nullable', 'array'],
             'department_fixed_amounts' => ['nullable', 'array'],
+            'department_fixed_amounts.*' => ['nullable', 'numeric', 'decimal:0,4', 'between:-99999999.9999,99999999.9999'],
             'employee_ids' => ['nullable', 'array'],
             'employee_ids.*' => ['exists:employees,id'],
             'employee_percentages' => ['nullable', 'array'],
             'employee_fixed_amounts' => ['nullable', 'array'],
+            'employee_fixed_amounts.*' => ['nullable', 'numeric', 'decimal:0,4', 'between:-99999999.9999,99999999.9999'],
             'approver_ids' => ['nullable', 'array'],
             'approver_ids.*' => ['exists:app_users,id'],
         ]);
@@ -191,7 +194,7 @@ class CompensationTypeController extends Controller
             'percentage_value' => ['required_if:calculation_type,percentage', 'nullable', 'numeric', 'min:0.01', 'max:999.99'],
             // Permite montos NEGATIVOS: un monto negativo es una deducción
             // (Infonavit, préstamo) que resta del efectivo (Luis 2026-07-09).
-            'fixed_amount' => ['required_if:calculation_type,fixed', 'nullable', 'numeric', 'between:-999999.99,999999.99', 'not_in:0'],
+            'fixed_amount' => ['required_if:calculation_type,fixed', 'nullable', 'numeric', 'decimal:0,4', 'between:-99999999.9999,99999999.9999', 'not_in:0'],
             'is_active' => ['boolean'],
             'application_mode' => ['required', Rule::in(['per_hour', 'per_day', 'one_time'])],
             'authorization_type' => ['nullable', Rule::in(['overtime', 'night_shift', 'holiday_worked', 'special'])],
@@ -206,14 +209,17 @@ class CompensationTypeController extends Controller
             'position_ids.*' => ['exists:positions,id'],
             'position_percentages' => ['nullable', 'array'],
             'position_fixed_amounts' => ['nullable', 'array'],
+            'position_fixed_amounts.*' => ['nullable', 'numeric', 'decimal:0,4', 'between:-99999999.9999,99999999.9999'],
             'department_ids' => ['nullable', 'array'],
             'department_ids.*' => ['exists:departments,id'],
             'department_percentages' => ['nullable', 'array'],
             'department_fixed_amounts' => ['nullable', 'array'],
+            'department_fixed_amounts.*' => ['nullable', 'numeric', 'decimal:0,4', 'between:-99999999.9999,99999999.9999'],
             'employee_ids' => ['nullable', 'array'],
             'employee_ids.*' => ['exists:employees,id'],
             'employee_percentages' => ['nullable', 'array'],
             'employee_fixed_amounts' => ['nullable', 'array'],
+            'employee_fixed_amounts.*' => ['nullable', 'numeric', 'decimal:0,4', 'between:-99999999.9999,99999999.9999'],
             'approver_ids' => ['nullable', 'array'],
             'approver_ids.*' => ['exists:app_users,id'],
         ]);

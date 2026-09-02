@@ -6,6 +6,7 @@ use App\Models\CompensationType;
 use App\Models\Department;
 use App\Models\Employee;
 use App\Models\Position;
+use Illuminate\Support\Facades\DB;
 use Inertia\Testing\AssertableInertia as Assert;
 use Tests\FeatureTestCase;
 
@@ -233,6 +234,67 @@ class CompensationTypeControllerTest extends FeatureTestCase
             'calculation_type' => 'fixed',
             'fixed_amount' => 150.00,
         ]);
+    }
+
+    public function test_fixed_amounts_keep_four_decimal_places_at_every_override_level(): void
+    {
+        $this->actingAsAdmin();
+        $position = Position::factory()->create();
+        $department = Department::factory()->create();
+        $employee = Employee::factory()->create();
+
+        $this->post(route('compensation-types.store'), [
+            'name' => 'Costo por pieza',
+            'code' => 'FIX-4DP',
+            'calculation_type' => 'fixed',
+            'fixed_amount' => '0.0055',
+            'application_mode' => 'one_time',
+            'priority' => 0,
+            'position_ids' => [$position->id],
+            'position_fixed_amounts' => [$position->id => '0.0066'],
+            'department_ids' => [$department->id],
+            'department_fixed_amounts' => [$department->id => '0.0077'],
+            'employee_ids' => [$employee->id],
+            'employee_fixed_amounts' => [$employee->id => '0.0088'],
+        ])->assertRedirect(route('compensation-types.index'));
+
+        $type = CompensationType::where('code', 'FIX-4DP')->firstOrFail();
+
+        $this->assertSame('0.0055', $type->fixed_amount);
+        $this->assertEquals(0.0066, DB::table('position_compensation_type')
+            ->where('position_id', $position->id)
+            ->where('compensation_type_id', $type->id)
+            ->value('default_fixed_amount'));
+        $this->assertEquals(0.0077, DB::table('department_compensation_type')
+            ->where('department_id', $department->id)
+            ->where('compensation_type_id', $type->id)
+            ->value('default_fixed_amount'));
+        $this->assertEquals(0.0088, DB::table('employee_compensation_type')
+            ->where('employee_id', $employee->id)
+            ->where('compensation_type_id', $type->id)
+            ->value('custom_fixed_amount'));
+    }
+
+    public function test_store_rejects_fixed_amounts_with_more_than_four_decimal_places(): void
+    {
+        $this->actingAsAdmin();
+        $employee = Employee::factory()->create();
+
+        $this->from(route('compensation-types.create'))->post(route('compensation-types.store'), [
+            'name' => 'Precision invalida',
+            'code' => 'FIX-5DP',
+            'calculation_type' => 'fixed',
+            'fixed_amount' => '0.00555',
+            'application_mode' => 'one_time',
+            'priority' => 0,
+            'employee_ids' => [$employee->id],
+            'employee_fixed_amounts' => [$employee->id => '0.00666'],
+        ])->assertSessionHasErrors([
+            'fixed_amount',
+            "employee_fixed_amounts.{$employee->id}",
+        ]);
+
+        $this->assertDatabaseMissing('compensation_types', ['code' => 'FIX-5DP']);
     }
 
     public function test_admin_can_store_recurring_concept_with_luis_payload(): void
@@ -652,6 +714,30 @@ class CompensationTypeControllerTest extends FeatureTestCase
             'application_mode' => 'per_day',
             'priority' => 5,
         ]);
+    }
+
+    public function test_admin_can_update_fixed_amount_and_employee_override_to_four_decimal_places(): void
+    {
+        $this->actingAsAdmin();
+        $type = CompensationType::factory()->fixed(1)->create(['code' => 'UPD-4DP']);
+        $employee = Employee::factory()->create();
+
+        $this->put(route('compensation-types.update', $type), [
+            'name' => $type->name,
+            'code' => 'UPD-4DP',
+            'calculation_type' => 'fixed',
+            'fixed_amount' => '0.0055',
+            'application_mode' => 'one_time',
+            'priority' => 0,
+            'employee_ids' => [$employee->id],
+            'employee_fixed_amounts' => [$employee->id => '0.0065'],
+        ])->assertRedirect(route('compensation-types.index'));
+
+        $this->assertSame('0.0055', $type->fresh()->fixed_amount);
+        $this->assertEquals(0.0065, DB::table('employee_compensation_type')
+            ->where('employee_id', $employee->id)
+            ->where('compensation_type_id', $type->id)
+            ->value('custom_fixed_amount'));
     }
 
     public function test_locked_type_cannot_be_updated_or_destroyed(): void

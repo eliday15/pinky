@@ -405,7 +405,7 @@ const submit = () => {
                             <input
                                 v-model="form.fixed_amount"
                                 type="number"
-                                step="0.01"
+                                step="0.0001"
                                 class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
                                 :class="{ 'border-red-500': form.errors.fixed_amount }"
                             />
@@ -734,7 +734,7 @@ const submit = () => {
                                         <input
                                             v-model="form.employee_fixed_amounts[emp.id]"
                                             type="number"
-                                            step="0.01"
+                                            step="0.0001"
                                             :placeholder="form.fixed_amount || '0.00'"
                                             class="w-28 rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 text-sm"
                                         />

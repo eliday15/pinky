@@ -76,7 +76,7 @@ class CompensationType extends Model
      */
     public function auditSubjectLabel(): string
     {
-        return trim('Concepto ' . ($this->code ? "{$this->code} - " : '') . ($this->name ?? ''));
+        return trim('Concepto '.($this->code ? "{$this->code} - " : '').($this->name ?? ''));
     }
 
     protected $fillable = [
@@ -101,7 +101,7 @@ class CompensationType extends Model
 
     protected $casts = [
         'percentage_value' => 'decimal:2',
-        'fixed_amount' => 'decimal:2',
+        'fixed_amount' => 'decimal:4',
         'is_active' => 'boolean',
         'priority' => 'integer',
         'is_recurring' => 'boolean',
