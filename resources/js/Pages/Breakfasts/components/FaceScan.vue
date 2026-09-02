@@ -25,6 +25,11 @@ let destroyed = false;
 
 const MODELS_URI = '/models-face';
 const REQUIRED_CONSECUTIVE = 2;
+const REFERENCE_DETECTION_OPTIONS = [
+    { inputSize: 416, scoreThreshold: 0.5 },
+    { inputSize: 512, scoreThreshold: 0.35 },
+    { inputSize: 608, scoreThreshold: 0.25 },
+];
 
 const stopAll = () => {
     if (intervalId) {
@@ -82,6 +87,23 @@ const detectFrame = async () => {
     }
 };
 
+// WebGL precision varies between browsers/GPUs. A face close to TinyFace's
+// default confidence threshold can therefore be detected on one computer but
+// missed on another. Retry only the reference-photo detection progressively;
+// identity matching still uses the configured maxDistance unchanged.
+const detectReferenceFace = async (image) => {
+    for (const options of REFERENCE_DETECTION_OPTIONS) {
+        const detection = await faceapi
+            .detectSingleFace(image, new faceapi.TinyFaceDetectorOptions(options))
+            .withFaceLandmarks()
+            .withFaceDescriptor();
+
+        if (detection) return detection;
+    }
+
+    return null;
+};
+
 onMounted(async () => {
     try {
         faceapi = await import('@vladmandic/face-api');
@@ -95,10 +117,7 @@ onMounted(async () => {
 
         statusText.value = 'Analizando foto de referencia...';
         const referenceImage = await faceapi.fetchImage(props.photoUrl);
-        const reference = await faceapi
-            .detectSingleFace(referenceImage, new faceapi.TinyFaceDetectorOptions({ inputSize: 416 }))
-            .withFaceLandmarks()
-            .withFaceDescriptor();
+        const reference = await detectReferenceFace(referenceImage);
 
         if (!reference) {
             fail('No se detectó un rostro en la foto registrada del empleado. Acude a RRHH para tomar una nueva foto.');
