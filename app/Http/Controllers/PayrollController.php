@@ -1019,6 +1019,12 @@ class PayrollController extends Controller
         // Conceptos itemizados (Cena, Puntualidad, etc.) con su cantidad — desglosa
         // el agrupado "Otros conceptos".
         foreach ($breakdown['compensation_concepts'] ?? [] as $concept) {
+            // Los conceptos informativos aparecen en el recibo, pero no son
+            // dinero a entregar y por eso nunca forman parte del cobro.
+            if (! empty($concept['informational'])) {
+                continue;
+            }
+
             $amount = (float) ($concept['amount'] ?? 0);
             $qty = (float) ($concept['quantity'] ?? 0);
             $hours = (float) ($concept['hours'] ?? 0);

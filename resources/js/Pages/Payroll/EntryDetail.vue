@@ -67,7 +67,7 @@ const isOtroConcepto = (c) => {
 // Solo los positivos: su suma es exactamente entry.other_compensation_pay (un
 // recurrente negativo es una deducción, no parte de "Otros conceptos").
 const otrosConceptos = computed(() =>
-    (breakdown.compensation_concepts ?? []).filter((c) => isOtroConcepto(c) && Number(c.amount) > 0)
+    (breakdown.compensation_concepts ?? []).filter((c) => !c.informational && isOtroConcepto(c) && Number(c.amount) > 0)
 );
 
 // Detalle "cuántos hubo" — mismo formato que el modal de cobro.
@@ -225,7 +225,7 @@ const transferLines = computed(() => {
     // las paga por transferencia junto con el sueldo. Se muestran aquí, no en el
     // efectivo (allá se saltan por el mismo flag).
     for (const c of (breakdown.compensation_concepts ?? [])) {
-        if (c.via_transfer && money(c.amount) > 0) {
+        if (!c.informational && c.via_transfer && money(c.amount) > 0) {
             lines.push({ label: c.name, detail: conceptDetail(c), amount: money(c.amount) });
         }
     }
@@ -538,6 +538,9 @@ const roundingIsCents = computed(() => Math.abs(pesoRounding.value) < 1);
                     <div>
                         <span class="text-gray-600">{{ concept.name }}</span>
                         <span class="ml-2 px-2 py-0.5 bg-gray-100 rounded text-xs text-gray-500">{{ concept.code }}</span>
+                        <span v-if="concept.informational" class="ml-2 px-2 py-0.5 bg-blue-100 rounded text-xs text-blue-700">
+                            Informativo · no se paga
+                        </span>
                         <span v-if="concept.hours > 0" class="text-xs text-gray-400 ml-2">
                             ({{ concept.hours }}h)
                         </span>

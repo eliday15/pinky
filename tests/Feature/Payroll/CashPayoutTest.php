@@ -587,6 +587,7 @@ class CashPayoutTest extends FeatureTestCase
                 'compensation_concepts' => [
                     ['name' => 'Cena por entrega a Walmart', 'code' => 'Cena_Walmart', 'amount' => 50, 'days' => 1],
                     ['name' => 'Puntualidad Almacen', 'code' => 'Puntualidad Alm', 'amount' => 600, 'quantity' => 600, 'rate' => ['fixed_amount' => 1]],
+                    ['name' => 'Desayunos', 'code' => 'DES', 'amount' => 90, 'quantity' => 3, 'informational' => true],
                 ],
             ],
         ]);
@@ -594,8 +595,9 @@ class CashPayoutTest extends FeatureTestCase
         $this->actingAsSuperadmin();
         $this->post(route('payroll.closeCash', $period->id));
 
-        // Efectivo = Horas extra $100 + Cena $50 + Puntualidad $600 (sin base ni
-        // "Otros conceptos" agrupado). Los tres renglones, con su cantidad.
+        // Efectivo = Horas extra $100 + Cena $50 + Puntualidad $600 (sin base,
+        // "Otros conceptos" agrupado ni los Desayunos informativos). Los tres
+        // renglones pagables conservan su cantidad.
         $this->get(route('payroll.cash', $period->id))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page

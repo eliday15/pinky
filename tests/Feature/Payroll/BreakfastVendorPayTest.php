@@ -3,6 +3,7 @@
 namespace Tests\Feature\Payroll;
 
 use App\Models\BreakfastClaim;
+use App\Models\CompensationType;
 use App\Models\Employee;
 use App\Models\PayrollPeriod;
 use App\Models\SystemSetting;
@@ -10,12 +11,11 @@ use App\Services\PayrollCalculatorService;
 use Tests\FeatureTestCase;
 
 /**
- * Feature tests for the breakfast vendor payout in the weekly payroll.
+ * Feature tests for the informational breakfast total in the weekly payroll.
  *
- * All breakfasts claimed at the kiosk during the period are paid to the ONE
+ * All breakfasts claimed at the kiosk during the period are shown to the ONE
  * configured vendor employee, in the period that pays BASE (weekly), summing
- * the frozen unit_cost snapshots so mid-week price changes never alter what
- * was already claimed.
+ * the frozen unit_cost snapshots without changing any payable amount.
  */
 class BreakfastVendorPayTest extends FeatureTestCase
 {
@@ -61,9 +61,17 @@ class BreakfastVendorPayTest extends FeatureTestCase
         parent::tearDown();
     }
 
-    public function test_weekly_period_pays_vendor_the_sum_of_claims(): void
+    public function test_weekly_period_shows_claim_sum_without_paying_vendor(): void
     {
         $vendor = $this->makeVendor();
+        $vendor->update(['is_imss_enrolled' => true]);
+
+        // Aun si el catálogo reutiliza DES como concepto transferible, el
+        // desayuno informativo nunca debe entrar al banco.
+        CompensationType::factory()->fixed(1)->create([
+            'code' => 'DES',
+            'pays_via_transfer' => true,
+        ]);
 
         // 3 desayunos de distintos empleados dentro de la semana.
         BreakfastClaim::factory()->onDate('2026-06-02')->withCost(30)->create();
@@ -72,15 +80,19 @@ class BreakfastVendorPayTest extends FeatureTestCase
 
         $entry = $this->calculator()->calculateEmployeePayroll($this->weeklyPeriod(), $vendor);
 
-        $this->assertEqualsWithDelta(95.00, (float) $entry->other_compensation_pay, 0.01);
+        $this->assertEqualsWithDelta(0.00, (float) $entry->other_compensation_pay, 0.01);
         $this->assertEqualsWithDelta(0.00, (float) $entry->regular_pay, 0.01, 'vendor has no base salary');
-        $this->assertEqualsWithDelta(95.00, (float) $entry->net_pay, 0.01, 'vendor only earns breakfasts');
+        $this->assertEqualsWithDelta(0.00, (float) $entry->gross_pay, 0.01);
+        $this->assertEqualsWithDelta(0.00, (float) $entry->net_pay, 0.01);
+        $this->assertEqualsWithDelta(0.00, (float) $entry->cash_amount, 0.01);
+        $this->assertEqualsWithDelta(0.00, (float) $entry->bank_amount, 0.01);
 
         $concepts = collect($entry->calculation_breakdown['compensation_concepts']);
         $des = $concepts->firstWhere('code', 'DES');
         $this->assertNotNull($des, 'DES concept present in breakdown');
         $this->assertSame(3, $des['quantity']);
         $this->assertEqualsWithDelta(95.00, $des['amount'], 0.01);
+        $this->assertTrue($des['informational']);
     }
 
     public function test_claims_outside_the_period_are_not_paid(): void
@@ -93,7 +105,10 @@ class BreakfastVendorPayTest extends FeatureTestCase
 
         $entry = $this->calculator()->calculateEmployeePayroll($this->weeklyPeriod(), $vendor);
 
-        $this->assertEqualsWithDelta(30.00, (float) $entry->other_compensation_pay, 0.01);
+        $this->assertEqualsWithDelta(0.00, (float) $entry->other_compensation_pay, 0.01);
+        $des = collect($entry->calculation_breakdown['compensation_concepts'])->firstWhere('code', 'DES');
+        $this->assertSame(1, $des['quantity']);
+        $this->assertEqualsWithDelta(30.00, $des['amount'], 0.01);
     }
 
     public function test_monthly_period_does_not_pay_breakfasts(): void
@@ -122,7 +137,7 @@ class BreakfastVendorPayTest extends FeatureTestCase
         $second = $this->calculator()->calculateEmployeePayroll($period, $vendor);
 
         $this->assertSame($first->id, $second->id, 'same entry updated, not duplicated');
-        $this->assertEqualsWithDelta(30.00, (float) $second->other_compensation_pay, 0.01);
+        $this->assertEqualsWithDelta(0.00, (float) $second->other_compensation_pay, 0.01);
         $this->assertEqualsWithDelta((float) $first->net_pay, (float) $second->net_pay, 0.001);
     }
 
@@ -159,7 +174,7 @@ class BreakfastVendorPayTest extends FeatureTestCase
         $this->assertEqualsWithDelta(0.00, (float) $entry->other_compensation_pay, 0.01);
     }
 
-    public function test_vendor_with_salary_gets_base_plus_breakfasts(): void
+    public function test_vendor_with_salary_sees_breakfasts_without_changing_pay(): void
     {
         $vendor = $this->makeVendor();
         $vendor->update(['daily_salary' => 100]);
@@ -169,9 +184,14 @@ class BreakfastVendorPayTest extends FeatureTestCase
 
         $entry = $this->calculator()->calculateEmployeePayroll($this->weeklyPeriod(), $vendor);
 
-        // Base 100 × 7 + 60 de desayunos.
+        // Base 100 × 7; los $60 de desayunos son solo informativos.
         $this->assertEqualsWithDelta(700.00, (float) $entry->regular_pay, 0.01);
-        $this->assertEqualsWithDelta(60.00, (float) $entry->other_compensation_pay, 0.01);
-        $this->assertEqualsWithDelta(760.00, (float) $entry->net_pay, 0.01);
+        $this->assertEqualsWithDelta(0.00, (float) $entry->other_compensation_pay, 0.01);
+        $this->assertEqualsWithDelta(700.00, (float) $entry->gross_pay, 0.01);
+        $this->assertEqualsWithDelta(700.00, (float) $entry->net_pay, 0.01);
+
+        $des = collect($entry->calculation_breakdown['compensation_concepts'])->firstWhere('code', 'DES');
+        $this->assertEqualsWithDelta(60.00, $des['amount'], 0.01);
+        $this->assertTrue($des['informational']);
     }
 }

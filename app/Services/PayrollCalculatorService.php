@@ -896,14 +896,14 @@ class PayrollCalculatorService
         $dinnerAllowance = $useCompTypes ? 0.0 : $nightShiftMetrics['dinner_allowance'];
         $nightShiftBonusPay = $useCompTypes ? 0.0 : $nightShiftMetrics['night_shift_bonus'];
 
-        // ---- Desayunos (vendedor) ----
+        // ---- Desayunos (vendedor, solo informativo) ----
         // El total de desayunos entregados en el kiosco durante el periodo se
-        // paga al empleado VENDEDOR configurado, en el periodo que paga BASE
-        // (semanal). Se suma desde los snapshots de breakfast_claims — cada
-        // claim congeló su precio — así que el recálculo es idempotente y un
-        // cambio de precio a mitad de semana no altera lo ya cobrado. Corre
-        // fuera de la ruta de conceptos: el vendedor puede no tener conceptos
-        // ni sueldo diario y aun así cobrar sus desayunos.
+        // muestra en la nómina del VENDEDOR configurado, en el periodo que paga
+        // BASE (semanal). Se calcula desde los snapshots de breakfast_claims —
+        // cada claim congeló su precio — pero NO se suma a ningún bucket de
+        // pago: other_compensation_pay, bruto, neto, efectivo y transferencia
+        // permanecen intactos. El marcador informational evita que las vistas
+        // de pago lo interpreten como una percepción.
         $breakfastCount = 0;
         $breakfastPay = 0.0;
         $breakfastVendorId = (int) SystemSetting::get('breakfast_vendor_employee_id', 0);
@@ -913,7 +913,6 @@ class PayrollCalculatorService
             $breakfastPay = round((float) $breakfastClaims->sum('unit_cost'), 2);
 
             if ($breakfastPay > 0) {
-                $otherCompensationPay += $breakfastPay;
                 $compensationConcepts[] = [
                     'code' => 'DES',
                     'name' => 'Desayunos',
@@ -923,6 +922,7 @@ class PayrollCalculatorService
                     'rate' => ['percentage' => null, 'fixed_amount' => 0.0],
                     'amount' => $breakfastPay,
                     'source' => 'breakfast_claims',
+                    'informational' => true,
                 ];
             }
         }
@@ -977,6 +977,10 @@ class PayrollCalculatorService
                 if (! empty($transferCodes)) {
                     $umaDailyConcepts = (float) SystemSetting::get('fiscal_uma_daily', 117.31);
                     foreach ($compensationConcepts as &$concept) {
+                        if (! empty($concept['informational'])) {
+                            continue;
+                        }
+
                         if (in_array(($concept['code'] ?? ''), $transferCodes, true) && empty($concept['via_transfer'])) {
                             $amount = (float) $concept['amount'];
                             $transferExtras += $amount;
@@ -1521,6 +1525,7 @@ class PayrollCalculatorService
         if ($preloadedTypes !== null) {
             return $preloadedTypes->contains($type);
         }
+
         return Authorization::query()
             ->where('employee_id', $employeeId)
             ->where('type', $type)
