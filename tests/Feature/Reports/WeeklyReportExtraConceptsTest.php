@@ -50,6 +50,14 @@ class WeeklyReportExtraConceptsTest extends FeatureTestCase
             'hours' => 1,
             'status' => Authorization::STATUS_APPROVED,
         ]);
+        Authorization::factory()->create([
+            'employee_id' => $employee->id,
+            'date' => '2026-03-11',
+            'type' => Authorization::TYPE_SPECIAL,
+            'compensation_type_id' => $custom->id,
+            'hours' => 1,
+            'status' => Authorization::STATUS_PENDING,
+        ]);
 
         $report = app(WeeklyOvertimeReportService::class)->buildReport($dept, Carbon::parse(self::MONDAY));
 
@@ -62,6 +70,17 @@ class WeeklyReportExtraConceptsTest extends FeatureTestCase
         // CONCEPTOS que muestran las plantillas).
         $this->assertSame('Cena por entrega a Walmart', $report['totals']['extra_concepts'][0]['name']);
         $this->assertSame(1, $report['totals']['extra_concepts'][0]['count']);
+        $this->assertSame(60.0, $report['rows'][0]['compensation']['total']);
+        $this->assertSame('CENAWM', $report['rows'][0]['compensation']['concepts'][0]['code']);
+        $this->assertSame(60.0, $report['rows'][0]['compensation']['concepts'][0]['amount']);
+
+        $safeReport = app(WeeklyOvertimeReportService::class)->buildReport(
+            $dept,
+            Carbon::parse(self::MONDAY),
+            includeAmounts: false,
+        );
+        $this->assertArrayNotHasKey('compensation', $safeReport['rows'][0]);
+        $this->assertArrayNotHasKey('amount', $safeReport['rows'][0]['extra_concepts'][0]);
     }
 
     public function test_known_concepts_do_not_appear_as_extra(): void

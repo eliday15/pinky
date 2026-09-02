@@ -190,6 +190,7 @@ class RecurringCompensationTest extends FeatureTestCase
 
         $this->assertNotNull($concept, 'el recurrente semanal aparece en Otros Conceptos');
         $this->assertEqualsWithDelta(150.00, (float) $concept['amount'], 0.01, 'muestra el valor en pesos del concepto');
+        $this->assertEqualsWithDelta(150.00, (float) $row['compensation']['total'], 0.01, 'el total monetario incluye el recurrente igual que nómina');
     }
 
     public function test_te_report_shows_concept_value_for_bonos_and_deduction(): void

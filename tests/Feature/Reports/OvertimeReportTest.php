@@ -3,6 +3,7 @@
 namespace Tests\Feature\Reports;
 
 use App\Models\Department;
+use App\Models\Employee;
 use Inertia\Testing\AssertableInertia as Assert;
 use Tests\FeatureTestCase;
 
@@ -150,7 +151,53 @@ class OvertimeReportTest extends FeatureTestCase
                     ->where('weekend_unit_hours', null) // depto sin regla de unidades
                     ->has('dates', 7)
                     ->has('rows')
-                    ->has('totals')));
+                    ->has('totals')
+                    ->etc()));
+    }
+
+    public function test_admin_can_preview_all_departments_with_department_labels_and_amounts(): void
+    {
+        $this->actingAsAdmin();
+        $first = Department::factory()->create(['name' => 'Corte']);
+        $second = Department::factory()->create(['name' => 'Diseño']);
+        Employee::factory()->create(['department_id' => $first->id, 'full_name' => 'Ana Corte']);
+        Employee::factory()->create(['department_id' => $second->id, 'full_name' => 'Bety Diseño']);
+
+        $this->get(route('reports.overtime-weekly.preview', [
+            'department_id' => 'all',
+            'week_start' => self::WEEK_START,
+        ]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Reports/OvertimeWeekly/Preview')
+                ->where('report.department.id', 'all')
+                ->where('report.is_consolidated', true)
+                ->where('report.includes_amounts', true)
+                ->has('report.rows', 2)
+                ->where('report.rows.0.department.name', 'Corte')
+                ->has('report.rows.0.compensation.concepts')
+                ->has('report.rows.0.compensation.total'));
+    }
+
+    public function test_supervisor_cannot_request_all_departments_and_never_receives_amounts(): void
+    {
+        $user = $this->actingAsSupervisor();
+        $employee = $this->attachEmployee($user);
+
+        $this->get(route('reports.overtime-weekly.preview', [
+            'department_id' => 'all',
+            'week_start' => self::WEEK_START,
+        ]))->assertForbidden();
+
+        $this->get(route('reports.overtime-weekly.preview', [
+            'department_id' => $employee->department_id,
+            'week_start' => self::WEEK_START,
+        ]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('report.includes_amounts', false)
+                ->missing('report.totals.compensation')
+                ->missing('report.rows.0.compensation'));
     }
 
     /**
@@ -308,7 +355,8 @@ class OvertimeReportTest extends FeatureTestCase
                         ->has('velada_count')
                         ->has('cena_count')
                         ->has('comida_count')
-                        ->etc())));
+                        ->etc())
+                    ->etc()));
     }
 
     /**

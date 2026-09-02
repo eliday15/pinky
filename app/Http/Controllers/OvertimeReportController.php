@@ -64,6 +64,7 @@ class OvertimeReportController extends Controller implements HasMiddleware
         return Inertia::render('Reports/OvertimeWeekly/Index', [
             'departments' => $departments,
             'defaultWeekStart' => Carbon::now()->startOfWeek()->toDateString(),
+            'canViewAllDepartments' => $this->isAdmin($request),
         ]);
     }
 
@@ -102,8 +103,11 @@ class OvertimeReportController extends Controller implements HasMiddleware
     {
         [$department, $start, $end] = $this->resolveInputs($request);
 
-        $report = $this->reportService->buildReport($department, $start, $end, $request->boolean('include_pending'));
-        $template = $this->registry->for($department);
+        $showAmounts = $this->isAdmin($request);
+        $report = $department
+            ? $this->reportService->buildReport($department, $start, $end, $request->boolean('include_pending'), $showAmounts)
+            : $this->reportService->buildConsolidatedReport($start, $end, $request->boolean('include_pending'), $showAmounts);
+        $template = $department ? $this->registry->for($department) : $this->registry->consolidated();
 
         return Inertia::render('Reports/OvertimeWeekly/Preview', [
             'report' => $report,
@@ -118,9 +122,12 @@ class OvertimeReportController extends Controller implements HasMiddleware
     {
         [$department, $start, $end] = $this->resolveInputs($request);
 
-        $report = $this->reportService->buildReport($department, $start, $end, $request->boolean('include_pending'));
+        $showAmounts = $this->isAdmin($request);
+        $report = $department
+            ? $this->reportService->buildReport($department, $start, $end, $request->boolean('include_pending'), $showAmounts)
+            : $this->reportService->buildConsolidatedReport($start, $end, $request->boolean('include_pending'), $showAmounts);
         $report['show_observations'] = $request->boolean('show_observations', true);
-        $template = $this->registry->for($department);
+        $template = $department ? $this->registry->for($department) : $this->registry->consolidated();
 
         $pdf = Pdf::loadView($template->pdfView(), ['report' => $report])
             ->setPaper('a4', 'landscape');
@@ -137,9 +144,12 @@ class OvertimeReportController extends Controller implements HasMiddleware
     {
         [$department, $start, $end] = $this->resolveInputs($request);
 
-        $report = $this->reportService->buildReport($department, $start, $end, $request->boolean('include_pending'));
+        $showAmounts = $this->isAdmin($request);
+        $report = $department
+            ? $this->reportService->buildReport($department, $start, $end, $request->boolean('include_pending'), $showAmounts)
+            : $this->reportService->buildConsolidatedReport($start, $end, $request->boolean('include_pending'), $showAmounts);
         $report['show_observations'] = $request->boolean('show_observations', true);
-        $template = $this->registry->for($department);
+        $template = $department ? $this->registry->for($department) : $this->registry->consolidated();
 
         $title = sprintf(
             'FORMATO DE TIEMPO EXTRA %s - PERIODO DEL %s AL %s%s',
@@ -169,22 +179,33 @@ class OvertimeReportController extends Controller implements HasMiddleware
      * [week_start, end_date]; when absent it falls back to the lun–dom week
      * that contains week_start.
      *
-     * @return array{0: Department, 1: Carbon, 2: ?Carbon}
+     * @return array{0: ?Department, 1: Carbon, 2: ?Carbon}
      */
     private function resolveInputs(Request $request): array
     {
         $validated = $request->validate([
-            'department_id' => ['required', 'integer', 'exists:departments,id'],
+            'department_id' => ['required'],
             'week_start' => ['required', 'date'],
             'end_date' => ['nullable', 'date', 'after_or_equal:week_start'],
         ]);
 
-        $department = Department::findOrFail($validated['department_id']);
+        $allDepartments = $validated['department_id'] === 'all';
+        if ($allDepartments && ! $this->isAdmin($request)) {
+            abort(403, 'Solo administración puede generar el reporte de todos los departamentos.');
+        }
+
+        if (! $allDepartments) {
+            $request->validate([
+                'department_id' => ['integer', 'exists:departments,id'],
+            ]);
+        }
+
+        $department = $allDepartments ? null : Department::findOrFail((int) $validated['department_id']);
 
         // Mismo candado que el selector: un encargado no genera (ni exporta)
         // el reporte de un departamento ajeno aunque arme la URL a mano.
         $allowed = $this->allowedDepartmentIds($request->user());
-        if ($allowed !== null && ! $allowed->contains($department->id)) {
+        if ($department && $allowed !== null && ! $allowed->contains($department->id)) {
             abort(403, 'Solo puedes generar el reporte de tus departamentos.');
         }
 
@@ -205,5 +226,10 @@ class OvertimeReportController extends Controller implements HasMiddleware
         $suffix = ($report['includes_pending'] ?? false) ? '_con_pendientes' : '';
 
         return "tiempo_extra_{$code}_{$weekStart}{$suffix}.{$extension}";
+    }
+
+    private function isAdmin(Request $request): bool
+    {
+        return $request->user()->hasAnyRole(['superadmin', 'admin']);
     }
 }

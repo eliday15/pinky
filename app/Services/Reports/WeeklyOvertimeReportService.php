@@ -7,6 +7,7 @@ use App\Models\Authorization;
 use App\Models\CompensationType;
 use App\Models\Department;
 use App\Models\Employee;
+use App\Models\Holiday;
 use App\Services\CompensationRateResolverService;
 use App\Services\OvertimeRoundingService;
 use Carbon\Carbon;
@@ -67,7 +68,7 @@ class WeeklyOvertimeReportService
      * Returns:
      *     Array with department, dates, rows and totals ready for templates.
      */
-    public function buildReport(Department $department, Carbon $weekStart, ?Carbon $rangeEnd = null, bool $includePending = false): array
+    public function buildReport(Department $department, Carbon $weekStart, ?Carbon $rangeEnd = null, bool $includePending = false, bool $includeAmounts = true): array
     {
         // Rango libre: si viene una fecha fin se respeta el rango literal
         // [inicio, fin] que pidió el usuario ("de qué día a qué día"). Sin
@@ -125,6 +126,7 @@ class WeeklyOvertimeReportService
                 Authorization::STATUS_PAID,
                 Authorization::STATUS_PENDING,
             ])
+            ->orderBy('id')
             ->get()
             ->groupBy('employee_id');
 
@@ -144,6 +146,10 @@ class WeeklyOvertimeReportService
         // N horas trabajadas (weekend_unit_hours) en vez de por día. NULL =
         // comportamiento normal (se muestran las horas/conteo de siempre).
         $weekendUnitHours = $department->weekend_unit_hours;
+        $holidayDates = Holiday::whereBetween('date', [$start->toDateString(), $end->toDateString()])
+            ->pluck('date')
+            ->map(fn ($date) => Carbon::parse($date)->toDateString())
+            ->all();
 
         $rows = $employees->map(fn (Employee $employee) => $this->buildEmployeeRow(
             $employee,
@@ -153,6 +159,8 @@ class WeeklyOvertimeReportService
             $weekendUnitHours,
             $deliveryPeriods->get($employee->id, []),
             $includePending,
+            $includeAmounts,
+            $holidayDates,
         ))->values()->all();
 
         $totals = $this->buildGrandTotals($rows, $weekendUnitHours);
@@ -166,10 +174,38 @@ class WeeklyOvertimeReportService
             'week_start' => $start->toDateString(),
             'week_end' => $end->toDateString(),
             'includes_pending' => $includePending,
+            'includes_amounts' => $includeAmounts,
             'weekend_unit_hours' => $weekendUnitHours,
             'dates' => $dates,
             'rows' => $rows,
             'totals' => $totals,
+        ];
+    }
+
+    /**
+     * Compose the existing department reports so every department keeps its
+     * own attendance and weekend-unit rules in the consolidated view.
+     */
+    public function buildConsolidatedReport(Carbon $start, ?Carbon $end = null, bool $includePending = false, bool $includeAmounts = true): array
+    {
+        $reports = Department::active()->orderBy('name')->get()->map(
+            fn (Department $department) => $this->buildReport($department, $start, $end, $includePending, $includeAmounts)
+        );
+
+        $first = $reports->first();
+        $rows = $reports->flatMap(fn (array $report) => $report['rows'])->values()->all();
+
+        return [
+            'department' => ['id' => 'all', 'name' => 'Todos los departamentos', 'code' => 'TODOS'],
+            'week_start' => $first['week_start'] ?? $start->copy()->startOfWeek()->toDateString(),
+            'week_end' => $first['week_end'] ?? ($end?->toDateString() ?? $start->copy()->endOfWeek()->toDateString()),
+            'includes_pending' => $includePending,
+            'includes_amounts' => $includeAmounts,
+            'is_consolidated' => true,
+            'weekend_unit_hours' => null,
+            'dates' => $first['dates'] ?? [],
+            'rows' => $rows,
+            'totals' => $this->buildGrandTotals($rows),
         ];
     }
 
@@ -184,6 +220,8 @@ class WeeklyOvertimeReportService
         ?int $weekendUnitHours = null,
         array $deliveryPeriods = [],
         bool $includePending = false,
+        bool $includeAmounts = false,
+        array $holidayDates = [],
     ): array {
         $recordsByDate = $records->keyBy(fn (AttendanceRecord $r) => $r->work_date->toDateString());
         $authsByDate = $authorizations->groupBy(fn (Authorization $a) => $a->date->toDateString());
@@ -257,35 +295,47 @@ class WeeklyOvertimeReportService
         $approvedOnly = $authorizations->filter(
             fn (Authorization $a) => in_array($a->status, [Authorization::STATUS_APPROVED, Authorization::STATUS_PAID], true)
         );
-        $extraConcepts = $this->buildExtraConcepts($approvedOnly, $employee);
+        $extraConcepts = $this->buildExtraConcepts($approvedOnly, $employee, $includeAmounts);
 
-        return [
+        $totals = [
+            'total_hours' => round($weeklyExtra, 2),
+            'weekend_hours' => round($weeklyWeekend, 2),
+            'weekend_worked_hours' => round($weeklyWeekendWorked, 2),
+            'weekend_units' => $weekendUnits,
+            'detected_hours' => round($weeklyDetected, 2),
+            'pending_hours' => round($weeklyPending, 2),
+            'velada_count' => $veladaCount,
+            'cena_count' => $cenaCount,
+            'comida_count' => ($weekendUnitHours && $comidaCount > 0) ? $weekendUnits : $comidaCount,
+        ];
+
+        $compensation = $includeAmounts
+            ? $this->buildCompensationBreakdown($employee, $approvedOnly, $totals, $days, $weekendUnitHours, $holidayDates)
+            : null;
+
+        $row = [
             'employee' => [
                 'id' => $employee->id,
                 'full_name' => $employee->full_name,
                 'employee_number' => $employee->employee_number,
                 'has_night_shift' => collect($days)->contains(fn ($d) => $d['is_night_shift']),
             ],
-            'days' => $days,
-            'totals' => [
-                'total_hours' => round($weeklyExtra, 2),
-                'weekend_hours' => round($weeklyWeekend, 2),
-                'weekend_worked_hours' => round($weeklyWeekendWorked, 2),
-                'weekend_units' => $weekendUnits,
-                'detected_hours' => round($weeklyDetected, 2),
-                'pending_hours' => round($weeklyPending, 2),
-                'velada_count' => $veladaCount,
-                'cena_count' => $cenaCount,
-                // En deptos por unidades (Almacén PT) la comida va igualada al fin
-                // de semana: una comida por unidad (12 h = 2 comidas). En el resto
-                // sigue siendo 1 por día con comida.
-                'comida_count' => ($weekendUnitHours && $comidaCount > 0)
-                    ? $weekendUnits
-                    : $comidaCount,
+            'department' => [
+                'id' => $employee->department?->id,
+                'name' => $employee->department?->name,
+                'code' => strtoupper($employee->department?->code ?? ''),
             ],
+            'days' => $days,
+            'totals' => $totals,
             'extra_concepts' => $extraConcepts,
             'observations' => $this->buildObservations($records, $approvedOnly),
         ];
+
+        if ($compensation !== null) {
+            $row['compensation'] = $compensation;
+        }
+
+        return $row;
     }
 
     /**
@@ -580,7 +630,7 @@ class WeeklyOvertimeReportService
      *
      * @return list<array{name: string, count: int, hours: float, amount: float}>
      */
-    private function buildExtraConcepts(Collection $authorizations, ?Employee $employee = null): array
+    private function buildExtraConcepts(Collection $authorizations, ?Employee $employee = null, bool $includeAmounts = false): array
     {
         $extra = [];
         $hourlyRate = (float) ($employee?->hourly_rate ?? 0);
@@ -597,12 +647,14 @@ class WeeklyOvertimeReportService
             }
 
             $name = $type->name ?: ($this->normalizeCode($type->code) ?: 'Concepto');
-            $extra[$name] ??= ['name' => $name, 'count' => 0, 'hours' => 0.0, 'amount' => 0.0];
+            $extra[$name] ??= ['name' => $name, 'count' => 0, 'hours' => 0.0];
             $extra[$name]['count']++;
             $extra[$name]['hours'] += (float) $auth->hours;
-            $extra[$name]['amount'] += $employee
-                ? $this->authorizationConceptAmount($employee, $type, (float) $auth->hours, $hourlyRate, $dailySalary)
-                : 0.0;
+            if ($includeAmounts) {
+                $extra[$name]['amount'] = ($extra[$name]['amount'] ?? 0.0) + ($employee
+                    ? $this->authorizationConceptAmount($employee, $type, (float) $auth->hours, $hourlyRate, $dailySalary)
+                    : 0.0);
+            }
         }
 
         // Conceptos RECURRENTES semanales inscritos al empleado (Luis
@@ -618,9 +670,11 @@ class WeeklyOvertimeReportService
             }
 
             $name = $type->name ?: ($this->normalizeCode($type->code) ?: 'Concepto');
-            $extra[$name] ??= ['name' => $name, 'count' => 0, 'hours' => 0.0, 'amount' => 0.0];
+            $extra[$name] ??= ['name' => $name, 'count' => 0, 'hours' => 0.0];
             $extra[$name]['count']++;
-            $extra[$name]['amount'] += $this->recurringConceptAmount($employee, $type, $dailySalary);
+            if ($includeAmounts) {
+                $extra[$name]['amount'] = ($extra[$name]['amount'] ?? 0.0) + $this->recurringConceptAmount($employee, $type, $dailySalary);
+            }
         }
 
         return array_values(array_map(
@@ -628,10 +682,69 @@ class WeeklyOvertimeReportService
                 'name' => $e['name'],
                 'count' => $e['count'],
                 'hours' => round($e['hours'], 2),
-                'amount' => round($e['amount'], 2),
+                ...(array_key_exists('amount', $e) ? ['amount' => round($e['amount'], 2)] : []),
             ],
             $extra,
         ));
+    }
+
+    private function buildCompensationBreakdown(
+        Employee $employee,
+        Collection $authorizations,
+        array $totals,
+        array $days,
+        ?int $weekendUnitHours,
+        array $holidayDates,
+    ): array {
+        $payments = $this->resolver->calculateAllCompensation(
+            $employee,
+            [
+                'overtime_hours' => (float) $totals['total_hours'],
+                'velada_hours' => collect($days)->sum('velada_hours'),
+                'velada_days' => (int) $totals['velada_count'],
+                'weekend_units' => (int) $totals['weekend_units'],
+            ],
+            (float) ($employee->hourly_rate ?? 0),
+            (float) ($employee->daily_salary_computed ?? 0),
+            $authorizations,
+            $holidayDates,
+            $weekendUnitHours,
+        );
+        $recurring = $this->resolver->calculateRecurringConcepts(
+            $employee,
+            (float) ($employee->hourly_rate ?? 0),
+            (float) ($employee->daily_salary_computed ?? 0),
+            [CompensationType::PAYMENT_PERIOD_WEEKLY],
+        );
+        $payments['concepts'] = array_merge($payments['concepts'], $recurring);
+        $payments['total'] = round((float) $payments['total'] + collect($recurring)->sum('amount'), 2);
+
+        $concepts = collect($payments['concepts'])
+            ->groupBy(fn (array $concept) => strtoupper((string) ($concept['code'] ?? 'EXTRA')).'|'.($concept['name'] ?? 'Concepto'))
+            ->map(function (Collection $items) {
+                $first = $items->first();
+
+                return [
+                    'code' => strtoupper((string) ($first['code'] ?? 'EXTRA')),
+                    'name' => $first['name'] ?? 'Concepto',
+                    'hours' => round($items->sum('hours'), 2),
+                    'units' => round($items->sum(fn (array $item) => (float) ($item['days'] ?? 0) + (float) ($item['quantity'] ?? 0)), 2),
+                    'amount' => round($items->sum('amount'), 2),
+                ];
+            })
+            ->values();
+
+        foreach ($payments['zero_amount'] ?? [] as $unpaid) {
+            $concepts->push([
+                'code' => strtoupper((string) ($unpaid['code'] ?? 'EXTRA')),
+                'name' => $unpaid['name'] ?? 'Concepto',
+                'hours' => 0.0,
+                'units' => (float) ($unpaid['quantity'] ?? 0),
+                'amount' => 0.0,
+            ]);
+        }
+
+        return ['concepts' => $concepts->all(), 'total' => round((float) $payments['total'], 2)];
     }
 
     /**
@@ -693,13 +806,29 @@ class WeeklyOvertimeReportService
         $cenaCount = 0;
         $comidaCount = 0;
         $extraConcepts = [];
+        $compensationConcepts = [];
+        $compensationTotal = 0.0;
+        $includesAmounts = false;
 
         foreach ($rows as $row) {
             foreach ($row['extra_concepts'] ?? [] as $ec) {
-                $extraConcepts[$ec['name']] ??= ['name' => $ec['name'], 'count' => 0, 'hours' => 0.0, 'amount' => 0.0];
+                $extraConcepts[$ec['name']] ??= ['name' => $ec['name'], 'count' => 0, 'hours' => 0.0];
                 $extraConcepts[$ec['name']]['count'] += $ec['count'];
                 $extraConcepts[$ec['name']]['hours'] += $ec['hours'];
-                $extraConcepts[$ec['name']]['amount'] += $ec['amount'] ?? 0.0;
+                if (array_key_exists('amount', $ec)) {
+                    $extraConcepts[$ec['name']]['amount'] = ($extraConcepts[$ec['name']]['amount'] ?? 0.0) + $ec['amount'];
+                }
+            }
+            if (isset($row['compensation'])) {
+                $includesAmounts = true;
+                $compensationTotal += (float) $row['compensation']['total'];
+                foreach ($row['compensation']['concepts'] as $concept) {
+                    $key = $concept['code'].'|'.$concept['name'];
+                    $compensationConcepts[$key] ??= ['code' => $concept['code'], 'name' => $concept['name'], 'hours' => 0.0, 'units' => 0.0, 'amount' => 0.0];
+                    $compensationConcepts[$key]['hours'] += $concept['hours'];
+                    $compensationConcepts[$key]['units'] += $concept['units'];
+                    $compensationConcepts[$key]['amount'] += $concept['amount'];
+                }
             }
             $totalHours += $row['totals']['total_hours'];
             $weekendHours += $row['totals']['weekend_hours'];
@@ -712,7 +841,7 @@ class WeeklyOvertimeReportService
             $comidaCount += $row['totals']['comida_count'];
         }
 
-        return [
+        $totals = [
             'total_hours' => round($totalHours, 2),
             'weekend_hours' => round($weekendHours, 2),
             'weekend_worked_hours' => round($weekendWorked, 2),
@@ -726,10 +855,29 @@ class WeeklyOvertimeReportService
             'cena_count' => $cenaCount,
             'comida_count' => $comidaCount,
             'extra_concepts' => array_values(array_map(
-                fn (array $e) => ['name' => $e['name'], 'count' => $e['count'], 'hours' => round($e['hours'], 2), 'amount' => round($e['amount'] ?? 0.0, 2)],
+                fn (array $e) => [
+                    'name' => $e['name'],
+                    'count' => $e['count'],
+                    'hours' => round($e['hours'], 2),
+                    ...(array_key_exists('amount', $e) ? ['amount' => round($e['amount'], 2)] : []),
+                ],
                 $extraConcepts,
             )),
             'employee_count' => count($rows),
         ];
+
+        if ($includesAmounts) {
+            $totals['compensation'] = [
+                'concepts' => array_values(array_map(fn (array $concept) => [
+                    ...$concept,
+                    'hours' => round($concept['hours'], 2),
+                    'units' => round($concept['units'], 2),
+                    'amount' => round($concept['amount'], 2),
+                ], $compensationConcepts)),
+                'total' => round($compensationTotal, 2),
+            ];
+        }
+
+        return $totals;
     }
 }

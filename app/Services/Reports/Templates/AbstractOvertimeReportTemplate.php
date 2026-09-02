@@ -44,6 +44,12 @@ abstract class AbstractOvertimeReportTemplate implements OvertimeReportTemplate
             return '';
         }
 
+        if (! array_key_exists('amount', $items[0])) {
+            return collect($items)
+                ->map(fn (array $c) => "{$c['name']} ({$c['count']})")
+                ->implode('; ');
+        }
+
         $lines = collect($items)
             ->map(fn (array $c) => "{$c['name']} ({$c['count']}): ".$this->formatMoney((float) ($c['amount'] ?? 0)))
             ->all();
@@ -60,5 +66,19 @@ abstract class AbstractOvertimeReportTemplate implements OvertimeReportTemplate
     protected function formatMoney(float $value): string
     {
         return ($value < 0 ? '-' : '').'$'.number_format(abs($value), 2);
+    }
+
+    protected function formatCompensation(?array $compensation): string
+    {
+        if (! $compensation) {
+            return '';
+        }
+
+        $parts = collect($compensation['concepts'] ?? [])
+            ->map(fn (array $concept) => ($concept['code'] ?: $concept['name']).': '.$this->formatMoney((float) $concept['amount']))
+            ->all();
+        $parts[] = 'TOTAL: '.$this->formatMoney((float) ($compensation['total'] ?? 0));
+
+        return implode('; ', $parts);
     }
 }

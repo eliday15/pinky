@@ -24,6 +24,9 @@ class DefaultTemplate extends AbstractOvertimeReportTemplate
     public function excelHeadings(array $report): array
     {
         $headings = ['NOMBRE'];
+        if (! empty($report['is_consolidated'])) {
+            $headings[] = 'DEPARTAMENTO';
+        }
         foreach ($report['dates'] as $date) {
             $headings[] = $this->formatDate($date);
         }
@@ -33,6 +36,9 @@ class DefaultTemplate extends AbstractOvertimeReportTemplate
         $headings[] = 'VELADA';
         $headings[] = 'CENA';
         $headings[] = 'OTROS CONCEPTOS';
+        if (! empty($report['includes_amounts'])) {
+            $headings[] = 'MONTO APROBADO';
+        }
         if ($report['show_observations'] ?? true) {
             $headings[] = 'OBSERVACIONES';
         }
@@ -46,6 +52,9 @@ class DefaultTemplate extends AbstractOvertimeReportTemplate
 
         foreach ($report['rows'] as $row) {
             $line = [$row['employee']['full_name']];
+            if (! empty($report['is_consolidated'])) {
+                $line[] = $row['department']['name'];
+            }
 
             foreach ($report['dates'] as $date) {
                 $day = $row['days'][$date];
@@ -76,6 +85,9 @@ class DefaultTemplate extends AbstractOvertimeReportTemplate
             $line[] = $row['totals']['velada_count'];
             $line[] = $row['totals']['cena_count'];
             $line[] = $this->formatExtraConcepts($row['extra_concepts'] ?? []);
+            if (! empty($report['includes_amounts'])) {
+                $line[] = $this->formatCompensation($row['compensation'] ?? null);
+            }
             if ($report['show_observations'] ?? true) {
                 $line[] = $row['observations'];
             }

@@ -6,9 +6,10 @@ import { ref, computed } from 'vue';
 const props = defineProps({
     departments: Array,
     defaultWeekStart: String,
+    canViewAllDepartments: Boolean,
 });
 
-const selectedDepartment = ref(props.departments[0]?.id ?? null);
+const selectedDepartment = ref(props.canViewAllDepartments ? 'all' : (props.departments[0]?.id ?? null));
 
 // El periodo se elige de qué día a qué día. Por defecto arranca en la semana
 // actual (lun–dom), pero el usuario puede mover libremente inicio y fin.
@@ -100,6 +101,7 @@ const generate = () => {
                         v-model="selectedDepartment"
                         class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
                     >
+                        <option v-if="canViewAllDepartments" value="all">Todos los departamentos</option>
                         <option v-for="dept in departments" :key="dept.id" :value="dept.id">
                             {{ dept.name }}
                         </option>

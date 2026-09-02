@@ -27,4 +27,9 @@ class OvertimeReportTemplateRegistry
     {
         return new DefaultTemplate;
     }
+
+    public function consolidated(): OvertimeReportTemplate
+    {
+        return new DefaultTemplate;
+    }
 }
