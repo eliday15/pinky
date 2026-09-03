@@ -424,7 +424,7 @@ class IncidentControllerTest extends FeatureTestCase
         $this->assertDatabaseMissing('incidents', ['employee_id' => $employee->id]);
     }
 
-    public function test_store_rejects_overlapping_incident(): void
+    public function test_store_rejects_overlapping_incident_of_same_concept(): void
     {
         $this->actingAsAdmin();
         $type = IncidentType::factory()->create(['requires_approval' => true]);
@@ -446,6 +446,69 @@ class IncidentControllerTest extends FeatureTestCase
                 'end_date' => '2026-06-08',
             ])
             ->assertSessionHasErrors(['dates']);
+    }
+
+    public function test_store_allows_frt_and_entry_permission_on_same_day(): void
+    {
+        $this->actingAsAdmin();
+        $frt = IncidentType::factory()->create([
+            'code' => 'FRT-TEST',
+            'category' => 'late_accumulation',
+            'requires_approval' => false,
+        ]);
+        $pen = IncidentType::factory()->permission()->create([
+            'code' => 'PEN-TEST',
+            'requires_approval' => true,
+        ]);
+        $employee = $this->makeEmployee();
+
+        Incident::factory()->approved()->create([
+            'employee_id' => $employee->id,
+            'incident_type_id' => $frt->id,
+            'start_date' => '2026-09-01',
+            'end_date' => '2026-09-01',
+            'late_month' => '2026-08',
+        ]);
+
+        $this->post(route('incidents.store'), [
+            'employee_id' => $employee->id,
+            'incident_type_id' => $pen->id,
+            'start_date' => '2026-09-01',
+            'end_date' => '2026-09-01',
+            'end_time' => '10:00',
+        ])->assertRedirect(route('incidents.index'))
+            ->assertSessionHasNoErrors();
+
+        $this->assertDatabaseHas('incidents', [
+            'employee_id' => $employee->id,
+            'incident_type_id' => $pen->id,
+            'start_date' => '2026-09-01',
+            'status' => 'pending',
+        ]);
+    }
+
+    public function test_store_ignores_rejected_overlap_of_same_concept(): void
+    {
+        $this->actingAsAdmin();
+        $type = IncidentType::factory()->create(['requires_approval' => true]);
+        $employee = $this->makeEmployee();
+
+        Incident::factory()->rejected()->create([
+            'employee_id' => $employee->id,
+            'incident_type_id' => $type->id,
+            'start_date' => '2026-09-01',
+            'end_date' => '2026-09-01',
+        ]);
+
+        $this->post(route('incidents.store'), [
+            'employee_id' => $employee->id,
+            'incident_type_id' => $type->id,
+            'start_date' => '2026-09-01',
+            'end_date' => '2026-09-01',
+        ])->assertRedirect(route('incidents.index'))
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame(2, Incident::where('employee_id', $employee->id)->count());
     }
 
     public function test_store_validation_requires_core_fields(): void
@@ -656,7 +719,7 @@ class IncidentControllerTest extends FeatureTestCase
             ->assertSessionHasErrors(['employee_ids']);
     }
 
-    public function test_store_bulk_skips_overlapping_employee(): void
+    public function test_store_bulk_skips_overlapping_employee_for_same_concept(): void
     {
         $this->actingAsAdmin();
         $type = IncidentType::factory()->create(['requires_approval' => true]);
@@ -679,6 +742,34 @@ class IncidentControllerTest extends FeatureTestCase
 
         // Only the pre-existing incident exists; the overlapping one was skipped.
         $this->assertSame(1, Incident::where('employee_id', $e1->id)->count());
+    }
+
+    public function test_store_bulk_allows_overlapping_dates_for_different_concept(): void
+    {
+        $this->actingAsAdmin();
+        $existingType = IncidentType::factory()->create(['requires_approval' => true]);
+        $requestedType = IncidentType::factory()->create(['requires_approval' => true]);
+        $employee = $this->makeEmployee();
+
+        Incident::factory()->approved()->create([
+            'employee_id' => $employee->id,
+            'incident_type_id' => $existingType->id,
+            'start_date' => '2026-09-01',
+            'end_date' => '2026-09-01',
+        ]);
+
+        $this->post(route('incidents.storeBulk'), [
+            'employee_ids' => [$employee->id],
+            'incident_type_id' => $requestedType->id,
+            'start_date' => '2026-09-01',
+            'end_date' => '2026-09-01',
+        ])->assertRedirect(route('incidents.index'));
+
+        $this->assertDatabaseHas('incidents', [
+            'employee_id' => $employee->id,
+            'incident_type_id' => $requestedType->id,
+            'status' => 'pending',
+        ]);
     }
 
     public function test_store_bulk_auto_approves_and_deducts_vacation(): void
@@ -936,6 +1027,55 @@ class IncidentControllerTest extends FeatureTestCase
             ->assertSessionHas('success');
 
         $this->assertDatabaseHas('incidents', ['id' => $incident->id, 'reason' => 'nuevo motivo']);
+    }
+
+    public function test_update_rejects_overlap_of_same_concept_but_allows_different_concept(): void
+    {
+        $this->actingAsAdmin();
+        $sameType = IncidentType::factory()->create();
+        $differentType = IncidentType::factory()->create();
+        $employee = $this->makeEmployee();
+        $target = Incident::factory()->create([
+            'employee_id' => $employee->id,
+            'incident_type_id' => $sameType->id,
+            'status' => 'pending',
+            'start_date' => '2026-09-10',
+            'end_date' => '2026-09-10',
+        ]);
+        Incident::factory()->approved()->create([
+            'employee_id' => $employee->id,
+            'incident_type_id' => $sameType->id,
+            'start_date' => '2026-09-01',
+            'end_date' => '2026-09-03',
+        ]);
+        Incident::factory()->approved()->create([
+            'employee_id' => $employee->id,
+            'incident_type_id' => $differentType->id,
+            'start_date' => '2026-09-08',
+            'end_date' => '2026-09-12',
+        ]);
+
+        $payload = [
+            'employee_id' => $employee->id,
+            'incident_type_id' => $sameType->id,
+            'start_date' => '2026-09-02',
+            'end_date' => '2026-09-02',
+            'reason' => 'no debe guardar',
+        ];
+        $this->put(route('incidents.update', $target), $payload)
+            ->assertSessionHasErrors(['dates']);
+        $this->assertSame('2026-09-10', $target->fresh()->start_date->toDateString());
+
+        $payload['start_date'] = '2026-09-09';
+        $payload['end_date'] = '2026-09-09';
+        $payload['reason'] = 'coexiste con concepto distinto';
+        $this->put(route('incidents.update', $target), $payload)
+            ->assertRedirect(route('incidents.index'))
+            ->assertSessionHasNoErrors();
+        $this->assertDatabaseHas('incidents', [
+            'id' => $target->id,
+            'reason' => 'coexiste con concepto distinto',
+        ]);
     }
 
     public function test_update_blocks_rejected_but_admin_corrects_approved(): void

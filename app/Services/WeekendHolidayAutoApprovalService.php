@@ -34,6 +34,7 @@ class WeekendHolidayAutoApprovalService
         private ZktecoSyncService $syncService,
         private PayrollInvalidationService $payrollInvalidation,
         private CompanionConceptService $companionConcept,
+        private WeekendAuthorizationUnitService $weekendAuthorizationUnits,
     ) {}
 
     /**
@@ -42,7 +43,8 @@ class WeekendHolidayAutoApprovalService
      */
     public function autoApprove(Authorization $authorization, User $approver): bool
     {
-        if (! $authorization->isPending() || ! $this->qualifies($authorization)) {
+        if (! $authorization->isPending() || ! $this->qualifies($authorization)
+            || $this->weekendAuthorizationUnits->differsFromBackedUnits($authorization)) {
             return false;
         }
 

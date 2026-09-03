@@ -79,7 +79,6 @@ class WeekendUnitsTest extends FeatureTestCase
         $checkOut ??= Carbon::parse(self::SATURDAY.' 08:00:00')
             ->addMinutes((int) round(($workedHours + $overtimeHours) * 60))
             ->format('H:i:s');
-
         AttendanceRecord::factory()->create([
             'employee_id' => $employee->id,
             'work_date' => self::SATURDAY,
@@ -625,6 +624,73 @@ class WeekendUnitsTest extends FeatureTestCase
         $entry = app(PayrollCalculatorService::class)
             ->calculateEmployeePayroll($period, $employee->fresh());
         $this->assertEqualsWithDelta(600.0, (float) $entry->weekend_pay, 0.01, '3 fines × $200');
+    }
+
+    public function test_approved_double_fin_is_not_recut_by_a_complete_checada(): void
+    {
+        // Caso real Angelica Rangel #5727: la autorización ya quedó aprobada
+        // con 2; una relectura posterior de 11 h 54 min no puede bajarla a 1.
+        $dept = Department::factory()->create([
+            'name' => 'Saldos',
+            'code' => 'SALDOS-ANGELICA',
+            'weekend_unit_hours' => null,
+            'weekend_overtime_after_hours' => 7,
+        ]);
+        $employee = Employee::factory()->create(['department_id' => $dept->id, 'status' => 'active']);
+        $fin = $this->weekendCompType(472.0);
+        $employee->compensationTypes()->attach($fin->id, ['is_active' => true]);
+
+        AttendanceRecord::factory()->create([
+            'employee_id' => $employee->id,
+            'work_date' => self::SATURDAY,
+            'check_in' => '06:17:26',
+            'check_out' => '18:11:36',
+            'worked_hours' => 9,
+            'overtime_hours' => 2.4,
+            'velada_hours' => 0,
+            'status' => 'present',
+            'is_weekend_work' => true,
+        ]);
+        Authorization::factory()->create([
+            'employee_id' => $employee->id,
+            'date' => self::SATURDAY,
+            'type' => Authorization::TYPE_SPECIAL,
+            'compensation_type_id' => $fin->id,
+            'hours' => 2,
+            'status' => Authorization::STATUS_APPROVED,
+        ]);
+
+        $report = app(WeeklyOvertimeReportService::class)->buildReport($dept, Carbon::parse('2026-03-09'));
+        $this->assertSame(2, $report['rows'][0]['totals']['weekend_units']);
+        $this->assertEqualsWithDelta(944.0, $report['rows'][0]['compensation']['concepts'][0]['amount'], 0.01);
+
+        $period = PayrollPeriod::factory()->monthly()->create([
+            'start_date' => '2026-03-01',
+            'end_date' => '2026-03-31',
+            'payment_date' => '2026-04-03',
+        ]);
+        $entry = app(PayrollCalculatorService::class)->calculateEmployeePayroll($period, $employee->fresh());
+        $this->assertEqualsWithDelta(944.0, (float) $entry->weekend_pay, 0.01);
+    }
+
+    public function test_duplicate_fin_rows_on_same_day_use_the_largest_approved_quantity(): void
+    {
+        $dept = Department::factory()->create(['name' => 'Saldos', 'code' => 'SALDOS-DEDUP']);
+        $employee = Employee::factory()->create(['department_id' => $dept->id, 'status' => 'active']);
+        $fin = $this->weekendCompType();
+        foreach ([1, 2] as $units) {
+            Authorization::factory()->create([
+                'employee_id' => $employee->id,
+                'date' => self::SATURDAY,
+                'type' => Authorization::TYPE_SPECIAL,
+                'compensation_type_id' => $fin->id,
+                'hours' => $units,
+                'status' => Authorization::STATUS_APPROVED,
+            ]);
+        }
+
+        $report = app(WeeklyOvertimeReportService::class)->buildReport($dept, Carbon::parse('2026-03-09'));
+        $this->assertSame(2, $report['rows'][0]['totals']['weekend_units']);
     }
 
     public function test_threshold_department_incomplete_checada_uses_captured_units(): void

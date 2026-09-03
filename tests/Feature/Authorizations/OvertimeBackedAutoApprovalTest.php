@@ -521,4 +521,135 @@ class OvertimeBackedAutoApprovalTest extends FeatureTestCase
 
         $this->assertSame(Authorization::STATUS_PENDING, $auth->fresh()->status, 'sin bloque nocturno no hay respaldo');
     }
+
+    public function test_morning_overtime_uses_calendar_date_punch_kept_on_previous_velada(): void
+    {
+        // Caso Policarpo 28/08 (Luis 2026-09-02): la huella 05:00 del viernes
+        // queda en el record del jueves porque cierra su velada 22:01–05:00.
+        // Esa misma frontera respalda el TE 05:00–08:00 del viernes sin moverla
+        // del jueves ni marcar el TE como "fuera de checada".
+        $this->actingAsSupervisor();
+        $emp = $this->corteEmployee(); // viernes 08:00–16:30
+
+        $previous = AttendanceRecord::factory()->create([
+            'employee_id' => $emp->id,
+            'work_date' => '2026-08-27',
+            'check_in' => '06:47:04',
+            'check_out' => '05:00:16',
+            'raw_punches' => [
+                ['date' => '2026-08-27', 'time' => '06:47:04', 'type' => 'in'],
+                ['date' => '2026-08-27', 'time' => '22:01:42', 'type' => 'punch'],
+                ['date' => '2026-08-28', 'time' => '01:01:16', 'type' => 'punch'],
+                ['date' => '2026-08-28', 'time' => '05:00:16', 'type' => 'out'],
+            ],
+        ]);
+        AttendanceRecord::factory()->create([
+            'employee_id' => $emp->id,
+            'work_date' => '2026-08-28',
+            'check_in' => '07:58:50',
+            'check_out' => '16:30:15',
+            'overtime_hours' => 0.02,
+            'raw_punches' => [
+                ['date' => '2026-08-28', 'time' => '07:58:50', 'type' => 'in'],
+                ['date' => '2026-08-28', 'time' => '16:30:15', 'type' => 'out'],
+            ],
+        ]);
+
+        $this->post(route('authorizations.store'), [
+            'employee_id' => $emp->id,
+            'type' => Authorization::TYPE_OVERTIME,
+            'date' => '2026-08-28',
+            'start_time' => '05:00',
+            'end_time' => '08:00',
+            'hours' => 3.0,
+            'reason' => 'Carga de mercancía',
+        ])->assertRedirect(route('authorizations.index'));
+
+        $authorization = Authorization::where('employee_id', $emp->id)
+            ->whereDate('date', '2026-08-28')
+            ->firstOrFail();
+        $this->assertSame(Authorization::STATUS_APPROVED, $authorization->status);
+        $this->assertFalse((bool) $authorization->is_unbacked_extra, 'la huella sí la respalda');
+        $this->assertEqualsWithDelta(3.0, (float) $authorization->hours, 0.01);
+        $this->assertSame('05:00:16', $previous->fresh()->check_out, 'la velada anterior conserva su cierre');
+        $this->assertCount(2, AttendanceRecord::where('employee_id', $emp->id)->get(), 'no duplica registros');
+    }
+
+    public function test_previous_record_punch_without_calendar_date_does_not_back_morning_overtime(): void
+    {
+        $this->actingAsSupervisor();
+        $emp = $this->corteEmployee();
+        AttendanceRecord::factory()->create([
+            'employee_id' => $emp->id,
+            'work_date' => '2026-08-27',
+            'check_in' => '06:47:04',
+            'check_out' => '05:00:16',
+            'raw_punches' => [
+                ['time' => '22:01:42', 'type' => 'punch'],
+                ['time' => '05:00:16', 'type' => 'out'],
+            ],
+        ]);
+        AttendanceRecord::factory()->create([
+            'employee_id' => $emp->id,
+            'work_date' => '2026-08-28',
+            'check_in' => '07:58:50',
+            'check_out' => '16:30:15',
+            'raw_punches' => [],
+        ]);
+
+        $this->post(route('authorizations.store'), [
+            'employee_id' => $emp->id,
+            'type' => Authorization::TYPE_OVERTIME,
+            'date' => '2026-08-28',
+            'start_time' => '05:00',
+            'end_time' => '08:00',
+            'hours' => 3.0,
+            'reason' => 'sin fecha verificable',
+        ]);
+
+        $this->assertDatabaseHas('authorizations', [
+            'employee_id' => $emp->id,
+            'date' => '2026-08-28',
+            'status' => Authorization::STATUS_PENDING,
+        ]);
+    }
+
+    public function test_previous_day_morning_punch_without_night_crossing_does_not_back_overtime(): void
+    {
+        $this->actingAsSupervisor();
+        $emp = $this->corteEmployee();
+        AttendanceRecord::factory()->create([
+            'employee_id' => $emp->id,
+            'work_date' => '2026-08-27',
+            'check_in' => '08:00:00',
+            'check_out' => '17:30:00',
+            'raw_punches' => [
+                ['date' => '2026-08-27', 'time' => '08:00:00', 'type' => 'in'],
+                ['date' => '2026-08-28', 'time' => '05:00:16', 'type' => 'out'],
+            ],
+        ]);
+        AttendanceRecord::factory()->create([
+            'employee_id' => $emp->id,
+            'work_date' => '2026-08-28',
+            'check_in' => '07:58:50',
+            'check_out' => '16:30:15',
+            'raw_punches' => [],
+        ]);
+
+        $this->post(route('authorizations.store'), [
+            'employee_id' => $emp->id,
+            'type' => Authorization::TYPE_OVERTIME,
+            'date' => '2026-08-28',
+            'start_time' => '05:00',
+            'end_time' => '08:00',
+            'hours' => 3.0,
+            'reason' => 'sin cruce nocturno',
+        ]);
+
+        $this->assertDatabaseHas('authorizations', [
+            'employee_id' => $emp->id,
+            'date' => '2026-08-28',
+            'status' => Authorization::STATUS_PENDING,
+        ]);
+    }
 }

@@ -133,6 +133,105 @@ class FaseDPayrollConceptsTest extends FeatureTestCase
         $this->assertEqualsWithDelta(0.00, (float) $entry->deductions, 0.01, 'permiso sin goce: el día no se paga, sin castigo del séptimo día');
     }
 
+    public function test_distinct_permission_concepts_on_same_date_count_one_day(): void
+    {
+        $employee = $this->employee();
+        $first = $this->typeWithCode('PSG-A', ['category' => 'permission', 'is_paid' => false]);
+        $second = $this->typeWithCode('PSG-B', ['category' => 'permission', 'is_paid' => false]);
+        $this->approvedIncident($employee, $first, '2026-06-03', '2026-06-03', 1);
+        $this->approvedIncident($employee, $second, '2026-06-03', '2026-06-03', 1);
+
+        $weekly = PayrollPeriod::factory()->weekly()->create([
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-07',
+        ]);
+
+        $entry = $this->calculator()->calculateEmployeePayroll($weekly, $employee);
+
+        $this->assertEqualsWithDelta(4800.00, (float) $entry->regular_pay, 0.01,
+            'dos conceptos en la misma fecha restan un solo día de base');
+        $this->assertSame(1, $entry->calculation_breakdown['incidents']['permission_days']);
+        $this->assertSame(1, $entry->calculation_breakdown['incidents']['permission_unpaid_days']);
+    }
+
+    public function test_paid_sick_leave_wins_over_unpaid_permission_on_same_date(): void
+    {
+        $employee = $this->employee();
+        $sick = $this->typeWithCode('INC-PAID-OVERLAP', [
+            'category' => 'sick_leave',
+            'is_paid' => true,
+            'count_mode' => IncidentType::COUNT_CALENDAR_DAYS,
+        ]);
+        $unpaidPermission = $this->typeWithCode('PSG-OVERLAP', [
+            'category' => 'permission',
+            'is_paid' => false,
+        ]);
+        $this->approvedIncident($employee, $sick, '2026-06-03', '2026-06-03', 1);
+        $this->approvedIncident($employee, $unpaidPermission, '2026-06-03', '2026-06-03', 1);
+
+        $weekly = PayrollPeriod::factory()->weekly()->create([
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-07',
+        ]);
+        $entry = $this->calculator()->calculateEmployeePayroll($weekly, $employee);
+
+        $this->assertEqualsWithDelta(4800.00, (float) $entry->regular_pay, 0.01,
+            'la fecha se separa de la base una sola vez por la incapacidad');
+        $this->assertSame(1, $entry->calculation_breakdown['incidents']['sick_leave_days']);
+        $this->assertSame(0, $entry->calculation_breakdown['incidents']['permission_days']);
+        $this->assertSame(0, $entry->calculation_breakdown['incidents']['permission_unpaid_days']);
+    }
+
+    public function test_two_paid_sick_types_on_same_date_pay_once(): void
+    {
+        $employee = $this->employee();
+        foreach (['INC-A', 'INC-B'] as $code) {
+            $type = $this->typeWithCode($code, [
+                'category' => 'sick_leave',
+                'is_paid' => true,
+                'count_mode' => IncidentType::COUNT_CALENDAR_DAYS,
+            ]);
+            $this->approvedIncident($employee, $type, '2026-06-03', '2026-06-03', 1);
+        }
+
+        $monthly = PayrollPeriod::factory()->monthly()->create([
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-30',
+        ]);
+        $entry = $this->calculator()->calculateEmployeePayroll($monthly, $employee);
+
+        $this->assertEqualsWithDelta(800.00, (float) $entry->sick_leave_pay, 0.01);
+        $this->assertSame(1, $entry->calculation_breakdown['incidents']['sick_leave_days']);
+    }
+
+    public function test_vacation_wins_over_unpaid_permission_on_same_date(): void
+    {
+        $employee = $this->employee();
+        $vacation = $this->typeWithCode('VAC-OVERLAP', [
+            'category' => 'vacation',
+            'is_paid' => true,
+            'deducts_vacation' => true,
+            'count_mode' => IncidentType::COUNT_WORKING_DAYS,
+        ]);
+        $unpaidPermission = $this->typeWithCode('PSG-VAC-OVERLAP', [
+            'category' => 'permission',
+            'is_paid' => false,
+        ]);
+        $this->approvedIncident($employee, $vacation, '2026-06-03', '2026-06-03', 1);
+        $this->approvedIncident($employee, $unpaidPermission, '2026-06-03', '2026-06-03', 1);
+
+        $weekly = PayrollPeriod::factory()->weekly()->create([
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-07',
+        ]);
+        $entry = $this->calculator()->calculateEmployeePayroll($weekly, $employee);
+
+        $this->assertEqualsWithDelta(5600.00, (float) $entry->regular_pay, 0.01,
+            'vacaciones ya van en el sueldo base; el permiso no vuelve a restar el día');
+        $this->assertSame(1, $entry->calculation_breakdown['incidents']['vacation_days']);
+        $this->assertSame(0, $entry->calculation_breakdown['incidents']['permission_days']);
+    }
+
     public function test_manual_prima_capture_suppresses_automatic_vacation_premium(): void
     {
         // Luis 2026-08-28 (caso Sonia Reyes): ya había pagado la prima por

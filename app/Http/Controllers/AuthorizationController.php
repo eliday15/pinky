@@ -1118,6 +1118,14 @@ class AuthorizationController extends Controller
             ? (float) $validated['hours']
             : null;
 
+        // FIN se valida contra la checada ANTES de aprobar. Una vez aprobado,
+        // reporte y nómina respetan esa cantidad sin volverla a recortar.
+        $weekendUnits = app(\App\Services\WeekendAuthorizationUnitService::class);
+        if ($weekendUnits->differsFromBackedUnits($authorization, $overrideHours)) {
+            return redirect()->back()->with('error', 'La checada solo respalda '
+                .$weekendUnits->backedUnits($authorization).' fin(es) de semana; corrige la cantidad antes de aprobar.');
+        }
+
         // Aprobar como EXTRA FUERA DE CHECADA (Elias 2026-08-12, "soluciones
         // auto-servibles"): la decisión consciente de pagar TE que el reloj no
         // respalda (trabajo real sin marca — p. ej. entrada de madrugada que la
@@ -1234,7 +1242,24 @@ class AuthorizationController extends Controller
 
         $schedule = $employee->getEffectiveScheduleForDay(Carbon::parse($date)->format('l'));
 
-        return $rounding->detectOvertimeHours($record, $schedule, $date);
+        $detected = $rounding->detectOvertimeHours($record, $schedule, $date);
+        $carriedMorning = $this->carriedMorningSegment($employee, $date, $schedule);
+        if ($carriedMorning === null || ! $authorization->start_time || ! $authorization->end_time) {
+            return $detected;
+        }
+
+        // El respaldo cruzado sólo aumenta el tope de SU ventana matutina. No
+        // debe convertirse en una bolsa de 3 h que permita aprobar una captura
+        // distinta por la tarde sin salida tardía.
+        $authStart = $this->minutesOfDay($authorization->start_time->format('H:i'));
+        $authEnd = $this->minutesOfDay($authorization->end_time->format('H:i'));
+        $carriedStart = $this->minutesOfDay($carriedMorning['start_time']);
+        $carriedEnd = $this->minutesOfDay($carriedMorning['end_time']);
+        if ($carriedStart <= $authStart && $authEnd <= $carriedEnd) {
+            return (float) $carriedMorning['hours'];
+        }
+
+        return $detected;
     }
 
     /**
@@ -1483,6 +1508,12 @@ class AuthorizationController extends Controller
             // Mismo tope de checadas que la aprobación individual: sin TE
             // respaldado se omite; con menos del solicitado se ajusta.
             $overrideHours = null;
+            $weekendUnits = app(\App\Services\WeekendAuthorizationUnitService::class);
+            if ($weekendUnits->differsFromBackedUnits($authorization)) {
+                $skipped++;
+
+                continue;
+            }
             $cap = $this->payableOvertimeCap($authorization);
             if ($cap !== null) {
                 if ($cap <= 0) {
@@ -1924,7 +1955,96 @@ class AuthorizationController extends Controller
         $dayName = Carbon::parse($date)->format('l');
         $schedule = $employee->getEffectiveScheduleForDay($dayName);
 
-        return $this->buildOvertimeSegments($record, $schedule, $date);
+        $segments = $this->buildOvertimeSegments($record, $schedule, $date);
+
+        // Una huella de madrugada puede pertenecer a DOS fronteras de trabajo:
+        // cierra la velada de D-1 y, cuando el encargado captura TE antes del
+        // turno de D, también respalda el inicio de ese tramo matutino. El sync
+        // la conserva en el AttendanceRecord de D-1 para no romper la velada,
+        // pero su `raw_punches.date` sigue siendo D. Léela por fecha calendario
+        // y sustituye el pequeño segmento de llegada normal (p. ej. 07:58–08:00)
+        // por el tramo completo 05:00–08:00; no se suma ni duplica la huella.
+        $carriedMorning = $this->carriedMorningSegment($employee, $date, $schedule);
+        if ($carriedMorning !== null) {
+            $segments = array_values(array_filter(
+                $segments,
+                fn (array $segment) => ($segment['kind'] ?? null) !== 'early',
+            ));
+            array_unshift($segments, $carriedMorning);
+        }
+
+        return $segments;
+    }
+
+    /**
+     * Tramo matutino respaldado por una huella cuya FECHA REAL es D aunque el
+     * registro de asistencia que la contiene sea D-1 (porque también cerró una
+     * velada). Devuelve null fuera de ese caso cruzado y explícito.
+     *
+     * No usamos sólo la hora: exigimos `raw_punches.date === D`, una marca
+     * nocturna (>=20:00) de D-1 en el mismo registro y horario de entrada en D.
+     * Así un registro legado sin fechas o una salida matutina ordinaria jamás
+     * inventan horas extra. De varias huellas de D se toma la última anterior al
+     * turno: es la frontera que cerró la noche (01:01, 05:00 -> 05:00).
+     *
+     * @return array{kind:string,start_time:string,end_time:string,hours:string,summary:string}|null
+     */
+    private function carriedMorningSegment(Employee $employee, string $date, ?object $schedule): ?array
+    {
+        if (! $schedule || empty($schedule->entry_time)) {
+            return null;
+        }
+
+        $previousDate = Carbon::parse($date)->subDay()->toDateString();
+        $previous = AttendanceRecord::where('employee_id', $employee->id)
+            ->whereDate('work_date', $previousDate)
+            ->first();
+        if (! $previous) {
+            return null;
+        }
+
+        $entryMin = $this->minutesOfDay(substr((string) $schedule->entry_time, 0, 5));
+        $hasPreviousNight = false;
+        $anchorMin = null;
+
+        foreach ((array) $previous->raw_punches as $punch) {
+            $punchDate = (string) ($punch['date'] ?? '');
+            $time = substr((string) ($punch['time'] ?? ''), 0, 5);
+            if (! preg_match('/^\d{2}:\d{2}$/', $time)) {
+                continue;
+            }
+
+            $minutes = $this->minutesOfDay($time);
+            if ($punchDate === $previousDate && $minutes >= 20 * 60) {
+                $hasPreviousNight = true;
+            }
+            // El agrupador sólo traslada madrugada real (<06:00) al día
+            // anterior. Exigir el mismo límite impide aceptar una marca de
+            // otro origen que por datos dañados acabara en ese registro.
+            if ($punchDate === $date && $minutes < min($entryMin, 6 * 60)) {
+                $anchorMin = $anchorMin === null ? $minutes : max($anchorMin, $minutes);
+            }
+        }
+
+        if (! $hasPreviousNight || $anchorMin === null) {
+            return null;
+        }
+
+        $rounded = $this->roundOvertimeMinutes($entryMin - $anchorMin);
+        if ($rounded <= 0) {
+            return null;
+        }
+
+        $anchor = sprintf('%02d:%02d', intdiv($anchorMin, 60), $anchorMin % 60);
+        $entry = sprintf('%02d:%02d', intdiv($entryMin, 60), $entryMin % 60);
+
+        return [
+            'kind' => 'early',
+            'start_time' => $anchor,
+            'end_time' => $entry,
+            'hours' => number_format($rounded, 2, '.', ''),
+            'summary' => "Entrada {$anchor} antes de horario {$entry} ({$rounded}h; huella de D conservada en la velada de D-1).",
+        ];
     }
 
     /**
@@ -2333,11 +2453,14 @@ class AuthorizationController extends Controller
             }
         }
 
+        $units = app(\App\Services\WeekendAuthorizationUnitService::class)
+            ->backedUnitsFor($employee, $record) ?? 1;
+
         return [
             'kind' => 'weekend',
             'start_time' => null,
             'end_time' => null,
-            'hours' => '1',
+            'hours' => (string) $units,
             'summary' => 'Fin de semana trabajado.',
         ];
     }
@@ -2386,6 +2509,9 @@ class AuthorizationController extends Controller
         $authorization->refresh();
 
         if ($authorization->isPending() && Auth::user()->can('approve', $authorization)) {
+            if (app(\App\Services\WeekendAuthorizationUnitService::class)->differsFromBackedUnits($authorization)) {
+                return;
+            }
             $authorization->approve(Auth::user());
             $this->applyApprovalEffects($authorization, app(ZktecoSyncService::class));
 

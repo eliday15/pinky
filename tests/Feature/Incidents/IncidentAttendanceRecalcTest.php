@@ -139,6 +139,61 @@ class IncidentAttendanceRecalcTest extends FeatureTestCase
         $this->assertEqualsWithDelta(1.0, (float) $record->permission_hours, 0.01, 'las horas del permiso se suman al registro');
     }
 
+    public function test_entry_and_exit_permissions_on_same_day_both_apply(): void
+    {
+        $employee = $this->employee();
+        $record = AttendanceRecord::factory()->for($employee)->create([
+            'work_date' => '2026-06-03',
+            'check_in' => '09:00:00',
+            'check_out' => '15:00:00',
+            'status' => 'absent',
+            'late_minutes' => 50,
+            'early_departure_minutes' => 120,
+        ]);
+
+        foreach ([[$this->penType(), 1.0], [$this->psaType(), 2.0]] as [$type, $hours]) {
+            Incident::factory()->approved()->create([
+                'employee_id' => $employee->id,
+                'incident_type_id' => $type->id,
+                'start_date' => '2026-06-03',
+                'end_date' => '2026-06-03',
+                'days_count' => 1,
+                'hours' => $hours,
+            ]);
+        }
+
+        app(ZktecoSyncService::class)->recalculateAttendanceRecord($record);
+        $record->refresh();
+
+        $this->assertSame('present', $record->status, 'PEN cubre entrada y PSA cubre salida sin depender del orden de consulta');
+        $this->assertEqualsWithDelta(3.0, (float) $record->permission_hours, 0.01);
+    }
+
+    public function test_covered_status_uses_deterministic_category_precedence(): void
+    {
+        $employee = $this->employee();
+        $permission = $this->penType();
+        $vacation = IncidentType::factory()->create(['category' => 'vacation', 'priority' => 0]);
+        $sick = IncidentType::factory()->create(['category' => 'sick_leave', 'priority' => 99]);
+
+        // Inserción deliberadamente contraria al ganador esperado. La prioridad
+        // numérica solo desempata dentro de categoría; incapacidad representa
+        // el estado real por encima de vacaciones y permiso.
+        foreach ([$sick, $vacation, $permission] as $type) {
+            Incident::factory()->approved()->create([
+                'employee_id' => $employee->id,
+                'incident_type_id' => $type->id,
+                'start_date' => '2026-06-03',
+                'end_date' => '2026-06-03',
+                'days_count' => 1,
+            ]);
+        }
+
+        $statuses = Incident::coveredStatusByEmployee([$employee->id], '2026-06-03', '2026-06-03');
+
+        $this->assertSame('sick_leave', $statuses[$employee->id]['2026-06-03']);
+    }
+
     public function test_auto_approved_incident_recalculates_on_store(): void
     {
         $employee = $this->employee();

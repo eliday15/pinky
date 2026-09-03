@@ -51,7 +51,7 @@ class CompanionConceptServiceTest extends FeatureTestCase
         ]);
     }
 
-    private function approvedWeekend(Employee $employee, User $approver, CompensationType $weekendType): Authorization
+    private function approvedWeekend(Employee $employee, User $approver, CompensationType $weekendType, int $units = 1): Authorization
     {
         return Authorization::factory()->special()->create([
             'employee_id' => $employee->id,
@@ -62,7 +62,7 @@ class CompanionConceptServiceTest extends FeatureTestCase
             'date' => '2026-06-06',
             'start_time' => null,
             'end_time' => null,
-            'hours' => 1,
+            'hours' => $units,
         ]);
     }
 
@@ -95,7 +95,7 @@ class CompanionConceptServiceTest extends FeatureTestCase
             ->orderBy('priority')
             ->firstOrFail();
         $employee = $this->enrolledEmployee($comida);
-        $weekend = $this->approvedWeekend($employee, $approver, $weekendType);
+        $weekend = $this->approvedWeekend($employee, $approver, $weekendType, 2);
 
         $companion = $this->service()->captureForApproved($weekend);
 
@@ -103,6 +103,7 @@ class CompanionConceptServiceTest extends FeatureTestCase
         $this->assertSame($comida->id, $companion->compensation_type_id);
         $this->assertSame(Authorization::STATUS_APPROVED, $companion->status);
         $this->assertSame($weekend->id, $companion->generated_from_authorization_id);
+        $this->assertSame('2.00', (string) $companion->hours);
     }
 
     public function test_no_companion_when_employee_not_enrolled(): void

@@ -276,4 +276,68 @@ class ApprovalOvertimeCapTest extends FeatureTestCase
         $this->assertSame(Authorization::STATUS_APPROVED, $over->fresh()->status);
         $this->assertSame(Authorization::STATUS_APPROVED, $clean->fresh()->status);
     }
+
+    public function test_manual_approval_accepts_morning_window_backed_by_calendar_date_punch_on_previous_velada(): void
+    {
+        [$approver, $code] = $this->approver();
+        $employee = $this->employee();
+        AttendanceRecord::factory()->for($employee)->create([
+            'work_date' => '2026-08-27',
+            'check_in' => '08:00:00',
+            'check_out' => '05:00:16',
+            'raw_punches' => [
+                ['date' => '2026-08-27', 'time' => '22:01:42', 'type' => 'punch'],
+                ['date' => '2026-08-28', 'time' => '05:00:16', 'type' => 'out'],
+            ],
+        ]);
+        AttendanceRecord::factory()->for($employee)->create([
+            'work_date' => '2026-08-28',
+            'check_in' => '07:58:50',
+            'check_out' => '17:00:00',
+            'raw_punches' => [
+                ['date' => '2026-08-28', 'time' => '07:58:50', 'type' => 'in'],
+                ['date' => '2026-08-28', 'time' => '17:00:00', 'type' => 'out'],
+            ],
+        ]);
+        $auth = $this->pendingOvertime($employee, '2026-08-28', 3.0);
+        $auth->update(['start_time' => '05:00', 'end_time' => '08:00']);
+
+        $this->actingAs($approver)
+            ->post(route('authorizations.approve', $auth), ['two_factor_code' => $code])
+            ->assertRedirect()
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame(Authorization::STATUS_APPROVED, $auth->fresh()->status);
+        $this->assertEqualsWithDelta(3.0, (float) $auth->fresh()->hours, 0.01);
+    }
+
+    public function test_carried_morning_hours_do_not_allow_unbacked_late_window(): void
+    {
+        [$approver, $code] = $this->approver();
+        $employee = $this->employee();
+        AttendanceRecord::factory()->for($employee)->create([
+            'work_date' => '2026-08-27',
+            'check_in' => '08:00:00',
+            'check_out' => '05:00:16',
+            'raw_punches' => [
+                ['date' => '2026-08-27', 'time' => '22:01:42', 'type' => 'punch'],
+                ['date' => '2026-08-28', 'time' => '05:00:16', 'type' => 'out'],
+            ],
+        ]);
+        AttendanceRecord::factory()->for($employee)->create([
+            'work_date' => '2026-08-28',
+            'check_in' => '08:00:00',
+            'check_out' => '17:00:00',
+            'raw_punches' => [],
+        ]);
+        $auth = $this->pendingOvertime($employee, '2026-08-28', 3.0);
+        $auth->update(['start_time' => '17:00', 'end_time' => '20:00']);
+
+        $this->actingAs($approver)
+            ->post(route('authorizations.approve', $auth), ['two_factor_code' => $code])
+            ->assertRedirect()
+            ->assertSessionHas('error');
+
+        $this->assertSame(Authorization::STATUS_PENDING, $auth->fresh()->status);
+    }
 }

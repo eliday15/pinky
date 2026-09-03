@@ -115,6 +115,32 @@ class Incident extends Model
     }
 
     /**
+     * Incidencias activas del mismo concepto que se cruzan con un rango.
+     *
+     * Conceptos distintos pueden coexistir el mismo día: por ejemplo, una FRT
+     * fechada el primer día del mes es un cargo contable del mes anterior y no
+     * debe impedir capturar un PEN real de ese día. Los vales HxV tampoco
+     * ocupan fechas, por lo que quedan fuera del conflicto.
+     */
+    public function scopeActiveConceptOverlap(
+        $query,
+        int $employeeId,
+        int $incidentTypeId,
+        string $startDate,
+        string $endDate,
+        ?int $exceptIncidentId = null,
+    ) {
+        return $query
+            ->where('employee_id', $employeeId)
+            ->where('incident_type_id', $incidentTypeId)
+            ->whereIn('status', ['pending', 'approved'])
+            ->where('converts_to_vacation_hours', false)
+            ->where('start_date', '<=', $endDate)
+            ->where('end_date', '>=', $startDate)
+            ->when($exceptIncidentId !== null, fn ($q) => $q->whereKeyNot($exceptIncidentId));
+    }
+
+    /**
      * Scope for incidents in date range.
      */
     public function scopeDateRange($query, $startDate, $endDate)
@@ -146,6 +172,54 @@ class Incident extends Model
             'absence' => (bool) $type->is_paid,
             default => false,
         };
+    }
+
+    /**
+     * Precedencia de una incidencia que representa el estado económico real
+     * de un día. Una incapacidad sustituye cualquier hoja/permiso ordinario;
+     * vacaciones sustituyen permisos, y un permiso justificado sustituye una
+     * falta del mismo día. FRT no participa: su fecha es el cargo contable del
+     * mes anterior y se procesa por separado.
+     */
+    public static function dailyEconomicCategoryRank(?IncidentType $type): int
+    {
+        return match ($type?->category) {
+            'sick_leave' => 500,
+            'vacation' => 400,
+            'permission' => 300,
+            'absence' => 200,
+            'special' => 100,
+            default => 0,
+        };
+    }
+
+    /**
+     * Decide de forma estable qué fila aporta el efecto de una fecha.
+     *
+     * Dentro de la misma categoría se honra el orden del catálogo
+     * (priority ascendente); los ids resuelven empates para que el resultado no
+     * dependa del orden de una consulta.
+     */
+    public static function preferredDailyEconomicIncident(?self $current, self $candidate): self
+    {
+        if ($current === null) {
+            return $candidate;
+        }
+
+        $currentKey = [
+            -self::dailyEconomicCategoryRank($current->incidentType),
+            (int) ($current->incidentType?->priority ?? 0),
+            (int) $current->incident_type_id,
+            (int) $current->id,
+        ];
+        $candidateKey = [
+            -self::dailyEconomicCategoryRank($candidate->incidentType),
+            (int) ($candidate->incidentType?->priority ?? 0),
+            (int) $candidate->incident_type_id,
+            (int) $candidate->id,
+        ];
+
+        return $candidateKey < $currentKey ? $candidate : $current;
     }
 
     /**
@@ -204,7 +278,7 @@ class Incident extends Model
             ->with('incidentType')
             ->get();
 
-        $map = [];
+        $winners = [];
 
         foreach ($incidents as $incident) {
             $category = $incident->incidentType?->category;
@@ -216,7 +290,16 @@ class Incident extends Model
             $to = Carbon::parse($incident->end_date)->min(Carbon::parse($endDate));
 
             for ($day = $from->copy(); $day->lte($to); $day->addDay()) {
-                $map[$incident->employee_id][$day->toDateString()] = $category;
+                $date = $day->toDateString();
+                $current = $winners[$incident->employee_id][$date] ?? null;
+                $winners[$incident->employee_id][$date] = self::preferredDailyEconomicIncident($current, $incident);
+            }
+        }
+
+        $map = [];
+        foreach ($winners as $employeeId => $dates) {
+            foreach ($dates as $date => $incident) {
+                $map[$employeeId][$date] = $incident->incidentType->category;
             }
         }
 

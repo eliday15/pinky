@@ -222,7 +222,8 @@ El sistema **nunca adivina** estos casos — los marca `requires_review = true` 
 | Permiso aprobado retroactivo (status pasó a `approved` después del sync) | Recalcular metrics del día afectado se dispara automáticamente vía observer en `Incident::saved`. |
 | Vacaciones medio día | Las incidencias actuales son por día completo. Permisos sí soportan horas. Si se requiere medio día → usar Permiso de Salida o Entrada. |
 | Incapacidad varios días con un festivo en medio | El festivo NO se descuenta del balance de incapacidad — son días naturales. |
-| Dos incidencias aprobadas el mismo día | La de mayor prioridad gana (vacación > permiso). Se valida en `Incident::saving` y se rechaza la segunda si choca. |
+| Dos incidencias del mismo concepto y rango | Se rechaza la segunda mientras la primera esté pendiente o aprobada. Una rechazada no bloquea. |
+| Incidencias de conceptos distintos el mismo día | Pueden coexistir y todas siguen visibles. Hay una sola consecuencia económica diaria con precedencia explícita: incapacidad > vacaciones > permiso > falta > especial; `priority` ascendente e ids solo desempatan dentro de la misma categoría. FRT queda aparte porque su fecha es un cargo contable del mes anterior. PEN + PSA combinan ambos lados y las ventanas de permiso se unen para no duplicar horas. |
 
 ### 9.F Velada / multi-turno
 | Caso | Regla |

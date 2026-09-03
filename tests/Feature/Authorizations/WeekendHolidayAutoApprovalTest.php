@@ -167,6 +167,23 @@ class WeekendHolidayAutoApprovalTest extends FeatureTestCase
         $this->assertFalse($this->service()->autoApprove($auth, $approver));
     }
 
+    public function test_auto_approve_refuses_fin_quantity_not_backed_by_complete_punches(): void
+    {
+        $approver = $this->adminUser();
+        $employee = Employee::factory()->create();
+        $this->weekendRecord($employee, [
+            'check_in' => '06:17:26',
+            'check_out' => '18:11:36', // 11 h 54 min: respalda 1, no 2
+        ]);
+        $auth = $this->pendingAuth($employee, [
+            'hours' => 2,
+            'compensation_type_id' => $this->compensationType(CompensationType::PULL_RULE_WEEKEND)->id,
+        ]);
+
+        $this->assertFalse($this->service()->autoApprove($auth, $approver));
+        $this->assertSame(Authorization::STATUS_PENDING, $auth->fresh()->status);
+    }
+
     public function test_command_approves_qualifying_pending_authorizations(): void
     {
         $this->adminUser(); // signer for the sweep

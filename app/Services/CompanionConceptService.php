@@ -47,6 +47,9 @@ class CompanionConceptService
         // Cena/Comida capturada a mano y aún pendiente: se aprueba con el
         // padre (mismo aprobador y mismos efectos) en vez de crear otra.
         if ($existing !== null) {
+            if ($parent->compensationType?->hasWeekendPullRule()) {
+                $existing->forceFill(['hours' => max(1, (int) round((float) $parent->hours))])->save();
+            }
             $existing->approve($approver);
             $this->applyEffects($existing);
 
@@ -61,7 +64,11 @@ class CompanionConceptService
             'date' => $this->dateString($parent),
             'start_time' => null,
             'end_time' => null,
-            'hours' => 1,
+            // Un FIN doble genera también dos comidas; la velada conserva una
+            // sola cena por noche.
+            'hours' => $parent->compensationType?->hasWeekendPullRule()
+                ? max(1, (int) round((float) $parent->hours))
+                : 1,
             'reason' => "Generado automáticamente al aprobar la autorización #{$parent->id} ({$companionType->name}).",
             'status' => Authorization::STATUS_PENDING,
             'is_pre_authorization' => false,

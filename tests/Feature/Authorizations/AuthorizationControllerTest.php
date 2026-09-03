@@ -1773,6 +1773,78 @@ class AuthorizationControllerTest extends FeatureTestCase
         $this->assertEquals('2.00', (string) $auth->hours);
     }
 
+    public function test_fin_cannot_be_approved_above_units_backed_by_complete_checadas(): void
+    {
+        [$admin, $code] = $this->privilegedWithTwoFactor();
+        $this->actingAs($admin);
+        $dept = Department::factory()->create([
+            'name' => 'Saldos',
+            'code' => 'SALDOS-FIN-CAP',
+            'weekend_unit_hours' => null,
+            'weekend_overtime_after_hours' => 7,
+        ]);
+        $employee = Employee::factory()->create(['department_id' => $dept->id]);
+        $fin = CompensationType::factory()->fixed(472)->create([
+            'application_mode' => CompensationType::APPLICATION_PER_DAY,
+            'authorization_type' => Authorization::TYPE_SPECIAL,
+            'attendance_pull_rule' => CompensationType::PULL_RULE_WEEKEND,
+        ]);
+        AttendanceRecord::factory()->create([
+            'employee_id' => $employee->id,
+            'work_date' => '2026-08-29',
+            'check_in' => '06:17:26',
+            'check_out' => '18:11:36',
+            'is_weekend_work' => true,
+            'velada_hours' => 0,
+        ]);
+        $auth = Authorization::factory()->special()->create([
+            'employee_id' => $employee->id,
+            'requested_by' => User::factory()->create()->id,
+            'compensation_type_id' => $fin->id,
+            'date' => '2026-08-29',
+            'hours' => 2,
+            'status' => Authorization::STATUS_PENDING,
+        ]);
+
+        $this->post(route('authorizations.approve', $auth), ['two_factor_code' => $code, 'hours' => 2])
+            ->assertSessionHas('error');
+        $this->assertSame(Authorization::STATUS_PENDING, $auth->fresh()->status);
+    }
+
+    public function test_fin_double_can_be_approved_when_complete_checadas_back_twelve_hours(): void
+    {
+        [$admin, $code] = $this->privilegedWithTwoFactor();
+        $this->actingAs($admin);
+        $dept = Department::factory()->create(['name' => 'Saldos', 'code' => 'SALDOS-FIN-12']);
+        $employee = Employee::factory()->create(['department_id' => $dept->id]);
+        $fin = CompensationType::factory()->fixed(472)->create([
+            'application_mode' => CompensationType::APPLICATION_PER_DAY,
+            'authorization_type' => Authorization::TYPE_SPECIAL,
+            'attendance_pull_rule' => CompensationType::PULL_RULE_WEEKEND,
+        ]);
+        AttendanceRecord::factory()->create([
+            'employee_id' => $employee->id,
+            'work_date' => '2026-08-29',
+            'check_in' => '06:00:00',
+            'check_out' => '18:00:00',
+            'is_weekend_work' => true,
+            'velada_hours' => 0,
+        ]);
+        $auth = Authorization::factory()->special()->create([
+            'employee_id' => $employee->id,
+            'requested_by' => User::factory()->create()->id,
+            'compensation_type_id' => $fin->id,
+            'date' => '2026-08-29',
+            'hours' => 2,
+            'status' => Authorization::STATUS_PENDING,
+        ]);
+
+        $this->post(route('authorizations.approve', $auth), ['two_factor_code' => $code, 'hours' => 2])
+            ->assertSessionHas('success');
+        $this->assertSame(Authorization::STATUS_APPROVED, $auth->fresh()->status);
+        $this->assertSame('2.00', (string) $auth->fresh()->hours);
+    }
+
     public function test_approve_redirects_guest_to_login(): void
     {
         $auth = $this->pendingOvertime();
@@ -2440,6 +2512,7 @@ class AuthorizationControllerTest extends FeatureTestCase
         $almacen = \App\Models\Department::factory()->create(['weekend_unit_hours' => 6]);
         $shortEmp = Employee::factory()->create(['department_id' => $normalDept->id]);   // 2 h
         $longEmp = Employee::factory()->create(['department_id' => $normalDept->id]);     // 8 h
+        $doubleEmp = Employee::factory()->create(['department_id' => $normalDept->id]);   // 12 h
         $almacenEmp = Employee::factory()->create(['department_id' => $almacen->id]);     // 2 h
 
         AttendanceRecord::factory()->create([
@@ -2451,6 +2524,11 @@ class AuthorizationControllerTest extends FeatureTestCase
             'employee_id' => $longEmp->id, 'work_date' => '2026-06-20',
             'check_in' => '08:00:00', 'check_out' => '17:00:00',
             'worked_hours' => 8, 'overtime_hours' => 0, 'is_weekend_work' => true,
+        ]);
+        AttendanceRecord::factory()->create([
+            'employee_id' => $doubleEmp->id, 'work_date' => '2026-06-20',
+            'check_in' => '06:00:00', 'check_out' => '18:00:00',
+            'worked_hours' => 9, 'overtime_hours' => 3, 'is_weekend_work' => true,
         ]);
         AttendanceRecord::factory()->create([
             'employee_id' => $almacenEmp->id, 'work_date' => '2026-06-20',
@@ -2475,6 +2553,12 @@ class AuthorizationControllerTest extends FeatureTestCase
         $pull($longEmp)->assertOk()
             ->assertJsonCount(1, 'suggestions')
             ->assertJsonPath('suggestions.0.kind', 'weekend');
+
+        // La sugerencia nace ya con la cantidad que respalda la checada; así
+        // una aprobación nueva de 12 h queda materializada como doble.
+        $pull($doubleEmp)->assertOk()
+            ->assertJsonCount(1, 'suggestions')
+            ->assertJsonPath('suggestions.0.hours', '2');
 
         // Almacén PT → siempre lo ofrece, sin importar las horas.
         $pull($almacenEmp)->assertOk()

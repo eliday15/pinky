@@ -879,28 +879,28 @@ class ZktecoSyncService
 
         // Check for approved permission incidents (exit/entry/ventana)
         $permissionHours = 0;
-        $approvedPermission = Incident::where('employee_id', $employee->id)
+        $approvedPermissions = Incident::where('employee_id', $employee->id)
             ->whereDate('start_date', '<=', $workDate->toDateString())
             ->whereDate('end_date', '>=', $workDate->toDateString())
             ->where('status', 'approved')
             ->whereHas('incidentType', fn ($q) => $q->where('affects_attendance', true)->orWhere('uses_vacation_hours', true))
             ->with('incidentType')
-            ->first();
+            ->get();
 
-        $hasApprovedExitPermission = false;
-        $hasApprovedEntryPermission = false;
-
-        if ($approvedPermission) {
-            $permissionHours = (float) ($approvedPermission->hours ?? 0);
-            $permissionType = $approvedPermission->incidentType;
+        $hasApprovedExitPermission = $approvedPermissions->contains(function (Incident $permission): bool {
+            $permissionType = $permission->incidentType;
             // "Horas a cuenta de vacaciones" cubre entrada tarde Y salida temprano
             // (Dani 2026-07-01): mientras el empleado tenga saldo de horas, no se
             // marca falta por umbral. PEN/PSA siguen cubriendo solo su lado.
             $usesVacationHours = (bool) ($permissionType->uses_vacation_hours ?? false);
-            $hasApprovedExitPermission = $usesVacationHours || $permissionType->code === 'PSA';
-            $hasApprovedEntryPermission = $usesVacationHours || $permissionType->code === 'PEN';
-        }
 
+            return $usesVacationHours || $permissionType->code === 'PSA';
+        });
+        $hasApprovedEntryPermission = $approvedPermissions->contains(function (Incident $permission): bool {
+            $permissionType = $permission->incidentType;
+
+            return (bool) ($permissionType->uses_vacation_hours ?? false) || $permissionType->code === 'PEN';
+        });
         // Permiso DENTRO de jornada (Dani 2026-08-24): una incidencia aprobada
         // con hora inicio Y fin distintas define una VENTANA de permiso (p. ej.
         // 13:00–15:00, el colaborador sale y regresa). La ventana:
@@ -914,8 +914,25 @@ class ZktecoSyncService
         //     seguir siendo falta).
         // Las horas de la ventana quedan en permission_hours (pagadas: el tipo
         // es is_paid y el día sigue 'present'). Fuera de turnos nocturnos.
-        $permissionWindow = $this->permissionWindowMinutes($approvedPermission);
-        if ($permissionWindow !== null && ! $isNightShift) {
+        $rawPermissionWindows = $approvedPermissions
+            ->map(fn (Incident $permission) => $this->permissionWindowMinutes($permission))
+            ->filter()
+            ->values()
+            ->all();
+        $permissionWindows = $this->mergeMinuteWindows($rawPermissionWindows);
+        $windowPermissionHours = array_sum(array_map(
+            fn (array $window): float => ($window[1] - $window[0]) / 60,
+            $permissionWindows,
+        ));
+        $scalarPermissionHours = (float) $approvedPermissions
+            ->reject(fn (Incident $permission) => $this->permissionWindowMinutes($permission) !== null)
+            ->sum(fn (Incident $permission) => (float) ($permission->hours ?? 0));
+        $permissionHours = $windowPermissionHours + $scalarPermissionHours;
+
+        foreach ($permissionWindows as $permissionWindow) {
+            if ($isNightShift) {
+                break;
+            }
             [$winStart, $winEnd] = $permissionWindow;
             $toMin = fn (string $time): int => ((int) substr($time, 0, 2)) * 60 + ((int) substr($time, 3, 2));
 
@@ -1128,6 +1145,36 @@ class ZktecoSyncService
         $endMin = $toMin($end);
 
         return $endMin > $startMin ? [$startMin, $endMin] : null;
+    }
+
+    /**
+     * Unión de ventanas [inicio, fin) para no sumar ni restar dos veces la
+     * porción donde conceptos distintos se enciman.
+     *
+     * @param  list<array{0: int, 1: int}>  $windows
+     * @return list<array{0: int, 1: int}>
+     */
+    private function mergeMinuteWindows(array $windows): array
+    {
+        if ($windows === []) {
+            return [];
+        }
+
+        usort($windows, fn (array $left, array $right): int => $left[0] <=> $right[0] ?: $left[1] <=> $right[1]);
+        $merged = [];
+
+        foreach ($windows as [$start, $end]) {
+            $last = array_key_last($merged);
+            if ($last === null || $start > $merged[$last][1]) {
+                $merged[] = [$start, $end];
+
+                continue;
+            }
+
+            $merged[$last][1] = max($merged[$last][1], $end);
+        }
+
+        return $merged;
     }
 
     /**

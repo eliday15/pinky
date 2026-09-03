@@ -10,6 +10,7 @@ use App\Models\Employee;
 use App\Models\Holiday;
 use App\Services\CompensationRateResolverService;
 use App\Services\OvertimeRoundingService;
+use App\Services\WeekendAuthorizationUnitService;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 
@@ -37,6 +38,7 @@ class WeeklyOvertimeReportService
     public function __construct(
         private readonly OvertimeRoundingService $rounding = new OvertimeRoundingService,
         private readonly CompensationRateResolverService $resolver = new CompensationRateResolverService,
+        private readonly WeekendAuthorizationUnitService $weekendAuthorizationUnits = new WeekendAuthorizationUnitService,
     ) {}
 
     /**
@@ -230,7 +232,6 @@ class WeeklyOvertimeReportService
         $weeklyExtra = 0.0;
         $weeklyWeekend = 0.0;
         $weeklyWeekendWorked = 0.0;
-        $weekendUnitsAccum = 0;
         $veladaCount = 0;
         $cenaCount = 0;
         $comidaCount = 0;
@@ -268,28 +269,10 @@ class WeeklyOvertimeReportService
             // sobreescribe abajo con las unidades (comida = fines).
             $comidaCount += $day['comida_units'] ?? $day['comida_marker'];
 
-            // Unidades de fin de semana POR DÍA autorizado. Almacén PT: cada día
-            // FIN cuenta al menos 1, aunque trabaje < 1 unidad (Dani 2026-06-28);
-            // 12 h ÷ 6 = 2 sobre horas corridas MENOS velada. Deptos de umbral
-            // (Dani 2026-08-25, caso Angelica/Saldos): T+ h = 1 fin, 12 h = fin
-            // DOBLE (el excedente sobre T sigue como TE). En ambos, sin checada
-            // completa valen las unidades capturadas en el FIN (Dani 2026-08-24).
-            // Coincide con la nómina (calculateWeekendUnits).
-            if ($day['has_weekend_auth']) {
-                if (! empty($day['weekend_gross_missing'])) {
-                    $weekendUnitsAccum += max(1, (int) round((float) ($day['weekend_captured_units'] ?? 1)));
-                } elseif ($weekendUnitHours) {
-                    $weekendUnitsAccum += max(1, (int) floor($day['weekend_worked_hours'] / $weekendUnitHours));
-                } else {
-                    $weekendUnitsAccum += (int) ($employee->weekendUnitsForGrossHours((float) $day['weekend_worked_hours']) ?? 0);
-                }
-            }
         }
 
-        // Todos los deptos exponen su conteo de fines (Almacén por bloques;
-        // umbral por la regla T/12) — la columna FIN muestra el conteo real
-        // que paga la nómina, no la suma de lo capturado.
-        $weekendUnits = $weekendUnitsAccum;
+        // La checada valida antes de aprobar; aquí ya manda el compromiso.
+        $weekendUnits = $this->weekendAuthorizationUnits->materializedUnits($authorizations, $records, $employee);
         // Conceptos extra y observaciones: SOLO aprobados (las pendientes
         // capturadas viven exclusivamente en la parte ámbar "por aprobar").
         $approvedOnly = $authorizations->filter(

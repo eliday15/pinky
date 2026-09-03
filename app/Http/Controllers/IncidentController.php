@@ -244,19 +244,20 @@ class IncidentController extends Controller
         $endDate = Carbon::parse($validated['end_date']);
         $validated['days_count'] = $this->calculateDaysCount($incidentType, $startDate, $endDate, $employee, $convertsToHours);
 
-        // Reject overlapping incidents for the same employee (any non-rejected
-        // status). Los vales de conversión HxV no ocupan el día (no son tiempo
-        // tomado), así que ni bloquean ni son bloqueados por el traslape.
+        // Evita duplicar el mismo concepto activo para el empleado y rango.
+        // Conceptos distintos sí pueden coexistir (p. ej. FRT contable + PEN
+        // real del día). Los vales HxV no ocupan fechas.
         if (! $convertsToHours) {
-            $overlapExists = Incident::where('employee_id', $validated['employee_id'])
-                ->whereIn('status', ['pending', 'approved'])
-                ->where('converts_to_vacation_hours', false)
-                ->where('start_date', '<=', $validated['end_date'])
-                ->where('end_date', '>=', $validated['start_date'])
+            $overlapExists = Incident::activeConceptOverlap(
+                (int) $validated['employee_id'],
+                (int) $validated['incident_type_id'],
+                $validated['start_date'],
+                $validated['end_date'],
+            )
                 ->exists();
             if ($overlapExists) {
                 return redirect()->back()->withErrors([
-                    'dates' => 'Ya existe una incidencia activa para este empleado en el rango de fechas seleccionado.',
+                    'dates' => 'Ya existe una incidencia activa del mismo concepto para este empleado en el rango de fechas seleccionado.',
                 ])->withInput();
             }
         }
@@ -474,11 +475,14 @@ class IncidentController extends Controller
             $endDate = Carbon::parse($validated['end_date']);
             $daysCount = $this->calculateDaysCount($incidentType, $startDate, $endDate, $employee);
 
-            // Skip overlaps: don't double-book the same employee for these dates.
-            $overlap = Incident::where('employee_id', $employeeId)
-                ->whereIn('status', ['pending', 'approved'])
-                ->where('start_date', '<=', $validated['end_date'])
-                ->where('end_date', '>=', $validated['start_date'])
+            // Solo se omite un traslape del mismo concepto. Conceptos distintos
+            // pueden coexistir en las mismas fechas.
+            $overlap = Incident::activeConceptOverlap(
+                (int) $employeeId,
+                (int) $validated['incident_type_id'],
+                $validated['start_date'],
+                $validated['end_date'],
+            )
                 ->exists();
             if ($overlap) {
                 $skipped[] = "{$employee->full_name} (solapamiento)";
@@ -643,6 +647,20 @@ class IncidentController extends Controller
         $startDate = Carbon::parse($validated['start_date']);
         $endDate = Carbon::parse($validated['end_date']);
         $validated['days_count'] = $this->calculateDaysCount($updateType, $startDate, $endDate, $employee);
+
+        // Mantiene el mismo invariante de captura al editar. Excluye la propia
+        // incidencia para que conservar o ajustar su rango no choque consigo.
+        if (! $incident->converts_to_vacation_hours && Incident::activeConceptOverlap(
+            (int) $validated['employee_id'],
+            (int) $validated['incident_type_id'],
+            $validated['start_date'],
+            $validated['end_date'],
+            $incident->id,
+        )->exists()) {
+            return redirect()->back()->withErrors([
+                'dates' => 'Ya existe una incidencia activa del mismo concepto para este empleado en el rango de fechas seleccionado.',
+            ])->withInput();
+        }
 
         if (! $wasApproved) {
             $incident->update($validated);

@@ -9,6 +9,7 @@ use App\Models\CompensationType;
 use App\Models\Employee;
 use App\Models\Holiday;
 use App\Models\Incident;
+use App\Models\IncidentType;
 use App\Models\PayrollEntry;
 use App\Models\PayrollPeriod;
 use App\Models\SystemSetting;
@@ -61,6 +62,7 @@ class PayrollCalculatorService
         \App\Services\Fiscal\FiscalDeductionService $fiscal,
         private \App\Services\Fiscal\EmployerQuotaCalculatorService $employerQuotas,
         private ApprovedAuthorizationQuantityService $approvedQuantities,
+        private WeekendAuthorizationUnitService $weekendAuthorizationUnits,
     ) {
         $this->resolver = $resolver;
         $this->lateAbsences = $lateAbsences;
@@ -676,7 +678,7 @@ class PayrollCalculatorService
             // de Dani 2026-06-28); 12 h = 2. Se calcula desde las autorizaciones
             // (no del status) para que un sábado marcado "ausente" pero trabajado
             // y autorizado sí pague.
-            $weekendResult = $this->calculateWeekendUnits($attendance, $approvedAuthorizations, $employee);
+            $weekendResult = $this->calculateWeekendUnits($attendance, $approvedAuthorizations, $employee, $allowedPaymentPeriods);
             $weekendUnits = $weekendResult['units'];
             $weekendNotCounted = $weekendResult['not_counted'];
 
@@ -1950,90 +1952,24 @@ class PayrollCalculatorService
      * Se basa en las autorizaciones, no en el status, para que un día trabajado
      * y autorizado pero marcado "ausente" también pague.
      */
-    private function calculateWeekendUnits(Collection $attendance, Collection $approvedAuthorizations, Employee $employee): array
-    {
-        // Días FIN autorizados que NO generaron fin de semana (no llegaron al
-        // umbral de horas corridas). Se reportan en el recibo: un fin aprobado
-        // que no aparece siempre termina en pregunta (Elias 2026-08-26, caso
-        // Orlando: sábado de 6 h 41 min contra el mínimo de 7 h).
+    private function calculateWeekendUnits(
+        Collection $attendance,
+        Collection $approvedAuthorizations,
+        Employee $employee,
+        ?array $allowedPaymentPeriods = null,
+    ): array {
+        // La checada fue la barrera antes de aprobar. Después manda la cantidad
+        // aprobada y nunca se vuelve a recortar por releer el reloj.
+        $approvedUnits = $this->weekendAuthorizationUnits->materializedUnits(
+            $approvedAuthorizations,
+            $attendance,
+            $employee,
+            $allowedPaymentPeriods,
+        );
+
         $notCounted = [];
-        $recordsByDate = $attendance->keyBy(fn ($r) => Carbon::parse($r->work_date)->toDateString());
 
-        $finAuths = $approvedAuthorizations
-            ->filter(fn (Authorization $a) => $a->compensationType?->hasWeekendPullRule());
-
-        $finDates = $finAuths
-            ->map(fn (Authorization $a) => Carbon::parse($a->date)->toDateString())
-            ->unique();
-
-        $finHoursByDate = $finAuths
-            ->groupBy(fn (Authorization $a) => Carbon::parse($a->date)->toDateString())
-            ->map(fn (Collection $auths) => (float) $auths->max('hours'));
-
-        $weekendUnitHours = $employee->department?->weekend_unit_hours;
-
-        // Almacén PT (paga por unidades de horas): por cada día FIN autorizado,
-        // AL MENOS 1 aunque trabaje < 1 unidad (Dani 2026-06-28); 12 h ÷ 6 = 2.
-        if ($weekendUnitHours && $weekendUnitHours > 0) {
-            $units = 0;
-            foreach ($finDates as $date) {
-                $record = $recordsByDate->get($date);
-                $gross = $record?->grossSpanHours();
-                if ($gross === null) {
-                    $units += max(1, (int) round((float) ($finHoursByDate->get($date) ?? 1)));
-
-                    continue;
-                }
-                $base = max(0.0, (float) $gross - (float) ($record->velada_hours ?? 0));
-                $units += max(1, (int) floor($base / $weekendUnitHours));
-            }
-
-            return ['units' => $units, 'not_counted' => $notCounted];
-        }
-
-        // Los demás deptos (Dani 2026-07-07, ampliada 2026-08-25 caso Angelica/
-        // Saldos): por cada día FIN autorizado con al menos T horas (7 por
-        // omisión) hay 1 fin de semana, y al llegar a 12 h corridas el fin se
-        // paga DOBLE — el excedente sobre T se sigue pagando como tiempo extra
-        // aparte (a diferencia de Almacén PT, donde las unidades absorben todo).
-        // Por debajo de T no hay fin de semana (esas horas van como tiempo
-        // extra). Se reconfirma el umbral aquí aunque el pull ya lo filtra.
-        $threshold = $employee->weekendUnitThreshold();
-        if ($threshold === null) {
-            return ['units' => 0, 'not_counted' => $notCounted];
-        }
-
-        // El umbral se compara contra las horas CORRIDAS de entrada a salida,
-        // sin descontar comida (Dani 2026-07-08) pero MENOS la velada — la
-        // velada se paga aparte y no genera fines (misma regla que Almacén).
-        // Un día FIN autorizado sin checada completa (empleado exento, salida
-        // no marcada, día sincronizado como ausente) vale lo CAPTURADO en la
-        // autorización (mínimo 1): la autorización aprobada es la evidencia
-        // cuando no hay horas que medir.
-        $units = 0;
-        foreach ($finDates as $date) {
-            $record = $recordsByDate->get($date);
-            $gross = $record?->grossSpanHours();
-            if ($gross === null) {
-                $units += max(1, (int) round((float) ($finHoursByDate->get($date) ?? 1)));
-
-                continue;
-            }
-            $base = max(0.0, (float) $gross - (float) ($record->velada_hours ?? 0));
-            $dayUnits = (int) ($employee->weekendUnitsForGrossHours($base) ?? 0);
-            $units += $dayUnits;
-
-            if ($dayUnits === 0) {
-                $notCounted[] = [
-                    'date' => $date,
-                    'gross_hours' => round($base, 2),
-                    'threshold' => round((float) $threshold, 2),
-                    'reason' => 'No llego al minimo de horas corridas; esas horas se pagan como tiempo extra',
-                ];
-            }
-        }
-
-        return ['units' => $units, 'not_counted' => $notCounted];
+        return ['units' => $approvedUnits, 'not_counted' => $notCounted];
     }
 
     private function calculateIncidentMetrics(
@@ -2052,12 +1988,12 @@ class PayrollCalculatorService
         $absenceDays = 0;
         $lateAbsenceDays = 0;
         $lateAbsenceIncidents = [];
+        $dailyIncidents = [];
 
         foreach ($incidents as $incident) {
             $incidentStart = Carbon::parse($incident->start_date);
 
             $category = $incident->incidentType->category;
-            $isPaid = $incident->incidentType->is_paid;
 
             // Retardos→falta (FRT): la incidencia está fechada el día 1 del
             // mes siguiente al acumulado y carga days_count completo en el
@@ -2080,45 +2016,43 @@ class PayrollCalculatorService
                 continue;
             }
 
-            // Días del solape contados según el count_mode del TIPO
-            // (DECISIONES §6): hábiles para vacaciones/permisos, calendario
-            // para incapacidades — el mismo conteo que la captura y el saldo.
-            $days = $this->incidentOverlapDays($incident, $startDate, $endDate, $employee, $holidayDates);
-
-            if ($days <= 0) {
-                continue;
+            foreach ($this->incidentCoveredDates($incident, $startDate, $endDate, $employee, $holidayDates) as $date) {
+                $dailyIncidents[$date] = Incident::preferredDailyEconomicIncident(
+                    $dailyIncidents[$date] ?? null,
+                    $incident,
+                );
             }
+        }
 
-            // Conteo por categoría para REPORTE. Permisos sin goce se restan del
-            // base plano (sin castigo del séptimo día). Las faltas injustificadas
-            // ('absence' con is_paid=false) SÍ descuentan SD×7/6, pero ese
-            // descuento se calcula por FECHA en incidentAbsenceDeductionDates()
-            // para deduplicar contra las faltas de asistencia y los días
-            // trabajados; aquí 'absence_days' queda solo como métrica de reporte
-            // (incluye también las faltas justificadas y honra el count_mode).
+        // Una sola consecuencia económica por fecha. Las filas siguen visibles
+        // y auditables; aquí solo gana la categoría de mayor precedencia.
+        foreach ($dailyIncidents as $incident) {
+            $category = $incident->incidentType->category;
+            $isPaid = (bool) $incident->incidentType->is_paid;
+
             switch ($category) {
                 case 'vacation':
-                    $vacationDays += $days;
+                    $vacationDays++;
                     break;
                 case 'sick_leave':
-                    $sickLeaveDays += $days;
+                    $sickLeaveDays++;
                     if ($isPaid) {
-                        $sickLeavePaidDays += $days;
+                        $sickLeavePaidDays++;
                     }
                     break;
                 case 'permission':
-                    $permissionDays += $days;
+                    $permissionDays++;
                     // Permiso con goce: lo paga el sueldo base (no se resta).
                     // Permiso sin goce: día no pagado, se resta del base plano
                     // (sin castigo del séptimo día).
                     if ($isPaid) {
-                        $permissionPaidDays += $days;
+                        $permissionPaidDays++;
                     } else {
-                        $permissionUnpaidDays += $days;
+                        $permissionUnpaidDays++;
                     }
                     break;
                 case 'absence':
-                    $absenceDays += $days;
+                    $absenceDays++;
                     break;
             }
         }
@@ -2134,6 +2068,64 @@ class PayrollCalculatorService
             'late_absence_days' => $lateAbsenceDays,
             'late_absence_incidents' => $lateAbsenceIncidents,
         ];
+    }
+
+    /**
+     * Fechas que aporta una incidencia a una métrica diaria.
+     *
+     * Respeta el modo calendario/hábil del concepto. Vacaciones agregan el
+     * sábado ganado por 3+ días de la semana, incluso si quedó fuera del rango
+     * capturado, siempre que caiga dentro del periodo calculado.
+     *
+     * @return list<string>
+     */
+    private function incidentCoveredDates(
+        Incident $incident,
+        Carbon $startDate,
+        Carbon $endDate,
+        Employee $employee,
+        array $holidayDates,
+    ): array {
+        $from = Carbon::parse($incident->start_date)->startOfDay()->max($startDate->copy()->startOfDay());
+        $to = Carbon::parse($incident->end_date)->startOfDay()->min($endDate->copy()->startOfDay());
+
+        if ($from->gt($to)) {
+            return [];
+        }
+
+        $calendarDays = ($incident->incidentType?->count_mode ?? IncidentType::COUNT_WORKING_DAYS)
+            === IncidentType::COUNT_CALENDAR_DAYS;
+        $dates = [];
+
+        for ($date = $from->copy(); $date->lte($to); $date->addDay()) {
+            $dateString = $date->toDateString();
+            if ($calendarDays || ($employee->isEffectiveWorkingDay($date->englishDayOfWeek) && ! in_array($dateString, $holidayDates, true))) {
+                $dates[] = $dateString;
+            }
+        }
+
+        if ($incident->incidentType?->deducts_vacation && ! $employee->isEffectiveWorkingDay('Saturday')) {
+            $perWeek = [];
+            for ($date = $from->copy(); $date->lte($to); $date->addDay()) {
+                $dateString = $date->toDateString();
+                if (! in_array($dateString, $holidayDates, true) && $employee->isEffectiveWorkingDay($date->englishDayOfWeek)) {
+                    $week = $date->copy()->startOfWeek(Carbon::MONDAY)->toDateString();
+                    $perWeek[$week] = ($perWeek[$week] ?? 0) + 1;
+                }
+            }
+            foreach ($perWeek as $week => $count) {
+                $saturday = Carbon::parse($week)->addDays(5);
+                $saturdayString = $saturday->toDateString();
+                if ($count >= 3
+                    && $saturday->betweenIncluded($startDate, $endDate)
+                    && ! in_array($saturdayString, $holidayDates, true)
+                    && ! Holiday::isHoliday($saturdayString)) {
+                    $dates[] = $saturdayString;
+                }
+            }
+        }
+
+        return array_values(array_unique($dates));
     }
 
     /**
@@ -2217,23 +2209,6 @@ class PayrollCalculatorService
         }
 
         return $dates;
-    }
-
-    /**
-     * Días del solape incidencia↔periodo según el count_mode del tipo:
-     * calendario = días corridos; hábiles = solo días laborables del
-     * empleado, excluyendo festivos.
-     */
-    private function incidentOverlapDays(
-        Incident $incident,
-        Carbon $startDate,
-        Carbon $endDate,
-        Employee $employee,
-        array $holidayDates,
-    ): int {
-        // Fuente única del prorrateo con count_mode: vive en el modelo para
-        // que nómina y reportes cuenten exactamente igual (auditoría #86).
-        return $incident->overlapDays($startDate, $endDate, $employee, $holidayDates);
     }
 
     /**
