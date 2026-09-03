@@ -118,6 +118,38 @@ class PermisoDentroJornadaTest extends FeatureTestCase
         $this->assertEqualsWithDelta(0.0, (float) $record->overtime_hours, 0.01);
     }
 
+    public function test_overlapping_windows_of_distinct_concepts_use_their_union(): void
+    {
+        $employee = Employee::factory()->create(['status' => 'active']);
+        $record = $this->record($employee, '08:00:00', '18:00:00');
+        $this->approvedWindow($employee, '13:00', '15:00', 2.0);
+        $otherType = IncidentType::factory()->create([
+            'code' => 'PDJ-OTRO',
+            'category' => 'permission',
+            'is_paid' => true,
+            'affects_attendance' => true,
+            'has_time_range' => true,
+        ]);
+        Incident::factory()->approved()->create([
+            'employee_id' => $employee->id,
+            'incident_type_id' => $otherType->id,
+            'start_date' => self::DATE,
+            'end_date' => self::DATE,
+            'days_count' => 1,
+            'start_time' => '14:00',
+            'end_time' => '16:00',
+            'hours' => 2.0,
+        ]);
+
+        app(ZktecoSyncService::class)->recalculateAttendanceRecord($record);
+        $record->refresh();
+
+        $this->assertEqualsWithDelta(6.0, (float) $record->worked_hours, 0.01,
+            '9 h netas menos la unión 13:00–16:00, no 4 h por filas');
+        $this->assertEqualsWithDelta(3.0, (float) $record->permission_hours, 0.01);
+        $this->assertEqualsWithDelta(9.0, (float) $record->total_payroll_hours, 0.01);
+    }
+
     public function test_not_returning_still_counts_early_departure_from_window_end(): void
     {
         // Permiso 13:00–15:00 pero NO regresa (última checada 13:00): la salida
