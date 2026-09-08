@@ -3,6 +3,7 @@
 namespace Tests\Feature\Admin;
 
 use App\Models\SystemSetting;
+use App\Services\BreakfastVendorAccessService;
 use Inertia\Testing\AssertableInertia as Assert;
 use Tests\FeatureTestCase;
 
@@ -175,6 +176,47 @@ class SettingsControllerTest extends FeatureTestCase
         ]);
     }
 
+    public function test_bulk_update_moves_kiosk_role_to_selected_breakfast_vendor(): void
+    {
+        $this->actingAsAdmin();
+        $oldUser = $this->supervisorUser();
+        $oldVendor = $this->attachEmployee($oldUser);
+        $newUser = $this->supervisorUser();
+        $newVendor = $this->attachEmployee($newUser);
+        SystemSetting::set('breakfast_vendor_employee_id', $oldVendor->id);
+        $oldUser->assignRole(BreakfastVendorAccessService::ROLE);
+
+        $this->put(route('settings.update'), [
+            'settings' => [[
+                'key' => 'breakfast_vendor_employee_id',
+                'value' => (string) $newVendor->id,
+            ]],
+        ])->assertRedirect()->assertSessionHas('success');
+
+        $this->assertFalse($oldUser->fresh()->hasRole(BreakfastVendorAccessService::ROLE));
+        $newUser->refresh();
+        $this->assertTrue($newUser->hasRole('supervisor'));
+        $this->assertTrue($newUser->hasRole(BreakfastVendorAccessService::ROLE));
+        $this->assertTrue($newUser->can('breakfasts.register'));
+        $this->assertFalse($newUser->can('breakfasts.view'));
+    }
+
+    public function test_bulk_update_rejects_breakfast_vendor_without_user_account(): void
+    {
+        $this->actingAsAdmin();
+        $vendorWithoutAccount = \App\Models\Employee::factory()->create();
+        SystemSetting::set('breakfast_vendor_employee_id', 0);
+
+        $this->put(route('settings.update'), [
+            'settings' => [[
+                'key' => 'breakfast_vendor_employee_id',
+                'value' => (string) $vendorWithoutAccount->id,
+            ]],
+        ])->assertSessionHasErrors(['settings.0.value']);
+
+        $this->assertSame(0, (int) SystemSetting::get('breakfast_vendor_employee_id'));
+    }
+
     public function test_bulk_update_validation_requires_settings_array(): void
     {
         $this->actingAsAdmin();
@@ -192,6 +234,34 @@ class SettingsControllerTest extends FeatureTestCase
                 ['key' => 'does_not_exist_key', 'value' => 'x'],
             ],
         ])->assertSessionHasErrors(['settings.0.key']);
+    }
+
+    public function test_bulk_update_rejects_duplicate_keys_without_changing_vendor_access(): void
+    {
+        $this->actingAsAdmin();
+        $currentUser = $this->supervisorUser();
+        $currentVendor = $this->attachEmployee($currentUser);
+        $newUser = $this->supervisorUser();
+        $newVendor = $this->attachEmployee($newUser);
+        SystemSetting::set('breakfast_vendor_employee_id', $currentVendor->id);
+        $currentUser->assignRole(BreakfastVendorAccessService::ROLE);
+
+        $this->put(route('settings.update'), [
+            'settings' => [
+                [
+                    'key' => 'breakfast_vendor_employee_id',
+                    'value' => (string) $newVendor->id,
+                ],
+                [
+                    'key' => 'breakfast_vendor_employee_id',
+                    'value' => '0',
+                ],
+            ],
+        ])->assertSessionHasErrors(['settings.0.key', 'settings.1.key']);
+
+        $this->assertSame($currentVendor->id, (int) SystemSetting::get('breakfast_vendor_employee_id'));
+        $this->assertTrue($currentUser->fresh()->hasRole(BreakfastVendorAccessService::ROLE));
+        $this->assertFalse($newUser->fresh()->hasRole(BreakfastVendorAccessService::ROLE));
     }
 
     public function test_rrhh_cannot_bulk_update_settings(): void
@@ -263,6 +333,23 @@ class SettingsControllerTest extends FeatureTestCase
             'key' => 'company_name',
             'value' => 'New Co',
         ]);
+    }
+
+    public function test_single_update_can_clear_vendor_and_revoke_kiosk_role(): void
+    {
+        $this->actingAsAdmin();
+        $vendorUser = $this->supervisorUser();
+        $vendor = $this->attachEmployee($vendorUser);
+        SystemSetting::set('breakfast_vendor_employee_id', $vendor->id);
+        $vendorUser->assignRole(BreakfastVendorAccessService::ROLE);
+
+        $this->put(route('settings.updateSingle'), [
+            'key' => 'breakfast_vendor_employee_id',
+            'value' => '0',
+        ])->assertRedirect()->assertSessionHas('success');
+
+        $this->assertFalse($vendorUser->fresh()->hasRole(BreakfastVendorAccessService::ROLE));
+        $this->assertSame(0, (int) SystemSetting::get('breakfast_vendor_employee_id'));
     }
 
     public function test_update_single_validation_requires_key_and_value(): void

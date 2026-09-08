@@ -5,6 +5,7 @@
     "scripts": {
         "build": "vite build",
         "dev": "vite",
+        "test:frontend": "node --test tests/frontend/*.test.mjs",
         "test:e2e": "node tests/e2e/runner.mjs"
     },
     "devDependencies": {
@@ -25,6 +26,7 @@
     "dependencies": {
         "@headlessui/vue": "^1.7.23",
         "@inertiajs/vue3": "^2.3.4",
+        "@tensorflow/tfjs-backend-wasm": "4.22.0",
         "@vladmandic/face-api": "^1.7.15",
         "chart.js": "^4.5.1",
         "dayjs": "^1.11.19",

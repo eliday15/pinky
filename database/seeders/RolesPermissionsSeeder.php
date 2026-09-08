@@ -2,6 +2,7 @@
 
 namespace Database\Seeders;
 
+use App\Services\BreakfastVendorAccessService;
 use Illuminate\Database\Seeder;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
@@ -179,6 +180,14 @@ class RolesPermissionsSeeder extends Seeder
             'breakfasts.register',
             'breakfasts.view',
         ]);
+
+        // Rol secundario administrado por la configuración del vendedor. Da
+        // acceso únicamente al kiosco y puede coexistir con su rol laboral.
+        $breakfastVendor = Role::firstOrCreate([
+            'name' => BreakfastVendorAccessService::ROLE,
+            'guard_name' => 'web',
+        ]);
+        $breakfastVendor->syncPermissions(['breakfasts.register']);
 
         // Create Supervisor role - Read-only employee access, attendance view, can create incidents/authorizations
         $supervisor = Role::firstOrCreate(['name' => 'supervisor']);

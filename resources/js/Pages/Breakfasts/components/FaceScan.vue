@@ -1,5 +1,12 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount } from 'vue';
+import wasmBasicUrl from '@tensorflow/tfjs-backend-wasm/dist/tfjs-backend-wasm.wasm?url';
+import wasmSimdUrl from '@tensorflow/tfjs-backend-wasm/dist/tfjs-backend-wasm-simd.wasm?url';
+import wasmThreadedSimdUrl from '@tensorflow/tfjs-backend-wasm/dist/tfjs-backend-wasm-threaded-simd.wasm?url';
+import {
+    FaceBackendInitializationError,
+    initializeFaceBackend,
+} from '../faceBackend';
 
 // Escáner facial del kiosco: carga face-api.js dinámicamente (solo esta
 // página paga el peso), calcula el descriptor de referencia desde la foto del
@@ -30,6 +37,16 @@ const REFERENCE_DETECTION_OPTIONS = [
     { inputSize: 320, scoreThreshold: 0.15 },
     { inputSize: 416, scoreThreshold: 0.1 },
 ];
+const WASM_PATHS = {
+    'tfjs-backend-wasm.wasm': wasmBasicUrl,
+    'tfjs-backend-wasm-simd.wasm': wasmSimdUrl,
+    'tfjs-backend-wasm-threaded-simd.wasm': wasmThreadedSimdUrl,
+};
+const BACKEND_STATUS = {
+    webgl: 'Preparando reconocimiento con aceleración gráfica...',
+    wasm: 'Preparando reconocimiento compatible...',
+    cpu: 'Preparando reconocimiento básico...',
+};
 
 const stopAll = () => {
     if (intervalId) {
@@ -112,6 +129,9 @@ const detectReferenceFace = async (image) => {
 onMounted(async () => {
     try {
         faceapi = await import('@vladmandic/face-api');
+        await initializeFaceBackend(faceapi.tf, WASM_PATHS, (backend) => {
+            statusText.value = BACKEND_STATUS[backend];
+        });
 
         await Promise.all([
             faceapi.nets.tinyFaceDetector.loadFromUri(MODELS_URI),
@@ -148,7 +168,11 @@ onMounted(async () => {
     } catch (error) {
         if (error?.name === 'NotAllowedError') {
             fail('La cámara está bloqueada. Permite el acceso a la cámara en este dispositivo.');
+        } else if (error instanceof FaceBackendInitializationError) {
+            console.error('No fue posible iniciar TensorFlow para el reconocimiento facial', error.attempts);
+            fail('Este navegador no pudo iniciar el motor de reconocimiento facial. Recarga la página; si continúa, reporta el navegador y equipo a Sistemas.');
         } else {
+            console.error('Falló la inicialización del reconocimiento facial', error);
             fail('No se pudo iniciar el reconocimiento facial. Verifica la cámara e intenta de nuevo.');
         }
     }

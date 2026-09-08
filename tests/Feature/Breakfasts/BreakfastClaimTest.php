@@ -7,6 +7,7 @@ use App\Models\Employee;
 use App\Models\Schedule;
 use App\Models\SystemSetting;
 use App\Services\BreakfastClaimService;
+use App\Services\BreakfastVendorAccessService;
 use Carbon\Carbon;
 use Illuminate\Validation\ValidationException;
 use Tests\FeatureTestCase;
@@ -282,6 +283,18 @@ class BreakfastClaimTest extends FeatureTestCase
         $this->postJson(route('breakfasts.lookup'), ['query' => 'Maria'])->assertForbidden();
         $this->postJson(route('breakfasts.status'), ['employee_id' => 1])->assertForbidden();
         $this->postJson(route('breakfasts.store'), [])->assertForbidden();
+    }
+
+    public function test_configured_vendor_role_can_open_kiosk_without_view_access(): void
+    {
+        $vendor = $this->supervisorUser();
+        $vendor->assignRole(BreakfastVendorAccessService::ROLE);
+        $this->actingAs($vendor);
+
+        $this->get(route('breakfasts.kiosk'))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page->component('Breakfasts/Kiosk'));
+        $this->get(route('breakfasts.index'))->assertForbidden();
     }
 
     public function test_index_requires_view_permission(): void

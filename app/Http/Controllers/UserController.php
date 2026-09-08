@@ -4,9 +4,12 @@ namespace App\Http\Controllers;
 
 use App\Models\AuditLog;
 use App\Models\Employee;
+use App\Models\SystemSetting;
 use App\Models\User;
+use App\Services\BreakfastVendorAccessService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
@@ -74,7 +77,7 @@ class UserController extends Controller
 
         return Inertia::render('Users/Index', [
             'users' => $users,
-            'roles' => Role::orderBy('name')->pluck('name'),
+            'roles' => $this->assignableRoles(),
             'filters' => $request->only(['search', 'role', 'two_factor', 'password_status']),
             'can' => [
                 'create' => $currentUser->can('create', User::class),
@@ -90,7 +93,7 @@ class UserController extends Controller
         $this->authorize('create', User::class);
 
         return Inertia::render('Users/Create', [
-            'roles' => Role::orderBy('name')->pluck('name'),
+            'roles' => $this->assignableRoles(),
             'employees' => Employee::active()
                 ->whereNull('user_id')
                 ->get(['id', 'full_name', 'email']),
@@ -108,7 +111,7 @@ class UserController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'string', 'email', 'max:255', 'unique:app_users'],
             'password' => ['required', 'string', 'min:8'],
-            'role' => ['required', 'string', Rule::in(Role::pluck('name'))],
+            'role' => ['required', 'string', Rule::in($this->assignableRoles())],
             'employee_id' => ['nullable', 'exists:employees,id'],
         ], [
             'name.required' => 'El nombre es obligatorio.',
@@ -180,7 +183,7 @@ class UserController extends Controller
 
         return Inertia::render('Users/Edit', [
             'editUser' => $user,
-            'roles' => Role::orderBy('name')->pluck('name'),
+            'roles' => $this->assignableRoles(),
             'employees' => $availableEmployees,
             'can' => [
                 'delete' => $currentUser->can('delete', $user),
@@ -199,7 +202,7 @@ class UserController extends Controller
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'string', 'email', 'max:255', Rule::unique('app_users')->ignore($user->id)],
-            'role' => ['required', 'string', Rule::in(Role::pluck('name'))],
+            'role' => ['required', 'string', Rule::in($this->assignableRoles())],
             'employee_id' => ['nullable', 'exists:employees,id'],
         ], [
             'name.required' => 'El nombre es obligatorio.',
@@ -216,6 +219,16 @@ class UserController extends Controller
             }
         }
 
+        $currentEmployeeId = $user->employee?->id;
+        $newEmployeeId = ! empty($validated['employee_id']) ? (int) $validated['employee_id'] : null;
+
+        if ($currentEmployeeId === (int) SystemSetting::get('breakfast_vendor_employee_id', 0)
+            && $currentEmployeeId !== $newEmployeeId) {
+            return back()->withErrors([
+                'employee_id' => 'No puedes desvincular la cuenta del vendedor de desayunos. Selecciona primero otro vendedor en Configuración.',
+            ]);
+        }
+
         // Capture roles before sync for audit trail
         $rolesBefore = $user->roles->pluck('name')->sort()->values()->toArray();
 
@@ -225,12 +238,15 @@ class UserController extends Controller
         ]);
 
         // Sync role
-        $user->syncRoles([$validated['role']]);
+        $managedRoles = $user->hasRole(BreakfastVendorAccessService::ROLE)
+            ? [BreakfastVendorAccessService::ROLE]
+            : [];
+        $user->syncRoles(array_merge([$validated['role']], $managedRoles));
 
-        $rolesAfter = [$validated['role']];
+        $rolesAfter = collect(array_merge([$validated['role']], $managedRoles))->sort()->values()->all();
         $roleChanged = $rolesBefore !== $rolesAfter;
         $auditDescription = $roleChanged
-            ? "Cambio los roles de {$validated['name']}: de " . implode(', ', $rolesBefore ?: ['ninguno']) . " a {$validated['role']}"
+            ? "Cambio los roles de {$validated['name']}: de ".implode(', ', $rolesBefore ?: ['ninguno'])." a {$validated['role']}"
             : "Actualizo el usuario {$validated['name']} ({$validated['email']})";
 
         AuditLog::record(
@@ -246,9 +262,6 @@ class UserController extends Controller
         );
 
         // Handle employee link change
-        $currentEmployeeId = $user->employee?->id;
-        $newEmployeeId = ! empty($validated['employee_id']) ? (int) $validated['employee_id'] : null;
-
         if ($currentEmployeeId !== $newEmployeeId) {
             // Unlink previous employee
             if ($currentEmployeeId) {
@@ -265,11 +278,26 @@ class UserController extends Controller
     }
 
     /**
+     * Roles laborales elegibles desde usuarios; los roles administrados por el
+     * sistema se conservan aparte y no pueden seleccionarse manualmente.
+     */
+    private function assignableRoles(): Collection
+    {
+        return Role::where('name', '!=', BreakfastVendorAccessService::ROLE)
+            ->orderBy('name')
+            ->pluck('name');
+    }
+
+    /**
      * Remove the specified user.
      */
     public function destroy(User $user): RedirectResponse
     {
         $this->authorize('delete', $user);
+
+        if ($user->employee?->id === (int) SystemSetting::get('breakfast_vendor_employee_id', 0)) {
+            return back()->with('error', 'No puedes eliminar la cuenta del vendedor de desayunos. Selecciona primero otro vendedor en Configuración.');
+        }
 
         // Snapshot identity before deletion
         $nameSnap = $user->name;

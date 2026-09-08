@@ -3,8 +3,10 @@
 namespace Tests\Feature\Admin;
 
 use App\Models\Employee;
+use App\Models\SystemSetting;
 use App\Models\TwoFactorDevice;
 use App\Models\User;
+use App\Services\BreakfastVendorAccessService;
 use Inertia\Testing\AssertableInertia as Assert;
 use Tests\FeatureTestCase;
 
@@ -365,6 +367,64 @@ class UserControllerTest extends FeatureTestCase
         ]);
         $this->assertTrue($target->fresh()->hasRole('supervisor'));
         $this->assertFalse($target->fresh()->hasRole('rrhh'));
+    }
+
+    public function test_updating_vendor_user_preserves_system_managed_breakfast_role(): void
+    {
+        $this->actingAsAdmin();
+        $target = $this->supervisorUser([
+            'name' => 'Vendor Original',
+            'email' => 'vendor@example.test',
+        ]);
+        $target->assignRole(BreakfastVendorAccessService::ROLE);
+
+        $this->put(route('users.update', $target), [
+            'name' => 'Vendor Actualizado',
+            'email' => 'vendor@example.test',
+            'role' => 'supervisor',
+            'employee_id' => null,
+        ])->assertRedirect(route('users.index'));
+
+        $target->refresh();
+        $this->assertTrue($target->hasRole('supervisor'));
+        $this->assertTrue($target->hasRole(BreakfastVendorAccessService::ROLE));
+        $this->assertTrue($target->can('breakfasts.register'));
+    }
+
+    public function test_configured_vendor_account_cannot_be_unlinked(): void
+    {
+        $this->actingAsAdmin();
+        $target = $this->supervisorUser(['email' => 'vendor-linked@example.test']);
+        $vendor = $this->attachEmployee($target);
+        $target->assignRole(BreakfastVendorAccessService::ROLE);
+        SystemSetting::set('breakfast_vendor_employee_id', $vendor->id);
+
+        $this->put(route('users.update', $target), [
+            'name' => $target->name,
+            'email' => $target->email,
+            'role' => 'supervisor',
+            'employee_id' => null,
+        ])->assertSessionHasErrors(['employee_id']);
+
+        $this->assertSame($target->id, $vendor->fresh()->user_id);
+        $this->assertTrue($target->fresh()->hasRole(BreakfastVendorAccessService::ROLE));
+    }
+
+    public function test_system_managed_breakfast_role_is_not_manually_assignable(): void
+    {
+        $this->actingAsAdmin();
+
+        $this->get(route('users.create'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('roles', fn ($roles) => ! collect($roles)->contains(BreakfastVendorAccessService::ROLE)));
+
+        $this->post(route('users.store'), [
+            'name' => 'Manual Vendor',
+            'email' => 'manual-vendor@example.test',
+            'password' => 'password123',
+            'role' => BreakfastVendorAccessService::ROLE,
+        ])->assertSessionHasErrors(['role']);
     }
 
     public function test_update_allows_keeping_same_email(): void

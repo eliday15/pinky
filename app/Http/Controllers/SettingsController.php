@@ -5,10 +5,12 @@ namespace App\Http\Controllers;
 use App\Models\AuditLog;
 use App\Models\Employee;
 use App\Models\SystemSetting;
+use App\Services\BreakfastVendorAccessService;
 use App\Services\TwoFactorService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -126,7 +128,7 @@ class SettingsController extends Controller
     /**
      * Update settings.
      */
-    public function update(Request $request): RedirectResponse
+    public function update(Request $request, BreakfastVendorAccessService $vendorAccess): RedirectResponse
     {
         $user = Auth::user();
 
@@ -136,29 +138,53 @@ class SettingsController extends Controller
 
         $validated = $request->validate([
             'settings' => ['required', 'array'],
-            'settings.*.key' => ['required', 'string', 'exists:system_settings,key'],
+            'settings.*.key' => ['required', 'string', 'distinct', 'exists:system_settings,key'],
             'settings.*.value' => ['required'],
         ]);
 
-        $oldValues = [];
-        $newValues = [];
+        $vendorIndex = collect($validated['settings'])->search(
+            fn (array $setting) => $setting['key'] === 'breakfast_vendor_employee_id'
+        );
+        $newVendor = $vendorIndex !== false
+            ? $vendorAccess->validateVendor(
+                $validated['settings'][$vendorIndex]['value'],
+                "settings.{$vendorIndex}.value"
+            )
+            : null;
 
-        foreach ($validated['settings'] as $setting) {
-            $oldValues[$setting['key']] = SystemSetting::get($setting['key']);
-            SystemSetting::set($setting['key'], $setting['value']);
-            $newValues[$setting['key']] = $setting['value'];
-        }
+        DB::transaction(function () use ($validated, $vendorIndex, $newVendor, $vendorAccess): void {
+            $oldValues = [];
+            $newValues = [];
+
+            // Serializa cambios concurrentes del vendedor: el valor y el rol
+            // administrado deben confirmarse siempre como una sola decisión.
+            if ($vendorIndex !== false) {
+                SystemSetting::where('key', 'breakfast_vendor_employee_id')
+                    ->lockForUpdate()
+                    ->firstOrFail();
+            }
+
+            foreach ($validated['settings'] as $setting) {
+                $oldValues[$setting['key']] = SystemSetting::get($setting['key']);
+                SystemSetting::set($setting['key'], $setting['value']);
+                $newValues[$setting['key']] = $setting['value'];
+            }
+
+            if ($vendorIndex !== false) {
+                $vendorAccess->sync($newVendor?->loadMissing('user'));
+            }
+
+            AuditLog::record(
+                module: AuditLog::MODULE_SETTINGS,
+                action: AuditLog::ACTION_UPDATE,
+                description: 'Actualizo la configuracion: '.implode(', ', array_keys($newValues)),
+                oldValues: $oldValues,
+                newValues: $newValues,
+            );
+        });
 
         // Clear cache after updating
         SystemSetting::clearCache();
-
-        AuditLog::record(
-            module: AuditLog::MODULE_SETTINGS,
-            action: AuditLog::ACTION_UPDATE,
-            description: 'Actualizo la configuracion: ' . implode(', ', array_keys($newValues)),
-            oldValues: $oldValues,
-            newValues: $newValues,
-        );
 
         return redirect()->back()->with('success', 'Configuracion actualizada exitosamente.');
     }
@@ -166,7 +192,7 @@ class SettingsController extends Controller
     /**
      * Update a single setting.
      */
-    public function updateSingle(Request $request): RedirectResponse
+    public function updateSingle(Request $request, BreakfastVendorAccessService $vendorAccess): RedirectResponse
     {
         $user = Auth::user();
 
@@ -179,16 +205,32 @@ class SettingsController extends Controller
             'value' => ['required'],
         ]);
 
-        $oldValue = SystemSetting::get($validated['key']);
-        SystemSetting::set($validated['key'], $validated['value']);
+        $newVendor = $validated['key'] === 'breakfast_vendor_employee_id'
+            ? $vendorAccess->validateVendor($validated['value'], 'value')
+            : null;
 
-        AuditLog::record(
-            module: AuditLog::MODULE_SETTINGS,
-            action: AuditLog::ACTION_UPDATE,
-            description: "Actualizo la configuracion: {$validated['key']}",
-            oldValues: [$validated['key'] => $oldValue],
-            newValues: [$validated['key'] => $validated['value']],
-        );
+        DB::transaction(function () use ($validated, $newVendor, $vendorAccess): void {
+            if ($validated['key'] === 'breakfast_vendor_employee_id') {
+                SystemSetting::where('key', $validated['key'])
+                    ->lockForUpdate()
+                    ->firstOrFail();
+            }
+
+            $oldValue = SystemSetting::get($validated['key']);
+            SystemSetting::set($validated['key'], $validated['value']);
+
+            if ($validated['key'] === 'breakfast_vendor_employee_id') {
+                $vendorAccess->sync($newVendor?->loadMissing('user'));
+            }
+
+            AuditLog::record(
+                module: AuditLog::MODULE_SETTINGS,
+                action: AuditLog::ACTION_UPDATE,
+                description: "Actualizo la configuracion: {$validated['key']}",
+                oldValues: [$validated['key'] => $oldValue],
+                newValues: [$validated['key'] => $validated['value']],
+            );
+        });
 
         return redirect()->back()->with('success', 'Configuracion actualizada.');
     }
