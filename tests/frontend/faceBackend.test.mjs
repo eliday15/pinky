@@ -59,6 +59,19 @@ test('falls back to CPU when WebGL and WASM are unavailable', async () => {
     assert.deepEqual(tf.calls, ['paths', 'backend:webgl', 'backend:wasm', 'backend:cpu', 'ready']);
 });
 
+test('reuses the selected backend across sequential employee scans', async () => {
+    const tf = fakeTensorFlow({ webgl: false, wasm: true });
+    const firstAttempts = [];
+    const secondAttempts = [];
+
+    assert.equal(await initializeFaceBackend(tf, {}, (backend) => firstAttempts.push(backend)), 'wasm');
+    assert.equal(await initializeFaceBackend(tf, {}, (backend) => secondAttempts.push(backend)), 'wasm');
+
+    assert.deepEqual(firstAttempts, ['webgl', 'wasm']);
+    assert.deepEqual(secondAttempts, ['wasm']);
+    assert.deepEqual(tf.calls, ['paths', 'backend:webgl', 'backend:wasm', 'ready']);
+});
+
 test('reports every attempted backend when none can initialize', async () => {
     const tf = fakeTensorFlow({ webgl: false, wasm: false, cpu: false });
 

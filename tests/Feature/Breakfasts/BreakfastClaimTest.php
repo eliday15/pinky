@@ -341,6 +341,7 @@ class BreakfastClaimTest extends FeatureTestCase
 
         $this->assertCount(1, $response->json('matches'));
         $this->assertSame($employee->id, $response->json('matches.0.id'));
+        $this->assertNull($response->json('matches.0.photo_url'));
     }
 
     public function test_lookup_finds_employee_by_exact_number(): void
@@ -386,6 +387,7 @@ class BreakfastClaimTest extends FeatureTestCase
         $this->postJson(route('breakfasts.status'), ['employee_id' => $employee->id])
             ->assertOk()
             ->assertJsonPath('employee.id', $employee->id)
+            ->assertJsonPath('employee.photo_url', '/storage/employees/photos/test.jpg')
             ->assertJsonPath('status.eligible', true)
             ->assertJsonPath('status.window.end', '09:00');
     }

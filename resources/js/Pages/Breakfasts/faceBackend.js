@@ -1,5 +1,7 @@
 export const FACE_BACKEND_ORDER = ['webgl', 'wasm', 'cpu'];
 
+const initializationByRuntime = new WeakMap();
+
 export class FaceBackendInitializationError extends Error {
     constructor(attempts) {
         const detail = attempts
@@ -21,22 +23,37 @@ export class FaceBackendInitializationError extends Error {
  * backend is tried in the order that best fits the kiosk hardware.
  */
 export const initializeFaceBackend = async (tf, wasmPaths, onAttempt = () => {}) => {
-    tf.setWasmPaths(wasmPaths);
-
-    const attempts = [];
-
-    for (const backend of FACE_BACKEND_ORDER) {
+    const existing = initializationByRuntime.get(tf);
+    if (existing) {
+        const backend = await existing;
         onAttempt(backend);
-        try {
-            const selected = await tf.setBackend(backend);
-            if (!selected) throw new Error('el navegador rechazó este motor');
-
-            await tf.ready();
-            return backend;
-        } catch (error) {
-            attempts.push({ backend, error });
-        }
+        return backend;
     }
 
-    throw new FaceBackendInitializationError(attempts);
+    const initialization = (async () => {
+        tf.setWasmPaths(wasmPaths);
+        const attempts = [];
+
+        for (const backend of FACE_BACKEND_ORDER) {
+            onAttempt(backend);
+            try {
+                const selected = await tf.setBackend(backend);
+                if (!selected) throw new Error('el navegador rechazó este motor');
+
+                await tf.ready();
+                return backend;
+            } catch (error) {
+                attempts.push({ backend, error });
+            }
+        }
+
+        throw new FaceBackendInitializationError(attempts);
+    })().catch((error) => {
+        // Do not permanently cache a transient initialization failure.
+        initializationByRuntime.delete(tf);
+        throw error;
+    });
+
+    initializationByRuntime.set(tf, initialization);
+    return initialization;
 };

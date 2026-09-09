@@ -69,7 +69,11 @@ class BreakfastController extends Controller
             ->orderBy('full_name')
             ->limit(8)
             ->get()
-            ->map(fn (Employee $employee) => $this->employeePayload($employee));
+            // Autocomplete must stay light on the old kiosk PC. Original
+            // employee photos are commonly 3–4 MB and decoding up to eight of
+            // them can exhaust memory before facial recognition starts. The
+            // selected employee's photo is returned by status() only.
+            ->map(fn (Employee $employee) => $this->employeePayload($employee, includePhoto: false));
 
         return response()->json(['matches' => $matches]);
     }
@@ -100,13 +104,15 @@ class BreakfastController extends Controller
      *
      * @return array<string, mixed>
      */
-    private function employeePayload(Employee $employee): array
+    private function employeePayload(Employee $employee, bool $includePhoto = true): array
     {
         return [
             'id' => $employee->id,
             'full_name' => $employee->full_name,
             'employee_number' => $employee->employee_number,
-            'photo_url' => $employee->photo_path ? Storage::url($employee->photo_path) : null,
+            'photo_url' => $includePhoto && $employee->photo_path
+                ? Storage::url($employee->photo_path)
+                : null,
             'department' => $employee->department?->name,
         ];
     }

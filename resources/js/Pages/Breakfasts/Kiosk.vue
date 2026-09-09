@@ -206,12 +206,9 @@ onBeforeUnmount(() => {
                             class="w-full flex items-center gap-4 p-3 rounded-2xl border border-gray-200 bg-gray-50 hover:bg-pink-50 hover:border-pink-300 text-left disabled:opacity-50"
                             @click="selectEmployee(match)"
                         >
-                            <img
-                                v-if="match.photo_url"
-                                :src="match.photo_url"
-                                class="w-14 h-14 rounded-full object-cover ring-2 ring-pink-200 flex-shrink-0"
-                            />
-                            <div v-else class="w-14 h-14 rounded-full bg-gray-200 flex items-center justify-center text-gray-400 text-xl flex-shrink-0">👤</div>
+                            <div class="w-14 h-14 rounded-full bg-pink-100 flex items-center justify-center text-pink-700 text-xl font-semibold flex-shrink-0">
+                                {{ match.full_name.charAt(0) }}
+                            </div>
                             <div>
                                 <p class="text-lg font-semibold text-gray-800">{{ match.full_name }}</p>
                                 <p class="text-sm text-gray-500">

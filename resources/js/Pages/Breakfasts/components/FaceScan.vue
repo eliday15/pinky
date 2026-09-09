@@ -7,6 +7,7 @@ import {
     FaceBackendInitializationError,
     initializeFaceBackend,
 } from '../faceBackend';
+import { ensureFaceModels } from '../faceModels';
 
 // Escáner facial del kiosco: carga face-api.js dinámicamente (solo esta
 // página paga el peso), calcula el descriptor de referencia desde la foto del
@@ -30,6 +31,7 @@ let referenceDescriptor = null;
 let consecutiveMatches = 0;
 let destroyed = false;
 let detectionInFlight = false;
+let failed = false;
 
 const MODELS_URI = '/models-face';
 const REQUIRED_CONSECUTIVE = 2;
@@ -57,9 +59,13 @@ const stopAll = () => {
         stream.getTracks().forEach((track) => track.stop());
         stream = null;
     }
+    if (video.value) video.value.srcObject = null;
+    scanning.value = false;
 };
 
 const fail = (message) => {
+    if (failed || destroyed) return;
+    failed = true;
     stopAll();
     emit('error', message);
 };
@@ -104,6 +110,9 @@ const detectFrame = async () => {
             consecutiveMatches = 0;
             statusText.value = 'Rostro no reconocido, intenta de frente y con buena luz.';
         }
+    } catch (error) {
+        console.error('Falló una inferencia del reconocimiento facial', error);
+        fail('El reconocimiento facial se detuvo en este intento. Regresa a desayunos e intenta de nuevo.');
     } finally {
         detectionInFlight = false;
     }
@@ -133,11 +142,8 @@ onMounted(async () => {
             statusText.value = BACKEND_STATUS[backend];
         });
 
-        await Promise.all([
-            faceapi.nets.tinyFaceDetector.loadFromUri(MODELS_URI),
-            faceapi.nets.faceLandmark68Net.loadFromUri(MODELS_URI),
-            faceapi.nets.faceRecognitionNet.loadFromUri(MODELS_URI),
-        ]);
+        statusText.value = 'Cargando modelos faciales...';
+        await ensureFaceModels(faceapi, MODELS_URI);
         if (destroyed) return;
 
         statusText.value = 'Analizando foto de referencia...';
@@ -161,6 +167,10 @@ onMounted(async () => {
         }
         video.value.srcObject = stream;
         await video.value.play();
+        if (destroyed) {
+            stopAll();
+            return;
+        }
 
         scanning.value = true;
         statusText.value = 'Mira a la cámara...';
