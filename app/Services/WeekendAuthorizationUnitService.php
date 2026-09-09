@@ -32,9 +32,9 @@ class WeekendAuthorizationUnitService
     }
 
     /**
-     * Materialización compatible: la cantidad aprobada nunca se reduce. Para
-     * filas históricas donde hours=1 era solo un marcador, conserva una unidad
-     * adicional ya ganada por la checada (por ejemplo 12 h = 2).
+     * Materializa el snapshot aprobado cuando la autorización tiene horario.
+     * Las filas históricas sin horario conservan la compatibilidad anterior,
+     * donde hours=1 era un marcador y la checada aportaba las unidades reales.
      */
     public function materializedUnits(
         Collection $authorizations,
@@ -55,9 +55,13 @@ class WeekendAuthorizationUnitService
             ->groupBy(fn (Authorization $authorization) => Carbon::parse($authorization->date)->toDateString())
             ->map(function (Collection $rows, string $date) use ($recordsByDate, $employee) {
                 $approved = max(1, (int) round((float) $rows->max('hours')));
-                $backed = $this->backedUnitsFor($employee, $recordsByDate->get($date));
+                $hasCapturedSchedule = $rows->contains(fn (Authorization $authorization) => $authorization->start_time !== null && $authorization->end_time !== null);
 
-                return max($approved, $backed ?? 0);
+                if ($hasCapturedSchedule) {
+                    return $approved;
+                }
+
+                return max($approved, $this->backedUnitsFor($employee, $recordsByDate->get($date)) ?? 0);
             })
             ->sum();
     }
@@ -101,6 +105,37 @@ class WeekendAuthorizationUnitService
         }
 
         return (int) ($employee->weekendUnitsForGrossHours($base) ?? 0);
+    }
+
+    /**
+     * Convierte el horario capturado en la cantidad FIN que representa. Esta es
+     * la misma regla de negocio usada con checadas, pero permite preautorizar
+     * un día todavía no trabajado. Si la salida es menor al inicio, cruza
+     * medianoche; horas iguales representan un rango vacío.
+     */
+    public function unitsForTimeRange(Employee $employee, ?string $startTime, ?string $endTime): ?int
+    {
+        if (empty($startTime) || empty($endTime)) {
+            return null;
+        }
+
+        $start = Carbon::createFromFormat('H:i', substr($startTime, 0, 5));
+        $end = Carbon::createFromFormat('H:i', substr($endTime, 0, 5));
+        if ($end->lt($start)) {
+            $end->addDay();
+        }
+
+        $grossHours = $start->diffInMinutes($end) / 60;
+        if ($grossHours <= 0) {
+            return 0;
+        }
+
+        $unitHours = $employee->department?->weekend_unit_hours;
+        if ($unitHours !== null && (int) $unitHours > 0) {
+            return max(1, (int) floor($grossHours / (int) $unitHours));
+        }
+
+        return (int) ($employee->weekendUnitsForGrossHours($grossHours) ?? 0);
     }
 
     public function requestedUnits(Authorization $authorization, ?float $overrideHours = null): int

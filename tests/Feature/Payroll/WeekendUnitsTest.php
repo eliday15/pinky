@@ -96,6 +96,10 @@ class WeekendUnitsTest extends FeatureTestCase
             'type' => Authorization::TYPE_SPECIAL,
             'compensation_type_id' => $fin->id,
             'hours' => 1,
+            // Autorización histórica: antes FIN no capturaba horario y hours=1
+            // funcionaba como marcador; materializedUnits conserva ese legado.
+            'start_time' => null,
+            'end_time' => null,
             'status' => Authorization::STATUS_APPROVED,
         ]);
     }

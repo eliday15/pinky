@@ -481,6 +481,7 @@ const setEntryField = (index, field, value) => {
     const next = [...form.entries];
     const row = { ...next[index], [field]: value };
     if (field === 'start_time' || field === 'end_time') {
+        row.end_date = inferEndDate(row.date, row.start_time, row.end_time);
         row.hours = recomputeHours(row);
     }
     next[index] = row;
@@ -515,27 +516,42 @@ const shiftEntryToPm = (index) => {
     form.entries = next;
 };
 
+const manualWeekendDates = () => {
+    if (selectedPullRule.value !== 'weekend' || !rangeStart.value || !rangeEnd.value) return [];
+    const dates = [];
+    const cursor = new Date(`${rangeStart.value}T12:00:00`);
+    const end = new Date(`${rangeEnd.value}T12:00:00`);
+    while (cursor <= end && dates.length < 31) {
+        const iso = cursor.toISOString().split('T')[0];
+        if ([0, 6].includes(cursor.getDay()) || holidaySet.value.has(iso)) dates.push(iso);
+        cursor.setDate(cursor.getDate() + 1);
+    }
+    return dates;
+};
+
 /** Add one blank row for every selected employee (mirrors how "Cargar desde
  *  checadas" fans out across the whole selection), not just the first. */
 const addManualEntry = () => {
     if (form.employee_ids.length === 0) return;
     const qty = isQuantityMode.value;
     const defaultDate = qty ? (startDate.value || today) : (rangeStart.value || today);
-    const newRows = form.employee_ids.map((empId) => {
+    const dates = manualWeekendDates();
+    const rowDates = dates.length > 0 ? dates : [defaultDate];
+    const newRows = form.employee_ids.flatMap((empId) => rowDates.map((date) => {
         const emp = props.employees.find(e => e.id === empId);
         return {
             employee_id: empId,
             employee_name: emp?.full_name || `Empleado #${empId}`,
             employee_number: emp?.employee_number || '',
-            date: defaultDate,
-            end_date: defaultDate,
+            date,
+            end_date: date,
             start_time: '',
             end_time: '',
             hours: qty ? '1' : '',
             summary: '',
             kind: 'manual',
         };
-    });
+    }));
     form.entries = [...form.entries, ...newRows];
 };
 
@@ -964,7 +980,7 @@ const canSubmit = computed(() => {
                             </p>
                         </div>
                         <div class="flex flex-col items-end gap-2 flex-shrink-0">
-                            <div v-if="canSuggestFromChecadas" class="flex items-center gap-2">
+                            <div v-if="canSuggestFromChecadas || selectedPullRule === 'weekend'" class="flex items-center gap-2">
                                 <label class="text-xs text-gray-600">Desde:</label>
                                 <input type="date" v-model="rangeStart"
                                     class="text-xs rounded border-gray-300 focus:border-pink-500 focus:ring-pink-500 py-1" />
@@ -980,7 +996,7 @@ const canSubmit = computed(() => {
                                 </button>
                                 <button type="button" @click="addManualEntry"
                                     class="px-3 py-1.5 border border-gray-300 text-gray-700 text-xs rounded hover:bg-gray-50">
-                                    + Agregar fila
+                                    {{ selectedPullRule === 'weekend' ? '+ Agregar rango' : '+ Agregar fila' }}
                                 </button>
                                 <button v-if="suggestionsApplied || form.entries.length > 0" type="button" @click="clearBulkSuggestions"
                                     class="px-3 py-1.5 border border-gray-300 text-gray-700 text-xs rounded hover:bg-gray-50">
@@ -1016,8 +1032,8 @@ const canSubmit = computed(() => {
                             </div>
                             <div class="divide-y divide-gray-100">
                                 <div v-for="entry in group.entries" :key="`${entry.employee_id}_${entry.date}_${entry._index}`"
-                                    class="px-4 py-2 flex items-center justify-between gap-3 text-sm bg-white">
-                                    <div class="min-w-0">
+                                    class="px-4 py-2 flex flex-wrap items-center justify-between gap-3 text-sm bg-white">
+                                    <div class="min-w-0 flex-1">
                                         <div v-if="entry.kind === 'manual'">
                                             <input type="date"
                                                 :value="entry.date"
@@ -1030,6 +1046,16 @@ const canSubmit = computed(() => {
                                         <div v-if="entry.summary" class="text-[11px] text-gray-600 truncate" :title="entry.summary">
                                             {{ entry.summary }}
                                         </div>
+                                    </div>
+                                    <div v-if="selectedPullRule === 'weekend'" class="flex items-center gap-2">
+                                        <label class="text-[11px] text-gray-500">Inicio</label>
+                                        <input type="time" :value="entry.start_time"
+                                            @input="setEntryField(entry._index, 'start_time', $event.target.value)"
+                                            class="text-xs rounded border-gray-300 focus:border-pink-500 focus:ring-pink-500 py-1" />
+                                        <label class="text-[11px] text-gray-500">Fin</label>
+                                        <input type="time" :value="entry.end_time"
+                                            @input="setEntryField(entry._index, 'end_time', $event.target.value)"
+                                            class="text-xs rounded border-gray-300 focus:border-pink-500 focus:ring-pink-500 py-1" />
                                     </div>
                                     <button type="button" @click="removeEntry(entry._index)"
                                         class="text-[11px] text-gray-400 hover:text-red-600 flex-shrink-0">

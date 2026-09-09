@@ -310,6 +310,7 @@ const setEntryField = (index, field, value) => {
     const next = [...form.entries];
     const row = { ...next[index], [field]: value };
     if (field === 'start_time' || field === 'end_time') {
+        row.end_date = inferEndDate(row.date, row.start_time, row.end_time);
         row.hours = recomputeHours(row);
     }
     next[index] = row;
@@ -322,26 +323,38 @@ const removeEntry = (index) => {
     form.entries = next;
 };
 
+const manualWeekendDates = () => {
+    if (selectedPullRule.value !== 'weekend' || !rangeStart.value || !rangeEnd.value) return [];
+    const dates = [];
+    const cursor = new Date(`${rangeStart.value}T12:00:00`);
+    const end = new Date(`${rangeEnd.value}T12:00:00`);
+    while (cursor <= end && dates.length < 31) {
+        const iso = cursor.toISOString().split('T')[0];
+        if ([0, 6].includes(cursor.getDay()) || holidaySet.value.has(iso)) dates.push(iso);
+        cursor.setDate(cursor.getDate() + 1);
+    }
+    return dates;
+};
+
 const addManualEntry = () => {
     if (!form.employee_id) return;
     const emp = props.employees.find(e => e.id == form.employee_id);
     const qty = isQuantityMode.value;
     const defaultDate = qty ? (startDate.value || today) : (rangeStart.value || today);
-    form.entries = [
-        ...form.entries,
-        {
+    const dates = manualWeekendDates();
+    const rowDates = dates.length > 0 ? dates : [defaultDate];
+    form.entries = [...form.entries, ...rowDates.map(date => ({
             employee_id: Number(form.employee_id),
             employee_name: emp?.full_name || '',
             employee_number: emp?.employee_number || '',
-            date: defaultDate,
-            end_date: defaultDate,
+            date,
+            end_date: date,
             start_time: '',
             end_time: '',
             hours: qty ? '1' : '',
             summary: '',
             kind: 'manual',
-        },
-    ];
+        }))];
 };
 
 /** Start uses the row's main date; end uses its own end_date so a velada can
@@ -773,7 +786,7 @@ const submitCount = computed(() => {
                             </p>
                         </div>
                         <div class="flex flex-col items-end gap-2 flex-shrink-0">
-                            <div v-if="canSuggestFromChecadas" class="flex items-center gap-2">
+                            <div v-if="canSuggestFromChecadas || selectedPullRule === 'weekend'" class="flex items-center gap-2">
                                 <label class="text-xs text-gray-600">Desde:</label>
                                 <input type="date" v-model="rangeStart"
                                     class="text-xs rounded border-gray-300 focus:border-pink-500 focus:ring-pink-500 py-1" />
@@ -789,7 +802,7 @@ const submitCount = computed(() => {
                                 </button>
                                 <button type="button" @click="addManualEntry"
                                     class="px-3 py-1.5 border border-gray-300 text-gray-700 text-xs rounded hover:bg-gray-50">
-                                    + Agregar fila
+                                    {{ selectedPullRule === 'weekend' ? '+ Agregar rango' : '+ Agregar fila' }}
                                 </button>
                                 <button v-if="suggestionsApplied || form.entries.length > 0" type="button" @click="clearSuggestions"
                                     class="px-3 py-1.5 border border-gray-300 text-gray-700 text-xs rounded hover:bg-gray-50">
@@ -808,8 +821,8 @@ const submitCount = computed(() => {
                     </div>
                     <div v-else class="border rounded-lg overflow-hidden divide-y divide-gray-100">
                         <div v-for="(entry, idx) in form.entries" :key="`${entry.date}_${idx}`"
-                            class="px-4 py-2 flex items-center justify-between gap-3 text-sm bg-white">
-                            <div class="min-w-0">
+                            class="px-4 py-2 flex flex-wrap items-center justify-between gap-3 text-sm bg-white">
+                            <div class="min-w-0 flex-1">
                                 <input v-if="entry.kind === 'manual'" type="date"
                                     :value="entry.date"
                                     @input="setEntryField(idx, 'date', $event.target.value)"
@@ -818,6 +831,16 @@ const submitCount = computed(() => {
                                 <div v-if="entry.summary" class="text-[11px] text-gray-600 truncate" :title="entry.summary">
                                     {{ entry.summary }}
                                 </div>
+                            </div>
+                            <div v-if="selectedPullRule === 'weekend'" class="flex items-center gap-2">
+                                <label class="text-[11px] text-gray-500">Inicio</label>
+                                <input type="time" :value="entry.start_time"
+                                    @input="setEntryField(idx, 'start_time', $event.target.value)"
+                                    class="text-xs rounded border-gray-300 focus:border-pink-500 focus:ring-pink-500 py-1" />
+                                <label class="text-[11px] text-gray-500">Fin</label>
+                                <input type="time" :value="entry.end_time"
+                                    @input="setEntryField(idx, 'end_time', $event.target.value)"
+                                    class="text-xs rounded border-gray-300 focus:border-pink-500 focus:ring-pink-500 py-1" />
                             </div>
                             <button type="button" @click="removeEntry(idx)"
                                 class="text-[11px] text-gray-400 hover:text-red-600 flex-shrink-0">

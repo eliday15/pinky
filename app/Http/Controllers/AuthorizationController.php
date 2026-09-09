@@ -16,6 +16,7 @@ use App\Services\CompanionConceptService;
 use App\Services\CompensationRateResolverService;
 use App\Services\OvertimeRoundingService;
 use App\Services\PayrollInvalidationService;
+use App\Services\WeekendAuthorizationUnitService;
 use App\Services\WeekendHolidayAutoApprovalService;
 use App\Services\ZktecoSyncService;
 use Carbon\Carbon;
@@ -392,6 +393,19 @@ class AuthorizationController extends Controller
             $validated['hours'] = $this->minutesBetweenTimes($validated['start_time'], $validated['end_time']) / 60;
         }
 
+        $compensationType = ! empty($validated['compensation_type_id'])
+            ? CompensationType::find($validated['compensation_type_id'])
+            : null;
+        if ($compensationType?->hasWeekendPullRule()) {
+            $validated['hours'] = $this->weekendUnitsForCapture(
+                Employee::with('department')->findOrFail($validated['employee_id']),
+                $validated['date'],
+                $validated['start_time'] ?? null,
+                $validated['end_time'] ?? null,
+                $validated['hours'] ?? null,
+            );
+        }
+
         // Handle file upload
         if ($request->hasFile('evidence')) {
             $validated['evidence_path'] = $request->file('evidence')->store('authorizations', 'public');
@@ -529,6 +543,42 @@ class AuthorizationController extends Controller
             ? CompensationType::find($validated['compensation_type_id'])
             : null;
 
+        // Resolver todas las cantidades FIN antes de insertar la primera fila:
+        // cualquier horario inválido rechaza el lote completo, sin altas
+        // parciales. Con checada completa manda el reloj (incluida la resta de
+        // velada); sin ella, el horario capturado sirve como preautorización.
+        $legacyWeekendHours = [];
+        if ($bulkCompType?->hasWeekendPullRule()) {
+            if (! empty($validated['entries'])) {
+                $employeesForWeekend = Employee::with('department')
+                    ->whereIn('id', array_unique(array_column($validated['entries'], 'employee_id')))
+                    ->get()->keyBy('id');
+                foreach ($validated['entries'] as $i => $entry) {
+                    $validated['entries'][$i]['hours'] = $this->weekendUnitsForCapture(
+                        $employeesForWeekend->get($entry['employee_id']),
+                        $entry['date'],
+                        $entry['start_time'] ?? null,
+                        $entry['end_time'] ?? null,
+                        $entry['hours'] ?? null,
+                        "entries.{$i}",
+                    );
+                }
+            } else {
+                $employeesForWeekend = Employee::with('department')
+                    ->whereIn('id', $validated['employee_ids'])->get()->keyBy('id');
+                foreach ($validated['employee_ids'] as $employeeId) {
+                    $legacyWeekendHours[$employeeId] = $this->weekendUnitsForCapture(
+                        $employeesForWeekend->get($employeeId),
+                        $validated['date'],
+                        $validated['start_time'] ?? null,
+                        $validated['end_time'] ?? null,
+                        $validated['hours'] ?? null,
+                        'hours',
+                    );
+                }
+            }
+        }
+
         if (! empty($validated['entries'])
             && in_array($validated['type'], [Authorization::TYPE_OVERTIME, Authorization::TYPE_NIGHT_SHIFT], true)
             && ! ($bulkCompType && $bulkCompType->pullsFromAttendance())
@@ -638,6 +688,9 @@ class AuthorizationController extends Controller
                 || Carbon::parse($validated['date'])->isToday();
 
             foreach ($validated['employee_ids'] as $employeeId) {
+                $employeeHours = $bulkCompType?->hasWeekendPullRule()
+                    ? $legacyWeekendHours[$employeeId]
+                    : $globalHours;
                 // Mismo dedup que la rama de entries (DECISIONES §2).
                 if ($this->activeDuplicateExists((int) $employeeId, $validated['date'], $validated['type'], $validated['compensation_type_id'] ?? null, $validated['start_time'] ?? null, $validated['end_time'] ?? null)) {
                     $duplicateCount++;
@@ -653,7 +706,7 @@ class AuthorizationController extends Controller
                     'date' => $validated['date'],
                     'start_time' => $validated['start_time'] ?? null,
                     'end_time' => $validated['end_time'] ?? null,
-                    'hours' => $globalHours,
+                    'hours' => $employeeHours,
                     'reason' => $validated['reason'],
                     'is_pre_authorization' => $isPreAuthorization,
                     'department_head_id' => $validated['department_head_id'] ?? null,
@@ -2364,6 +2417,49 @@ class AuthorizationController extends Controller
         return (int) abs($s->diffInMinutes($e));
     }
 
+    private function weekendUnitsForCapture(
+        ?Employee $employee,
+        string $date,
+        ?string $startTime,
+        ?string $endTime,
+        mixed $fallback,
+        string $errorKey = 'hours',
+    ): float {
+        if (! $employee) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                $errorKey => 'No se encontró el empleado para calcular el fin de semana.',
+            ]);
+        }
+        if (($startTime && ! $endTime) || ($endTime && ! $startTime)) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                $errorKey => 'Para calcular el fin de semana captura tanto la hora de inicio como la de fin.',
+            ]);
+        }
+
+        $service = app(WeekendAuthorizationUnitService::class);
+        $record = AttendanceRecord::query()
+            ->where('employee_id', $employee->id)
+            ->whereDate('work_date', $date)
+            ->whereNotNull('check_in')
+            ->whereNotNull('check_out')
+            ->first();
+        if (! $record && (! $startTime || ! $endTime)) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                $errorKey => 'Captura el horario de inicio y fin para calcular este fin de semana.',
+            ]);
+        }
+        $units = $record
+            ? $service->backedUnitsFor($employee, $record)
+            : $service->unitsForTimeRange($employee, $startTime, $endTime);
+        if ($units === 0) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                $errorKey => 'El horario de fin de semana debe tener una duración mayor a cero.',
+            ]);
+        }
+
+        return (float) ($units ?? $fallback ?? 1);
+    }
+
     /**
      * Meal (Cena) segment: a single per-day entry when the day qualifies for a
      * dinner. A day qualifies if ANY of these hold (the reasons are surfaced so
@@ -2458,8 +2554,8 @@ class AuthorizationController extends Controller
 
         return [
             'kind' => 'weekend',
-            'start_time' => null,
-            'end_time' => null,
+            'start_time' => $record->check_in ? Carbon::parse($record->check_in)->format('H:i') : null,
+            'end_time' => $record->check_out ? Carbon::parse($record->check_out)->format('H:i') : null,
             'hours' => (string) $units,
             'summary' => 'Fin de semana trabajado.',
         ];
