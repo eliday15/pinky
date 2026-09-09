@@ -179,7 +179,7 @@ class OvertimeReportTest extends FeatureTestCase
                 ->has('report.rows.0.compensation.total'));
     }
 
-    public function test_supervisor_cannot_request_all_departments_and_never_receives_amounts(): void
+    public function test_supervisor_cannot_request_all_departments_and_does_not_receive_amounts_by_default(): void
     {
         $user = $this->actingAsSupervisor();
         $employee = $this->attachEmployee($user);
@@ -198,6 +198,39 @@ class OvertimeReportTest extends FeatureTestCase
                 ->where('report.includes_amounts', false)
                 ->missing('report.totals.compensation')
                 ->missing('report.rows.0.compensation'));
+    }
+
+    public function test_authorized_supervisor_receives_team_overtime_amounts_without_gaining_other_departments(): void
+    {
+        $user = $this->actingAsSupervisor();
+        $employee = $this->attachEmployee($user);
+        $user->givePermissionTo('reports.view_overtime_amounts');
+
+        $this->get(route('reports.overtime-weekly.preview', [
+            'department_id' => $employee->department_id,
+            'week_start' => self::WEEK_START,
+        ]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('report.includes_amounts', true)
+                ->has('report.totals.compensation')
+                ->has('report.rows.0.compensation'));
+
+        $otherDepartment = Department::factory()->create();
+
+        $this->get(route('reports.overtime-weekly.preview', [
+            'department_id' => $otherDepartment->id,
+            'week_start' => self::WEEK_START,
+        ]))->assertForbidden();
+
+        $this->get(route('reports.overtime-weekly.preview', [
+            'department_id' => 'all',
+            'week_start' => self::WEEK_START,
+        ]))->assertForbidden();
+
+        $this->assertFalse($user->hasPermissionTo('payroll.view_basic'));
+        $this->assertFalse($user->hasPermissionTo('payroll.view_complete'));
+        $this->assertFalse($user->hasPermissionTo('employees.view_salary'));
     }
 
     /**

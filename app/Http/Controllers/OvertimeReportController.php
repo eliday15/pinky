@@ -103,7 +103,7 @@ class OvertimeReportController extends Controller implements HasMiddleware
     {
         [$department, $start, $end] = $this->resolveInputs($request);
 
-        $showAmounts = $this->isAdmin($request);
+        $showAmounts = $this->canViewAmounts($request);
         $report = $department
             ? $this->reportService->buildReport($department, $start, $end, $request->boolean('include_pending'), $showAmounts)
             : $this->reportService->buildConsolidatedReport($start, $end, $request->boolean('include_pending'), $showAmounts);
@@ -122,7 +122,7 @@ class OvertimeReportController extends Controller implements HasMiddleware
     {
         [$department, $start, $end] = $this->resolveInputs($request);
 
-        $showAmounts = $this->isAdmin($request);
+        $showAmounts = $this->canViewAmounts($request);
         $report = $department
             ? $this->reportService->buildReport($department, $start, $end, $request->boolean('include_pending'), $showAmounts)
             : $this->reportService->buildConsolidatedReport($start, $end, $request->boolean('include_pending'), $showAmounts);
@@ -144,7 +144,7 @@ class OvertimeReportController extends Controller implements HasMiddleware
     {
         [$department, $start, $end] = $this->resolveInputs($request);
 
-        $showAmounts = $this->isAdmin($request);
+        $showAmounts = $this->canViewAmounts($request);
         $report = $department
             ? $this->reportService->buildReport($department, $start, $end, $request->boolean('include_pending'), $showAmounts)
             : $this->reportService->buildConsolidatedReport($start, $end, $request->boolean('include_pending'), $showAmounts);
@@ -231,5 +231,10 @@ class OvertimeReportController extends Controller implements HasMiddleware
     private function isAdmin(Request $request): bool
     {
         return $request->user()->hasAnyRole(['superadmin', 'admin']);
+    }
+
+    private function canViewAmounts(Request $request): bool
+    {
+        return $request->user()->hasPermissionTo('reports.view_overtime_amounts');
     }
 }

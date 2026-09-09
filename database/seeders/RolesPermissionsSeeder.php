@@ -104,6 +104,9 @@ class RolesPermissionsSeeder extends Seeder
             'reports.view_all',
             'reports.view_team',
             'reports.view_own',
+            // Permite incluir importes en el reporte de tiempo extra, sin
+            // ampliar el alcance de empleados/departamentos del usuario.
+            'reports.view_overtime_amounts',
 
             // Desayunos
             'breakfasts.register',
