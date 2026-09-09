@@ -91,7 +91,7 @@ class BreakfastClaimService
 
         // Ventana Abierta (Pruebas) — Luis 2026-08-18: con el switch activo en
         // Configuración > Desayunos se entrega a cualquier hora y cualquier día
-        // (se saltan la ventana y el horario). Activo/foto/NIP/1-por-día siguen.
+        // (se saltan la ventana y el horario). Activo/foto/contraseña/1-por-día siguen.
         $openAllDay = (bool) SystemSetting::get('breakfast_open_all_day', false);
 
         if (! $openAllDay) {

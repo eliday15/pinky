@@ -1040,7 +1040,7 @@ watch(() => form.hire_date, onHireDateChange);
                     <!-- Contraseña de cobro en efectivo (solo admin) -->
                     <div v-if="canEditAll" class="mt-6 border-t border-gray-200 pt-6">
                         <h4 class="text-sm font-semibold text-gray-800 mb-1">Contraseña de cobro</h4>
-                        <p class="text-xs text-gray-500 mb-4">PIN personal que el empleado usa para cobrar su efectivo y su desayuno en el kiosco. Dejalo en blanco para no cambiarlo. Solo números para poder teclearlo en el kiosco.</p>
+                        <p class="text-xs text-gray-500 mb-4">Contraseña personal que el empleado usa para cobrar su efectivo y su desayuno en el kiosco. Puede incluir letras, números y símbolos; déjala en blanco para no cambiarla.</p>
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Nueva contraseña de cobro</label>

@@ -18,7 +18,7 @@ use Inertia\Response;
  *
  * El kiosco corre en una sesión autenticada (usuario del vendedor o de RRHH)
  * con el permiso breakfasts.register; el empleado que desayuna se identifica
- * con su número, su rostro y su NIP — no necesita cuenta de usuario.
+ * con su número, su rostro y su contraseña de cobro — no necesita cuenta.
  */
 class BreakfastController extends Controller
 {
@@ -122,7 +122,7 @@ class BreakfastController extends Controller
 
         $validated = $request->validate([
             'employee_id' => ['required', 'integer', 'exists:employees,id'],
-            'pin' => ['required', 'string'],
+            'pin' => ['required', 'string', 'min:4', 'max:255'],
             'face_distance' => ['required', 'numeric', 'min:0'],
             'evidence' => ['nullable', 'string'],
         ]);

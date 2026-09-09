@@ -3,10 +3,9 @@ import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head } from '@inertiajs/vue3';
 import { ref, watch, onBeforeUnmount } from 'vue';
 import FaceScan from './components/FaceScan.vue';
-import PinPad from './components/PinPad.vue';
 
 // Kiosco de desayunos: (1) número de empleado → (2) verificación facial →
-// (3) NIP → desayuno registrado. El servidor re-valida todo (NIP, ventana
+// (3) contraseña → desayuno registrado. El servidor revalida todo (contraseña, ventana
 // antes de la hora de entrada, 1 por día); esta pantalla solo guía el flujo.
 const props = defineProps({
     faceMaxDistance: { type: Number, default: 0.5 },
@@ -146,7 +145,7 @@ const submitPin = async () => {
     } catch (error) {
         const errors = error?.response?.data?.errors;
         if (errors?.pin) {
-            // NIP incorrecto: se queda en el teclado para reintentar.
+            // Contraseña incorrecta: se queda en el campo para reintentar.
             pinError.value = Array.isArray(errors.pin) ? errors.pin[0] : errors.pin;
             pin.value = '';
         } else {
@@ -270,12 +269,53 @@ onBeforeUnmount(() => {
                 </button>
             </div>
 
-            <!-- Paso 3: NIP -->
+            <!-- Paso 3: contraseña de cobro -->
             <div v-else-if="step === 'pin'" class="bg-gray-50 rounded-2xl shadow p-8">
                 <h2 class="text-xl font-semibold text-gray-800 text-center mb-2">Rostro verificado ✓</h2>
                 <p class="text-gray-500 text-center mb-6">Teclea tu contraseña de cobro (la misma de tu nómina)</p>
-                <PinPad v-model="pin" :disabled="loading" @submit="submitPin" />
-                <p v-if="pinError" class="mt-4 text-center text-red-600 text-lg">{{ pinError }}</p>
+                <!-- Campo de texto enmascarado en vez de type=password: evita
+                     que el gestor del navegador guarde contraseñas de empleados
+                     en esta computadora compartida. -->
+                <form autocomplete="off" @submit.prevent="submitPin">
+                    <label for="breakfast_pin" class="sr-only">Contraseña de cobro</label>
+                    <div
+                        class="relative rounded-2xl border border-gray-300 bg-white shadow-sm focus-within:border-pink-500 focus-within:ring-1 focus-within:ring-pink-500"
+                        :class="{ 'border-red-500': pinError, 'opacity-50': loading }"
+                    >
+                        <input
+                            id="breakfast_pin"
+                            v-model="pin"
+                            type="text"
+                            name="desayuno-otp"
+                            autocomplete="off"
+                            autocapitalize="off"
+                            autocorrect="off"
+                            spellcheck="false"
+                            data-lpignore="true"
+                            data-1p-ignore="true"
+                            data-bwignore="true"
+                            data-form-type="other"
+                            autofocus
+                            maxlength="255"
+                            :disabled="loading"
+                            class="absolute inset-0 z-10 h-full w-full cursor-text opacity-0"
+                        />
+                        <div
+                            aria-hidden="true"
+                            class="pointer-events-none flex min-h-[4rem] items-center justify-center overflow-hidden px-4 py-4 text-2xl tracking-widest text-gray-900"
+                        >
+                            <span v-for="index in pin.length" :key="index">•</span>
+                        </div>
+                    </div>
+                    <p v-if="pinError" class="mt-4 text-center text-red-600 text-lg">{{ pinError }}</p>
+                    <button
+                        type="submit"
+                        :disabled="loading || pin.length < 4"
+                        class="mt-5 w-full rounded-2xl bg-pink-600 py-4 text-xl font-semibold text-white shadow hover:bg-pink-700 disabled:opacity-50"
+                    >
+                        {{ loading ? 'Verificando...' : 'Confirmar' }}
+                    </button>
+                </form>
                 <button type="button" class="mt-6 w-full py-3 rounded-2xl bg-gray-100 text-gray-600 font-medium hover:bg-gray-200" @click="reset">
                     Cancelar
                 </button>

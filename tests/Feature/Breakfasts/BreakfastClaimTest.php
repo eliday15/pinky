@@ -271,6 +271,24 @@ class BreakfastClaimTest extends FeatureTestCase
         $this->assertNotNull($claim->id);
     }
 
+    public function test_claim_accepts_an_alphanumeric_cash_password(): void
+    {
+        $employee = $this->makeEmployee(['cash_pin' => 'Clave-A9']);
+        Carbon::setTestNow(Carbon::parse('2026-06-03 08:30:00'));
+
+        $claim = $this->service()->validateAndCreate(
+            $employee,
+            'Clave-A9',
+            0.35,
+            null,
+            $this->adminUser(),
+        );
+
+        $this->assertNotNull($claim->id);
+        $this->assertTrue($employee->verifyCashPin('Clave-A9'));
+        $this->assertFalse($employee->verifyCashPin('clave-a9'));
+    }
+
     // ------------------------------------------------------------------
     // Endpoints HTTP (kiosco)
     // ------------------------------------------------------------------
