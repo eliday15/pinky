@@ -8,6 +8,7 @@ use App\Http\Traits\VerifiesTwoFactor;
 use App\Models\AuditLog;
 use App\Models\CashPayout;
 use App\Models\Department;
+use App\Models\Employee;
 use App\Models\PayrollEntry;
 use App\Models\PayrollPeriod;
 use App\Services\CashDenominationService;
@@ -788,25 +789,34 @@ class PayrollController extends Controller
             abort(403);
         }
 
-        if ($payroll->status !== 'approved') {
-            return redirect()->back()
-                ->with('error', 'Solo se puede preparar el efectivo de una nomina aprobada.');
-        }
+        $result = DB::transaction(function () use ($payroll) {
+            $currentPayroll = PayrollPeriod::whereKey($payroll->id)->lockForUpdate()->firstOrFail();
 
-        // Con el cobro ya cerrado el efectivo se devolvió: re-prepararlo
-        // reactivaría el cobro por la puerta de atrás. Hay que reabrir primero.
-        if ($payroll->isCashCollectionClosed()) {
-            return redirect()->back()
-                ->with('error', 'El cobro de este periodo ya se cerró. Reabre el cobro antes de volver a preparar el efectivo.');
-        }
+            if ($currentPayroll->status !== 'approved') {
+                return ['error' => 'Solo se puede preparar el efectivo de una nomina aprobada.'];
+            }
 
-        DB::transaction(function () use ($payroll) {
-            $entries = $payroll->entries()->with('employee')->get();
+            // Con el cobro ya cerrado el efectivo se devolvió: re-prepararlo
+            // reactivaría el cobro por la puerta de atrás. Hay que reabrir primero.
+            if ($currentPayroll->isCashCollectionClosed()) {
+                return ['error' => 'El cobro de este periodo ya se cerró. Reabre el cobro antes de volver a preparar el efectivo.'];
+            }
+
+            $entries = $currentPayroll->entries()
+                ->orderBy('employee_id')
+                ->lockForUpdate()
+                ->get();
 
             foreach ($entries as $entry) {
-                $existing = CashPayout::where('payroll_period_id', $payroll->id)
-                    ->where('employee_id', $entry->employee_id)
-                    ->first();
+                // Protocolo estable en todas las mutaciones de efectivo:
+                // periodo -> empleado -> ledger completo del empleado por id.
+                $employee = Employee::whereKey($entry->employee_id)->lockForUpdate()->first();
+                $ledger = CashPayout::where('employee_id', $entry->employee_id)
+                    ->with('payrollPeriod')
+                    ->orderBy('id')
+                    ->lockForUpdate()
+                    ->get();
+                $existing = $ledger->firstWhere('payroll_period_id', $currentPayroll->id);
 
                 // El reparto efectivo/banco AUTORITATIVO lo escribe el cálculo
                 // de nómina (incluye retenciones ISR/IMSS/Infonavit, extras por
@@ -819,7 +829,7 @@ class PayrollController extends Controller
                 // toda la nómina (bug 2026-07-15). Si un empleado se formalizó
                 // después de calcular, eso requiere recalcular la nómina (el
                 // banco necesita sus retenciones), no un re-parte aquí.
-                if ($entry->employee && $entry->employee->paysBaseInCash() && (float) $entry->bank_amount > 0) {
+                if ($employee && $employee->paysBaseInCash() && (float) $entry->bank_amount > 0) {
                     $entry->update([
                         'cash_amount' => round((float) $entry->net_pay, 2),
                         'bank_amount' => 0.0,
@@ -837,12 +847,11 @@ class PayrollController extends Controller
                 // se han pagado (los pagados ya saldaron su acumulado al cobrar).
                 $openingBalance = 0.0;
                 if (! $existing || $existing->status !== CashPayout::STATUS_PAID) {
-                    $priorPending = CashPayout::where('employee_id', $entry->employee_id)
-                        ->where('payroll_period_id', '!=', $payroll->id)
+                    $priorPending = $ledger
+                        ->where('payroll_period_id', '!=', $currentPayroll->id)
                         ->where('status', CashPayout::STATUS_PENDING)
-                        ->whereHas('payrollPeriod', fn ($q) => $q->where('start_date', '<', $payroll->start_date))
-                        ->with('payrollPeriod')
-                        ->get()
+                        ->filter(fn (CashPayout $p) => $p->payrollPeriod
+                            && $p->payrollPeriod->start_date->lt($currentPayroll->start_date))
                         ->sortByDesc(fn (CashPayout $p) => $p->payrollPeriod->start_date)
                         ->first();
 
@@ -874,7 +883,7 @@ class PayrollController extends Controller
                 }
 
                 CashPayout::updateOrCreate(
-                    ['payroll_period_id' => $payroll->id, 'employee_id' => $entry->employee_id],
+                    ['payroll_period_id' => $currentPayroll->id, 'employee_id' => $entry->employee_id],
                     [
                         'period_amount' => $periodAmount,
                         'opening_balance' => $openingBalance,
@@ -888,7 +897,7 @@ class PayrollController extends Controller
 
             // Re-preparar el efectivo cambia montos/billetes: hay que volver a
             // confirmar la entrega (paso 1) antes de poder cobrar (paso 2).
-            $payroll->update([
+            $currentPayroll->update([
                 'cash_closed_at' => now(),
                 'cash_delivery_confirmed_at' => null,
             ]);
@@ -896,12 +905,18 @@ class PayrollController extends Controller
             AuditLog::record(
                 module: AuditLog::MODULE_CASH,
                 action: AuditLog::ACTION_CLOSE,
-                model: $payroll,
-                description: "Preparo el efectivo de la nomina {$payroll->name} ({$entries->count()} empleados)",
-                subjectLabel: $payroll->name,
+                model: $currentPayroll,
+                description: "Preparo el efectivo de la nomina {$currentPayroll->name} ({$entries->count()} empleados)",
+                subjectLabel: $currentPayroll->name,
                 metadata: ['empleados' => $entries->count()],
             );
+
+            return ['success' => true];
         });
+
+        if (isset($result['error'])) {
+            return redirect()->back()->with('error', $result['error']);
+        }
 
         return redirect()->route('payroll.cash', $payroll)
             ->with('success', 'Efectivo preparado. Revisa el desglose de billetes.');
@@ -1131,6 +1146,8 @@ class PayrollController extends Controller
             // el cobrador —en distintas máquinas— vean el MISMO desglose.
             'enabledDenominations' => $payroll->cash_enabled_denominations,
             'summary' => [
+                'total_period' => $entriesCashCurrent,
+                'total_opening_balance' => (float) $payouts->sum('opening_balance'),
                 'total_due' => $totalCash,
                 'total_paid' => (float) $payouts->sum('amount_paid'),
                 'total_pending' => (float) $payouts->where('status', CashPayout::STATUS_PENDING)->sum(fn (array $p) => max(0.0, $p['total_due'] - $p['amount_paid'])),
@@ -1203,6 +1220,114 @@ class PayrollController extends Controller
     }
 
     /**
+     * Confirm that an employee's carried balance was already paid previously.
+     *
+     * This is an administrative correction: it settles the prior ledger rows
+     * and removes that balance from the current payout without marking the
+     * current period itself as collected.
+     */
+    public function markPreviousCashPaid(PayrollPeriod $payroll, CashPayout $payout): RedirectResponse
+    {
+        if (! auth()->user()->hasPermissionTo('payroll.pay_cash')) {
+            abort(403);
+        }
+
+        $result = DB::transaction(function () use ($payroll, $payout) {
+            $currentPayroll = PayrollPeriod::whereKey($payroll->id)->lockForUpdate()->firstOrFail();
+            $employee = Employee::whereKey($payout->employee_id)->lockForUpdate()->firstOrFail();
+            $ledger = CashPayout::where('employee_id', $employee->id)
+                ->with('payrollPeriod')
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+            $current = $ledger->firstWhere('id', $payout->id);
+
+            if (! $current || $current->payroll_period_id !== $currentPayroll->id) {
+                abort(404);
+            }
+
+            if ($currentPayroll->isCashCollectionClosed()) {
+                return ['error' => 'La nómina ya está cerrada; reabre el cobro antes de corregir semanas anteriores.'];
+            }
+
+            $rolledIntoLater = $ledger
+                ->where('status', CashPayout::STATUS_PENDING)
+                ->where('id', '!=', $current->id)
+                ->first(fn (CashPayout $candidate) => $candidate->payrollPeriod
+                    && $candidate->payrollPeriod->start_date->gt($currentPayroll->start_date));
+            if ($rolledIntoLater) {
+                return ['error' => 'Este saldo ya se acumuló a una semana posterior. Corrígelo desde ese periodo.'];
+            }
+
+            $openingBalance = (float) $current->opening_balance;
+
+            if ($current->status === CashPayout::STATUS_PAID || $openingBalance <= 0.005) {
+                return ['error' => 'Este empleado ya no tiene semanas anteriores pendientes.'];
+            }
+
+            $priorPayouts = $ledger
+                ->where('payroll_period_id', '!=', $current->payroll_period_id)
+                ->where('status', CashPayout::STATUS_PENDING)
+                ->filter(fn (CashPayout $candidate) => $candidate->payrollPeriod
+                    && $candidate->payrollPeriod->start_date->lt($currentPayroll->start_date));
+
+            if ($priorPayouts->isEmpty()) {
+                return ['error' => 'Este empleado ya no tiene semanas anteriores pendientes.'];
+            }
+
+            $paidAt = now();
+            $priorPayouts->each(function (CashPayout $prior) use ($paidAt) {
+                $totalDue = max(0.0, round((float) $prior->total_due, 2));
+                $prior->update([
+                    'status' => CashPayout::STATUS_PAID,
+                    'total_due' => $totalDue,
+                    'amount_paid' => $totalDue,
+                    'collected_at' => $paidAt,
+                    'pin_verified' => false,
+                    'collected_by' => auth()->id(),
+                ]);
+            });
+
+            $totalDue = max(0.0, round((float) $current->total_due - $openingBalance, 2));
+            $amountPaid = min($totalDue, max(0.0, round((float) $current->amount_paid, 2)));
+            $outstanding = max(0.0, round($totalDue - $amountPaid, 2));
+            $current->update([
+                'opening_balance' => 0,
+                'total_due' => $totalDue,
+                'amount_paid' => $amountPaid,
+                'status' => $outstanding > 0.005 ? CashPayout::STATUS_PENDING : CashPayout::STATUS_PAID,
+                'denomination_breakdown' => $this->denominations->breakdown((int) round($outstanding)),
+            ]);
+
+            $employeeName = $employee->full_name;
+
+            AuditLog::record(
+                module: AuditLog::MODULE_CASH,
+                action: AuditLog::ACTION_PAY,
+                model: $currentPayroll,
+                description: "Marco como pagado el saldo de semanas anteriores de {$employeeName} (\$".number_format($openingBalance, 2).')',
+                employeeId: $current->employee_id,
+                subjectLabel: $currentPayroll->name,
+                metadata: [
+                    'previous_balance_paid' => $openingBalance,
+                    'employee_name' => $employeeName,
+                    'prior_payout_ids' => $priorPayouts->pluck('id')->all(),
+                ],
+            );
+
+            return ['employee_name' => $employeeName];
+        });
+
+        if (isset($result['error'])) {
+            return redirect()->back()
+                ->with('error', $result['error']);
+        }
+
+        return redirect()->route('payroll.cash', $payroll)
+            ->with('success', "Semanas anteriores de {$result['employee_name']} marcadas como pagadas.");
+    }
+
+    /**
      * Marcar un cobro como realizado validando el PIN personal del empleado.
      *
      * Liquida el total a cobrar (que ya incluye el acumulado) y salda de paso
@@ -1215,65 +1340,61 @@ class PayrollController extends Controller
             abort(403);
         }
 
-        // El cobrador solo cobra en SU nómina (general o taller).
-        abort_unless($user->allowsCashPeriod($payroll), 403);
-
-        if ($payout->payroll_period_id !== $payroll->id) {
-            abort(404);
-        }
-
-        if (! $payroll->isCashClosed()) {
-            return redirect()->back()
-                ->with('error', 'Primero cierra y prepara el efectivo de este periodo.');
-        }
-
-        // No se puede cobrar (paso 2) sin haber preparado/confirmado la entrega
-        // del efectivo (paso 1).
-        if (! $payroll->isCashDeliveryConfirmed()) {
-            return redirect()->back()
-                ->with('error', 'Primero confirma la preparación del efectivo (Paso 1) antes de cobrar.');
-        }
-
-        // Con el cobro cerrado el efectivo ya se regresó a la empresa: el saldo
-        // del empleado se acumula y se cobra la siguiente semana.
-        if ($payroll->isCashCollectionClosed()) {
-            return redirect()->back()
-                ->with('error', 'La nomina ya esta cerrada; el efectivo se regreso y el saldo se acumula a la siguiente semana.');
-        }
-
-        if ($payout->status === CashPayout::STATUS_PAID) {
-            return redirect()->back()
-                ->with('error', 'Este cobro ya fue registrado.');
-        }
-
-        // El efectivo del empleado se cobra por su cobro MÁS RECIENTE, que ya
-        // arrastra el acumulado de las semanas previas. Si existe uno posterior
-        // pendiente, este ya quedó incluido ahí: cobrarlo por separado sería doble
-        // pago. Se bloquea y se cobra desde el periodo más reciente.
-        $rolledIntoLater = CashPayout::where('employee_id', $payout->employee_id)
-            ->where('status', CashPayout::STATUS_PENDING)
-            ->where('id', '!=', $payout->id)
-            ->whereHas('payrollPeriod', fn ($q) => $q->where('start_date', '>', $payroll->start_date))
-            ->exists();
-        if ($rolledIntoLater) {
-            return redirect()->back()
-                ->with('error', 'Este efectivo ya se acumuló a una semana posterior. Cóbralo desde ese periodo (arrastra el total).');
-        }
-
         $request->validate(['pin' => ['required', 'string']]);
 
-        $payout->loadMissing('employee');
+        $result = DB::transaction(function () use ($request, $user, $payout, $payroll) {
+            $currentPayroll = PayrollPeriod::whereKey($payroll->id)->lockForUpdate()->firstOrFail();
+            $employee = Employee::whereKey($payout->employee_id)->lockForUpdate()->firstOrFail();
+            $ledger = CashPayout::where('employee_id', $employee->id)
+                ->with('payrollPeriod')
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+            $current = $ledger->firstWhere('id', $payout->id);
 
-        if (! $payout->employee || ! $payout->employee->verifyCashPin($request->input('pin'))) {
-            throw \Illuminate\Validation\ValidationException::withMessages([
-                'pin' => 'Contraseña de cobro incorrecta.',
-            ]);
-        }
+            // El cobrador solo cobra en SU nómina (general o taller).
+            abort_unless($user->allowsCashPeriod($currentPayroll), 403);
 
-        DB::transaction(function () use ($payout, $payroll) {
-            $payout->update([
+            if (! $current || $current->payroll_period_id !== $currentPayroll->id) {
+                abort(404);
+            }
+
+            if (! $currentPayroll->isCashClosed()) {
+                return ['error' => 'Primero cierra y prepara el efectivo de este periodo.'];
+            }
+
+            if (! $currentPayroll->isCashDeliveryConfirmed()) {
+                return ['error' => 'Primero confirma la preparación del efectivo (Paso 1) antes de cobrar.'];
+            }
+
+            if ($currentPayroll->isCashCollectionClosed()) {
+                return ['error' => 'La nomina ya esta cerrada; el efectivo se regreso y el saldo se acumula a la siguiente semana.'];
+            }
+
+            if ($current->status === CashPayout::STATUS_PAID) {
+                return ['error' => 'Este cobro ya fue registrado.'];
+            }
+
+            $rolledIntoLater = $ledger
+                ->where('status', CashPayout::STATUS_PENDING)
+                ->where('id', '!=', $current->id)
+                ->first(fn (CashPayout $candidate) => $candidate->payrollPeriod
+                    && $candidate->payrollPeriod->start_date->gt($currentPayroll->start_date));
+            if ($rolledIntoLater) {
+                return ['error' => 'Este efectivo ya se acumuló a una semana posterior. Cóbralo desde ese periodo (arrastra el total).'];
+            }
+
+            if (! $employee->verifyCashPin($request->input('pin'))) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'pin' => 'Contraseña de cobro incorrecta.',
+                ]);
+            }
+
+            $totalDue = max(0.0, round((float) $current->total_due, 2));
+            $current->update([
                 'status' => CashPayout::STATUS_PAID,
-                'amount_paid' => $payout->total_due,
+                'total_due' => $totalDue,
+                'amount_paid' => $totalDue,
                 'collected_at' => now(),
                 'pin_verified' => true,
                 'collected_by' => auth()->id(),
@@ -1282,31 +1403,39 @@ class PayrollController extends Controller
             AuditLog::record(
                 module: AuditLog::MODULE_CASH,
                 action: AuditLog::ACTION_PAY,
-                model: $payroll,
-                description: "Registro el cobro en efectivo de {$payout->employee->full_name} en la nomina {$payroll->name} (\$".number_format((float) $payout->total_due, 2).')',
-                employeeId: $payout->employee_id,
-                subjectLabel: $payroll->name,
-                metadata: ['amount_paid' => (float) $payout->total_due, 'employee_name' => $payout->employee->full_name],
+                model: $currentPayroll,
+                description: "Registro el cobro en efectivo de {$employee->full_name} en la nomina {$currentPayroll->name} (\$".number_format($totalDue, 2).')',
+                employeeId: $current->employee_id,
+                subjectLabel: $currentPayroll->name,
+                metadata: ['amount_paid' => $totalDue, 'employee_name' => $employee->full_name],
             );
 
             // El total cobrado ya incluía el acumulado de periodos previos: saldar
             // esos cobros pendientes para que no reaparezcan en el siguiente cierre.
-            CashPayout::where('employee_id', $payout->employee_id)
-                ->where('payroll_period_id', '!=', $payout->payroll_period_id)
+            $ledger
+                ->where('payroll_period_id', '!=', $current->payroll_period_id)
                 ->where('status', CashPayout::STATUS_PENDING)
-                ->whereHas('payrollPeriod', fn ($q) => $q->where('start_date', '<', $payroll->start_date))
-                ->get()
+                ->filter(fn (CashPayout $candidate) => $candidate->payrollPeriod
+                    && $candidate->payrollPeriod->start_date->lt($currentPayroll->start_date))
                 ->each(function (CashPayout $prior) {
+                    $totalDue = max(0.0, round((float) $prior->total_due, 2));
                     $prior->update([
                         'status' => CashPayout::STATUS_PAID,
-                        'amount_paid' => $prior->total_due,
+                        'total_due' => $totalDue,
+                        'amount_paid' => $totalDue,
                         'collected_at' => now(),
                     ]);
                 });
+
+            return ['employee_name' => $employee->full_name];
         });
 
+        if (isset($result['error'])) {
+            return redirect()->back()->with('error', $result['error']);
+        }
+
         return redirect()->route('payroll.cash', $payroll)
-            ->with('success', "Cobro registrado para {$payout->employee->full_name}.");
+            ->with('success', "Cobro registrado para {$result['employee_name']}.");
     }
 
     /**
@@ -1324,42 +1453,64 @@ class PayrollController extends Controller
             abort(403);
         }
 
-        abort_unless($user->allowsCashPeriod($payroll), 403);
+        $result = DB::transaction(function () use ($user, $payroll) {
+            $currentPayroll = PayrollPeriod::whereKey($payroll->id)->lockForUpdate()->firstOrFail();
 
-        if (! $payroll->isCashDeliveryConfirmed()) {
-            return redirect()->back()
-                ->with('error', 'No se puede cerrar el cobro: aun no se confirma la entrega del efectivo (Paso 1).');
+            abort_unless($user->allowsCashPeriod($currentPayroll), 403);
+
+            if (! $currentPayroll->isCashDeliveryConfirmed()) {
+                return ['error' => 'No se puede cerrar el cobro: aun no se confirma la entrega del efectivo (Paso 1).'];
+            }
+
+            if ($currentPayroll->isCashCollectionClosed()) {
+                return ['error' => 'El cobro de este periodo ya esta cerrado.'];
+            }
+
+            // Respeta el protocolo periodo -> empleados por id -> payouts por id.
+            // closeCash crea payouts únicamente para los empleados de entries.
+            $employeeIds = $currentPayroll->entries()
+                ->orderBy('employee_id')
+                ->pluck('employee_id')
+                ->unique()
+                ->values();
+            Employee::whereIn('id', $employeeIds)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+
+            $pendingPayouts = $currentPayroll->cashPayouts()
+                ->pending()
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+            $returnAmount = round(
+                (float) $pendingPayouts->sum(fn (CashPayout $p) => max(0.0, $p->outstanding())),
+                2
+            );
+
+            $currentPayroll->update([
+                'cash_collection_closed_at' => now(),
+                'cash_collection_closed_by' => $user->id,
+                'cash_return_amount' => $returnAmount,
+            ]);
+
+            AuditLog::record(
+                module: AuditLog::MODULE_CASH,
+                action: AuditLog::ACTION_CLOSE,
+                model: $currentPayroll,
+                description: "Cerro el cobro en efectivo de la nomina {$currentPayroll->name}. Efectivo devuelto: $".number_format($returnAmount, 2),
+                subjectLabel: $currentPayroll->name,
+                metadata: ['cash_return_amount' => $returnAmount],
+            );
+
+            return ['return_amount' => $returnAmount];
+        });
+
+        if (isset($result['error'])) {
+            return redirect()->back()->with('error', $result['error']);
         }
 
-        if ($payroll->isCashCollectionClosed()) {
-            return redirect()->back()
-                ->with('error', 'El cobro de este periodo ya esta cerrado.');
-        }
-
-        // Efectivo a regresar = suma de los saldos aún no cobrados (incluye
-        // pagos parciales por su outstanding). Se guarda EXACTO con centavos para
-        // que cuadre con los montos por empleado (que ya no se redondean al peso);
-        // el desglose físico de billetes se redondea aparte al mostrarse.
-        $returnAmount = round(
-            (float) $payroll->cashPayouts()->pending()->get()
-                ->sum(fn (CashPayout $p) => max(0.0, $p->outstanding())),
-            2
-        );
-
-        $payroll->update([
-            'cash_collection_closed_at' => now(),
-            'cash_collection_closed_by' => $user->id,
-            'cash_return_amount' => $returnAmount,
-        ]);
-
-        AuditLog::record(
-            module: AuditLog::MODULE_CASH,
-            action: AuditLog::ACTION_CLOSE,
-            model: $payroll,
-            description: "Cerro el cobro en efectivo de la nomina {$payroll->name}. Efectivo devuelto: $".number_format($returnAmount, 2),
-            subjectLabel: $payroll->name,
-            metadata: ['cash_return_amount' => $returnAmount],
-        );
+        $returnAmount = $result['return_amount'];
 
         $formatted = number_format($returnAmount, 2);
 

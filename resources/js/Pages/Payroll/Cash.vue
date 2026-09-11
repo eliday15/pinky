@@ -267,6 +267,15 @@ const submitCollect = () => {
         onSuccess: () => closeCollect(),
     });
 };
+
+const markPreviousForm = useForm({});
+const markPreviousPaid = (payout) => {
+    if (!window.confirm(`¿Confirmas que el saldo anterior de ${payout.employee_name} por ${formatCurrency(payout.opening_balance)} ya fue pagado?`)) return;
+
+    markPreviousForm.post(route('payroll.payouts.markPreviousPaid', [props.period.id, payout.id]), {
+        preserveScroll: true,
+    });
+};
 </script>
 
 <template>
@@ -375,18 +384,26 @@ const submitCollect = () => {
             </div>
 
             <!-- Resumen: solo efectivo (las transferencias tienen su propia pantalla) -->
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-                <div class="bg-white rounded-lg shadow p-4">
-                    <p class="text-sm text-gray-500">Efectivo total</p>
-                    <p class="text-2xl font-bold text-pink-600">{{ formatCurrency(summary.total_cash) }}</p>
+            <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+                <div class="bg-white rounded-lg border border-gray-100 shadow-sm p-4">
+                    <p class="text-sm font-medium text-gray-600">Efectivo de esta nómina</p>
+                    <p class="text-2xl font-bold text-pink-600">{{ formatCurrency(summary.total_period) }}</p>
+                    <p class="mt-1 text-xs text-gray-500">Generado únicamente en este periodo</p>
                 </div>
-                <div class="bg-white rounded-lg shadow p-4">
-                    <p class="text-sm text-gray-500">Cobrado</p>
+                <div class="bg-white rounded-lg border border-gray-100 shadow-sm p-4">
+                    <p class="text-sm font-medium text-gray-600">Saldos anteriores</p>
+                    <p class="text-2xl font-bold text-gray-700">{{ formatCurrency(summary.total_opening_balance) }}</p>
+                    <p class="mt-1 text-xs text-gray-500">Pendientes acumulados de otras nóminas</p>
+                </div>
+                <div class="bg-white rounded-lg border border-gray-100 shadow-sm p-4">
+                    <p class="text-sm font-medium text-gray-600">Cobrado</p>
                     <p class="text-2xl font-bold text-green-600">{{ formatCurrency(summary.total_paid) }}</p>
+                    <p class="mt-1 text-xs text-gray-500">Efectivo ya entregado a empleados</p>
                 </div>
-                <div class="bg-white rounded-lg shadow p-4">
-                    <p class="text-sm text-gray-500">Pendiente</p>
+                <div class="bg-amber-50 rounded-lg border border-amber-200 shadow-sm p-4">
+                    <p class="text-sm font-medium text-amber-800">Pendiente total</p>
                     <p class="text-2xl font-bold text-amber-600">{{ formatCurrency(summary.total_pending) }}</p>
+                    <p class="mt-1 text-xs text-amber-700">Incluye saldos acumulados</p>
                 </div>
             </div>
 
@@ -576,7 +593,19 @@ const submitCollect = () => {
                             </td>
                             <td class="px-4 py-3 text-right">{{ formatCurrency(payout.period_amount) }}</td>
                             <td class="px-4 py-3 text-right" :class="payout.opening_balance > 0 ? 'text-amber-600' : 'text-gray-400'">
-                                {{ payout.opening_balance > 0 ? formatCurrency(payout.opening_balance) : '-' }}
+                                <template v-if="payout.opening_balance > 0">
+                                    <div>{{ formatCurrency(payout.opening_balance) }}</div>
+                                    <button
+                                        v-if="can?.payCash && payout.status !== 'paid' && !collectionClosed"
+                                        type="button"
+                                        :disabled="markPreviousForm.processing"
+                                        @click="markPreviousPaid(payout)"
+                                        class="mt-1 text-xs font-medium text-amber-700 underline hover:text-amber-900 disabled:opacity-50"
+                                    >
+                                        Marcar semanas anteriores pagadas
+                                    </button>
+                                </template>
+                                <template v-else>-</template>
                             </td>
                             <td class="px-4 py-3 text-right font-semibold text-gray-800">
                                 {{ formatCurrency(collectable(payout)) }}

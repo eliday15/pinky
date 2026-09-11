@@ -2,10 +2,12 @@
 
 namespace Tests\Feature\Payroll;
 
+use App\Http\Controllers\PayrollController;
 use App\Models\CashPayout;
 use App\Models\Employee;
 use App\Models\PayrollEntry;
 use App\Models\PayrollPeriod;
+use Illuminate\Http\Request;
 use Inertia\Testing\AssertableInertia as Assert;
 use Tests\FeatureTestCase;
 
@@ -290,6 +292,18 @@ class CashPayoutTest extends FeatureTestCase
         $this->assertEqualsWithDelta(700.00, (float) $payout2->period_amount, 0.01);
         $this->assertEqualsWithDelta(500.00, (float) $payout2->opening_balance, 0.01, 'acumulado de P1');
         $this->assertEqualsWithDelta(1200.00, (float) $payout2->total_due, 0.01);
+
+        // El cobrador debe distinguir el efectivo generado por P2 del saldo
+        // anterior, aunque ambos formen parte del total pendiente a entregar.
+        $this->actingAsCobrador('cobrador_general');
+        $this->get(route('payroll.cash', $p2->id))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('summary.total_period', 700)
+                ->where('summary.total_opening_balance', 500)
+                ->where('summary.total_due', 1200)
+                ->where('summary.total_pending', 1200)
+                ->etc());
     }
 
     public function test_cannot_collect_old_payout_already_rolled_into_later_period(): void
@@ -340,6 +354,175 @@ class CashPayoutTest extends FeatureTestCase
         $this->post(route('payroll.payouts.collect', [$p2->id, $payout2->id]), ['pin' => '4321']);
         $this->assertSame('paid', $payout1->fresh()->status);
         $this->assertSame('paid', $payout2->fresh()->status);
+    }
+
+    public function test_admin_can_mark_previous_weeks_paid_without_collecting_current_period(): void
+    {
+        $employee = Employee::factory()->create([
+            'status' => 'active', 'cash_pin' => '4321',
+            'is_trial_period' => true, 'trial_period_end_date' => null, 'is_imss_enrolled' => false,
+        ]);
+        $this->actingAsSuperadmin();
+
+        $p1 = PayrollPeriod::factory()->create([
+            'type' => 'weekly', 'status' => 'approved',
+            'start_date' => '2026-06-01', 'end_date' => '2026-06-07',
+        ]);
+        PayrollEntry::factory()->create([
+            'payroll_period_id' => $p1->id, 'employee_id' => $employee->id,
+            'net_pay' => 500, 'regular_pay' => 0, 'deductions' => 0,
+            'cash_amount' => 500, 'bank_amount' => 0,
+        ]);
+        $this->post(route('payroll.closeCash', $p1->id));
+
+        $p2 = PayrollPeriod::factory()->create([
+            'type' => 'weekly', 'status' => 'approved',
+            'start_date' => '2026-06-08', 'end_date' => '2026-06-14',
+        ]);
+        PayrollEntry::factory()->create([
+            'payroll_period_id' => $p2->id, 'employee_id' => $employee->id,
+            'net_pay' => 700, 'regular_pay' => 0, 'deductions' => 0,
+            'cash_amount' => 700, 'bank_amount' => 0,
+        ]);
+        $this->post(route('payroll.closeCash', $p2->id));
+
+        $payout1 = CashPayout::where('payroll_period_id', $p1->id)->firstOrFail();
+        $payout2 = CashPayout::where('payroll_period_id', $p2->id)->firstOrFail();
+        $stalePeriod = $p2->fresh();
+
+        $this->post(route('payroll.payouts.markPreviousPaid', [$p2->id, $payout2->id]))
+            ->assertRedirect(route('payroll.cash', $p2->id))
+            ->assertSessionHas('success');
+
+        // Un cierre que conservaba un modelo previo a la corrección debe volver
+        // a leer el ledger bloqueado y no reintroducir los $500 al acumulado.
+        app(PayrollController::class)->closeCash(Request::create('/', 'POST'), $stalePeriod);
+
+        $payout1->refresh();
+        $payout2->refresh();
+        $this->assertSame(CashPayout::STATUS_PAID, $payout1->status);
+        $this->assertEqualsWithDelta(500.00, (float) $payout1->amount_paid, 0.01);
+        $this->assertEqualsWithDelta(0.00, (float) $payout2->opening_balance, 0.01);
+        $this->assertEqualsWithDelta(700.00, (float) $payout2->total_due, 0.01);
+        $this->assertEqualsWithDelta(0.00, (float) $payout2->amount_paid, 0.01);
+        $this->assertSame(CashPayout::STATUS_PENDING, $payout2->status);
+
+        $this->get(route('payroll.cash', $p2->id))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('summary.total_period', 700)
+                ->where('summary.total_opening_balance', 0)
+                ->where('summary.total_due', 700)
+                ->where('summary.total_pending', 700)
+                ->etc());
+    }
+
+    public function test_collector_cannot_mark_previous_weeks_paid_without_admin_permission(): void
+    {
+        [$period] = $this->approvedPeriodWithEntry(500);
+        $this->actingAsSuperadmin();
+        $this->post(route('payroll.closeCash', $period->id));
+        $payout = CashPayout::where('payroll_period_id', $period->id)->firstOrFail();
+
+        $this->actingAsCobrador('cobrador_general');
+        $this->post(route('payroll.payouts.markPreviousPaid', [$period->id, $payout->id]))
+            ->assertForbidden();
+    }
+
+    public function test_mark_previous_paid_uses_fresh_payout_state_inside_transaction(): void
+    {
+        [$currentPeriod, $employee] = $this->approvedPeriodWithEntry(500, [
+            'start_date' => '2026-06-08', 'end_date' => '2026-06-14',
+        ]);
+        $priorPeriod = PayrollPeriod::factory()->create([
+            'type' => 'weekly', 'status' => 'approved',
+            'start_date' => '2026-06-01', 'end_date' => '2026-06-07',
+        ]);
+        $prior = CashPayout::create([
+            'payroll_period_id' => $priorPeriod->id,
+            'employee_id' => $employee->id,
+            'period_amount' => 300,
+            'opening_balance' => 0,
+            'total_due' => 300,
+            'amount_paid' => 0,
+            'status' => CashPayout::STATUS_PENDING,
+            'denomination_breakdown' => [],
+        ]);
+
+        $this->actingAsSuperadmin();
+        $this->post(route('payroll.closeCash', $currentPeriod->id));
+        $current = CashPayout::where('payroll_period_id', $currentPeriod->id)->firstOrFail();
+        $stalePeriod = $currentPeriod->fresh();
+        $stalePayout = $current->fresh();
+
+        // Simula otro request que ya corrigió el snapshot después del binding.
+        $current->update(['opening_balance' => 0, 'total_due' => 500]);
+
+        app(PayrollController::class)->markPreviousCashPaid($stalePeriod, $stalePayout);
+
+        $this->assertSame(CashPayout::STATUS_PENDING, $prior->fresh()->status);
+        $this->assertEqualsWithDelta(0.00, (float) $current->fresh()->opening_balance, 0.01);
+        $this->assertEqualsWithDelta(500.00, (float) $current->fresh()->total_due, 0.01);
+    }
+
+    public function test_collect_uses_fresh_paid_state_inside_transaction(): void
+    {
+        [$period, $employee] = $this->approvedPeriodWithEntry(500);
+        $employee->update(['cash_pin' => '4321']);
+        $this->actingAsSuperadmin();
+        $this->post(route('payroll.closeCash', $period->id));
+        $this->confirmDelivery($period);
+
+        $payout = CashPayout::where('payroll_period_id', $period->id)->firstOrFail();
+        $stalePeriod = $period->fresh();
+        $stalePayout = $payout->fresh();
+        $paidAt = now()->subMinute()->startOfSecond();
+
+        // Simula un cobro completado por otro request tras el route binding.
+        $payout->update([
+            'status' => CashPayout::STATUS_PAID,
+            'amount_paid' => 500,
+            'collected_at' => $paidAt,
+            'pin_verified' => true,
+            'collected_by' => null,
+        ]);
+
+        $request = Request::create('/', 'POST', ['pin' => '4321']);
+        app(PayrollController::class)->collectCash($request, $stalePeriod, $stalePayout);
+
+        $fresh = $payout->fresh();
+        $this->assertSame(CashPayout::STATUS_PAID, $fresh->status);
+        $this->assertEqualsWithDelta(500.00, (float) $fresh->amount_paid, 0.01);
+        $this->assertTrue($fresh->collected_at->equalTo($paidAt));
+        $this->assertNull($fresh->collected_by);
+        $this->assertLessThanOrEqual((float) $fresh->total_due, (float) $fresh->amount_paid);
+    }
+
+    public function test_collect_uses_fresh_closed_period_state_inside_transaction(): void
+    {
+        [$period, $employee] = $this->approvedPeriodWithEntry(500);
+        $employee->update(['cash_pin' => '4321']);
+        $this->actingAsSuperadmin();
+        $this->post(route('payroll.closeCash', $period->id));
+        $this->confirmDelivery($period);
+
+        $payout = CashPayout::where('payroll_period_id', $period->id)->firstOrFail();
+        $stalePeriod = $period->fresh();
+        $stalePayout = $payout->fresh();
+
+        // Simula el cierre que ganó la carrera tras el route binding.
+        $period->update([
+            'cash_collection_closed_at' => now(),
+            'cash_return_amount' => 500,
+        ]);
+
+        $request = Request::create('/', 'POST', ['pin' => '4321']);
+        app(PayrollController::class)->collectCash($request, $stalePeriod, $stalePayout);
+
+        $fresh = $payout->fresh();
+        $this->assertSame(CashPayout::STATUS_PENDING, $fresh->status);
+        $this->assertEqualsWithDelta(0.00, (float) $fresh->amount_paid, 0.01);
+        $this->assertNull($fresh->collected_at);
     }
 
     public function test_collecting_rolled_total_settles_prior_pending(): void

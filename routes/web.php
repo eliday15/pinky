@@ -135,6 +135,7 @@ Route::middleware(['auth', 'password-changed', 'two-factor-setup'])->group(funct
     Route::post('/payroll/{payroll}/cash-denominations', [PayrollController::class, 'saveCashDenominations'])->name('payroll.cashDenominations');
     Route::get('/payroll/{payroll}/cash', [PayrollController::class, 'cash'])->name('payroll.cash');
     Route::get('/payroll/{payroll}/transfers', [PayrollController::class, 'transfers'])->name('payroll.transfers');
+    Route::post('/payroll/{payroll}/payouts/{payout}/mark-previous-paid', [PayrollController::class, 'markPreviousCashPaid'])->name('payroll.payouts.markPreviousPaid');
     Route::post('/payroll/{payroll}/payouts/{payout}/collect', [PayrollController::class, 'collectCash'])->name('payroll.payouts.collect');
     // Cierre del cobro por el cobrador (congela el efectivo a regresar),
     // recepción/reapertura por el custodio (superadmin) y landing del cobrador.
