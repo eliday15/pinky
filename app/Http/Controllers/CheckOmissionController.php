@@ -341,19 +341,14 @@ class CheckOmissionController extends Controller
     // ---- Team scoping helpers --------------------------------------------
 
     /**
-     * Aplica el filtro de equipo (subordinados) cuando el usuario no tiene
-     * view_all.
+     * Aplica el filtro de equipo cuando el usuario no tiene view_all.
      */
     private function scopeToViewableEmployees($query, $user)
     {
-        if (! $user->hasPermissionTo('check_omissions.view_all')) {
-            $userEmployee = $user->employee;
-            if ($userEmployee) {
-                $allowedIds = $userEmployee->allSubordinateIds();
-                $query->whereIn('employee_id', $allowedIds);
-            } else {
-                $query->whereRaw('1 = 0');
-            }
+        $allowedIds = $this->viewableEmployeeIds($user);
+
+        if ($allowedIds !== null) {
+            $query->whereIn('employee_id', $allowedIds);
         }
 
         return $query;
@@ -365,11 +360,10 @@ class CheckOmissionController extends Controller
     private function viewableEmployees($user)
     {
         $query = Employee::active()->orderBy('full_name');
+        $allowedIds = $this->viewableEmployeeIds($user);
 
-        if (! $user->hasPermissionTo('check_omissions.view_all')) {
-            $userEmployee = $user->employee;
-            $allowedIds = $userEmployee ? $userEmployee->allSubordinateIds() : [];
-            $query->whereIn('id', $allowedIds ?: [0]);
+        if ($allowedIds !== null) {
+            $query->whereIn('id', $allowedIds);
         }
 
         return $query;
@@ -380,15 +374,45 @@ class CheckOmissionController extends Controller
      */
     private function authorizeEmployeeAccess(Employee $employee, $user): void
     {
-        if ($user->hasPermissionTo('check_omissions.view_all')) {
+        $allowedIds = $this->viewableEmployeeIds($user);
+
+        if ($allowedIds === null) {
             return;
         }
-
-        $userEmployee = $user->employee;
-        $allowedIds = $userEmployee ? $userEmployee->allSubordinateIds() : [];
 
         if (! in_array($employee->id, $allowedIds, true)) {
             abort(403);
         }
+    }
+
+    /**
+     * IDs que un usuario puede consultar y capturar: toda la organización para
+     * view_all; para view_team, sus subordinados y el resto del personal
+     * activo de su propio departamento. null significa que no hay restricción.
+     */
+    private function viewableEmployeeIds($user): ?array
+    {
+        if ($user->hasPermissionTo('check_omissions.view_all')) {
+            return null;
+        }
+
+        $userEmployee = $user->employee;
+        if (! $userEmployee) {
+            return [];
+        }
+
+        $departmentEmployeeIds = $userEmployee->department_id
+            ? Employee::active()
+                ->where('department_id', $userEmployee->department_id)
+                ->where('id', '!=', $userEmployee->id)
+                ->pluck('id')
+            : collect();
+
+        return $departmentEmployeeIds
+            ->merge($userEmployee->allSubordinateIds())
+            ->unique()
+            ->map(fn ($id) => (int) $id)
+            ->values()
+            ->all();
     }
 }

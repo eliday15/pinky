@@ -4,9 +4,11 @@ namespace Tests\Feature\CheckOmissions;
 
 use App\Models\AttendanceRecord;
 use App\Models\CheckOmission;
+use App\Models\Department;
 use App\Models\Employee;
 use App\Models\Schedule;
 use App\Services\ZktecoSyncService;
+use Inertia\Testing\AssertableInertia as Assert;
 use Tests\FeatureTestCase;
 
 /**
@@ -178,6 +180,84 @@ class CheckOmissionTest extends FeatureTestCase
 
         $this->assertSame(CheckOmission::STATUS_APPROVED, $omission->fresh()->status);
         $this->assertSame('present', $rec->fresh()->status);
+    }
+
+    public function test_supervisor_can_capture_for_active_employee_in_same_department_without_subordinate_link(): void
+    {
+        $department = Department::factory()->create();
+        $supervisorUser = $this->supervisorUser();
+        $supervisorEmployee = $this->attachEmployee($supervisorUser, [
+            'department_id' => $department->id,
+            'full_name' => 'Responsable Calidad',
+        ]);
+        $employee = $this->dayEmployee();
+        $employee->update([
+            'department_id' => $department->id,
+            'full_name' => 'Inspectora Calidad',
+            'supervisor_id' => null,
+        ]);
+
+        $this->actingAs($supervisorUser)
+            ->get(route('check-omissions.create'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('CheckOmissions/Create')
+                ->has('employees', 1)
+                ->where('employees.0.id', $employee->id));
+
+        $this->post(route('check-omissions.store'), [
+            'employee_id' => $employee->id,
+            'work_date' => self::WEDNESDAY,
+            'reason' => CheckOmission::REASON_DELIVERY,
+        ])->assertRedirect(route('check-omissions.index'));
+
+        $this->assertDatabaseHas('check_omissions', [
+            'employee_id' => $employee->id,
+            'authorized_by' => $supervisorUser->id,
+        ]);
+
+        $this->post(route('check-omissions.store'), [
+            'employee_id' => $supervisorEmployee->id,
+            'work_date' => '2026-06-18',
+            'reason' => CheckOmission::REASON_DELIVERY,
+        ])->assertForbidden();
+    }
+
+    public function test_supervisor_cannot_view_or_capture_employee_from_other_department(): void
+    {
+        $supervisorUser = $this->supervisorUser();
+        $this->attachEmployee($supervisorUser);
+        $otherDepartmentEmployee = $this->dayEmployee();
+        CheckOmission::factory()->for($otherDepartmentEmployee)->create([
+            'work_date' => self::WEDNESDAY,
+        ]);
+
+        $this->actingAs($supervisorUser)
+            ->get(route('check-omissions.index'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('CheckOmissions/Index')
+                ->has('omissions.data', 0));
+
+        $this->post(route('check-omissions.store'), [
+            'employee_id' => $otherDepartmentEmployee->id,
+            'work_date' => '2026-06-18',
+            'reason' => CheckOmission::REASON_DELIVERY,
+        ])->assertForbidden();
+    }
+
+    public function test_rrhh_can_capture_for_any_department(): void
+    {
+        $employee = $this->dayEmployee();
+
+        $this->actingAs($this->rrhhUser())
+            ->post(route('check-omissions.store'), [
+                'employee_id' => $employee->id,
+                'work_date' => self::WEDNESDAY,
+                'reason' => CheckOmission::REASON_DELIVERY,
+            ])->assertRedirect(route('check-omissions.index'));
+
+        $this->assertDatabaseHas('check_omissions', ['employee_id' => $employee->id]);
     }
 
     public function test_other_reason_requires_a_comment(): void

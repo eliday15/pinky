@@ -501,6 +501,68 @@ class OvertimeBackedAutoApprovalTest extends FeatureTestCase
         $this->assertSame(Authorization::STATUS_APPROVED, $auth->fresh()->status, 'el bloque nocturno real respalda la velada');
     }
 
+    public function test_lorenzo_four_punch_velada_auto_approves_on_capture(): void
+    {
+        // Reporte de Dani 2026-09-15: Lorenzo trabajó el 14-sep con marcas
+        // 09:04, 22:30, 01:09 y 05:15. Las dos últimas delimitan el bloque de
+        // velada y respaldan una noche capturada después del día trabajado.
+        // "Postautorización" describe el momento de captura; no debe impedir
+        // que la checada la apruebe en el mismo alta.
+        $supervisor = $this->actingAsSupervisor();
+        $emp = Employee::factory()->create([
+            'schedule_id' => Schedule::factory()->create([
+                'entry_time' => '09:00',
+                'exit_time' => '18:00',
+            ])->id,
+        ]);
+        AttendanceRecord::factory()->create([
+            'employee_id' => $emp->id,
+            'work_date' => '2026-09-14',
+            'check_in' => '09:04:00',
+            'check_out' => '05:15:00',
+            'raw_punches' => [
+                ['date' => '2026-09-14', 'time' => '09:04:00', 'type' => 'in'],
+                ['date' => '2026-09-14', 'time' => '22:30:00', 'type' => 'punch'],
+                ['date' => '2026-09-15', 'time' => '01:09:00', 'type' => 'punch'],
+                ['date' => '2026-09-15', 'time' => '05:15:00', 'type' => 'out'],
+            ],
+        ]);
+        $vel = \App\Models\CompensationType::factory()->create([
+            'code' => 'VEL',
+            'application_mode' => \App\Models\CompensationType::APPLICATION_PER_DAY,
+            'authorization_type' => Authorization::TYPE_NIGHT_SHIFT,
+            'attendance_pull_rule' => \App\Models\CompensationType::PULL_RULE_VELADA,
+        ]);
+
+        $this->from(route('authorizations.create'))->post(route('authorizations.store'), [
+            'employee_id' => $emp->id,
+            'compensation_type_id' => $vel->id,
+            'type' => Authorization::TYPE_NIGHT_SHIFT,
+            'date' => '2026-09-14',
+            'hours' => 1,
+            'reason' => 'Velada respaldada por checadas',
+        ])->assertRedirect(route('authorizations.index'))
+            ->assertSessionHasNoErrors();
+
+        $auth = Authorization::where('employee_id', $emp->id)->sole();
+        $this->assertFalse((bool) $auth->is_pre_authorization, 'se capturó como postautorización');
+        $this->assertSame(Authorization::STATUS_APPROVED, $auth->status, 'la postautorización respaldada sí se autoaprueba');
+        $this->assertSame($supervisor->id, $auth->requested_by);
+        $this->assertSame($supervisor->id, $auth->approved_by, 'el alta y la aprobación inmediata quedan firmadas por el capturista');
+        $this->assertNotNull($auth->approved_at);
+    }
+
+    public function test_postauthorization_copy_does_not_look_like_a_negative_approval_status(): void
+    {
+        $source = file_get_contents(resource_path('js/Pages/Authorizations/Show.vue'));
+
+        $this->assertIsString($source);
+        $this->assertStringNotContainsString('No (Post-autorizacion)', $source);
+        $this->assertStringContainsString('Momento de captura', $source);
+        $this->assertStringContainsString('Sí quedó aprobada.', $source);
+        $this->assertStringContainsString('no significa que esté pendiente', $source);
+    }
+
     public function test_velada_without_night_block_stays_pending(): void
     {
         $this->adminUser();

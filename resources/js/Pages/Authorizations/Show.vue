@@ -254,9 +254,17 @@ const submitReject = () => {
                                     </dd>
                                 </div>
                                 <div>
-                                    <dt class="text-sm font-medium text-gray-500">Pre-autorizacion</dt>
+                                    <dt class="text-sm font-medium text-gray-500">Momento de captura</dt>
                                     <dd class="mt-1 text-sm text-gray-900">
-                                        {{ authorization.is_pre_authorization ? 'Si' : 'No (Post-autorizacion)' }}
+                                        {{ authorization.is_pre_authorization
+                                            ? 'Antes o el mismo día del trabajo (preautorización)'
+                                            : 'Después del día trabajado (postautorización)' }}
+                                    </dd>
+                                    <dd
+                                        v-if="!authorization.is_pre_authorization && authorization.status === 'approved'"
+                                        class="mt-1 text-xs font-medium text-green-700"
+                                    >
+                                        Sí quedó aprobada. “Postautorización” solo indica cuándo se capturó; no significa que esté pendiente.
                                     </dd>
                                 </div>
                             </dl>
