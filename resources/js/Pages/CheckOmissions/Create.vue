@@ -52,7 +52,10 @@ const submit = () => {
                     </svg>
                     <div class="ml-3 text-sm text-blue-700">
                         <p>
-                            <strong>Entrega de mercancía:</strong> el día se paga completo, sin descuento de falta.
+                            <strong>Entrega de mercancía / Trabajo foráneo:</strong> el día se paga completo, sin descuento de falta.
+                        </p>
+                        <p class="mt-1">
+                            <strong>Fallas en reloj checador y huellas:</strong> el día se paga completo, sin falta ni retardo. Solo la puede capturar el administrador.
                         </p>
                         <p class="mt-1">
                             <strong>Otro:</strong> el día se convierte en retardo (puede acumular falta por retardos según política).
@@ -122,7 +125,7 @@ const submit = () => {
                 <!-- Reason hint -->
                 <div v-if="form.reason" class="bg-gray-50 rounded-lg p-3 -mt-2">
                     <p v-if="fullDayReasons.includes(form.reason)" class="text-sm text-green-700">
-                        Este motivo <strong>no genera falta</strong>: el día se paga completo.
+                        Este motivo <strong>no genera falta ni retardo</strong>: el día se paga completo.
                     </p>
                     <p v-else class="text-sm text-amber-700">
                         Este motivo <strong>convierte el día en retardo</strong>. Acumular suficientes retardos puede generar una falta.

@@ -51,6 +51,12 @@ class CheckOmission extends Model
     // sí cuenta para el acumulado mensual de retardos → falta.
     public const REASON_OTHER = 'otro';
 
+    // "Fallas en reloj checador y huellas" (Dani 2026-09-22) → el día se paga
+    // completo: la falla del reloj o del lector de huellas no es imputable al
+    // colaborador, así que NO genera falta ni retardo. Lo captura únicamente el
+    // administrador (ver adminOnlyReasons()).
+    public const REASON_CLOCK_FAILURE = 'falla_reloj_checador';
+
     /**
      * Estados del flujo de 2 pasos.
      */
@@ -94,8 +100,46 @@ class CheckOmission extends Model
         return [
             self::REASON_DELIVERY => 'Entrega de mercancía',
             self::REASON_FOREIGN_WORK => 'Trabajo foráneo',
+            self::REASON_CLOCK_FAILURE => 'Fallas en reloj checador y huellas',
             self::REASON_OTHER => 'Otro (especificar)',
         ];
+    }
+
+    /**
+     * Motivos que SOLO puede capturar el administrador (Dani 2026-09-22).
+     *
+     * @return array<int, string>
+     */
+    public static function adminOnlyReasons(): array
+    {
+        return [self::REASON_CLOCK_FAILURE];
+    }
+
+    /**
+     * Catálogo de motivos visible para un usuario: los exclusivos del
+     * administrador desaparecen del formulario de quien no puede aprobar.
+     *
+     * @return array<string, string>
+     */
+    public static function reasonOptionsFor(bool $isAdmin): array
+    {
+        $options = self::reasonOptions();
+
+        if ($isAdmin) {
+            return $options;
+        }
+
+        foreach (self::adminOnlyReasons() as $reason) {
+            unset($options[$reason]);
+        }
+
+        return $options;
+    }
+
+    /** ¿Este motivo es de captura exclusiva del administrador? */
+    public static function isAdminOnlyReason(string $reason): bool
+    {
+        return in_array($reason, self::adminOnlyReasons(), true);
     }
 
     /**
@@ -106,7 +150,7 @@ class CheckOmission extends Model
      */
     public static function fullDayReasons(): array
     {
-        return [self::REASON_DELIVERY, self::REASON_FOREIGN_WORK];
+        return [self::REASON_DELIVERY, self::REASON_FOREIGN_WORK, self::REASON_CLOCK_FAILURE];
     }
 
     /** ¿El motivo paga el día completo (entrega de mercancía / trabajo foráneo)? */
@@ -131,6 +175,12 @@ class CheckOmission extends Model
     public function isOther(): bool
     {
         return $this->reason === self::REASON_OTHER;
+    }
+
+    /** ¿El motivo "Fallas en reloj checador y huellas"? */
+    public function isClockFailure(): bool
+    {
+        return $this->reason === self::REASON_CLOCK_FAILURE;
     }
 
     // ---- Relaciones -------------------------------------------------------

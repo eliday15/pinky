@@ -24,7 +24,10 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
  * Flujo de 2 pasos: el jefe/supervisor del departamento AUTORIZA la omisión con
  * un motivo (al capturarla) y el administrador la APRUEBA. El motivo decide el
  * efecto sobre la asistencia una vez aprobada:
- *   - "Entrega de mercancía" → el día se paga completo (present), sin falta.
+ *   - "Entrega de mercancía" / "Trabajo foráneo" → el día se paga completo
+ *     (present), sin falta.
+ *   - "Fallas en reloj checador y huellas" → igual (paga completo, ni falta ni
+ *     retardo), pero SOLO la captura el administrador y nace aprobada.
  *   - "Otro (especificar)"   → el día se convierte en retardo (late), que cuenta
  *     para el acumulado mensual de retardos → falta.
  */
@@ -79,7 +82,10 @@ class CheckOmissionController extends Controller
             'filters' => $request->only(['status', 'reason', 'employee', 'department', 'from_date', 'to_date', 'search']),
             'employees' => $this->viewableEmployees($user)->get(['id', 'full_name']),
             'departments' => Department::active()->orderBy('name')->get(['id', 'name']),
+            // Catálogo completo para etiquetar los registros ya existentes...
             'reasonOptions' => CheckOmission::reasonOptions(),
+            // ...y el subconjunto que este usuario puede capturar/filtrar.
+            'selectableReasonOptions' => CheckOmission::reasonOptionsFor($user->hasPermissionTo('check_omissions.approve')),
             'can' => [
                 'create' => $user->hasPermissionTo('check_omissions.create'),
                 'approve' => $user->hasPermissionTo('check_omissions.approve'),
@@ -102,7 +108,9 @@ class CheckOmissionController extends Controller
             'employees' => $this->viewableEmployees($user)
                 ->with('department:id,name')
                 ->get(['id', 'full_name', 'department_id']),
-            'reasonOptions' => CheckOmission::reasonOptions(),
+            // Solo los motivos que este usuario puede capturar: los exclusivos del
+            // administrador no aparecen en el formulario de nadie más.
+            'reasonOptions' => CheckOmission::reasonOptionsFor($user->hasPermissionTo('check_omissions.approve')),
             'fullDayReasons' => CheckOmission::fullDayReasons(),
             'prefill' => [
                 'employee_id' => $request->integer('employee_id') ?: null,
@@ -129,6 +137,13 @@ class CheckOmissionController extends Controller
             'comments' => ['nullable', 'string', 'max:1000'],
         ]);
 
+        // Los motivos exclusivos del administrador no se pueden capturar desde
+        // una cuenta de jefe/supervisor/RRHH, aunque se manden a mano en el POST.
+        $isAdmin = $user->hasPermissionTo('check_omissions.approve');
+        if (CheckOmission::isAdminOnlyReason($validated['reason']) && ! $isAdmin) {
+            abort(403, 'Solo el administrador puede capturar ese motivo de omisión.');
+        }
+
         // "Otro (especificar)" exige detalle.
         if ($validated['reason'] === CheckOmission::REASON_OTHER && blank($validated['comments'] ?? null)) {
             return back()->withErrors(['comments' => 'Especifica el motivo de la omisión.'])->withInput();
@@ -153,17 +168,37 @@ class CheckOmissionController extends Controller
             ->whereDate('work_date', $workDate)
             ->first();
 
-        CheckOmission::create([
+        // Un motivo de captura exclusiva del administrador nace APROBADO: no
+        // tiene sentido pedirle al mismo administrador que apruebe lo que acaba
+        // de capturar. Queda con authorized_by y approved_by en la misma persona,
+        // así que la auditoría sigue mostrando quién respondió por el día.
+        $autoApprove = CheckOmission::isAdminOnlyReason($validated['reason']);
+
+        $omission = CheckOmission::create([
             'employee_id' => $employee->id,
             'attendance_record_id' => $attendanceRecord?->id,
             'work_date' => $workDate,
             'reason' => $validated['reason'],
             'comments' => $validated['comments'] ?? null,
-            'status' => CheckOmission::STATUS_AUTHORIZED,
+            'status' => $autoApprove ? CheckOmission::STATUS_APPROVED : CheckOmission::STATUS_AUTHORIZED,
             'authorized_by' => $user->id,
             'authorized_at' => now(),
+            'approved_by' => $autoApprove ? $user->id : null,
+            'approved_at' => $autoApprove ? now() : null,
             'created_by' => $user->id,
         ]);
+
+        if ($autoApprove) {
+            $this->applyEffect($omission);
+            $omission->recordAuditEvent(
+                action: AuditLog::ACTION_APPROVE,
+                description: 'Aprobo la omision de checada de ' . ($employee->full_name ?? 'empleado') . ' del ' . Carbon::parse($workDate)->format('d/m/Y') . ' (' . $omission->reasonLabel() . ')',
+                metadata: ['motivo' => $omission->reason, 'captura_administrador' => true],
+            );
+
+            return redirect()->route('check-omissions.index')
+                ->with('success', 'Omisión registrada y aprobada. El día se ajustó en la asistencia y la nómina.');
+        }
 
         return redirect()->route('check-omissions.index')
             ->with('success', 'Omisión autorizada. Pendiente de aprobación por el administrador.');

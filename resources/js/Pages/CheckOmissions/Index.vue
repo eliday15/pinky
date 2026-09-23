@@ -12,6 +12,7 @@ const props = defineProps({
     employees: Array,
     departments: Array,
     reasonOptions: Object,
+    selectableReasonOptions: { type: Object, default: () => ({}) },
     can: Object,
 });
 
@@ -225,7 +226,7 @@ const statusLabel = (status) => {
                         @change="applyFilters"
                     >
                         <option value="">Todos</option>
-                        <option v-for="[key, label] in Object.entries(reasonOptions)" :key="key" :value="key">
+                        <option v-for="[key, label] in Object.entries(selectableReasonOptions)" :key="key" :value="key">
                             {{ label }}
                         </option>
                     </select>

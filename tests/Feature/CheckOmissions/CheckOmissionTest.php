@@ -274,4 +274,124 @@ class CheckOmissionTest extends FeatureTestCase
 
         $this->assertDatabaseCount('check_omissions', 0);
     }
+
+    // ------------------------------------------------------------------
+    // "Fallas en reloj checador y huellas" (Dani 2026-09-22): solo la captura
+    // el administrador y NO genera falta ni retardo.
+    // ------------------------------------------------------------------
+
+    public function test_approved_clock_failure_omission_pays_the_day_as_present(): void
+    {
+        $e = $this->dayEmployee();
+        $rec = $this->missingCheckoutRecord($e);
+        app(ZktecoSyncService::class)->recalculateAttendanceRecord($rec);
+        $this->assertSame('absent', $rec->fresh()->status);
+
+        CheckOmission::factory()->for($e)->clockFailure()->approved()->create([
+            'work_date' => self::WEDNESDAY,
+            'attendance_record_id' => $rec->id,
+        ]);
+
+        app(ZktecoSyncService::class)->recalculateAttendanceRecord($rec);
+
+        $this->assertSame('present', $rec->fresh()->status, 'la falla del reloj paga el día completo');
+    }
+
+    public function test_clock_failure_omission_never_becomes_a_retardo(): void
+    {
+        $e = $this->dayEmployee();
+        // Llegó 90 min tarde y sin salida: sin omisión esto ya es falta.
+        $rec = AttendanceRecord::factory()->for($e)->create([
+            'work_date' => self::WEDNESDAY,
+            'check_in' => '09:30:00',
+            'check_out' => null,
+            'status' => 'absent',
+            'late_minutes' => 90,
+        ]);
+
+        CheckOmission::factory()->for($e)->clockFailure()->approved()->create([
+            'work_date' => self::WEDNESDAY,
+            'attendance_record_id' => $rec->id,
+        ]);
+
+        app(ZktecoSyncService::class)->recalculateAttendanceRecord($rec);
+
+        // 'present' es lo que garantiza que el acumulado mensual de retardos
+        // (LateAbsenceService cuenta status='late') no lo convierta en falta.
+        $this->assertSame('present', $rec->fresh()->status, 'ni falta ni retardo');
+    }
+
+    public function test_admin_capturing_clock_failure_is_auto_approved_and_applied(): void
+    {
+        $admin = $this->actingAsAdmin();
+        $e = $this->dayEmployee();
+        $rec = $this->missingCheckoutRecord($e);
+        app(ZktecoSyncService::class)->recalculateAttendanceRecord($rec);
+        $this->assertSame('absent', $rec->fresh()->status);
+
+        $this->post(route('check-omissions.store'), [
+            'employee_id' => $e->id,
+            'work_date' => self::WEDNESDAY,
+            'reason' => CheckOmission::REASON_CLOCK_FAILURE,
+            'comments' => 'Reloj checador sin batería',
+        ])->assertRedirect(route('check-omissions.index'));
+
+        $omission = CheckOmission::where('employee_id', $e->id)->firstOrFail();
+        // Nace aprobada: el administrador es quien captura y quien responde.
+        $this->assertSame(CheckOmission::STATUS_APPROVED, $omission->status);
+        $this->assertSame($admin->id, $omission->authorized_by);
+        $this->assertSame($admin->id, $omission->approved_by);
+        // El efecto ya se aplicó en la asistencia del día.
+        $this->assertSame('present', $rec->fresh()->status);
+    }
+
+    public function test_supervisor_cannot_capture_clock_failure(): void
+    {
+        $supervisorUser = $this->supervisorUser();
+        $boss = $this->attachEmployee($supervisorUser);
+        $e = $this->dayEmployee();
+        $e->update(['supervisor_id' => $boss->id]);
+
+        $this->actingAs($supervisorUser)
+            ->post(route('check-omissions.store'), [
+                'employee_id' => $e->id,
+                'work_date' => self::WEDNESDAY,
+                'reason' => CheckOmission::REASON_CLOCK_FAILURE,
+            ])->assertForbidden();
+
+        $this->assertDatabaseCount('check_omissions', 0);
+    }
+
+    public function test_rrhh_cannot_capture_clock_failure(): void
+    {
+        $e = $this->dayEmployee();
+
+        $this->actingAs($this->rrhhUser())
+            ->post(route('check-omissions.store'), [
+                'employee_id' => $e->id,
+                'work_date' => self::WEDNESDAY,
+                'reason' => CheckOmission::REASON_CLOCK_FAILURE,
+            ])->assertForbidden();
+
+        $this->assertDatabaseCount('check_omissions', 0);
+    }
+
+    public function test_clock_failure_reason_is_hidden_from_non_admins_but_visible_to_admins(): void
+    {
+        $this->actingAsAdmin();
+        $this->get(route('check-omissions.create'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('reasonOptions', fn ($options) => collect($options)->has(CheckOmission::REASON_CLOCK_FAILURE)));
+
+        $supervisorUser = $this->supervisorUser();
+        $this->attachEmployee($supervisorUser);
+
+        $this->actingAs($supervisorUser)
+            ->get(route('check-omissions.create'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('reasonOptions', fn ($options) => ! collect($options)->has(CheckOmission::REASON_CLOCK_FAILURE))
+                ->where('reasonOptions', fn ($options) => collect($options)->has(CheckOmission::REASON_DELIVERY)));
+    }
 }

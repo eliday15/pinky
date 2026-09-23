@@ -60,6 +60,12 @@ class CheckOmissionFactory extends Factory
         ]);
     }
 
+    /** Motivo "Fallas en reloj checador y huellas" (paga completo, sin falta ni retardo). */
+    public function clockFailure(): static
+    {
+        return $this->state(fn () => ['reason' => CheckOmission::REASON_CLOCK_FAILURE]);
+    }
+
     /** Aprobada por el administrador. */
     public function approved(): static
     {
