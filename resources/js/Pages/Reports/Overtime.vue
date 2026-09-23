@@ -88,7 +88,7 @@ const formatCurrency = (amount) => {
         </div>
 
         <!-- Summary Cards -->
-        <div class="grid grid-cols-3 gap-4 mb-6">
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
             <div class="bg-white rounded-lg shadow p-4 text-center">
                 <p class="text-2xl font-bold text-gray-800">{{ summary.total_employees }}</p>
                 <p class="text-xs text-gray-500">Empleados con Extras</p>
@@ -101,6 +101,10 @@ const formatCurrency = (amount) => {
                 <p class="text-2xl font-bold text-blue-600">{{ summary.total_days_with_overtime }}</p>
                 <p class="text-xs text-gray-500">Dias con Extras</p>
             </div>
+            <div class="bg-white rounded-lg shadow p-4 text-center">
+                <p class="text-2xl font-bold text-pink-600">{{ formatCurrency(summary.total_estimated_cost) }}</p>
+                <p class="text-xs text-gray-500">Costo Total Estimado</p>
+            </div>
         </div>
 
         <!-- Employee Table -->
@@ -111,6 +115,7 @@ const formatCurrency = (amount) => {
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Empleado</th>
                         <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Dias con Extra</th>
                         <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Horas Extra</th>
+                        <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Horas Autorizadas</th>
                         <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Costo Estimado</th>
                     </tr>
                 </thead>
@@ -135,16 +140,38 @@ const formatCurrency = (amount) => {
                         <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-bold text-green-600">
                             {{ row.total_overtime }}h
                         </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900">
+                            {{ row.total_authorized }}h
+                        </td>
                         <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium text-gray-900">
                             {{ formatCurrency(row.estimated_cost) }}
                         </td>
                     </tr>
                     <tr v-if="byEmployee.length === 0">
-                        <td colspan="4" class="px-6 py-12 text-center text-gray-500">
+                        <td colspan="5" class="px-6 py-12 text-center text-gray-500">
                             No hay registros de horas extra para este periodo
                         </td>
                     </tr>
                 </tbody>
+                <tfoot v-if="byEmployee.length > 0" class="bg-gray-50 border-t-2 border-gray-300">
+                    <tr>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900 uppercase">
+                            Total
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-bold text-gray-900">
+                            {{ summary.total_days_with_overtime }}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-bold text-green-600">
+                            {{ summary.total_overtime_hours }}h
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-bold text-gray-900">
+                            {{ summary.total_authorized_hours }}h
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-bold text-gray-900">
+                            {{ formatCurrency(summary.total_estimated_cost) }}
+                        </td>
+                    </tr>
+                </tfoot>
             </table>
         </div>
     </AppLayout>

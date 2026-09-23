@@ -387,6 +387,9 @@ class ReportController extends Controller implements HasMiddleware
             'total_overtime_hours' => round($records->sum('overtime_hours'), 2),
             'total_authorized_hours' => round($records->sum('overtime_authorized_hours') + $exemptAuths->sum('hours'), 2),
             'total_days_with_overtime' => $records->count() + $exemptRows->sum('days_with_overtime'),
+            // Suma de la columna "Costo Estimado": es lo que nómina necesita para
+            // cuadrar el total pagado por tiempo extra del periodo (Luis 2026-09-22).
+            'total_estimated_cost' => round($byEmployee->sum('estimated_cost'), 2),
         ];
 
         return Inertia::render('Reports/Overtime', [

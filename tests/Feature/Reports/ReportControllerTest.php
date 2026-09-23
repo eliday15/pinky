@@ -907,7 +907,55 @@ class ReportControllerTest extends FeatureTestCase
                 // 1.5h autorizadas * 150 (monto fijo HE) = 225 — lo que paga nómina
                 ->where('byEmployee.0.estimated_cost', 225)
                 ->where('summary.total_overtime_hours', 2.5)
-                ->where('summary.total_authorized_hours', 1.5));
+                ->where('summary.total_authorized_hours', 1.5)
+                // La suma de la columna Costo Estimado debe salir en el resumen:
+                // es el total que Luis pide ver (2026-09-22).
+                ->where('summary.total_estimated_cost', 225));
+    }
+
+    /**
+     * El resumen debe traer la SUMA de la columna "Costo Estimado" de todos los
+     * empleados del periodo (Luis 2026-09-22: "No veo la suma").
+     */
+    public function test_overtime_summary_sums_estimated_cost_across_employees(): void
+    {
+        $this->actingAsAdmin();
+
+        $he = CompensationType::factory()->create([
+            'code' => 'HE',
+            'authorization_type' => 'overtime',
+            'application_mode' => 'per_hour',
+            'calculation_type' => 'fixed',
+            'fixed_amount' => 100.00,
+            'priority' => 10,
+            'is_active' => true,
+        ]);
+
+        foreach ([['2026-03-10', 4.0], ['2026-03-11', 2.5]] as [$date, $authorizedHours]) {
+            $employee = Employee::factory()->create(['daily_salary' => 800.00]);
+            $employee->compensationTypes()->attach($he->id, ['is_active' => true]);
+
+            AttendanceRecord::factory()->create([
+                'employee_id' => $employee->id,
+                'work_date' => $date,
+                'status' => 'present',
+                'worked_hours' => 8.00,
+                'overtime_hours' => $authorizedHours,
+                'overtime_authorized_hours' => $authorizedHours,
+            ]);
+        }
+
+        $this->get(route('reports.overtime', [
+            'start_date' => '2026-03-01',
+            'end_date' => '2026-03-31',
+        ]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Reports/Overtime')
+                ->has('byEmployee', 2)
+                // 4.00h + 2.50h = 6.50h autorizadas * 100 = 650
+                ->where('summary.total_authorized_hours', 6.5)
+                ->where('summary.total_estimated_cost', 650));
     }
 
     public function test_overtime_unauthorized_hours_cost_nothing(): void
