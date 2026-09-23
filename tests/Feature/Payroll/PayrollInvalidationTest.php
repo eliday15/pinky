@@ -155,13 +155,13 @@ class PayrollInvalidationTest extends FeatureTestCase
         $this->assertSame('approved', $period->status);
     }
 
-    public function test_paid_period_is_untouched(): void
+    public function test_paid_period_is_flagged_but_never_silently_recalculated(): void
     {
         $employee = $this->employee();
         $period = $this->monthlyPeriod('paid');
         $entry = $this->calculator()->calculateEmployeePayroll($period, $employee);
         // calculateEmployeePayroll directo escribe el entry, pero el flujo de
-        // invalidación jamás debe tocar un periodo pagado.
+        // invalidación jamás debe reescribir solo un periodo pagado.
 
         $incident = $this->pendingVacation($employee);
 
@@ -173,8 +173,14 @@ class PayrollInvalidationTest extends FeatureTestCase
 
         $period->refresh();
 
-        $this->assertFalse((bool) $period->requires_recalculation, 'pagado: ni marca ni recálculo');
-        $this->assertEqualsWithDelta(0.00, (float) $entry->fresh()->vacation_pay, 0.01);
+        // El importe NO cambia solo...
+        $this->assertEqualsWithDelta(0.00, (float) $entry->fresh()->vacation_pay, 0.01, 'un pago entregado no se reescribe en silencio');
+        $this->assertSame('paid', $period->status);
+
+        // ...pero tampoco se queda callado: queda marcado para ajuste
+        // retroactivo (antes se ignoraba y el error vivía para siempre).
+        $this->assertTrue((bool) $period->requires_recalculation, 'pagado: se marca para conciliación');
+        $this->assertNotNull($period->recalculation_flagged_at);
     }
 
     public function test_explicit_recalculation_clears_flag_and_returns_to_review(): void

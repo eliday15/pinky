@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\AuditLog;
 use App\Models\Employee;
 use App\Models\PayrollPeriod;
 
@@ -15,8 +16,13 @@ use App\Models\PayrollPeriod;
  *   del empleado afectado, de inmediato.
  * - Periodos en review/approved: se marcan requires_recalculation para que
  *   un admin recalcule explícitamente (el periodo vuelve a review).
- * - Periodos paid: inmutables — nunca se tocan; el cambio queda en el audit
- *   log del modelo que lo originó.
+ * - Periodos paid: el importe NO se toca solo (un pago entregado no se
+ *   reescribe en silencio), pero SÍ se marcan y se deja rastro en auditoría.
+ *   Antes se ignoraban por completo, y eso congelaba deducciones por falta
+ *   cacheadas sobre checadas que el sync ya había corregido (caso Elsa
+ *   2026-09-10: la checada se arregló 52 h después del cálculo y el descuento
+ *   de $367.55 se quedó para siempre). La corrección se aplica con
+ *   `payroll:reconcile-stale`, que reconstruye el recibo y lo audita.
  *
  * El cableado vive en los CONTROLADORES (no en observers de modelo) a
  * propósito: las escrituras internas de servicios (p.ej. la generación de
@@ -57,7 +63,7 @@ class PayrollInvalidationService
                     ->where('extras_start_date', '<=', $endDate)
                     ->where('extras_end_date', '>=', $startDate));
         })
-            ->whereIn('status', ['draft', 'calculating', 'review', 'approved'])
+            ->whereIn('status', ['draft', 'calculating', 'review', 'approved', 'paid'])
             ->when(
                 $employee->department?->has_separate_payroll,
                 fn ($q) => $q->where('department_id', $employee->department_id),
@@ -78,12 +84,35 @@ class PayrollInvalidationService
                 continue;
             }
 
-            // review/approved: marcar, no recalcular en silencio.
+            // review/approved/paid: marcar, no recalcular en silencio.
             if (! $period->requires_recalculation) {
                 $period->update([
                     'requires_recalculation' => true,
                     'recalculation_flagged_at' => now(),
                 ]);
+
+                // Un periodo pagado no se corrige solo, así que el aviso tiene
+                // que quedar en la auditoría: si no, el descuento obsoleto vive
+                // para siempre sin que nadie se entere.
+                if ($period->status === 'paid') {
+                    AuditLog::record(
+                        module: AuditLog::MODULE_PAYROLL,
+                        action: AuditLog::ACTION_UPDATE,
+                        model: $period,
+                        description: 'Cambio posterior en asistencia/incidencias de '
+                            . ($employee->full_name ?? 'un empleado')
+                            . ' dentro de la nomina pagada ' . $period->name
+                            . ' — requiere ajuste retroactivo',
+                        subjectLabel: $period->name,
+                        metadata: [
+                            'employee_id' => $employee->id,
+                            'employee' => $employee->full_name,
+                            'start_date' => $startDate,
+                            'end_date' => $endDate,
+                            'nota' => 'Periodo pagado: no se recalcula solo. Correr payroll:reconcile-stale.',
+                        ],
+                    );
+                }
             }
         }
     }
