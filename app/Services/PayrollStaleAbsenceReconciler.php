@@ -33,7 +33,14 @@ class PayrollStaleAbsenceReconciler
         'Falta por incidencia',
     ];
 
-    /** Estados de asistencia que significan "sí trabajó ese día". */
+    /**
+     * Estados de asistencia que significan "sí trabajó ese día".
+     *
+     * Solo el STATUS decide. Un registro con status 'absent' y horas
+     * trabajadas NO es un dato obsoleto: es una falta legítima por retardo
+     * extremo o salida temprana (reglas del sync). Tomar las horas como
+     * evidencia de trabajo marcaba 61 recibos sanos como si estuvieran mal.
+     */
     private const WORKED_STATUSES = ['present', 'late', 'partial'];
 
     public function __construct(private PayrollCalculatorService $calculator)
@@ -193,7 +200,7 @@ class PayrollStaleAbsenceReconciler
                 continue;
             }
 
-            if (in_array($record->status, self::WORKED_STATUSES, true) || (float) $record->worked_hours > 0) {
+            if (in_array($record->status, self::WORKED_STATUSES, true)) {
                 $dates[] = (string) $date;
             }
         }

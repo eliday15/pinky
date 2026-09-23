@@ -135,6 +135,36 @@ class StaleAbsenceReconciliationTest extends FeatureTestCase
             ->assertSuccessful();
     }
 
+    public function test_it_leaves_alone_an_absent_day_that_has_worked_hours(): void
+    {
+        $employee = $this->employee();
+
+        // Llegó muy tarde / salió muy temprano: el día tiene horas trabajadas
+        // pero la falta es correcta por regla del sync. Tomar las horas como
+        // "sí trabajó" marcaría como error 61 recibos sanos.
+        AttendanceRecord::factory()->for($employee)->create([
+            'work_date' => self::ABSENCE_DATE,
+            'status' => 'absent',
+            'check_in' => '15:00:00',
+            'check_out' => '17:00:00',
+            'worked_hours' => 2.00,
+        ]);
+
+        $period = PayrollPeriod::factory()->weekly()->paid()->create([
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-07',
+        ]);
+
+        $entry = $this->calculator()->calculateEmployeePayroll($period, $employee);
+        $this->assertGreaterThan(0.0, (float) $entry->deductions, 'precondición: el día ausente descuenta');
+
+        $this->artisan('payroll:reconcile-stale')
+            ->expectsOutputToContain('Sin deducciones obsoletas')
+            ->assertSuccessful();
+
+        $this->assertGreaterThan(0.0, (float) $entry->fresh()->deductions);
+    }
+
     public function test_it_does_not_touch_the_late_accumulation_sanction(): void
     {
         $employee = $this->employee();
