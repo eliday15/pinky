@@ -260,6 +260,7 @@ class CompensationRateResolverService
             $explicitOvertime = $authorizations->filter(
                 fn (Authorization $a) => $a->compensation_type_id
                     && $a->type === Authorization::TYPE_OVERTIME
+                    && ! $a->compensationType?->hasWeekendPullRule()
                     && (float) $a->hours > 0
             );
             $explicitVelada = $authorizations->filter(
@@ -348,8 +349,7 @@ class CompensationRateResolverService
         $veladaHours = (float) ($metrics['velada_hours'] ?? 0);
         $veladaDays = (int) ($metrics['velada_days'] ?? 0);
 
-        $eligibleExplicitVelada = $explicitVelada->filter(fn (Authorization $authorization) =>
-            $authorization->compensationType
+        $eligibleExplicitVelada = $explicitVelada->filter(fn (Authorization $authorization) => $authorization->compensationType
             && $this->paymentPeriodAllowed($authorization->compensationType, $allowedPaymentPeriods)
         );
         $veladaType = $eligibleExplicitVelada->first()?->compensationType

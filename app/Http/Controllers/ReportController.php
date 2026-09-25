@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Exports\AccountantReport\AccountantReportExport;
+use App\Exports\OvertimeSummaryExport;
 use App\Http\Controllers\Concerns\ScopesReportEmployees;
 use App\Models\AttendanceRecord;
 use App\Models\Department;
@@ -11,9 +12,9 @@ use App\Models\Holiday;
 use App\Models\Incident;
 use App\Models\PayrollEntry;
 use App\Models\PayrollPeriod;
-use App\Services\CompensationRateResolverService;
 use App\Services\LateAbsenceService;
 use App\Services\Reports\AccountantReportService;
+use App\Services\Reports\OvertimeSummaryReportService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controllers\HasMiddleware;
@@ -301,103 +302,50 @@ class ReportController extends Controller implements HasMiddleware
     /**
      * Overtime report.
      */
-    public function overtime(Request $request): Response
+    public function overtime(Request $request): Response|BinaryFileResponse
     {
+        $request->validate([
+            'start_date' => ['nullable', 'date'],
+            'end_date' => ['nullable', 'date', 'after_or_equal:start_date'],
+            'export' => ['nullable', 'in:xlsx'],
+        ]);
         $startDate = $request->start_date ? Carbon::parse($request->start_date) : Carbon::now()->startOfMonth();
         $endDate = $request->end_date ? Carbon::parse($request->end_date) : Carbon::now()->endOfMonth();
-
-        $activeEmployeeIds = $this->scopedActiveEmployeeIds();
-
-        // Detectadas vs autorizadas: la nómina solo paga las horas
-        // AUTORIZADAS (overtime_authorized_hours, ya redondeadas con la
-        // escalera de la empresa). El reporte muestra ambas columnas para
-        // conciliar, y el costo estimado se calcula sobre lo autorizado con
-        // el MONTO FIJO por hora del concepto de horas extra del empleado —
-        // nunca sobre horas crudas sin autorizar ni por tarifa por hora.
-        $records = AttendanceRecord::with([
-            'employee.department',
-            'employee.compensationTypes' => fn ($q) => $q->wherePivot('is_active', true),
-        ])
-            ->whereIn('employee_id', $activeEmployeeIds)
-            ->whereBetween('work_date', [$startDate->toDateString(), $endDate->toDateString()])
-            ->where(function ($q) {
-                $q->where('overtime_hours', '>', 0)
-                    ->orWhere('overtime_authorized_hours', '>', 0);
-            })
-            ->get();
-
-        $resolver = app(CompensationRateResolverService::class);
-
-        $byEmployee = $records->groupBy('employee_id')->map(function ($group) use ($resolver) {
-            $employee = $group->first()->employee;
-            $authorizedHours = round($group->sum('overtime_authorized_hours'), 2);
-
-            // Monto fijo por hora del concepto de horas extra asignado (HE).
-            $perHour = 0.0;
-            $overtimeType = $employee ? $resolver->findApplicableType($employee, 'overtime') : null;
-            if ($employee && $overtimeType) {
-                $rate = $resolver->resolveRate($employee, $overtimeType);
-                $perHour = (float) ($rate['fixed_amount'] ?? 0);
+        if ($endDate->lt($startDate)) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['end_date' => 'La fecha final debe ser posterior al inicio.']);
+        }
+        $includesAmounts = $request->user()?->hasPermissionTo('reports.view_overtime_amounts') ?? false;
+        if ($request->export === 'xlsx' && ! $includesAmounts) {
+            abort(403);
+        }
+        $report = app(OvertimeSummaryReportService::class)->build($this->scopedActiveEmployeeIds(), $startDate, $endDate);
+        $report['includesAmounts'] = $includesAmounts;
+        if (! $includesAmounts) {
+            unset($report['summary']['total_estimated_cost'], $report['summary']['estimate_incomplete']);
+            foreach ($report['summary']['concepts'] as &$concept) {
+                unset($concept['amount'], $concept['missing_rate']);
             }
-
-            return [
-                'employee' => $employee,
-                'days_with_overtime' => $group->count(),
-                'total_overtime' => round($group->sum('overtime_hours'), 2),
-                'total_authorized' => $authorizedHours,
-                'estimated_cost' => round($authorizedHours * $perHour, 2),
-            ];
-        })->sortByDesc('total_overtime')->values();
-
-        // Empleados que no checan (is_attendance_exempt): su TE aprobado no
-        // vive en attendance_records (no hay checadas), así que se agrega
-        // directo desde las autorizaciones — mismo criterio que la nómina.
-        // Detectadas queda en 0 porque no existe timecard contra el cual medir.
-        // Si un exento llegara a tener checadas con TE, gana la fila de
-        // checadas (no se cuenta doble).
-        $recordEmployeeIds = $records->pluck('employee_id')->unique();
-        $exemptAuths = $this->exemptOvertimeAuthorizations($activeEmployeeIds, $startDate->toDateString(), $endDate->toDateString())
-            ->reject(fn ($auth) => $recordEmployeeIds->contains($auth->employee_id))
-            ->values();
-
-        $exemptRows = $exemptAuths->groupBy('employee_id')->map(function ($group) use ($resolver) {
-            $employee = $group->first()->employee;
-            $authorizedHours = round($group->sum('hours'), 2);
-
-            $perHour = 0.0;
-            $overtimeType = $employee ? $resolver->findApplicableType($employee, 'overtime') : null;
-            if ($employee && $overtimeType) {
-                $rate = $resolver->resolveRate($employee, $overtimeType);
-                $perHour = (float) ($rate['fixed_amount'] ?? 0);
+            unset($concept);
+            foreach ($report['byEmployee'] as &$row) {
+                unset($row['estimated_cost'], $row['estimate_incomplete']);
+                foreach ($row['concepts'] as &$concept) {
+                    unset($concept['amount'], $concept['missing_rate']);
+                }
+                unset($concept);
             }
+            unset($row);
+            // Amount-based ordering would disclose relative compensation.
+            usort($report['byEmployee'], fn ($a, $b) => strcmp($a['employee']['full_name'], $b['employee']['full_name']));
+        }
 
-            return [
-                'employee' => $employee,
-                'days_with_overtime' => $group->pluck('date')->map(fn ($d) => Carbon::parse($d)->toDateString())->unique()->count(),
-                'total_overtime' => 0.0,
-                'total_authorized' => $authorizedHours,
-                'estimated_cost' => round($authorizedHours * $perHour, 2),
-            ];
-        })->values();
+        if ($request->export === 'xlsx') {
+            return \Maatwebsite\Excel\Facades\Excel::download(
+                new OvertimeSummaryExport($report),
+                'extras_'.$startDate->toDateString().'_'.$endDate->toDateString().'.xlsx',
+            );
+        }
 
-        $byEmployee = $byEmployee->concat($exemptRows)->values();
-
-        $summary = [
-            'total_employees' => $byEmployee->count(),
-            'total_overtime_hours' => round($records->sum('overtime_hours'), 2),
-            'total_authorized_hours' => round($records->sum('overtime_authorized_hours') + $exemptAuths->sum('hours'), 2),
-            'total_days_with_overtime' => $records->count() + $exemptRows->sum('days_with_overtime'),
-            // Suma de la columna "Costo Estimado": es lo que nómina necesita para
-            // cuadrar el total pagado por tiempo extra del periodo (Luis 2026-09-22).
-            'total_estimated_cost' => round($byEmployee->sum('estimated_cost'), 2),
-        ];
-
-        return Inertia::render('Reports/Overtime', [
-            'startDate' => $startDate->toDateString(),
-            'endDate' => $endDate->toDateString(),
-            'byEmployee' => $byEmployee,
-            'summary' => $summary,
-        ]);
+        return Inertia::render('Reports/Overtime', $report);
     }
 
     /**
