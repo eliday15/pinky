@@ -858,6 +858,12 @@ class AuthorizationController extends Controller
             return false;
         }
 
+        return $this->overlapsApprovedOvertimeWindow($authorization, $start, $end);
+    }
+
+    /** Check a normalized TE window against already-paid/live approved time. */
+    private function overlapsApprovedOvertimeWindow(Authorization $authorization, string $start, string $end): bool
+    {
         $dateString = $authorization->date instanceof Carbon
             ? $authorization->date->toDateString()
             : (string) $authorization->date;
@@ -1889,6 +1895,26 @@ class AuthorizationController extends Controller
                 ->all();
         }
 
+        // Per-hour suggestions also subtract live rows. Otherwise reloading
+        // the same range keeps offering an already pending/approved/paid
+        // window; after submission that noise used to reach the split path and
+        // could be normalized into a repeated approved fragment.
+        $existingHourly = collect();
+        if (! $isPull) {
+            $existingHourly = Authorization::query()
+                ->whereIn('employee_id', $validated['employee_ids'])
+                ->whereBetween('date', [$startDate->toDateString(), $endDate->toDateString()])
+                ->where('type', $validated['type'])
+                ->where('compensation_type_id', $validated['compensation_type_id'] ?? null)
+                ->whereIn('status', [
+                    Authorization::STATUS_PENDING,
+                    Authorization::STATUS_APPROVED,
+                    Authorization::STATUS_PAID,
+                ])
+                ->get(['employee_id', 'date', 'start_time', 'end_time'])
+                ->groupBy(fn (Authorization $a) => $a->employee_id.'|'.Carbon::parse($a->date)->toDateString());
+        }
+
         $rows = [];
         foreach ($employees as $employee) {
             if ($allowed !== null && ! in_array($employee->id, $allowed, true)) {
@@ -1928,6 +1954,23 @@ class AuthorizationController extends Controller
                 } elseif ($record && $record->check_in && $record->check_out) {
                     $segments = $this->buildSuggestionSegments($employee, $dateStr, $validated['type'], $record);
                     foreach ($segments as $seg) {
+                        $alreadyCaptured = $existingHourly
+                            ->get($employee->id.'|'.$dateStr, collect())
+                            ->contains(function (Authorization $auth) use ($seg, $validated) {
+                                if ($validated['type'] !== Authorization::TYPE_OVERTIME) {
+                                    return true;
+                                }
+
+                                return $this->overtimeRangesOverlap(
+                                    $this->normalizeTimeForCompare($seg['start_time'] ?? null),
+                                    $this->normalizeTimeForCompare($seg['end_time'] ?? null),
+                                    $this->normalizeTimeForCompare($auth->start_time?->format('H:i')),
+                                    $this->normalizeTimeForCompare($auth->end_time?->format('H:i')),
+                                );
+                            });
+                        if ($alreadyCaptured) {
+                            continue;
+                        }
                         $rows[] = [
                             'employee_id' => $employee->id,
                             'employee_name' => $employee->full_name,
@@ -2010,6 +2053,19 @@ class AuthorizationController extends Controller
 
         $segments = $this->buildOvertimeSegments($record, $schedule, $date);
 
+        // La regla de madrugada conserva como badge una entrada >= 3 h antes
+        // del turno. Para "Cargar desde checadas" esa marca sí es la frontera
+        // real del TE matutino: mostrarla evita sustituirla por el pequeño TE
+        // de salida que también pueda existir ese día.
+        $rawMorning = $this->currentDayRawMorningSegment($record, $date, $schedule);
+        if ($rawMorning !== null) {
+            $segments = array_values(array_filter(
+                $segments,
+                fn (array $segment) => ($segment['kind'] ?? null) !== 'early',
+            ));
+            array_unshift($segments, $rawMorning);
+        }
+
         // Una huella de madrugada puede pertenecer a DOS fronteras de trabajo:
         // cierra la velada de D-1 y, cuando el encargado captura TE antes del
         // turno de D, también respalda el inicio de ese tramo matutino. El sync
@@ -2027,6 +2083,61 @@ class AuthorizationController extends Controller
         }
 
         return $segments;
+    }
+
+    /**
+     * Entrada matutina real que el pareo dejó en raw_punches por estar al
+     * menos 3 h antes del turno. Exige fecha calendario D y limita el inicio
+     * a la franja posterior a la ventana de velada; así no convierte una
+     * salida nocturna de 01:00 en TE de la mañana.
+     */
+    private function currentDayRawMorningSegment(AttendanceRecord $record, string $date, ?object $schedule): ?array
+    {
+        if (! $schedule || empty($schedule->entry_time)) {
+            return null;
+        }
+
+        $entryMin = $this->minutesOfDay(substr((string) $schedule->entry_time, 0, 5));
+        $discardCutoff = $entryMin - (3 * 60);
+        $veladaEnd = (int) SystemSetting::get('velada_detection_end_hour', 5) * 60;
+        if ($discardCutoff < $veladaEnd) {
+            return null;
+        }
+
+        $anchorMin = null;
+        foreach ((array) $record->raw_punches as $punch) {
+            if (($punch['date'] ?? null) !== $date) {
+                continue;
+            }
+            $time = substr((string) ($punch['time'] ?? ''), 0, 5);
+            if (! preg_match('/^\d{2}:\d{2}$/', $time)) {
+                continue;
+            }
+            $minutes = $this->minutesOfDay($time);
+            if ($minutes >= $veladaEnd && $minutes <= $discardCutoff) {
+                $anchorMin = $anchorMin === null ? $minutes : min($anchorMin, $minutes);
+            }
+        }
+
+        if ($anchorMin === null) {
+            return null;
+        }
+
+        $rounded = $this->roundOvertimeMinutes($entryMin - $anchorMin);
+        if ($rounded <= 0) {
+            return null;
+        }
+
+        $anchor = sprintf('%02d:%02d', intdiv($anchorMin, 60), $anchorMin % 60);
+        $entry = sprintf('%02d:%02d', intdiv($entryMin, 60), $entryMin % 60);
+
+        return [
+            'kind' => 'early',
+            'start_time' => $anchor,
+            'end_time' => $entry,
+            'hours' => number_format($rounded, 2, '.', ''),
+            'summary' => "Entrada real {$anchor} antes de horario {$entry} ({$rounded}h; huella conservada como badge de madrugada).",
+        ];
     }
 
     /**
@@ -2604,6 +2715,13 @@ class AuthorizationController extends Controller
     {
         $authorization->refresh();
 
+        // Incluso un admin debe pasar primero por la clasificación especial
+        // de una huella que el pareo descartó: esa bandera es necesaria para
+        // que nómina pague el TE matutino sobre el tope del timecard.
+        if ($this->attemptRawPunchMorningApproval($authorization)) {
+            return;
+        }
+
         if ($authorization->isPending() && Auth::user()->can('approve', $authorization)) {
             if (app(\App\Services\WeekendAuthorizationUnitService::class)->differsFromBackedUnits($authorization)) {
                 return;
@@ -2639,6 +2757,14 @@ class AuthorizationController extends Controller
         // would otherwise bail out at the status guard below.
         $authorization->refresh();
 
+        // La huella matutina descartada es un respaldo especial: debe quedar
+        // marcada is_unbacked_extra para que nómina la pague por encima del
+        // tope del timecard. Resuélvela antes del matcher general, incluso si
+        // la fila vino exacta desde "Cargar desde checadas".
+        if ($this->attemptRawPunchMorningApproval($authorization)) {
+            return;
+        }
+
         if (! $this->matchesDetectedForAutoApproval($authorization)) {
             // Reclama MÁS de lo que la checada respalda: partirla — aprobar la
             // porción respaldada y dejar el excedente pendiente, marcado como
@@ -2646,10 +2772,6 @@ class AuthorizationController extends Controller
             if ($this->attemptOvertimeSplitApproval($authorization) !== null) {
                 return;
             }
-
-            // TE de ANTES del horario respaldado por una huella que la regla
-            // de madrugada descartó (Elias 2026-08-12): se aprueba solo.
-            $this->attemptRawPunchMorningApproval($authorization);
 
             return;
         }
@@ -2886,6 +3008,20 @@ class AuthorizationController extends Controller
             return null;
         }
 
+        // Una huella matutina descartada tiene su propio criterio de anclaje
+        // (−15/+30 min) y su propio tope. Si ese camino no aprobó la captura,
+        // el split no debe recortarla ni convertirla en una aprobación parcial.
+        $schedule = $employee->getEffectiveScheduleForDay(Carbon::parse($dateString)->format('l'));
+        $authEndForMorning = $this->minutesOfDay($authorization->end_time->format('H:i'));
+        $scheduleEntry = $schedule && ! empty($schedule->entry_time)
+            ? $this->minutesOfDay(substr((string) $schedule->entry_time, 0, 5))
+            : null;
+        if ($scheduleEntry !== null
+            && $authEndForMorning <= $scheduleEntry
+            && $this->currentDayRawMorningSegment($record, $dateString, $schedule) !== null) {
+            return null;
+        }
+
         $segments = $this->buildSuggestionSegments($employee, $dateString, $authorization->type, $record);
         if (empty($segments)) {
             return null;
@@ -2947,17 +3083,40 @@ class AuthorizationController extends Controller
         // reintenta corrida +12 h; una madrugada genuina sí traslapa su
         // segmento y por eso nunca se reinterpreta. Al aprobarse, los tiempos
         // guardados se normalizan a la ventana real (P.M.).
+        $shiftedToPm = false;
         if (! $best && $authStartMin < 720 && $authEndMin + 720 <= 1440) {
             $shifted = $evaluate($authStartMin + 720, $authEndMin + 720);
             if ($shifted) {
                 $best = $shifted;
                 $authStartMin += 720;
                 $authEndMin += 720;
+                $shiftedToPm = true;
             }
         }
 
         if (! $best) {
             return null;
+        }
+
+        // El dedup del alta vio la hora tecleada (A.M.). Si el split la
+        // normalizó a P.M., vuelve a validar la ventana canónica antes de
+        // mutar/aprobar; así una segunda captura no repite el mismo tramo.
+        if ($shiftedToPm) {
+            $fmtCanonical = fn (int $m): string => sprintf('%02d:%02d', intdiv($m, 60) % 24, $m % 60);
+            $canonicalStart = $fmtCanonical($authStartMin);
+            $canonicalEnd = $fmtCanonical($authEndMin);
+            if ($this->overlapsApprovedOvertimeWindow($authorization, $canonicalStart, $canonicalEnd)
+                || $this->activeDuplicateExists(
+                    $authorization->employee_id,
+                    $dateString,
+                    $authorization->type,
+                    $authorization->compensation_type_id,
+                    $canonicalStart,
+                    $canonicalEnd,
+                    $authorization->id,
+                )) {
+                return null;
+            }
         }
 
         $excessHours = max(0.0, round($authHours - $best['backed_hours'], 2));
@@ -3110,6 +3269,8 @@ class AuthorizationController extends Controller
         $entryMin = $this->minutesOfDay(substr((string) $schedule->entry_time, 0, 5));
         $startMin = $this->minutesOfDay($authorization->start_time->format('H:i'));
         $endMin = $this->minutesOfDay($authorization->end_time->format('H:i'));
+        $discardCutoff = $entryMin - (3 * 60);
+        $veladaEnd = (int) SystemSetting::get('velada_detection_end_hour', 5) * 60;
 
         // Solo ventanas íntegramente ANTES del turno. Lo que cruza el inicio
         // del turno o va después ya lo cubren los caminos normales.
@@ -3120,12 +3281,18 @@ class AuthorizationController extends Controller
         // Marca cruda pegada al inicio capturado (la más temprana que ancle).
         $anchorMin = null;
         foreach ((array) $record->raw_punches as $punch) {
+            if (($punch['date'] ?? null) !== $dateString) {
+                continue;
+            }
             $time = substr((string) ($punch['time'] ?? ''), 0, 5);
             if (! preg_match('/^\d{2}:\d{2}$/', $time)) {
                 continue;
             }
             $p = $this->minutesOfDay($time);
-            if ($p >= $startMin - 15 && $p <= $startMin + 30 && $p < $entryMin) {
+            if ($p >= $veladaEnd
+                && $p <= $discardCutoff
+                && $p >= $startMin - 15
+                && $p <= $startMin + 30) {
                 $anchorMin = $anchorMin === null ? $p : min($anchorMin, $p);
             }
         }
@@ -3190,14 +3357,14 @@ class AuthorizationController extends Controller
             if (! Auth::user()->can('approve', $authorization)) {
                 continue;
             }
-            if ($this->attemptOvertimeAutoApproval($authorization)) {
-                $approved++;
-            } elseif ($this->attemptOvertimeSplitApproval($authorization) !== null) {
-                $split++;
-            } elseif ($this->attemptRawPunchMorningApproval($authorization)) {
+            if ($this->attemptRawPunchMorningApproval($authorization)) {
                 // TE de antes del horario respaldado por una huella descartada
                 // por la regla de madrugada (Elias 2026-08-12).
                 $approved++;
+            } elseif ($this->attemptOvertimeAutoApproval($authorization)) {
+                $approved++;
+            } elseif ($this->attemptOvertimeSplitApproval($authorization) !== null) {
+                $split++;
             }
         }
 

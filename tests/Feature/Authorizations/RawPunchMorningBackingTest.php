@@ -135,4 +135,232 @@ class RawPunchMorningBackingTest extends FeatureTestCase
         $this->assertNotNull($auth);
         $this->assertSame(Authorization::STATUS_PENDING, $auth->status);
     }
+
+    public function test_miguel_real_0500_entry_wins_over_1758_late_exit_without_split(): void
+    {
+        $this->actingAsSupervisor();
+        $employee = Employee::factory()->create([
+            'full_name' => 'Miguel Ángel Peralta Sánchez',
+            'schedule_id' => Schedule::factory()->create([
+                'entry_time' => '08:00',
+                'exit_time' => '17:30',
+            ])->id,
+        ]);
+        $record = AttendanceRecord::factory()->create([
+            'employee_id' => $employee->id,
+            'work_date' => '2026-09-29',
+            'check_in' => '07:58:00',
+            'check_out' => '17:58:00',
+            'raw_punches' => [
+                ['date' => '2026-09-29', 'time' => '05:00:00', 'type' => 'punch'],
+                ['date' => '2026-09-29', 'time' => '07:58:00', 'type' => 'in'],
+                ['date' => '2026-09-29', 'time' => '17:58:00', 'type' => 'out'],
+            ],
+        ]);
+
+        $this->post(route('authorizations.store'), [
+            'employee_id' => $employee->id,
+            'type' => Authorization::TYPE_OVERTIME,
+            'date' => '2026-09-29',
+            'start_time' => '05:00',
+            'end_time' => '08:00',
+            'hours' => 3.0,
+            'reason' => 'Carga temprana Almacén PT',
+        ])->assertRedirect(route('authorizations.index'));
+
+        $authorization = Authorization::where('employee_id', $employee->id)->sole();
+        $this->assertSame(Authorization::STATUS_APPROVED, $authorization->status);
+        $this->assertSame('05:00', $authorization->start_time->format('H:i'));
+        $this->assertSame('08:00', $authorization->end_time->format('H:i'));
+        $this->assertEqualsWithDelta(3.0, (float) $authorization->hours, 0.01);
+        $this->assertTrue((bool) $authorization->is_unbacked_extra, 'se paga sobre el tope del timecard');
+        $this->assertNull($authorization->generated_from_authorization_id);
+
+        $payment = app(\App\Services\VeladaCalculatorService::class)
+            ->calculate($record->fresh(), $employee->fresh());
+        $this->assertEqualsWithDelta(3.0, $payment['overtime_authorized'], 0.01, 'nómina materializa las 3 h una sola vez');
+    }
+
+    public function test_admin_bulk_keeps_discarded_morning_punch_flagged_for_payroll(): void
+    {
+        $this->actingAsAdmin();
+        $employee = Employee::factory()->create([
+            'schedule_id' => Schedule::factory()->create([
+                'entry_time' => '08:00',
+                'exit_time' => '17:30',
+            ])->id,
+        ]);
+        AttendanceRecord::factory()->create([
+            'employee_id' => $employee->id,
+            'work_date' => '2026-09-29',
+            'check_in' => '07:58:00',
+            'check_out' => '17:58:00',
+            'raw_punches' => [
+                ['date' => '2026-09-29', 'time' => '05:00:00', 'type' => 'punch'],
+                ['date' => '2026-09-29', 'time' => '07:58:00', 'type' => 'in'],
+                ['date' => '2026-09-29', 'time' => '17:58:00', 'type' => 'out'],
+            ],
+        ]);
+
+        $this->post(route('authorizations.storeBulk'), [
+            'type' => Authorization::TYPE_OVERTIME,
+            'reason' => 'Carga masiva desde checadas',
+            'entries' => [[
+                'employee_id' => $employee->id,
+                'date' => '2026-09-29',
+                'start_time' => '05:00',
+                'end_time' => '08:00',
+                'hours' => 3.0,
+            ]],
+        ])->assertRedirect(route('authorizations.index'));
+
+        $authorization = Authorization::where('employee_id', $employee->id)->sole();
+        $this->assertSame(Authorization::STATUS_APPROVED, $authorization->status);
+        $this->assertTrue((bool) $authorization->is_unbacked_extra);
+        $this->assertEqualsWithDelta(3.0, (float) $authorization->hours, 0.01);
+    }
+
+    public function test_ordinary_early_punch_is_approved_without_unbacked_flag(): void
+    {
+        $this->actingAsSupervisor();
+        $employee = Employee::factory()->create([
+            'schedule_id' => Schedule::factory()->create([
+                'entry_time' => '09:00',
+                'exit_time' => '17:30',
+            ])->id,
+        ]);
+        AttendanceRecord::factory()->create([
+            'employee_id' => $employee->id,
+            'work_date' => '2026-09-29',
+            'check_in' => '07:00:00',
+            'check_out' => '17:30:00',
+            'raw_punches' => [
+                ['date' => '2026-09-29', 'time' => '07:00:00', 'type' => 'in'],
+                ['date' => '2026-09-29', 'time' => '17:30:00', 'type' => 'out'],
+            ],
+        ]);
+
+        $this->post(route('authorizations.store'), [
+            'employee_id' => $employee->id,
+            'type' => Authorization::TYPE_OVERTIME,
+            'date' => '2026-09-29',
+            'start_time' => '07:00',
+            'end_time' => '09:00',
+            'hours' => 2.0,
+            'reason' => 'Entrada temprana ordinaria',
+        ])->assertRedirect(route('authorizations.index'));
+
+        $authorization = Authorization::where('employee_id', $employee->id)->sole();
+        $this->assertSame(Authorization::STATUS_APPROVED, $authorization->status);
+        $this->assertFalse((bool) $authorization->is_unbacked_extra);
+    }
+
+    public function test_load_from_punches_includes_discarded_early_entry_and_subtracts_live_rows(): void
+    {
+        $this->actingAsAdmin();
+        $employee = Employee::factory()->create([
+            'full_name' => 'Karen Itzel Guerrero Villafuerte',
+            'schedule_id' => Schedule::factory()->create([
+                'entry_time' => '08:00',
+                'exit_time' => '16:00',
+            ])->id,
+        ]);
+        AttendanceRecord::factory()->create([
+            'employee_id' => $employee->id,
+            'work_date' => '2026-09-23',
+            'check_in' => '08:01:00',
+            'check_out' => '17:00:00',
+            'raw_punches' => [
+                ['date' => '2026-09-23', 'time' => '05:00:00', 'type' => 'punch'],
+                ['date' => '2026-09-23', 'time' => '08:01:00', 'type' => 'in'],
+                ['date' => '2026-09-23', 'time' => '17:00:00', 'type' => 'out'],
+            ],
+        ]);
+
+        $params = [
+            'employee_ids' => [$employee->id],
+            'start_date' => '2026-09-23',
+            'end_date' => '2026-09-23',
+            'type' => Authorization::TYPE_OVERTIME,
+        ];
+
+        $this->getJson(route('authorizations.suggestBulk', $params))
+            ->assertOk()
+            ->assertJsonCount(2, 'suggestions')
+            ->assertJsonPath('suggestions.0.kind', 'early')
+            ->assertJsonPath('suggestions.0.start_time', '05:00')
+            ->assertJsonPath('suggestions.0.end_time', '08:00')
+            ->assertJsonPath('suggestions.0.hours', '3.00')
+            ->assertJsonPath('suggestions.1.kind', 'late')
+            ->assertJsonPath('suggestions.1.start_time', '16:00')
+            ->assertJsonPath('suggestions.1.end_time', '17:00');
+
+        Authorization::factory()->create([
+            'employee_id' => $employee->id,
+            'type' => Authorization::TYPE_OVERTIME,
+            'date' => '2026-09-23',
+            'start_time' => '05:00',
+            'end_time' => '08:00',
+            'hours' => 3,
+            'status' => Authorization::STATUS_APPROVED,
+        ]);
+
+        $this->getJson(route('authorizations.suggestBulk', $params))
+            ->assertOk()
+            ->assertJsonCount(1, 'suggestions')
+            ->assertJsonPath('suggestions.0.kind', 'late');
+    }
+
+    public function test_pm_normalization_does_not_split_onto_approved_window_of_another_concept(): void
+    {
+        $this->adminUser();
+        $employee = Employee::factory()->create([
+            'schedule_id' => Schedule::factory()->create([
+                'entry_time' => '08:00',
+                'exit_time' => '17:30',
+            ])->id,
+        ]);
+        AttendanceRecord::factory()->create([
+            'employee_id' => $employee->id,
+            'work_date' => '2026-09-29',
+            'check_in' => '08:00:00',
+            'check_out' => '17:58:00',
+        ]);
+        $approvedConcept = \App\Models\CompensationType::factory()->create([
+            'application_mode' => \App\Models\CompensationType::APPLICATION_PER_HOUR,
+            'authorization_type' => Authorization::TYPE_OVERTIME,
+        ]);
+        $pendingConcept = \App\Models\CompensationType::factory()->create([
+            'application_mode' => \App\Models\CompensationType::APPLICATION_PER_HOUR,
+            'authorization_type' => Authorization::TYPE_OVERTIME,
+        ]);
+        Authorization::factory()->create([
+            'employee_id' => $employee->id,
+            'type' => Authorization::TYPE_OVERTIME,
+            'compensation_type_id' => $approvedConcept->id,
+            'date' => '2026-09-29',
+            'start_time' => '17:30',
+            'end_time' => '17:58',
+            'hours' => 0.5,
+            'status' => Authorization::STATUS_APPROVED,
+        ]);
+        $pending = Authorization::factory()->create([
+            'employee_id' => $employee->id,
+            'type' => Authorization::TYPE_OVERTIME,
+            'compensation_type_id' => $pendingConcept->id,
+            'date' => '2026-09-29',
+            'start_time' => '05:00',
+            'end_time' => '08:00',
+            'hours' => 3.0,
+            'status' => Authorization::STATUS_PENDING,
+        ]);
+
+        $this->artisan('authorizations:auto-approve-overtime')->assertSuccessful();
+
+        $pending->refresh();
+        $this->assertSame(Authorization::STATUS_PENDING, $pending->status);
+        $this->assertSame('05:00', $pending->start_time->format('H:i'));
+        $this->assertEqualsWithDelta(3.0, (float) $pending->hours, 0.01);
+        $this->assertSame(2, Authorization::where('employee_id', $employee->id)->count());
+    }
 }
