@@ -436,8 +436,7 @@ class ZktecoSyncService
      * Group records by user and date.
      *
      * For night shifts, punches between 00:00-06:00 are assigned to the previous day
-     * if they appear to be continuation of a shift (i.e., there are punches from the
-     * previous evening after 20:00).
+     * only when they close an unmatched punch from the previous evening after 20:00.
      */
     private function groupRecordsByUserAndDate(array $records): array
     {
@@ -486,8 +485,26 @@ class ZktecoSyncService
                 }
 
                 $prevPunches = $grouped[$userId][$previousDate];
+                usort($prevPunches, fn ($a, $b) => strcmp($a['timestamp'], $b['timestamp']));
+
+                // Una huella nocturna no basta para concluir que la primera
+                // huella de D+1 es su salida. Si D ya tiene pares completos
+                // (entrada/salida), su última huella nocturna cerró ese día y
+                // la madrugada pertenece a D+1. Eso fue lo que pasó con Norma
+                // Reyes (24/09: 08:55–21:05; 25/09: 05:56–20:03): 05:56 se
+                // robaba como salida del 24 y el 25 quedaba ausente.
+                //
+                // Sólo se arrastra la madrugada cuando, después de colapsar
+                // reintentos del lector, D deja una huella sin pareja. Así se
+                // conservan las veladas reales: jornada + reentrada nocturna
+                // (número impar de eventos) o entrada nocturna pura.
+                $distinctPrevPunches = $this->filterDuplicatePunches($prevPunches, 5);
+                if (count($distinctPrevPunches) % 2 === 0) {
+                    continue;
+                }
+
                 $lastNight = null;
-                foreach ($prevPunches as $punch) {
+                foreach ($distinctPrevPunches as $punch) {
                     $stamp = Carbon::parse($punch['timestamp']);
                     if ($stamp->hour >= 20 && ($lastNight === null || $stamp->gt($lastNight))) {
                         $lastNight = $stamp;
