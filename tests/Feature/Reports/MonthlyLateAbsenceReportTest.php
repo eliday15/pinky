@@ -237,4 +237,46 @@ class MonthlyLateAbsenceReportTest extends FeatureTestCase
                 ->where('selectedPeriod', null)
             );
     }
+
+    public function test_reports_count_only_thresholds_within_selected_cut(): void
+    {
+        $employee = $this->employee();
+        $this->twelveJuneLates($employee);
+        $service = app(LateAbsenceService::class);
+        $this->assertCount(0, $service->reportDetails($employee, Carbon::parse('2026-06-01'), Carbon::parse('2026-06-05')));
+        $this->assertCount(1, $service->reportDetails($employee, Carbon::parse('2026-06-08'), Carbon::parse('2026-06-14')));
+        $service->ensureMonthlyIncidentsGenerated($employee);
+        $this->actingAsAdmin();
+        $this->get(route('reports.faltas', ['start_date' => '2026-06-08', 'end_date' => '2026-06-14']))
+            ->assertInertia(fn (Assert $page) => $page->where('summary.retardo_faltas', 1));
+        $this->assertCount(0, $service->reportDetails($employee, Carbon::parse('2026-06-01'), Carbon::parse('2026-06-05')));
+    }
+
+    public function test_pardoned_frt_does_not_reappear_as_projection(): void
+    {
+        $employee = $this->employee();
+        $this->twelveJuneLates($employee);
+        $service = app(LateAbsenceService::class);
+        $service->ensureMonthlyIncidentsGenerated($employee);
+        \App\Models\Incident::where('employee_id', $employee->id)->get()->each->delete();
+        $this->assertSame([], $service->reportDetails($employee, Carbon::parse('2026-06-01'), Carbon::parse('2026-06-30')));
+        $this->actingAsAdmin();
+        $this->get(route('reports.faltas', ['start_date' => '2026-06-01', 'end_date' => '2026-06-30']))
+            ->assertInertia(fn (Assert $page) => $page->where('summary.retardo_faltas', 0));
+        $report = app(\App\Services\Reports\AccountantReportService::class)->build(Carbon::parse('2026-06-01'), Carbon::parse('2026-06-30'));
+        foreach ($report as $company) {
+            $this->assertSame([], $company['faltas_retardo']);
+        }
+    }
+
+    public function test_second_pending_threshold_is_visible_after_first_was_generated(): void
+    {
+        $employee = $this->employee();
+        $this->twelveJuneLates($employee);
+        $service = app(LateAbsenceService::class);
+        $service->generateForMonth($employee, Carbon::parse('2026-06-01'), Carbon::parse('2026-06-08'));
+        $rows = $service->reportDetails($employee, Carbon::parse('2026-06-01'), Carbon::parse('2026-06-30'));
+        $this->assertSame(2, array_sum(array_column($rows, 'faltas')));
+        $this->assertSame(['cobrada', 'pendiente_cierre'], array_column($rows, 'source'));
+    }
 }

@@ -20,6 +20,70 @@ class SettingsControllerTest extends FeatureTestCase
     // index
     // ---------------------------------------------------------------------
 
+    public function test_breakfast_close_margin_rejects_invalid_values_without_saving(): void
+    {
+        $this->actingAsAdmin();
+        foreach ([-1, 'invalid', 1.5, 60, 61] as $value) {
+            $this->put(route('settings.update'), [
+                'settings' => [['key' => 'breakfast_close_minutes_before_entry', 'value' => $value]],
+            ])->assertSessionHasErrors('settings.0.value');
+
+            $this->put(route('settings.updateSingle'), [
+                'key' => 'breakfast_close_minutes_before_entry', 'value' => $value,
+            ])->assertSessionHasErrors('value');
+        }
+        $this->assertSame(10, SystemSetting::get('breakfast_close_minutes_before_entry'));
+    }
+
+    public function test_breakfast_window_validation_uses_both_submitted_values(): void
+    {
+        $this->actingAsAdmin();
+        $this->put(route('settings.updateSingle'), [
+            'key' => 'breakfast_window_minutes', 'value' => 5,
+        ])->assertSessionHasErrors('value');
+
+        $this->put(route('settings.update'), [
+            'settings' => [
+                ['key' => 'breakfast_window_minutes', 'value' => 5],
+                ['key' => 'breakfast_close_minutes_before_entry', 'value' => 0],
+            ],
+        ])->assertSessionHasNoErrors();
+        $this->assertSame(5, SystemSetting::get('breakfast_window_minutes'));
+        $this->assertSame(0, SystemSetting::get('breakfast_close_minutes_before_entry'));
+    }
+
+    public function test_breakfast_testing_switch_can_be_disabled_and_saved_again(): void
+    {
+        $this->actingAsAdmin();
+        SystemSetting::set('breakfast_open_all_day', true);
+
+        foreach (['false', 'false', 'true', '0', false, true] as $value) {
+            $this->put(route('settings.update'), [
+                'settings' => [['key' => 'breakfast_open_all_day', 'value' => $value]],
+            ])->assertSessionHasNoErrors()->assertRedirect();
+
+            $expected = filter_var($value, FILTER_VALIDATE_BOOLEAN);
+            $this->assertSame($expected, SystemSetting::get('breakfast_open_all_day'));
+            $this->assertDatabaseHas('system_settings', [
+                'key' => 'breakfast_open_all_day',
+                'value' => $expected ? 'true' : 'false',
+            ]);
+        }
+    }
+
+    public function test_single_setting_update_preserves_false_boolean_string(): void
+    {
+        $this->actingAsAdmin();
+        SystemSetting::set('breakfast_open_all_day', true);
+
+        $this->put(route('settings.updateSingle'), [
+            'key' => 'breakfast_open_all_day',
+            'value' => 'false',
+        ])->assertSessionHasNoErrors()->assertRedirect();
+
+        $this->assertFalse(SystemSetting::get('breakfast_open_all_day'));
+    }
+
     public function test_admin_sees_settings_index_with_expected_props(): void
     {
         $this->actingAsAdmin();

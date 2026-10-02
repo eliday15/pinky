@@ -8,8 +8,8 @@ use App\Models\Holiday;
 use App\Models\Incident;
 use App\Models\IncidentType;
 use App\Models\SystemSetting;
-use App\Services\PayrollInvalidationService;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -43,6 +43,8 @@ class LateAbsenceService
 {
     public const FRT_CODE = 'FRT';
 
+    private const SOURCE_CORRECTED = 'Corrección automática de retardos: el umbral ya no se cumple.';
+
     /**
      * Umbral configurable: cada N retardos = 1 falta.
      */
@@ -59,7 +61,7 @@ class LateAbsenceService
     {
         $value = (string) SystemSetting::get('monthly_late_absence_start_month', '');
 
-        if (! preg_match('/^\d{4}-\d{2}$/', $value)) {
+        if (! preg_match('/^\d{4}-(0[1-9]|1[0-2])$/', $value)) {
             return null;
         }
 
@@ -136,10 +138,6 @@ class LateAbsenceService
         // Exentos de checador ("No checa"): sus retardos residuales (de antes
         // de marcar la casilla) jamás generan falta por acumulación — sus
         // faltas se capturan por incidencia manual (Elias 2026-08-07).
-        if ($employee->is_attendance_exempt) {
-            return [];
-        }
-
         $today = $today ?? Carbon::today();
         $month = $month->copy()->startOfMonth();
         $startMonth = $this->startMonth();
@@ -155,75 +153,158 @@ class LateAbsenceService
         }
 
         $lateMonth = $month->format('Y-m');
+        $changedDates = [];
 
-        // Lo ya generado del mes se mide en DÍAS de falta (incluidas las
-        // soft-deleted: borrarlas fue un perdón humano explícito y no se
-        // regeneran). Esto hace la transición exacta con las FRT históricas
-        // de la regla vieja (una incidencia día-1 con days_count N).
-        $generatedDays = (int) Incident::withTrashed()
-            ->where('employee_id', $employee->id)
-            ->where(function ($q) use ($lateMonth) {
-                $q->where('late_month', $lateMonth)
-                    ->orWhere('late_month', 'like', $lateMonth.'#%');
-            })
-            ->sum('days_count');
+        // Lock the employee, including when no incident exists yet. Every
+        // generator uses this lock, so concurrent payroll/cron cannot insert
+        // the same sequence. SQLite serializes writers at transaction level.
+        $created = DB::transaction(function () use ($employee, $month, $today, $lateMonth, &$changedDates) {
+            $employee = Employee::whereKey($employee->id)->lockForUpdate()->firstOrFail();
+            $existing = Incident::withTrashed()->where('employee_id', $employee->id)
+                ->where(function ($q) use ($lateMonth) {
+                    $q->where('late_month', $lateMonth)->orWhere('late_month', 'like', $lateMonth.'#%');
+                })->orderBy('id')->get();
+            $lateDates = array_values(array_filter($this->lateDatesForMonth($employee, $month),
+                fn ($date) => $date <= $today->toDateString()));
+            $absences = $employee->is_attendance_exempt ? 0 : $this->absencesFromLates(count($lateDates));
+            $type = IncidentType::where('code', self::FRT_CODE)->first();
+            if (! $type) {
+                Log::warning("IncidentType FRT no encontrado para {$lateMonth}.");
 
-        $lateDates = $this->lateDatesForMonth($employee, $month);
-        $absences = $this->absencesFromLates(count($lateDates));
+                return [];
+            }
 
-        if ($absences <= $generatedDays) {
-            return [];
-        }
+            // Legacy rows can represent several days, charged next month.
+            // Preserve both that history and every explicitly forgiven slot.
+            $covered = [];
+            $managed = [];
+            foreach ($existing as $incident) {
+                $sequence = str_contains($incident->late_month, '#')
+                    ? (int) explode('#', $incident->late_month)[1] : 1;
+                $days = max(1, (int) $incident->days_count);
+                $legacy = $days > 1 || $incident->start_date->format('Y-m') !== $lateMonth;
+                if ($incident->trashed() || $legacy || $incident->approved_by !== null || ($incident->status !== 'approved'
+                    && ! ($incident->status === 'rejected' && $incident->rejection_reason === self::SOURCE_CORRECTED))) {
+                    for ($n = $sequence; $n < $sequence + $days; $n++) {
+                        $covered[$n] = true;
+                    }
 
-        $incidentType = IncidentType::where('code', self::FRT_CODE)->first();
+                    continue;
+                }
+                $managed[$sequence] = $incident;
+            }
 
-        if (! $incidentType) {
-            Log::warning("IncidentType '".self::FRT_CODE."' no encontrado; no se puede generar la falta por retardos de {$lateMonth}.");
+            $created = [];
+            $last = max($absences, $managed ? max(array_keys($managed)) : 0);
+            for ($n = 1; $n <= $last; $n++) {
+                if (isset($covered[$n])) {
+                    continue;
+                }
+                $incident = $managed[$n] ?? null;
+                if ($n > $absences) {
+                    if ($incident && $incident->status === 'approved') {
+                        $changedDates[] = $incident->start_date->toDateString();
+                        $incident->update(['status' => 'rejected', 'rejection_reason' => self::SOURCE_CORRECTED]);
+                    }
 
-            return [];
-        }
+                    continue;
+                }
+                $chargeDate = $lateDates[$n * $this->threshold() - 1];
+                $attributes = [
+                    'employee_id' => $employee->id,
+                    'incident_type_id' => $type->id,
+                    'start_date' => $chargeDate,
+                    'end_date' => $chargeDate,
+                    'days_count' => 1,
+                    'late_month' => $n === 1 ? $lateMonth : $lateMonth.'#'.$n,
+                    'reason' => "Falta por acumulación de retardos en {$lateMonth}: el {$chargeDate} se cumplió el retardo número ".($n * $this->threshold()).' del mes. Se descuenta en el corte donde se cumplió la regla.',
+                    'status' => 'approved',
+                    'rejection_reason' => null,
+                    'approved_by' => null,
+                    'approved_at' => now(),
+                ];
+                if (! $incident) {
+                    $created[] = Incident::create($attributes);
+                    $changedDates[] = $chargeDate;
+                } elseif ($incident->status !== 'approved' || $incident->start_date->toDateString() !== $chargeDate) {
+                    $changedDates[] = $incident->start_date->toDateString();
+                    $incident->update($attributes);
+                    $changedDates[] = $chargeDate;
+                }
+            }
 
-        $threshold = $this->threshold();
-        $monthLabel = $month->copy()->locale('es')->isoFormat('MMMM YYYY');
-        $created = [];
+            return $created;
+        }, 3);
 
-        for ($n = $generatedDays + 1; $n <= $absences; $n++) {
-            // Fechada el día del retardo que cruzó el umbral n×threshold:
-            // cae en el corte (semana) donde se cumplió la regla.
-            $chargeDate = $lateDates[$n * $threshold - 1];
-
-            $created[] = Incident::create([
-                'employee_id' => $employee->id,
-                'incident_type_id' => $incidentType->id,
-                'start_date' => $chargeDate,
-                'end_date' => $chargeDate,
-                'days_count' => 1,
-                'late_month' => $n === 1 ? $lateMonth : $lateMonth.'#'.$n,
-                'reason' => 'Falta por acumulación de retardos en '.$monthLabel.': el '.$chargeDate.' se cumplió el retardo número '.($n * $threshold).' del mes (umbral: '.$threshold.'). Se descuenta en el corte donde se cumplió la regla (Luis 2026-10-01).',
-                'status' => 'approved',
-                'approved_by' => null,
-                'approved_at' => now(),
-            ]);
-
-        }
-
-        // El corte que contiene cada fecha puede estar ya calculado: se marca
-        // para recálculo (un draft se recalcula solo; pagados quedan solo
-        // señalados). DESPUÉS de crear todas las del mes: invalidar en medio
-        // del loop re-entra al cálculo del draft y duplicaba la secuencia.
-        foreach ($created as $incident) {
-            app(PayrollInvalidationService::class)->invalidate(
-                $employee->id,
-                $incident->start_date->toDateString(),
-                $incident->start_date->toDateString(),
-            );
+        // Invalidation may reenter payroll: reconcile every slot before doing
+        // this. Paid receipts are only flagged by the existing service.
+        foreach (array_unique($changedDates) as $date) {
+            app(PayrollInvalidationService::class)->invalidate($employee->id, $date, $date);
         }
 
         return $created;
     }
 
     /**
-     * Garantiza que todos los meses cerrados desde el corte tengan su FRT
+     * Read-only report details: charge dates belong to the selected cut; all
+     * month lates establish the threshold. Deleted/rejected slots never return
+     * as projections. Both reports use this same calculation.
+     *
+     * @return list<array{month:string,late_count:int,faltas:int,source:string,charged_on:string}>
+     */
+    public function reportDetails(Employee $employee, Carbon $start, Carbon $end): array
+    {
+        $rows = [];
+        $incidents = Incident::withTrashed()->where('employee_id', $employee->id)
+            ->whereNotNull('late_month')->orderBy('start_date')->get();
+        $byMonth = $incidents->groupBy(fn ($i) => explode('#', $i->late_month)[0]);
+        $datesByMonth = [];
+        foreach ($incidents as $incident) {
+            if ($incident->trashed() || $incident->status !== 'approved'
+                || ! $incident->start_date->betweenIncluded($start->copy()->startOfDay(), $end->copy()->endOfDay())) {
+                continue;
+            }
+            $key = explode('#', $incident->late_month)[0];
+            $dates = $datesByMonth[$key] ??= $this->lateDatesForMonth($employee, Carbon::parse($key.'-01'));
+            $rows[] = ['month' => $key, 'late_count' => count(array_filter($dates, fn ($date) => $date <= $end->copy()->min(Carbon::today())->toDateString())),
+                'faltas' => max(1, (int) $incident->days_count), 'source' => 'cobrada',
+                'charged_on' => $incident->start_date->toDateString()];
+        }
+        $ruleStart = $this->startMonth();
+        if (! $ruleStart || $employee->is_attendance_exempt) {
+            return $rows;
+        }
+        $through = $end->copy()->min(Carbon::today());
+        for ($month = $start->copy()->startOfMonth(); $month->lte($through); $month->addMonthNoOverflow()) {
+            if ($month->lt($ruleStart)) {
+                continue;
+            }
+            $key = $month->format('Y-m');
+            $dates = $datesByMonth[$key] ??= $this->lateDatesForMonth($employee, $month);
+            $dates = array_values(array_filter($dates, fn ($d) => $d <= $through->toDateString()));
+            $covered = [];
+            foreach ($byMonth->get($key, collect()) as $incident) {
+                $sequence = str_contains($incident->late_month, '#') ? (int) explode('#', $incident->late_month)[1] : 1;
+                for ($n = $sequence; $n < $sequence + max(1, (int) $incident->days_count); $n++) {
+                    $covered[$n] = true;
+                }
+            }
+            for ($n = 1; $n <= $this->absencesFromLates(count($dates)); $n++) {
+                $date = $dates[$n * $this->threshold() - 1];
+                if (isset($covered[$n]) || $date < $start->toDateString()) {
+                    continue;
+                }
+                $rows[] = ['month' => $key, 'late_count' => count($dates), 'faltas' => 1,
+                    'source' => $key === Carbon::today()->format('Y-m') ? 'proyeccion' : 'pendiente_cierre',
+                    'charged_on' => $date];
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Garantiza que todos los meses desde el corte, incluido el actual, tengan su FRT
      * generada para el empleado. Idempotente; seguro de llamar en cada
      * cálculo de nómina. Devuelve cuántas incidencias se crearon.
      */
@@ -249,10 +330,8 @@ class LateAbsenceService
     }
 
     /**
-     * Versión en lote de ensureMonthlyIncidentsGenerated para el cálculo de
-     * nómina: un solo query trae los pares (empleado, mes) ya procesados y
-     * solo se intenta generar lo que falta. En estado estable (todo generado)
-     * cuesta 1 query en total en vez de meses × empleados.
+     * Reconcile eligible employee/month pairs, including the current month,
+     * late imports and months whose previously generated source disappeared.
      *
      * @param  \Illuminate\Support\Collection<int, Employee>  $employees
      */
@@ -265,99 +344,19 @@ class LateAbsenceService
             return 0;
         }
 
-        $lastClosed = $today->copy()->startOfMonth()->subMonthNoOverflow();
-
-        if ($startMonth->gt($lastClosed)) {
-            return 0;
-        }
-
-        // Pares empleado|mes ya procesados — con soft-deleted, igual que
-        // generateForMonth: una FRT borrada fue decisión humana, no se regenera.
-        $processed = Incident::withTrashed()
-            ->whereIn('employee_id', $employees->pluck('id'))
-            ->whereNotNull('late_month')
-            ->get(['employee_id', 'late_month'])
-            ->map(fn (Incident $i) => $i->employee_id.'|'.$i->late_month)
-            ->flip();
-
         $generated = 0;
-
-        for ($month = $startMonth->copy(); $month->lte($lastClosed); $month->addMonthNoOverflow()) {
-            $monthKey = $month->format('Y-m');
-
-            $pending = $employees->filter(
-                fn (Employee $e) => ! isset($processed[$e->id.'|'.$monthKey])
-            );
-
-            if ($pending->isEmpty()) {
-                continue;
-            }
-
-            $start = $month->copy()->startOfMonth();
-            $end = $month->copy()->endOfMonth();
-
-            $holidayDates = Holiday::whereBetween('date', [$start->toDateString(), $end->toDateString()])
-                ->pluck('date')
-                ->map(fn ($d) => Carbon::parse($d)->toDateString())
-                ->all();
-
-            // Retardos del mes de TODOS los pendientes en un query. El conteo
-            // en memoria replica lateCountForMonth: excluye festivos y días no
-            // obligatorios (fin de semana / fuera de horario).
-            $latesByEmployee = AttendanceRecord::whereIn('employee_id', $pending->pluck('id'))
-                ->whereBetween('work_date', [$start->toDateString(), $end->toDateString()])
-                ->where('status', 'late')
-                ->get(['employee_id', 'work_date'])
-                ->groupBy('employee_id');
-
-            foreach ($pending as $employee) {
-                $lateCount = $latesByEmployee->get($employee->id, collect())
-                    ->filter(function ($record) use ($employee, $holidayDates) {
-                        $date = Carbon::parse($record->work_date);
-
-                        if (in_array($date->toDateString(), $holidayDates, true)) {
-                            return false;
-                        }
-
-                        return $employee->isObligatoryWorkDay($date);
-                    })
-                    ->count();
-
-                if ($this->absencesFromLates($lateCount) < 1) {
-                    // Sin FRT que generar: el mes queda sin marca (igual que el
-                    // camino por-empleado) y se re-evalúa en el siguiente
-                    // cálculo — pero ya al costo del query en lote.
-                    continue;
-                }
-
-                // Candidato real (raro): generateForMonth re-verifica
-                // idempotencia y conteo por su cuenta — sigue siendo la única
-                // fuente de verdad de la creación.
-                $generated += count($this->generateForMonth($employee, $month, $today));
-            }
-        }
-
-        // MES CORRIENTE (regla de Luis 2026-10-01): el acumulado en curso
-        // genera su falta el día que cruza el umbral. Pre-filtro barato en un
-        // query: solo los empleados cuyo conteo bruto de 'late' del mes llega
-        // al umbral pasan al generador (que aplica los filtros finos de
-        // festivos/días obligatorios e idempotencia por secuencia).
-        $currentMonth = $today->copy()->startOfMonth();
-        if ($currentMonth->gte($startMonth)) {
-            $threshold = $this->threshold();
+        for ($month = $startMonth->copy(); $month->lte($today->copy()->startOfMonth()); $month->addMonthNoOverflow()) {
+            // Candidates include previously generated incidents, even if all
+            // source lates disappeared. Closed months may receive late imports.
             $candidateIds = AttendanceRecord::whereIn('employee_id', $employees->pluck('id'))
-                ->whereBetween('work_date', [
-                    $currentMonth->toDateString(),
-                    $currentMonth->copy()->endOfMonth()->toDateString(),
-                ])
-                ->where('status', 'late')
-                ->selectRaw('employee_id, count(*) as c')
-                ->groupBy('employee_id')
-                ->havingRaw('count(*) >= ?', [$threshold])
-                ->pluck('employee_id');
-
-            foreach ($employees->whereIn('id', $candidateIds) as $employee) {
-                $generated += count($this->generateForMonth($employee, $currentMonth, $today));
+                ->whereBetween('work_date', [$month->toDateString(), $month->copy()->endOfMonth()->toDateString()])
+                ->where('status', 'late')->distinct()->pluck('employee_id');
+            $key = $month->format('Y-m');
+            $existingIds = Incident::withTrashed()->whereIn('employee_id', $employees->pluck('id'))
+                ->where(fn ($q) => $q->where('late_month', $key)->orWhere('late_month', 'like', $key.'#%'))
+                ->distinct()->pluck('employee_id');
+            foreach ($employees->whereIn('id', $candidateIds->merge($existingIds)->unique()) as $employee) {
+                $generated += count($this->generateForMonth($employee, $month, $today));
             }
         }
 

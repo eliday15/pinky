@@ -18,7 +18,7 @@ const props = defineProps({
     maxDistance: { type: Number, default: 0.5 },
 });
 
-const emit = defineEmits(['verified', 'error']);
+const emit = defineEmits(['verified', 'error', 'rejected']);
 
 const video = ref(null);
 const statusText = ref('Cargando reconocimiento facial...');
@@ -32,6 +32,7 @@ let consecutiveMatches = 0;
 let destroyed = false;
 let detectionInFlight = false;
 let failed = false;
+let rejectionReported = false;
 
 const MODELS_URI = '/models-face';
 const REQUIRED_CONSECUTIVE = 2;
@@ -109,6 +110,11 @@ const detectFrame = async () => {
         } else {
             consecutiveMatches = 0;
             statusText.value = 'Rostro no reconocido, intenta de frente y con buena luz.';
+            // One alert per scan attempt, never one per camera frame.
+            if (!rejectionReported) {
+                rejectionReported = true;
+                emit('rejected');
+            }
         }
     } catch (error) {
         console.error('Falló una inferencia del reconocimiento facial', error);

@@ -11,6 +11,8 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -142,6 +144,8 @@ class SettingsController extends Controller
             'settings.*.value' => ['required'],
         ]);
 
+        $this->validateBreakfastWindow($validated['settings']);
+
         $vendorIndex = collect($validated['settings'])->search(
             fn (array $setting) => $setting['key'] === 'breakfast_vendor_employee_id'
         );
@@ -205,6 +209,8 @@ class SettingsController extends Controller
             'value' => ['required'],
         ]);
 
+        $this->validateBreakfastWindow([$validated], single: true);
+
         $newVendor = $validated['key'] === 'breakfast_vendor_employee_id'
             ? $vendorAccess->validateVendor($validated['value'], 'value')
             : null;
@@ -233,5 +239,39 @@ class SettingsController extends Controller
         });
 
         return redirect()->back()->with('success', 'Configuracion actualizada.');
+    }
+
+    private function validateBreakfastWindow(array $settings, bool $single = false): void
+    {
+        $windowKey = 'breakfast_window_minutes';
+        $closeKey = 'breakfast_close_minutes_before_entry';
+        $values = [];
+        $fields = [];
+        foreach ($settings as $index => $setting) {
+            if (! in_array($setting['key'], [$windowKey, $closeKey], true)) {
+                continue;
+            }
+            $field = $single ? 'value' : "settings.{$index}.value";
+            $validator = Validator::make(['value' => $setting['value']], [
+                'value' => ['required', 'integer', $setting['key'] === $windowKey ? 'min:1' : 'min:0'],
+            ]);
+            if ($validator->fails()) {
+                throw ValidationException::withMessages([$field => $validator->errors()->first('value')]);
+            }
+            $values[$setting['key']] = (int) $setting['value'];
+            $fields[$setting['key']] = $field;
+        }
+
+        if ($values === []) {
+            return;
+        }
+
+        $window = $values[$windowKey] ?? (int) SystemSetting::get($windowKey, 60);
+        $close = $values[$closeKey] ?? (int) SystemSetting::get($closeKey, 10);
+        if ($close >= $window) {
+            throw ValidationException::withMessages([
+                $fields[$closeKey] ?? $fields[$windowKey] => 'El cierre debe ser menor que la ventana de desayuno.',
+            ]);
+        }
     }
 }

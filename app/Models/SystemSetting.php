@@ -161,7 +161,7 @@ class SystemSetting extends Model
         }
 
         if ($type === 'boolean') {
-            return $value ? 'true' : 'false';
+            return filter_var($value, FILTER_VALIDATE_BOOLEAN) ? 'true' : 'false';
         }
 
         return (string) $value;

@@ -26,8 +26,8 @@ class BreakfastClaimService
     /**
      * Get the claim window for the employee on the given moment's date.
      *
-     * Returns ['start' => Carbon, 'end' => Carbon, 'entry_time' => string]
-     * where the window is [entry - window_minutes, entry). Returns null when
+     * Returns ['start' => Carbon, 'end' => Carbon, 'entry' => Carbon, 'entry_time' => string]
+     * where the close margin is inclusive, but entry itself is excluded. Returns null when
      * the employee has no schedule, the day is not a working day, or the day
      * schedule has no entry time.
      */
@@ -56,6 +56,7 @@ class BreakfastClaimService
             'start' => $entry->copy()->subMinutes($windowMinutes),
             'end' => $entry->copy()->subMinutes($closeMinutes),
             'entry_time' => $entry->format('H:i'),
+            'entry' => $entry,
         ];
     }
 
@@ -107,7 +108,7 @@ class BreakfastClaimService
                 return $fail("Aún es temprano: el desayuno se entrega a partir de las {$window['start']->format('H:i')}.");
             }
 
-            if ($now->gte($window['end'])) {
+            if ($now->gt($window['end']) || $now->gte($window['entry'])) {
                 return $fail("Fuera de horario: el desayuno se entrega hasta las {$window['end']->format('H:i')} (tu entrada es a las {$window['entry_time']}).");
             }
         }

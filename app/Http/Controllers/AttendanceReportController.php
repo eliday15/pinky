@@ -26,11 +26,12 @@ class AttendanceReportController extends Controller implements HasMiddleware
         return [
             new Middleware(function ($request, $next) {
                 $user = $request->user();
-                if (!$user->hasPermissionTo('reports.view_all')
-                    && !$user->hasPermissionTo('reports.view_team')
-                    && !$user->hasPermissionTo('reports.view_own')) {
+                if (! $user->hasPermissionTo('reports.view_all')
+                    && ! $user->hasPermissionTo('reports.view_team')
+                    && ! $user->hasPermissionTo('reports.view_own')) {
                     abort(403);
                 }
+
                 return $next($request);
             }),
         ];
@@ -107,90 +108,13 @@ class AttendanceReportController extends Controller implements HasMiddleware
             }
         }
 
-        // Late records per employee — aggregated in PHP so we can drop lates
-        // on non-working days (e.g. a Saturday late for a Mon-Fri employee).
-        // Lates that fall on a holiday don't accumulate either.
-        $lateRows = DB::table('attendance_records')
-            ->select('employee_id', 'work_date')
-            ->whereBetween('work_date', [$startDate->toDateString(), $endDate->toDateString()])
-            ->whereIn('employee_id', $activeEmployeeIds)
-            ->where('status', 'late')
-            ->when(! empty($holidayDates), fn ($q) => $q->whereNotIn('work_date', $holidayDates))
-            ->get();
-
-        $lateByEmpMonth = [];
-        foreach ($lateRows as $row) {
-            $emp = $employees[$row->employee_id] ?? null;
-            if (! $emp || ! $this->isWorkingDayForEmployee($emp, $row->work_date)) {
-                continue;
-            }
-            $month = Carbon::parse($row->work_date)->format('Y-m');
-            $lateByEmpMonth[$row->employee_id][$month] = ($lateByEmpMonth[$row->employee_id][$month] ?? 0) + 1;
-        }
-
-        // Faltas por retardos: la fuente de verdad para meses CERRADOS son las
-        // incidencias FRT generadas al cierre (las mismas que cobra la nómina,
-        // DECISIONES_NEGOCIO §1). El mes en curso se muestra como proyección
-        // claramente etiquetada; los meses previos al corte de la regla solo
-        // muestran el conteo de retardos sin faltas.
-        $monthsInRange = [];
-        for ($cursor = $startDate->copy()->startOfMonth(); $cursor->lte($endDate); $cursor->addMonthNoOverflow()) {
-            $monthsInRange[] = $cursor->format('Y-m');
-        }
-
-        $ruleStartKey = $lateAbsenceService->startMonth()?->format('Y-m');
-        $currentMonthKey = Carbon::today()->format('Y-m');
-
-        // late_month lleva secuencia desde la regla inmediata (Luis
-        // 2026-10-01): 'YYYY-MM' la 1ª del mes, 'YYYY-MM#2' la 2ª. Se traen
-        // todas y se agrupan por la base del mes.
-        $frtIncidents = Incident::where('status', 'approved')
-            ->whereIn('employee_id', $activeEmployeeIds)
-            ->where(function ($q) use ($monthsInRange) {
-                $q->whereIn('late_month', $monthsInRange);
-                foreach ($monthsInRange as $m) {
-                    $q->orWhere('late_month', 'like', $m.'#%');
-                }
-            })
-            ->get(['employee_id', 'late_month', 'days_count', 'start_date']);
-
         $retardoFaltasByEmployee = [];
         $retardoDetailsByEmployee = [];
-        $chargedMonthsByEmployee = [];
-
-        foreach ($frtIncidents as $incident) {
-            $eid = $incident->employee_id;
-            $baseMonth = explode('#', (string) $incident->late_month)[0];
-            $faltas = max(1, (int) $incident->days_count);
-            $retardoFaltasByEmployee[$eid] = ($retardoFaltasByEmployee[$eid] ?? 0) + $faltas;
-            $chargedMonthsByEmployee[$eid][$baseMonth] = true;
-            $retardoDetailsByEmployee[$eid][] = [
-                'month' => $baseMonth,
-                'late_count' => $lateByEmpMonth[$eid][$baseMonth] ?? 0,
-                'faltas' => $faltas,
-                'source' => 'cobrada',
-                'charged_on' => Carbon::parse($incident->start_date)->toDateString(),
-            ];
-        }
-
-        foreach ($lateByEmpMonth as $eid => $months) {
-            foreach ($months as $month => $cnt) {
-                if (isset($chargedMonthsByEmployee[$eid][$month])) {
-                    continue; // ya cobrada vía incidencia FRT
-                }
-                if ($ruleStartKey !== null && $month < $ruleStartKey) {
-                    continue; // mes previo al corte: lo manejó el sistema legado
-                }
-                $faltas = intdiv($cnt, $lateToAbsenceCount);
-                if ($faltas > 0) {
-                    $retardoFaltasByEmployee[$eid] = ($retardoFaltasByEmployee[$eid] ?? 0) + $faltas;
-                    $retardoDetailsByEmployee[$eid][] = [
-                        'month' => $month,
-                        'late_count' => $cnt,
-                        'faltas' => $faltas,
-                        'source' => $month === $currentMonthKey ? 'proyeccion' : 'pendiente_cierre',
-                    ];
-                }
+        foreach (Employee::with('schedule')->whereIn('id', $activeEmployeeIds)->get() as $employee) {
+            $details = $lateAbsenceService->reportDetails($employee, $startDate, $endDate);
+            if ($details !== []) {
+                $retardoDetailsByEmployee[$employee->id] = $details;
+                $retardoFaltasByEmployee[$employee->id] = array_sum(array_column($details, 'faltas'));
             }
         }
 
@@ -266,7 +190,7 @@ class AttendanceReportController extends Controller implements HasMiddleware
 
         foreach ($employees as $employee) {
             $effectiveSchedule = $employee->getEffectiveSchedule();
-            if (!$effectiveSchedule) {
+            if (! $effectiveSchedule) {
                 continue;
             }
 
@@ -310,7 +234,7 @@ class AttendanceReportController extends Controller implements HasMiddleware
             $hasEarlyDeparture = $nonHolidayRecords->where('early_departure_minutes', '>', 0)->isNotEmpty();
             $hasAbsence = $nonHolidayRecords->where('status', 'absent')->isNotEmpty();
 
-            if ($presentRecords->count() >= $adjustedExpected && !$hasLate && !$hasEarlyDeparture && !$hasAbsence) {
+            if ($presentRecords->count() >= $adjustedExpected && ! $hasLate && ! $hasEarlyDeparture && ! $hasAbsence) {
                 $byEmployee->push([
                     'employee' => [
                         'id' => $employee->id,

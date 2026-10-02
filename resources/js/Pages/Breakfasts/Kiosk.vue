@@ -3,6 +3,9 @@ import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head } from '@inertiajs/vue3';
 import { ref, watch, onBeforeUnmount } from 'vue';
 import FaceScan from './components/FaceScan.vue';
+import { createRejectionSound } from './rejectionSound';
+
+const rejectionSound = createRejectionSound();
 
 // Kiosco de desayunos: (1) número de empleado → (2) verificación facial →
 // (3) contraseña → desayuno registrado. El servidor revalida todo (contraseña, ventana
@@ -97,6 +100,7 @@ watch(searchQuery, (value) => {
 // elegibilidad de hoy y se avanza a la confirmación.
 const selectEmployee = async (match) => {
     if (loading.value) return;
+    rejectionSound.prepare();
     loading.value = true;
     lookupError.value = '';
     try {
@@ -106,6 +110,7 @@ const selectEmployee = async (match) => {
         employee.value = data.employee;
         status.value = data.status;
         step.value = 'eligibility';
+        if (!data.status.eligible) rejectionSound.play();
     } catch (error) {
         lookupError.value = firstError(error, 'No se pudo consultar al empleado.');
     } finally {
@@ -114,6 +119,7 @@ const selectEmployee = async (match) => {
 };
 
 const startFaceScan = () => {
+    rejectionSound.prepare();
     step.value = 'face';
 };
 
@@ -123,6 +129,7 @@ const onFaceVerified = ({ distance, snapshot }) => {
 };
 
 const onFaceError = (message) => {
+    rejectionSound.play();
     resultMessage.value = message;
     step.value = 'error';
     scheduleReset(8000);
@@ -130,6 +137,7 @@ const onFaceError = (message) => {
 
 const submitPin = async () => {
     if (loading.value) return;
+    rejectionSound.prepare();
     loading.value = true;
     pinError.value = '';
     try {
@@ -143,6 +151,7 @@ const submitPin = async () => {
         step.value = 'success';
         scheduleReset(6000);
     } catch (error) {
+        rejectionSound.play();
         const errors = error?.response?.data?.errors;
         if (errors?.pin) {
             // Contraseña incorrecta: se queda en el campo para reintentar.
@@ -159,6 +168,7 @@ const submitPin = async () => {
 };
 
 onBeforeUnmount(() => {
+    rejectionSound.dispose();
     if (resetTimer) clearTimeout(resetTimer);
     if (searchTimer) clearTimeout(searchTimer);
 });
@@ -259,6 +269,7 @@ onBeforeUnmount(() => {
                     :photo-url="employee.photo_url"
                     :max-distance="faceMaxDistance"
                     @verified="onFaceVerified"
+                    @rejected="rejectionSound.play"
                     @error="onFaceError"
                 />
                 <button type="button" class="mt-6 w-full py-3 rounded-2xl bg-gray-100 text-gray-600 font-medium hover:bg-gray-200" @click="reset">

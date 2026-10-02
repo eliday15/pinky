@@ -45,12 +45,15 @@ Schedule::command('sync:health-check --minutes=20')
     ->everyTenMinutes()
     ->appendOutputTo(storage_path('logs/sync-health.log'));
 
-// Cierre mensual de retardos→falta (DECISIONES_NEGOCIO §1): genera las
-// incidencias FRT del mes recién cerrado. Autocurable: la nómina también
-// garantiza la generación al calcular, así que este cron aporta puntualidad
-// y visibilidad, no correctitud.
+// Reconcile the running month promptly; retain the previous-month closure
+// for late imports across a month boundary. No concurrent scheduled runs.
+Schedule::command('late-absences:close --current')
+    ->everyTenMinutes()
+    ->withoutOverlapping()
+    ->appendOutputTo(storage_path('logs/late-absences.log'));
 Schedule::command('late-absences:close')
-    ->monthlyOn(1, '06:00')
+    ->dailyAt('06:00')
+    ->withoutOverlapping()
     ->appendOutputTo(storage_path('logs/late-absences.log'));
 
 // Bonos de maquila: genera las autorizaciones PENDIENTES del mes recién cerrado

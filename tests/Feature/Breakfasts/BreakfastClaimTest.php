@@ -15,8 +15,8 @@ use Tests\FeatureTestCase;
 /**
  * Feature tests for the breakfast kiosk claim rules.
  *
- * The window is [entry_time - window_minutes, entry_time): an employee whose
- * shift starts at 09:00 gets a breakfast at 08:50 but NOT at 09:00 sharp.
+ * With a ten-minute margin, a 09:00 shift allows breakfast through 08:50:00
+ * inclusive, but rejects 08:50:01. Entry itself is excluded even with zero margin.
  * One breakfast per day, hard-gated server-side by the breakfast PIN and the
  * configured face-match threshold.
  */
@@ -96,7 +96,7 @@ class BreakfastClaimTest extends FeatureTestCase
 
     public function test_claim_before_the_close_margin_is_accepted(): void
     {
-        // Ventana [08:00, 08:50): con entrada 09:00 y cierre de 10 min, a las
+        // Ventana [08:00, 08:50]: con entrada 09:00 y cierre de 10 min, a las
         // 08:49 todavía pasa (Luis 2026-10-02).
         $employee = $this->makeEmployee();
 
@@ -157,8 +157,54 @@ class BreakfastClaimTest extends FeatureTestCase
         // cierra a las 08:50.
         $employee = $this->makeEmployee();
 
-        $this->assertClaimFails($employee, '2026-06-03 08:50:00', 'Fuera de horario');
+        $this->assertClaimFails($employee, '2026-06-03 08:50:01', 'Fuera de horario');
         $this->assertClaimFails($employee, '2026-06-03 08:55:00', 'Fuera de horario');
+    }
+
+    public function test_closing_testing_migration_enforces_the_requested_schedule(): void
+    {
+        SystemSetting::set('breakfast_open_all_day', true);
+        SystemSetting::set('breakfast_close_minutes_before_entry', 0);
+        $employee = $this->makeEmployee();
+        $late = Carbon::parse('2026-06-03 08:55:00');
+        $this->assertTrue($this->service()->statusFor($employee, $late)['eligible']);
+
+        $migration = require database_path('migrations/2026_10_02_000002_close_breakfast_testing_window.php');
+        $migration->up();
+
+        $this->assertFalse(SystemSetting::get('breakfast_open_all_day'));
+        $this->assertSame(10, SystemSetting::get('breakfast_close_minutes_before_entry'));
+        $this->assertFalse($this->service()->statusFor($employee, $late)['eligible']);
+        $this->assertTrue($this->service()->statusFor($employee, Carbon::parse('2026-06-03 08:50:00'))['eligible']);
+
+        $migration->down();
+        $this->assertFalse(SystemSetting::get('breakfast_open_all_day'));
+    }
+
+    public function test_exactly_ten_minutes_before_entry_is_accepted(): void
+    {
+        $claim = $this->claimAt($this->makeEmployee(), '2026-06-03 08:50:00');
+
+        $this->assertNotNull($claim->id);
+    }
+
+    public function test_zero_close_margin_still_rejects_entry_time(): void
+    {
+        SystemSetting::set('breakfast_close_minutes_before_entry', 0);
+        $employee = $this->makeEmployee();
+
+        $this->assertClaimFails($employee, '2026-06-03 09:00:00', 'Fuera de horario');
+        $this->assertNotNull($this->claimAt($employee, '2026-06-03 08:59:59')->id);
+    }
+
+    public function test_close_margin_uses_employee_override_entry_time(): void
+    {
+        $employee = $this->makeEmployee([
+            'schedule_overrides' => ['day_schedules' => ['wednesday' => ['entry_time' => '07:00']]],
+        ]);
+
+        $this->assertClaimFails($employee, '2026-06-03 06:50:01', 'Fuera de horario');
+        $this->assertNotNull($this->claimAt($employee, '2026-06-03 06:50:00')->id);
     }
 
     public function test_schedule_override_entry_time_moves_the_window(): void

@@ -481,4 +481,118 @@ class MonthlyLateAbsenceTest extends FeatureTestCase
         $this->assertNotNull($frtRow);
         $this->assertSame('2026-06', $frtRow['late_detail'][0]['month']);
     }
+
+    public function test_batch_handles_first_active_month_and_ignores_future_lates(): void
+    {
+        SystemSetting::set('monthly_late_absence_start_month', '2026-06');
+        $employee = $this->employee();
+        $this->twelveJuneLates($employee);
+        $this->travelTo(Carbon::parse('2026-06-08'));
+        $this->assertSame(1, $this->service()->ensureForEmployees(collect([$employee])));
+        $this->assertSame(1, Incident::where('employee_id', $employee->id)->count());
+        $this->travelTo(Carbon::parse('2026-06-16'));
+        $this->assertSame(1, $this->service()->ensureForEmployees(collect([$employee])));
+        $this->assertSame(0, $this->service()->ensureForEmployees(collect([$employee])));
+    }
+
+    public function test_batch_reconciles_late_import_after_month_closed(): void
+    {
+        $employee = $this->employee();
+        $this->twelveJuneLates($employee);
+        AttendanceRecord::where('employee_id', $employee->id)->where('work_date', '>', '2026-06-08')->update(['status' => 'present']);
+        $this->assertSame(1, $this->service()->ensureForEmployees(collect([$employee])));
+        AttendanceRecord::where('employee_id', $employee->id)->update(['status' => 'late']);
+        $this->assertSame(1, $this->service()->ensureForEmployees(collect([$employee])));
+        $this->assertSame(2, Incident::where('employee_id', $employee->id)->approved()->count());
+    }
+
+    public function test_corrected_source_revokes_then_restores_without_new_incident(): void
+    {
+        $employee = $this->employee();
+        $this->twelveJuneLates($employee);
+        $this->service()->ensureForEmployees(collect([$employee]));
+        AttendanceRecord::where('employee_id', $employee->id)->where('work_date', '2026-06-01')->update(['status' => 'present']);
+        $this->service()->ensureForEmployees(collect([$employee]));
+        $first = Incident::where('employee_id', $employee->id)->where('late_month', '2026-06')->first();
+        $second = Incident::where('employee_id', $employee->id)->where('late_month', '2026-06#2')->first();
+        $this->assertSame('2026-06-09', $first->start_date->toDateString());
+        $this->assertSame('rejected', $second->status);
+        $this->assertStringStartsWith('Corrección automática', $second->rejection_reason);
+        AttendanceRecord::where('employee_id', $employee->id)->where('work_date', '2026-06-01')->update(['status' => 'late']);
+        $this->service()->ensureForEmployees(collect([$employee]));
+        $this->assertSame('approved', $second->fresh()->status);
+        $this->assertSame(2, Incident::withTrashed()->where('employee_id', $employee->id)->count());
+    }
+
+    public function test_corrected_source_flags_paid_receipt_without_rewriting_amount(): void
+    {
+        $employee = $this->employee();
+        $this->twelveJuneLates($employee);
+        $this->service()->ensureForEmployees(collect([$employee]));
+        $period = PayrollPeriod::factory()->weekly()->create(['start_date' => '2026-06-08', 'end_date' => '2026-06-14']);
+        $entry = $this->calculator()->calculateEmployeePayroll($period, $employee);
+        $deductions = $entry->deductions;
+        $period->update(['status' => 'paid']);
+        AttendanceRecord::where('employee_id', $employee->id)->update(['status' => 'present']);
+        $this->service()->ensureForEmployees(collect([$employee]));
+        $this->assertSame($deductions, $entry->fresh()->deductions);
+        $this->assertTrue($period->fresh()->requires_recalculation);
+        $this->assertSame(0, Incident::where('employee_id', $employee->id)->approved()->count());
+    }
+
+    public function test_monthly_close_retains_previous_month_default_and_current_option(): void
+    {
+        $employee = $this->employee();
+        $this->twelveJuneLates($employee);
+        $this->travelTo(Carbon::parse('2026-07-01'));
+        $this->artisan('late-absences:close')->assertSuccessful();
+        $this->assertSame(2, Incident::where('employee_id', $employee->id)->count());
+        $this->artisan('late-absences:close', ['--current' => true])->assertSuccessful();
+        $this->assertSame(2, Incident::where('employee_id', $employee->id)->count());
+        $this->artisan('late-absences:close', ['--month' => '2026-13'])->assertFailed();
+    }
+
+    public function test_exemption_reconciles_existing_auto_incidents_using_fresh_employee(): void
+    {
+        $employee = $this->employee();
+        $this->twelveJuneLates($employee);
+        $this->service()->ensureForEmployees(collect([$employee]));
+        Employee::whereKey($employee->id)->update(['is_attendance_exempt' => true]);
+        $this->service()->ensureForEmployees(collect([$employee]));
+        $this->assertSame(0, Incident::where('employee_id', $employee->id)->approved()->count());
+    }
+
+    public function test_human_rejection_and_pardon_survive_source_reconciliation(): void
+    {
+        $employee = $this->employee();
+        $this->twelveJuneLates($employee);
+        $this->service()->ensureForEmployees(collect([$employee]));
+        $incidents = Incident::where('employee_id', $employee->id)->orderBy('id')->get();
+        $incidents[0]->update(['status' => 'rejected', 'rejection_reason' => 'Perdón autorizado por RRHH']);
+        $incidents[1]->delete();
+        AttendanceRecord::where('employee_id', $employee->id)->update(['status' => 'present']);
+        $this->service()->ensureForEmployees(collect([$employee]));
+        AttendanceRecord::where('employee_id', $employee->id)->update(['status' => 'late']);
+        $this->service()->ensureForEmployees(collect([$employee]));
+        $this->assertSame('rejected', $incidents[0]->fresh()->status);
+        $this->assertTrue($incidents[1]->fresh()->trashed());
+        $this->assertSame(2, Incident::withTrashed()->where('employee_id', $employee->id)->count());
+    }
+
+    public function test_close_dry_run_counts_only_existing_lates_for_non_exempt_employees(): void
+    {
+        $employee = $this->employee();
+        $this->twelveJuneLates($employee);
+        $exempt = $this->employee();
+        $this->twelveJuneLates($exempt);
+        $exempt->update(['is_attendance_exempt' => true]);
+        $this->travelTo(Carbon::parse('2026-06-08'));
+
+        $this->artisan('late-absences:close', ['--current' => true, '--dry-run' => true])
+            ->expectsTable(['No. Empleado', 'Empleado', 'Retardos', 'Faltas', 'Resultado'], [
+                [$employee->employee_number, $employee->full_name, 6, 1, 'dry-run'],
+                [$exempt->employee_number, $exempt->full_name, 0, 0, 'dry-run'],
+            ])->assertSuccessful();
+        $this->assertSame(0, Incident::whereIn('employee_id', [$employee->id, $exempt->id])->count());
+    }
 }

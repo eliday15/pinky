@@ -19,7 +19,8 @@ use Illuminate\Console\Command;
 class CloseMonthlyLateAbsences extends Command
 {
     protected $signature = 'late-absences:close
-        {--month= : Mes a cerrar (YYYY-MM); por defecto el mes anterior}
+        {--month= : Mes a revisar (YYYY-MM); por defecto el mes anterior}
+        {--current : Revisar el mes en curso}
         {--dry-run : Solo muestra qué se generaría, sin escribir}';
 
     protected $description = 'Genera las incidencias FRT (faltas por retardos acumulados) del mes — en curso o cerrado';
@@ -28,17 +29,15 @@ class CloseMonthlyLateAbsences extends Command
     {
         $monthOption = $this->option('month');
 
-        if ($monthOption !== null && ! preg_match('/^\d{4}-\d{2}$/', $monthOption)) {
+        if ($monthOption !== null && (! preg_match('/^\d{4}-(0[1-9]|1[0-2])$/', $monthOption))) {
             $this->error('El mes debe tener formato YYYY-MM.');
 
             return self::FAILURE;
         }
 
-        // Por defecto el mes CORRIENTE (regla de Luis 2026-10-01): la falta
-        // se genera el día que se cruza el umbral, no al cierre del mes.
         $month = $monthOption
             ? Carbon::createFromFormat('Y-m-d', $monthOption.'-01')->startOfMonth()
-            : Carbon::today()->startOfMonth();
+            : ($this->option('current') ? Carbon::today()->startOfMonth() : Carbon::today()->startOfMonth()->subMonthNoOverflow());
 
         $startMonth = $service->startMonth();
 
@@ -66,12 +65,11 @@ class CloseMonthlyLateAbsences extends Command
         $created = 0;
 
         foreach (Employee::active()->orderBy('id')->get() as $employee) {
-            $lateCount = $service->lateCountForMonth($employee, $month);
+            $lateCount = $employee->is_attendance_exempt ? 0 : count(array_filter(
+                $service->lateDatesForMonth($employee, $month),
+                fn ($date) => $date <= Carbon::today()->toDateString(),
+            ));
             $absences = $service->absencesFromLates($lateCount);
-
-            if ($absences < 1) {
-                continue;
-            }
 
             if ($dryRun) {
                 $rows[] = [$employee->employee_number, $employee->full_name, $lateCount, $absences, 'dry-run'];
