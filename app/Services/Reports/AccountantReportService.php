@@ -181,9 +181,16 @@ class AccountantReportService
 
         // 1) Meses cerrados: incidencias FRT ya cobradas.
         $chargedMonths = [];
+        // late_month lleva secuencia desde la regla inmediata (Luis
+        // 2026-10-01): 'YYYY-MM' la 1ª del mes, 'YYYY-MM#2' la 2ª.
         $frt = Incident::approved()
             ->whereHas('incidentType', fn ($q) => $q->where('category', 'late_accumulation'))
-            ->whereIn('late_month', $months)
+            ->where(function ($q) use ($months) {
+                $q->whereIn('late_month', $months);
+                foreach ($months as $m) {
+                    $q->orWhere('late_month', 'like', $m.'#%');
+                }
+            })
             ->get(['employee_id', 'late_month', 'days_count']);
 
         foreach ($frt as $incident) {
@@ -191,9 +198,10 @@ class AccountantReportService
             if (! $employee) {
                 continue;
             }
+            $baseMonth = explode('#', (string) $incident->late_month)[0];
             $faltas = max(1, (int) $incident->days_count);
-            $chargedMonths[$incident->employee_id][$incident->late_month] = true;
-            $mes = Carbon::parse($incident->late_month.'-01')->locale('es')->isoFormat('MMM YYYY');
+            $chargedMonths[$incident->employee_id][$baseMonth] = true;
+            $mes = Carbon::parse($baseMonth.'-01')->locale('es')->isoFormat('MMM YYYY');
 
             $report[$empresaOf($incident->employee_id)]['faltas_retardo'][] = [
                 $employee->full_name,

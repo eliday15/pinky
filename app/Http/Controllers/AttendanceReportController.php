@@ -141,9 +141,17 @@ class AttendanceReportController extends Controller implements HasMiddleware
         $ruleStartKey = $lateAbsenceService->startMonth()?->format('Y-m');
         $currentMonthKey = Carbon::today()->format('Y-m');
 
+        // late_month lleva secuencia desde la regla inmediata (Luis
+        // 2026-10-01): 'YYYY-MM' la 1ª del mes, 'YYYY-MM#2' la 2ª. Se traen
+        // todas y se agrupan por la base del mes.
         $frtIncidents = Incident::where('status', 'approved')
             ->whereIn('employee_id', $activeEmployeeIds)
-            ->whereIn('late_month', $monthsInRange)
+            ->where(function ($q) use ($monthsInRange) {
+                $q->whereIn('late_month', $monthsInRange);
+                foreach ($monthsInRange as $m) {
+                    $q->orWhere('late_month', 'like', $m.'#%');
+                }
+            })
             ->get(['employee_id', 'late_month', 'days_count', 'start_date']);
 
         $retardoFaltasByEmployee = [];
@@ -152,12 +160,13 @@ class AttendanceReportController extends Controller implements HasMiddleware
 
         foreach ($frtIncidents as $incident) {
             $eid = $incident->employee_id;
+            $baseMonth = explode('#', (string) $incident->late_month)[0];
             $faltas = max(1, (int) $incident->days_count);
             $retardoFaltasByEmployee[$eid] = ($retardoFaltasByEmployee[$eid] ?? 0) + $faltas;
-            $chargedMonthsByEmployee[$eid][$incident->late_month] = true;
+            $chargedMonthsByEmployee[$eid][$baseMonth] = true;
             $retardoDetailsByEmployee[$eid][] = [
-                'month' => $incident->late_month,
-                'late_count' => $lateByEmpMonth[$eid][$incident->late_month] ?? 0,
+                'month' => $baseMonth,
+                'late_count' => $lateByEmpMonth[$eid][$baseMonth] ?? 0,
                 'faltas' => $faltas,
                 'source' => 'cobrada',
                 'charged_on' => Carbon::parse($incident->start_date)->toDateString(),

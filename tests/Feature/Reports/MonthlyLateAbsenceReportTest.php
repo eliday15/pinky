@@ -84,7 +84,9 @@ class MonthlyLateAbsenceReportTest extends FeatureTestCase
             ->where('byEmployee.0.retardo_details.0.source', 'cobrada')
             ->where('byEmployee.0.retardo_details.0.month', '2026-06')
             ->where('byEmployee.0.retardo_details.0.late_count', 12)
-            ->where('byEmployee.0.retardo_details.0.charged_on', '2026-07-01')
+            // Regla de Luis 2026-10-01: la falta se cobra el día del retardo
+            // que cruzó el umbral (el 6º fue el 8 de junio), no el mes siguiente.
+            ->where('byEmployee.0.retardo_details.0.charged_on', '2026-06-08')
             ->where('summary.retardo_faltas', 2)
         );
     }
