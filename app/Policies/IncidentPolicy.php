@@ -113,6 +113,16 @@ class IncidentPolicy
             return $user->hasPermissionTo('incidents.view_all');
         }
 
+        // FRT (falta por acumulación de retardos) — con la regla de Luis
+        // 2026-10-01 se genera auto-aprobada el día del cruce: borrarla es el
+        // PERDÓN explícito de esa falta. Admin/RRHH la elimina; el servicio
+        // nunca la regenera (una FRT soft-deleted cuenta como procesada) y el
+        // destroy recalcula asistencia/nómina.
+        if ($incident->status === 'approved'
+            && ($incident->incidentType?->category) === 'late_accumulation') {
+            return $user->hasPermissionTo('incidents.view_all');
+        }
+
         // Los vales de conversión "a cuenta de horas" (HxV) sí pueden borrarse
         // aunque estén aprobados: el borrado devuelve las horas no gastadas a la
         // bolsa (IncidentController::destroy) y es la vía de corrección, ya que

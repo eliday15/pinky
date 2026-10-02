@@ -16,13 +16,15 @@ use Carbon\Carbon;
 use Tests\FeatureTestCase;
 
 /**
- * Regla mensual retardos→falta (DECISIONES_NEGOCIO_2026-06-04.md §1).
+ * Regla mensual retardos→falta (DECISIONES §1, ACTUALIZADA por Luis
+ * 2026-10-01: la falta se aplica en el corte donde se cumple el umbral).
  *
- * Los retardos se acumulan por mes calendario; al cierre se genera UNA
- * incidencia FRT auto-aprobada con floor(retardos/umbral) días, fechada el
- * día 1 del mes siguiente, y se cobra en la primera nómina base calculada
- * después del cierre. Idempotente por (empleado, mes); una FRT soft-deleted
- * no se regenera; los meses previos al corte nunca se procesan.
+ * Los retardos se acumulan por mes calendario; cada cruce del umbral genera
+ * DE INMEDIATO una incidencia FRT auto-aprobada de 1 día fechada el día del
+ * retardo que cruzó (6º → una, 12º → otra con secuencia '#2'), y se cobra en
+ * el periodo base que contiene esa fecha. Idempotente por (empleado, mes,
+ * secuencia); una FRT soft-deleted no se regenera (perdón); los meses previos
+ * al corte nunca se procesan.
  *
  * Las fechas viajan a 2026-08-10: junio y julio 2026 están cerrados y el
  * corte de la regla (migración) es 2026-06.
@@ -122,32 +124,36 @@ class MonthlyLateAbsenceTest extends FeatureTestCase
         $this->twelveJuneLates($employee);
         $employee->update(['is_attendance_exempt' => true]);
 
-        $incident = $this->service()->generateForMonth(
+        $incidents = $this->service()->generateForMonth(
             $employee->fresh(),
             \Carbon\Carbon::parse('2026-06-01'),
             \Carbon\Carbon::parse('2026-07-05'),
         );
 
-        $this->assertNull($incident, 'exento de checador: sin FRT aunque tenga retardos residuales');
+        $this->assertSame([], $incidents, 'exento de checador: sin FRT aunque tenga retardos residuales');
     }
 
-    public function test_generates_auto_approved_frt_incident_at_month_close(): void
+    public function test_generates_one_auto_approved_frt_per_threshold_crossing(): void
     {
         $employee = $this->employee();
         $this->twelveJuneLates($employee);
 
         $generated = $this->service()->ensureMonthlyIncidentsGenerated($employee);
 
-        $this->assertSame(1, $generated, 'solo junio alcanza umbral; julio sin retardos');
+        $this->assertSame(2, $generated, '12 retardos / umbral 6 = 2 faltas, una por cruce');
 
-        $incident = Incident::where('employee_id', $employee->id)->where('late_month', '2026-06')->first();
+        $first = Incident::where('employee_id', $employee->id)->where('late_month', '2026-06')->first();
+        $second = Incident::where('employee_id', $employee->id)->where('late_month', '2026-06#2')->first();
 
-        $this->assertNotNull($incident);
-        $this->assertSame(2, (int) $incident->days_count, '12 retardos / umbral 6 = 2 faltas (proporcional)');
-        $this->assertSame('2026-07-01', $incident->start_date->toDateString(), 'fechada el día 1 del mes siguiente');
-        $this->assertSame('2026-07-01', $incident->end_date->toDateString());
-        $this->assertSame('approved', $incident->status, 'auto-aprobada, sin paso de supervisor');
-        $this->assertSame('FRT', $incident->incidentType->code);
+        $this->assertNotNull($first);
+        $this->assertSame(1, (int) $first->days_count);
+        $this->assertSame('2026-06-08', $first->start_date->toDateString(), 'fechada el día del 6º retardo: cae en ese corte');
+        $this->assertSame('approved', $first->status, 'auto-aprobada, sin paso de supervisor');
+        $this->assertSame('FRT', $first->incidentType->code);
+
+        $this->assertNotNull($second);
+        $this->assertSame(1, (int) $second->days_count);
+        $this->assertSame('2026-06-16', $second->start_date->toDateString(), 'la segunda, el día del 12º retardo');
     }
 
     public function test_generation_is_idempotent(): void
@@ -155,9 +161,9 @@ class MonthlyLateAbsenceTest extends FeatureTestCase
         $employee = $this->employee();
         $this->twelveJuneLates($employee);
 
-        $this->assertSame(1, $this->service()->ensureMonthlyIncidentsGenerated($employee));
+        $this->assertSame(2, $this->service()->ensureMonthlyIncidentsGenerated($employee));
         $this->assertSame(0, $this->service()->ensureMonthlyIncidentsGenerated($employee), 'segunda pasada no genera nada');
-        $this->assertSame(1, Incident::where('employee_id', $employee->id)->where('late_month', '2026-06')->count());
+        $this->assertSame(2, Incident::where('employee_id', $employee->id)->where('late_month', 'like', '2026-06%')->count());
     }
 
     public function test_soft_deleted_frt_is_not_regenerated(): void
@@ -166,11 +172,11 @@ class MonthlyLateAbsenceTest extends FeatureTestCase
         $this->twelveJuneLates($employee);
 
         $this->service()->ensureMonthlyIncidentsGenerated($employee);
-        Incident::where('employee_id', $employee->id)->where('late_month', '2026-06')->first()->delete();
+        Incident::where('employee_id', $employee->id)->where('late_month', 'like', '2026-06%')->get()->each->delete();
 
-        $this->assertSame(0, $this->service()->ensureMonthlyIncidentsGenerated($employee), 'borrarla fue decisión humana: no se regenera');
-        $this->assertSame(0, Incident::where('employee_id', $employee->id)->where('late_month', '2026-06')->count());
-        $this->assertSame(1, Incident::withTrashed()->where('employee_id', $employee->id)->where('late_month', '2026-06')->count());
+        $this->assertSame(0, $this->service()->ensureMonthlyIncidentsGenerated($employee), 'borrarlas fue un perdón humano: no se regeneran');
+        $this->assertSame(0, Incident::where('employee_id', $employee->id)->where('late_month', 'like', '2026-06%')->count());
+        $this->assertSame(2, Incident::withTrashed()->where('employee_id', $employee->id)->where('late_month', 'like', '2026-06%')->count());
     }
 
     public function test_months_before_rule_start_are_skipped(): void
@@ -184,8 +190,11 @@ class MonthlyLateAbsenceTest extends FeatureTestCase
         $this->assertSame(0, Incident::where('employee_id', $employee->id)->whereNotNull('late_month')->count());
     }
 
-    public function test_current_month_is_never_closed(): void
+    public function test_current_month_generates_immediately_on_sixth_late(): void
     {
+        // Volteado a propósito (Luis 2026-10-01): antes el mes en curso jamás
+        // generaba; ahora el 6º retardo del mes produce la falta ese mismo
+        // día, para que se descuente en el corte donde se cumplió la regla.
         $employee = $this->employee();
 
         // 6 retardos en agosto (mes en curso al 2026-08-10).
@@ -199,7 +208,10 @@ class MonthlyLateAbsenceTest extends FeatureTestCase
 
         $this->service()->ensureMonthlyIncidentsGenerated($employee);
 
-        $this->assertSame(0, Incident::where('employee_id', $employee->id)->where('late_month', '2026-08')->count());
+        $incident = Incident::where('employee_id', $employee->id)->where('late_month', '2026-08')->first();
+        $this->assertNotNull($incident, 'el mes en curso genera al cruzar el umbral');
+        $this->assertSame('2026-08-10', $incident->start_date->toDateString(), 'fechada el día del 6º retardo');
+        $this->assertSame(1, (int) $incident->days_count);
     }
 
     public function test_below_threshold_generates_nothing(): void
@@ -217,35 +229,49 @@ class MonthlyLateAbsenceTest extends FeatureTestCase
         $this->assertSame(0, $this->service()->ensureMonthlyIncidentsGenerated($employee));
     }
 
-    public function test_weekly_payroll_charges_frt_once_in_first_period_after_close(): void
+    public function test_weekly_payroll_charges_each_frt_in_the_period_that_contains_its_crossing(): void
     {
+        // Regla de Luis 2026-10-01: cada falta se cobra en el CORTE donde se
+        // cumplió su umbral (6º retardo = 8 jun, 12º = 16 jun) — ya no en la
+        // primera nómina del mes siguiente.
         $employee = $this->employee();
         $this->twelveJuneLates($employee);
 
-        // Primera nómina de julio: contiene el 1 de julio (fecha de cargo).
+        // Semana que contiene el 6º retardo (8 jun). El cálculo mismo
+        // garantiza la generación (autocurable, sin cron).
         $firstPeriod = PayrollPeriod::factory()->weekly()->create([
-            'start_date' => '2026-07-01',
-            'end_date' => '2026-07-07',
+            'start_date' => '2026-06-08',
+            'end_date' => '2026-06-14',
         ]);
 
-        // El cálculo mismo garantiza la generación (autocurable, sin cron).
         $entry = $this->calculator()->calculateEmployeePayroll($firstPeriod, $employee);
 
-        // 2 faltas × 800 × 7/6 (séptimo día, divisor fijo 6 para todos).
-        $this->assertEqualsWithDelta(1866.67, (float) $entry->deductions, 0.01, '2 faltas × 800 × 7/6');
-        $this->assertSame(2, (int) $entry->late_absences_generated);
-        $this->assertSame(2, (int) $entry->days_absent);
+        // 1 falta × 800 × 7/6 (séptimo día, divisor fijo 6 para todos).
+        $this->assertEqualsWithDelta(933.33, (float) $entry->deductions, 0.01, 'la 1ª falta se cobra en su corte');
+        $this->assertSame(1, (int) $entry->late_absences_generated);
+        $this->assertSame(1, (int) $entry->days_absent);
 
-        // Segunda nómina de julio: la misma acumulación NO se vuelve a cobrar.
+        // Semana del 12º retardo (16 jun): cobra la segunda.
         $secondPeriod = PayrollPeriod::factory()->weekly()->create([
-            'start_date' => '2026-07-08',
-            'end_date' => '2026-07-14',
+            'start_date' => '2026-06-15',
+            'end_date' => '2026-06-21',
         ]);
 
         $secondEntry = $this->calculator()->calculateEmployeePayroll($secondPeriod, $employee);
 
-        $this->assertEqualsWithDelta(0.00, (float) $secondEntry->deductions, 0.01);
-        $this->assertSame(0, (int) $secondEntry->late_absences_generated);
+        $this->assertEqualsWithDelta(933.33, (float) $secondEntry->deductions, 0.01, 'la 2ª falta se cobra en el corte del 12º retardo');
+        $this->assertSame(1, (int) $secondEntry->late_absences_generated);
+
+        // La primera nómina de julio ya no cobra nada de junio.
+        $julyPeriod = PayrollPeriod::factory()->weekly()->create([
+            'start_date' => '2026-07-01',
+            'end_date' => '2026-07-07',
+        ]);
+
+        $julyEntry = $this->calculator()->calculateEmployeePayroll($julyPeriod, $employee);
+
+        $this->assertEqualsWithDelta(0.00, (float) $julyEntry->deductions, 0.01, 'julio no arrastra las faltas de junio');
+        $this->assertSame(0, (int) $julyEntry->late_absences_generated);
     }
 
     public function test_recalculation_does_not_double_charge(): void
@@ -254,15 +280,15 @@ class MonthlyLateAbsenceTest extends FeatureTestCase
         $this->twelveJuneLates($employee);
 
         $period = PayrollPeriod::factory()->weekly()->create([
-            'start_date' => '2026-07-01',
-            'end_date' => '2026-07-07',
+            'start_date' => '2026-06-08',
+            'end_date' => '2026-06-14',
         ]);
 
         $this->calculator()->calculateEmployeePayroll($period, $employee);
         $entry = $this->calculator()->calculateEmployeePayroll($period, $employee); // recálculo
 
-        $this->assertEqualsWithDelta(1866.67, (float) $entry->deductions, 0.01, 'recalcular no duplica el descuento');
-        $this->assertSame(1, Incident::where('employee_id', $employee->id)->where('late_month', '2026-06')->count());
+        $this->assertEqualsWithDelta(933.33, (float) $entry->deductions, 0.01, 'recalcular no duplica el descuento');
+        $this->assertSame(2, Incident::where('employee_id', $employee->id)->where('late_month', 'like', '2026-06%')->count());
     }
 
     public function test_monthly_extras_period_never_deducts_frt(): void
@@ -273,8 +299,8 @@ class MonthlyLateAbsenceTest extends FeatureTestCase
         // El periodo mensual (extras) se calcula primero y NO debe "comerse"
         // la falta: el cobro pertenece al periodo base.
         $monthly = PayrollPeriod::factory()->monthly()->create([
-            'start_date' => '2026-07-01',
-            'end_date' => '2026-07-31',
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-30',
         ]);
 
         $monthlyEntry = $this->calculator()->calculateEmployeePayroll($monthly, $employee);
@@ -284,13 +310,13 @@ class MonthlyLateAbsenceTest extends FeatureTestCase
         $this->assertSame(0, (int) $monthlyEntry->days_absent);
 
         $weekly = PayrollPeriod::factory()->weekly()->create([
-            'start_date' => '2026-07-01',
-            'end_date' => '2026-07-07',
+            'start_date' => '2026-06-08',
+            'end_date' => '2026-06-14',
         ]);
 
         $weeklyEntry = $this->calculator()->calculateEmployeePayroll($weekly, $employee);
 
-        $this->assertEqualsWithDelta(1866.67, (float) $weeklyEntry->deductions, 0.01, 'el periodo base sigue cobrando la falta');
+        $this->assertEqualsWithDelta(933.33, (float) $weeklyEntry->deductions, 0.01, 'el periodo base sigue cobrando la falta de su corte');
     }
 
     public function test_legacy_weekly_accumulation_is_ignored(): void
@@ -308,13 +334,13 @@ class MonthlyLateAbsenceTest extends FeatureTestCase
         ]);
 
         $period = PayrollPeriod::factory()->weekly()->create([
-            'start_date' => '2026-07-01',
-            'end_date' => '2026-07-07',
+            'start_date' => '2026-06-08',
+            'end_date' => '2026-06-14',
         ]);
 
         $entry = $this->calculator()->calculateEmployeePayroll($period, $employee);
 
-        $this->assertEqualsWithDelta(1866.67, (float) $entry->deductions, 0.01, 'solo la FRT mensual descuenta, el contador legado no suma');
+        $this->assertEqualsWithDelta(933.33, (float) $entry->deductions, 0.01, 'solo la FRT mensual descuenta, el contador legado no suma');
         $this->assertFalse((bool) $legacy->fresh()->absence_generated, 'la nómina ya no escribe el flag legado');
     }
 
@@ -356,20 +382,74 @@ class MonthlyLateAbsenceTest extends FeatureTestCase
         $this->artisan('late-absences:close', ['--month' => '2026-06'])
             ->assertSuccessful();
 
-        $incident = Incident::where('employee_id', $employee->id)->where('late_month', '2026-06')->first();
-        $this->assertNotNull($incident);
-        $this->assertSame(2, (int) $incident->days_count);
+        $incidents = Incident::where('employee_id', $employee->id)->where('late_month', 'like', '2026-06%')->orderBy('start_date')->get();
+        $this->assertCount(2, $incidents, 'una incidencia por cruce de umbral');
+        $this->assertSame('2026-06-08', $incidents[0]->start_date->toDateString());
+        $this->assertSame('2026-06-16', $incidents[1]->start_date->toDateString());
 
         // Reejecutar el comando es seguro (idempotente).
         $this->artisan('late-absences:close', ['--month' => '2026-06'])->assertSuccessful();
-        $this->assertSame(1, Incident::where('employee_id', $employee->id)->where('late_month', '2026-06')->count());
+        $this->assertSame(2, Incident::where('employee_id', $employee->id)->where('late_month', 'like', '2026-06%')->count());
     }
 
-    public function test_close_command_refuses_open_month(): void
+    public function test_close_command_processes_current_month_and_refuses_future(): void
     {
-        $this->artisan('late-absences:close', ['--month' => '2026-08'])
-            ->expectsOutputToContain('aún no termina')
+        // Volteado a propósito (Luis 2026-10-01): el mes en curso SÍ se
+        // procesa (genera al cruce del umbral); solo los futuros se rechazan.
+        $employee = $this->employee();
+        foreach (['2026-08-03', '2026-08-04', '2026-08-05', '2026-08-06', '2026-08-07', '2026-08-10'] as $date) {
+            AttendanceRecord::factory()->for($employee)->create([
+                'work_date' => $date,
+                'status' => 'late',
+                'late_minutes' => 15,
+            ]);
+        }
+
+        $this->artisan('late-absences:close', ['--month' => '2026-08'])->assertSuccessful();
+        $this->assertSame(1, Incident::where('employee_id', $employee->id)->where('late_month', '2026-08')->count());
+
+        $this->artisan('late-absences:close', ['--month' => '2026-09'])
+            ->expectsOutputToContain('es futuro')
             ->assertSuccessful();
+    }
+
+    public function test_transition_old_rule_frt_counts_as_generated(): void
+    {
+        // Transición: septiembre 2026 se procesó con la regla vieja (UNA
+        // incidencia días=N fechada el día 1 del mes siguiente). El generador
+        // nuevo suma esos días y no duplica.
+        $employee = $this->employee();
+        $this->twelveJuneLates($employee);
+
+        Incident::create([
+            'employee_id' => $employee->id,
+            'incident_type_id' => IncidentType::where('code', 'FRT')->first()->id,
+            'start_date' => '2026-07-01',
+            'end_date' => '2026-07-01',
+            'days_count' => 2,
+            'late_month' => '2026-06',
+            'reason' => 'FRT regla vieja (cierre de mes)',
+            'status' => 'approved',
+            'approved_at' => now(),
+        ]);
+
+        $this->assertSame(0, $this->service()->ensureMonthlyIncidentsGenerated($employee), 'los 2 días ya generados cubren los 2 cruces');
+    }
+
+    public function test_admin_can_delete_approved_frt_as_a_pardon(): void
+    {
+        // El perdón de la falta por retardos es autoservible: Admin/RRHH la
+        // borra desde la UI y el servicio jamás la regenera.
+        $employee = $this->employee();
+        $this->twelveJuneLates($employee);
+        $this->service()->ensureMonthlyIncidentsGenerated($employee);
+        $incident = Incident::where('employee_id', $employee->id)->where('late_month', '2026-06')->first();
+
+        $this->actingAsAdmin();
+        $this->delete(route('incidents.destroy', $incident))->assertRedirect();
+
+        $this->assertNotNull($incident->fresh()->deleted_at, 'la FRT aprobada se puede borrar (perdón)');
+        $this->assertSame(0, $this->service()->ensureMonthlyIncidentsGenerated($employee), 'y no se regenera');
     }
 
     public function test_breakdown_details_which_late_days_caused_the_absence(): void
@@ -380,10 +460,11 @@ class MonthlyLateAbsenceTest extends FeatureTestCase
         $this->twelveJuneLates($employee);
         $this->service()->ensureMonthlyIncidentsGenerated($employee);
 
-        // Periodo semanal que contiene el 1 jul, donde cae la FRT de junio.
+        // Periodo semanal que contiene el 8 jun (6º retardo), donde cae la
+        // primera FRT de junio con la regla nueva.
         $period = PayrollPeriod::factory()->weekly()->create([
-            'start_date' => '2026-06-29',
-            'end_date' => '2026-07-05',
+            'start_date' => '2026-06-08',
+            'end_date' => '2026-06-14',
         ]);
 
         $entry = $this->calculator()->calculateEmployeePayroll($period, $employee);

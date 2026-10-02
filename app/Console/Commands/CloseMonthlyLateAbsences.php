@@ -22,7 +22,7 @@ class CloseMonthlyLateAbsences extends Command
         {--month= : Mes a cerrar (YYYY-MM); por defecto el mes anterior}
         {--dry-run : Solo muestra qué se generaría, sin escribir}';
 
-    protected $description = 'Genera las incidencias FRT (faltas por retardos acumulados) del mes cerrado';
+    protected $description = 'Genera las incidencias FRT (faltas por retardos acumulados) del mes — en curso o cerrado';
 
     public function handle(LateAbsenceService $service): int
     {
@@ -34,9 +34,11 @@ class CloseMonthlyLateAbsences extends Command
             return self::FAILURE;
         }
 
+        // Por defecto el mes CORRIENTE (regla de Luis 2026-10-01): la falta
+        // se genera el día que se cruza el umbral, no al cierre del mes.
         $month = $monthOption
             ? Carbon::createFromFormat('Y-m-d', $monthOption.'-01')->startOfMonth()
-            : Carbon::today()->startOfMonth()->subMonthNoOverflow();
+            : Carbon::today()->startOfMonth();
 
         $startMonth = $service->startMonth();
 
@@ -52,8 +54,8 @@ class CloseMonthlyLateAbsences extends Command
             return self::SUCCESS;
         }
 
-        if ($month->copy()->endOfMonth()->gte(Carbon::today()->startOfDay())) {
-            $this->warn("El mes {$month->format('Y-m')} aún no termina; no se procesa.");
+        if ($month->gt(Carbon::today()->startOfMonth())) {
+            $this->warn("El mes {$month->format('Y-m')} es futuro; no se procesa.");
 
             return self::SUCCESS;
         }
@@ -77,11 +79,12 @@ class CloseMonthlyLateAbsences extends Command
                 continue;
             }
 
-            $incident = $service->generateForMonth($employee, $month);
+            $incidents = $service->generateForMonth($employee, $month);
 
-            if ($incident !== null) {
-                $created++;
-                $rows[] = [$employee->employee_number, $employee->full_name, $lateCount, $absences, "incidencia #{$incident->id}"];
+            if ($incidents !== []) {
+                $created += count($incidents);
+                $ids = implode(', #', array_map(fn ($i) => $i->id, $incidents));
+                $rows[] = [$employee->employee_number, $employee->full_name, $lateCount, $absences, "incidencia(s) #{$ids}"];
             } else {
                 $rows[] = [$employee->employee_number, $employee->full_name, $lateCount, $absences, 'ya procesado'];
             }

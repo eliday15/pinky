@@ -1103,7 +1103,10 @@ class PayrollCalculatorService
         // que la originaron, para que el recibo lo explique (no solo "por retardos").
         $lateAccumulationDetail = [];
         foreach (($incidentMetrics['late_absence_incidents'] ?? []) as $frt) {
-            $month = $frt['month'];
+            // late_month lleva secuencia desde la regla inmediata (Luis
+            // 2026-10-01): '2026-06' la 1ª del mes, '2026-06#2' la 2ª. Para
+            // listar los retardos del mes se usa solo la base YYYY-MM.
+            $month = $frt['month'] ? explode('#', (string) $frt['month'])[0] : null;
             $lateDates = [];
             if ($month) {
                 $mStart = Carbon::parse($month.'-01')->startOfMonth();
