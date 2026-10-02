@@ -47,10 +47,14 @@ class BreakfastClaimService
 
         $entry = Carbon::parse($now->toDateString().' '.$daySchedule->entry_time, $now->getTimezone());
         $windowMinutes = (int) SystemSetting::get('breakfast_window_minutes', 60);
+        // Cierre ANTES de la entrada (Luis 2026-10-02): el desayuno se compra
+        // con al menos N minutos de margen — con menos de N para su entrada ya
+        // no pasa (que nadie llegue tarde al puesto por estar en el kiosco).
+        $closeMinutes = max(0, (int) SystemSetting::get('breakfast_close_minutes_before_entry', 10));
 
         return [
             'start' => $entry->copy()->subMinutes($windowMinutes),
-            'end' => $entry,
+            'end' => $entry->copy()->subMinutes($closeMinutes),
             'entry_time' => $entry->format('H:i'),
         ];
     }
@@ -104,7 +108,7 @@ class BreakfastClaimService
             }
 
             if ($now->gte($window['end'])) {
-                return $fail("Fuera de horario: tu hora de entrada era a las {$window['entry_time']} y el desayuno solo se entrega antes.");
+                return $fail("Fuera de horario: el desayuno se entrega hasta las {$window['end']->format('H:i')} (tu entrada es a las {$window['entry_time']}).");
             }
         }
 

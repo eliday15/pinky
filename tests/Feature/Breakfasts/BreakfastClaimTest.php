@@ -32,6 +32,8 @@ class BreakfastClaimTest extends FeatureTestCase
         SystemSetting::set('breakfast_window_minutes', 60);
         SystemSetting::set('breakfast_face_max_distance', 0.5);
         SystemSetting::set('breakfast_open_all_day', false);
+        // Cierre antes de la entrada (Luis 2026-10-02): default 10 min.
+        SystemSetting::set('breakfast_close_minutes_before_entry', 10);
     }
 
     protected function tearDown(): void
@@ -92,11 +94,13 @@ class BreakfastClaimTest extends FeatureTestCase
     // Ventana antes de la hora de entrada (miércoles 2026-06-03, entrada 09:00)
     // ------------------------------------------------------------------
 
-    public function test_claim_at_ten_minutes_before_entry_is_accepted(): void
+    public function test_claim_before_the_close_margin_is_accepted(): void
     {
+        // Ventana [08:00, 08:50): con entrada 09:00 y cierre de 10 min, a las
+        // 08:49 todavía pasa (Luis 2026-10-02).
         $employee = $this->makeEmployee();
 
-        $claim = $this->claimAt($employee, '2026-06-03 08:50:00');
+        $claim = $this->claimAt($employee, '2026-06-03 08:49:00');
 
         $this->assertDatabaseHas('breakfast_claims', [
             'id' => $claim->id,
@@ -142,8 +146,19 @@ class BreakfastClaimTest extends FeatureTestCase
 
         $this->assertClaimFails($employee, '2026-06-03 08:30:00', 'temprano');
 
-        $claim = $this->claimAt($employee, '2026-06-03 08:50:00');
+        $claim = $this->claimAt($employee, '2026-06-03 08:47:00');
         $this->assertNotNull($claim->id);
+    }
+
+    public function test_less_than_close_margin_before_entry_does_not_pass(): void
+    {
+        // Luis 2026-10-02: "10 min antes de su entrada pueden adquirir su
+        // desayuno, si es menos de 10, no pasa". Entrada 09:00 → el kiosco
+        // cierra a las 08:50.
+        $employee = $this->makeEmployee();
+
+        $this->assertClaimFails($employee, '2026-06-03 08:50:00', 'Fuera de horario');
+        $this->assertClaimFails($employee, '2026-06-03 08:55:00', 'Fuera de horario');
     }
 
     public function test_schedule_override_entry_time_moves_the_window(): void
@@ -389,7 +404,7 @@ class BreakfastClaimTest extends FeatureTestCase
             ->assertJsonPath('employee.id', $employee->id)
             ->assertJsonPath('employee.photo_url', '/storage/employees/photos/test.jpg')
             ->assertJsonPath('status.eligible', true)
-            ->assertJsonPath('status.window.end', '09:00');
+            ->assertJsonPath('status.window.end', '08:50');
     }
 
     public function test_store_creates_claim_via_http(): void
