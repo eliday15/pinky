@@ -26,10 +26,11 @@ class BreakfastClaimService
     /**
      * Get the claim window for the employee on the given moment's date.
      *
-     * Returns ['start' => Carbon, 'end' => Carbon, 'entry' => Carbon, 'entry_time' => string]
-     * where the close margin is inclusive, but entry itself is excluded. Returns null when
-     * the employee has no schedule, the day is not a working day, or the day
-     * schedule has no entry time.
+     * Returns ['start' => Carbon, 'end' => Carbon, 'entry' => Carbon, 'entry_time' => string].
+     * Both bounds are MINUTE-inclusive (the whole displayed minute counts:
+     * "hasta las 08:50" admits 08:50:59); entry itself is excluded. Returns
+     * null when the employee has no schedule, the day is not a working day,
+     * or the day schedule has no entry time.
      */
     public function claimWindowFor(Employee $employee, Carbon $now): ?array
     {
@@ -104,11 +105,23 @@ class BreakfastClaimService
                 return $fail('Hoy no es un día laborable del empleado o no tiene horario asignado.');
             }
 
-            if ($now->lt($window['start'])) {
+            // Ventana imposible (cierre > apertura): configuración contradictoria.
+            // El guardado en Configuración ya la rechaza, pero si llegara a la BD
+            // por otra vía el kiosco lo dice claro en vez de culpar al horario.
+            if ($window['end']->lt($window['start'])) {
+                return $fail("La ventana de desayunos está mal configurada (abriría a las {$window['start']->format('H:i')} y cerraría a las {$window['end']->format('H:i')}): revisa Configuración > Desayunos.");
+            }
+
+            // El empleado ve las horas en HH:MM, así que la regla se evalúa por
+            // minuto: "hasta las 08:50" vale TODO el minuto 08:50 (caso 2026-10-06:
+            // rechazado a las 05:50:4x con un cierre que decía "hasta las 05:50").
+            $minute = $now->copy()->startOfMinute();
+
+            if ($minute->lt($window['start'])) {
                 return $fail("Aún es temprano: el desayuno se entrega a partir de las {$window['start']->format('H:i')}.");
             }
 
-            if ($now->gt($window['end']) || $now->gte($window['entry'])) {
+            if ($minute->gt($window['end']) || $minute->gte($window['entry'])) {
                 return $fail("Fuera de horario: el desayuno se entrega hasta las {$window['end']->format('H:i')} (tu entrada es a las {$window['entry_time']}).");
             }
         }

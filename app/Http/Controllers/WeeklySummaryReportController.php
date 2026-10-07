@@ -70,9 +70,12 @@ class WeeklySummaryReportController extends Controller
         $toStr = $to->toDateString();
 
         // Empleados activos (no exentos de checada para las faltas) + nombres.
+        // schedule/schedule_overrides viajan porque la regla de retardos
+        // (LateAbsenceService::lateDatesForMonth → isObligatoryWorkDay) los
+        // necesita: sin ellos todos los retardos se descartan en silencio.
         $employees = Employee::active()
-            ->with('department:id,name')
-            ->get(['id', 'full_name', 'employee_number', 'department_id', 'is_attendance_exempt', 'birth_date'])
+            ->with(['department:id,name', 'schedule'])
+            ->get(['id', 'full_name', 'employee_number', 'department_id', 'is_attendance_exempt', 'birth_date', 'schedule_id', 'schedule_overrides'])
             ->keyBy('id');
 
         $label = fn ($e) => [
@@ -134,40 +137,77 @@ class WeeklySummaryReportController extends Controller
             ->sortBy(fn ($row) => ($row['name'] ?? '').'|'.($row['date'] ?? ''))
             ->values()->all();
 
-        // ---- FALTAS POR RETARDO ---- La acumulación de retardos es MENSUAL
-        // (igual que la nómina, DECISIONES §1): N retardos en el mes = 1 falta,
-        // con N = late_to_absence_count. Se cuentan los retardos del/los mes(es)
-        // que toca el rango y se listan solo los colaboradores que alcanzan el
-        // umbral (los que SÍ generan falta), con el conteo y las faltas
-        // proyectadas — como el "Faltas por retardo" del Excel de Luis.
-        $threshold = app(LateAbsenceService::class)->threshold();
+        // ---- FALTAS POR RETARDO ---- Acumulación MENSUAL: N retardos = 1 falta
+        // (LateAbsenceService, única fuente de verdad). Dani 2026-10-07: cuando
+        // la falta ya se autogeneró, su desglose NO vuelve a aparecer en semanas
+        // posteriores. Cada falta sale UNA vez, en el corte que contiene el
+        // retardo que cruzó el umbral (reportDetails — el mismo criterio que
+        // Reports/Faltas y el reporte al contador), y aparte se lista lo que se
+        // VA ACUMULANDO: los retardos del mes aún sin consumir por una falta.
+        $lateService = app(LateAbsenceService::class);
+        $threshold = $lateService->threshold();
+        $ruleStart = $lateService->startMonth();
         $months = [];
         for ($c = $from->copy()->startOfMonth(); $c->lte($to); $c->addMonthNoOverflow()) {
             $months[$c->format('Y-m')] = [$c->copy()->startOfMonth(), $c->copy()->endOfMonth()];
         }
 
+        // Candidatos: con algún retardo en los meses que toca el rango (una
+        // falta cobrada en el rango siempre implica retardos en su mes).
+        $candidateIds = AttendanceRecord::whereBetween('work_date', [
+            $from->copy()->startOfMonth()->toDateString(),
+            $to->copy()->endOfMonth()->toDateString(),
+        ])
+            ->whereIn('employee_id', $nonExemptIds)
+            ->where('status', 'late')
+            ->distinct()
+            ->pluck('employee_id');
+
         $retardos = [];
-        foreach ($months as $ym => [$mStart, $mEnd]) {
-            $monthHolidays = Holiday::whereBetween('date', [$mStart->toDateString(), $mEnd->toDateString()])
-                ->pluck('date')->map(fn ($d) => Carbon::parse($d)->toDateString())->all();
+        $accrualEnd = $to->copy()->min(Carbon::today());
+        foreach ($candidateIds as $eid) {
+            $employee = $employees->get($eid);
+            if (! $employee) {
+                continue;
+            }
 
-            $counts = AttendanceRecord::whereBetween('work_date', [$mStart->toDateString(), $mEnd->toDateString()])
-                ->whereIn('employee_id', $nonExemptIds)
-                ->where('status', 'late')
-                ->when(! empty($monthHolidays), fn ($q) => $q->whereNotIn('work_date', $monthHolidays))
-                ->selectRaw('employee_id, count(*) as n')
-                ->groupBy('employee_id')
-                ->havingRaw('count(*) >= ?', [$threshold])
-                ->pluck('n', 'employee_id');
-
-            $monthLabel = ucfirst($mStart->locale('es')->isoFormat('MMMM YYYY'));
-            foreach ($counts as $eid => $n) {
-                $faltasGeneradas = intdiv((int) $n, $threshold);
-                $retardos[] = array_merge($label($employees->get($eid)), [
-                    'date' => $monthLabel,
-                    'observaciones' => $n.' retardos → '.$faltasGeneradas.' '.($faltasGeneradas === 1 ? 'falta' : 'faltas'),
-                    'count' => (int) $n,
+            // Faltas cuyo cruce de umbral cae dentro del rango.
+            foreach ($lateService->reportDetails($employee, $from, $to) as $detail) {
+                $f = $detail['faltas'];
+                $retardos[] = array_merge($label($employee), [
+                    'date' => Carbon::parse($detail['charged_on'])->format('d/m/Y'),
+                    'observaciones' => ($f === 1
+                        ? '1 falta por retardos aplicada en este corte'
+                        : $f.' faltas por retardos aplicadas en este corte')
+                        .' (lleva '.$detail['late_count'].' retardos en el mes)',
+                    'count' => (int) $detail['late_count'],
                 ]);
+            }
+
+            // Residuo acumulándose al corte del rango: retardos del mes que aún
+            // no completan la siguiente falta (los ya consumidos no reaparecen;
+            // una falta perdonada tampoco los libera).
+            foreach ($months as $ym => [$mStart, $mEnd]) {
+                if (! $ruleStart || $mStart->lt($ruleStart)) {
+                    continue;
+                }
+                $monthEnd = $accrualEnd->copy()->min($mEnd);
+                if ($monthEnd->lt($mStart)) {
+                    continue;
+                }
+                $dates = array_filter(
+                    $lateService->lateDatesForMonth($employee, $mStart),
+                    fn ($d) => $d <= $monthEnd->toDateString(),
+                );
+                $leftover = count($dates) % $threshold;
+                if ($leftover > 0) {
+                    $retardos[] = array_merge($label($employee), [
+                        'date' => ucfirst($mStart->locale('es')->isoFormat('MMMM YYYY')),
+                        'observaciones' => $leftover.' '.($leftover === 1 ? 'retardo acumulado' : 'retardos acumulados')
+                            .' — a los '.$threshold.' se genera la falta',
+                        'count' => $leftover,
+                    ]);
+                }
             }
         }
 

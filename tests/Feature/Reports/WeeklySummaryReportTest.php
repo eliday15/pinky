@@ -135,29 +135,66 @@ class WeeklySummaryReportTest extends FeatureTestCase
                 ->where('faltas.0.name', $falton->full_name));
     }
 
-    public function test_retardos_reaching_the_monthly_threshold_generate_a_falta(): void
+    public function test_retardos_section_shows_the_running_accumulation(): void
     {
-        // El umbral por defecto es 6 retardos/mes = 1 falta. La acumulación es
-        // MENSUAL: 6 retardos en junio califican aunque el rango sea una semana.
+        // Dani 2026-10-07: la sección muestra lo que SE VA ACUMULANDO al corte
+        // del rango. En la semana del 1-7 de junio ambos van acumulando (el 6º
+        // retardo del primero cae el día 8, fuera del rango).
         $this->actingAsAdmin();
-        $conFalta = Employee::factory()->create(['status' => 'active', 'is_attendance_exempt' => false]);
-        $sinFalta = Employee::factory()->create(['status' => 'active', 'is_attendance_exempt' => false]);
+        $cerca = Employee::factory()->create(['status' => 'active', 'is_attendance_exempt' => false]);
+        $lejos = Employee::factory()->create(['status' => 'active', 'is_attendance_exempt' => false]);
 
         foreach (['2026-06-01', '2026-06-02', '2026-06-03', '2026-06-04', '2026-06-05', '2026-06-08'] as $day) {
-            AttendanceRecord::factory()->create(['employee_id' => $conFalta->id, 'work_date' => $day, 'status' => 'late']);
+            AttendanceRecord::factory()->create(['employee_id' => $cerca->id, 'work_date' => $day, 'status' => 'late']);
         }
-        // Solo 2 retardos: no alcanza el umbral → no aparece.
         foreach (['2026-06-01', '2026-06-02'] as $day) {
-            AttendanceRecord::factory()->create(['employee_id' => $sinFalta->id, 'work_date' => $day, 'status' => 'late']);
+            AttendanceRecord::factory()->create(['employee_id' => $lejos->id, 'work_date' => $day, 'status' => 'late']);
         }
 
         $this->get(route('reports.resumen', ['from' => self::FROM, 'to' => self::TO]))
             ->assertOk()
             ->assertInertia(fn ($page) => $page
+                ->has('retardos', 2)
+                ->where('retardos.0.name', $cerca->full_name)
+                ->where('retardos.0.count', 5)
+                ->where('retardos.0.observaciones', '5 retardos acumulados — a los 6 se genera la falta')
+                ->where('retardos.1.name', $lejos->full_name)
+                ->where('retardos.1.count', 2));
+    }
+
+    public function test_generated_falta_appears_only_in_its_cut_and_never_again(): void
+    {
+        // Dani 2026-10-07: "que lo que el sistema ya autogeneró como falta deje
+        // de aparecer" — la falta sale UNA vez, en el corte donde se cumplió el
+        // 6º retardo, y las semanas siguientes solo muestran el residuo que se
+        // sigue acumulando (o nada, si no hay residuo).
+        $this->actingAsAdmin();
+        $e = Employee::factory()->create(['status' => 'active', 'is_attendance_exempt' => false]);
+        foreach ([
+            '2026-06-01', '2026-06-02', '2026-06-03', '2026-06-04', '2026-06-05',
+            '2026-06-08', '2026-06-09', '2026-06-10',
+        ] as $day) {
+            AttendanceRecord::factory()->create(['employee_id' => $e->id, 'work_date' => $day, 'status' => 'late']);
+        }
+        app(\App\Services\LateAbsenceService::class)->ensureMonthlyIncidentsGenerated($e);
+
+        // Semana del cruce (8-14 jun): la falta (6º retardo el 8) + el residuo (2).
+        $this->get(route('reports.resumen', ['from' => '2026-06-08', 'to' => '2026-06-14']))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->has('retardos', 2)
+                ->where('retardos.0.date', '08/06/2026')
+                ->where('retardos.0.observaciones', '1 falta por retardos aplicada en este corte (lleva 8 retardos en el mes)')
+                ->where('retardos.1.count', 2)
+                ->where('retardos.1.observaciones', '2 retardos acumulados — a los 6 se genera la falta'));
+
+        // Semana posterior (15-21 jun): la falta ya NO reaparece; solo el residuo.
+        $this->get(route('reports.resumen', ['from' => '2026-06-15', 'to' => '2026-06-21']))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
                 ->has('retardos', 1)
-                ->where('retardos.0.name', $conFalta->full_name)
-                ->where('retardos.0.count', 6)
-                ->where('retardos.0.observaciones', '6 retardos → 1 falta'));
+                ->where('retardos.0.count', 2)
+                ->where('retardos.0.observaciones', '2 retardos acumulados — a los 6 se genera la falta'));
     }
 
     public function test_faltas_and_retardos_coexist_without_clobbering(): void

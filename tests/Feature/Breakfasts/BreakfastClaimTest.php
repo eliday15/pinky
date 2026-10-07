@@ -15,8 +15,10 @@ use Tests\FeatureTestCase;
 /**
  * Feature tests for the breakfast kiosk claim rules.
  *
- * With a ten-minute margin, a 09:00 shift allows breakfast through 08:50:00
- * inclusive, but rejects 08:50:01. Entry itself is excluded even with zero margin.
+ * With a ten-minute margin, a 09:00 shift allows breakfast through the whole
+ * 08:50 minute (08:50:59 inclusive) and rejects from 08:51:00 — the employee
+ * reads the bounds in HH:MM, so the rule is minute-granular (caso Luis
+ * Fernando 2026-10-06). Entry itself is excluded even with zero margin.
  * One breakfast per day, hard-gated server-side by the breakfast PIN and the
  * configured face-match threshold.
  */
@@ -157,8 +159,33 @@ class BreakfastClaimTest extends FeatureTestCase
         // cierra a las 08:50.
         $employee = $this->makeEmployee();
 
-        $this->assertClaimFails($employee, '2026-06-03 08:50:01', 'Fuera de horario');
+        $this->assertClaimFails($employee, '2026-06-03 08:51:00', 'Fuera de horario');
         $this->assertClaimFails($employee, '2026-06-03 08:55:00', 'Fuera de horario');
+    }
+
+    public function test_seconds_within_the_closing_minute_still_pass(): void
+    {
+        // Caso real 2026-10-06 (Luis Fernando, entrada 06:00): el kiosco decía
+        // "hasta las 05:50" pero a las 05:50:40 rechazaba. La regla es por
+        // minuto: todo el minuto del cierre pasa.
+        $claim = $this->claimAt($this->makeEmployee(), '2026-06-03 08:50:40');
+
+        $this->assertNotNull($claim->id);
+    }
+
+    public function test_impossible_window_reports_misconfiguration(): void
+    {
+        // Cierre mayor que la apertura (solo posible saltándose la validación
+        // de Configuración): el kiosco explica el problema real en vez de
+        // "aún es temprano"/"fuera de horario" contradictorios.
+        SystemSetting::set('breakfast_window_minutes', 5);
+        SystemSetting::set('breakfast_close_minutes_before_entry', 10);
+        $employee = $this->makeEmployee();
+
+        $status = $this->service()->statusFor($employee, Carbon::parse('2026-06-03 08:53:00'));
+
+        $this->assertFalse($status['eligible']);
+        $this->assertStringContainsString('mal configurada', $status['reason']);
     }
 
     public function test_closing_testing_migration_enforces_the_requested_schedule(): void
@@ -203,7 +230,7 @@ class BreakfastClaimTest extends FeatureTestCase
             'schedule_overrides' => ['day_schedules' => ['wednesday' => ['entry_time' => '07:00']]],
         ]);
 
-        $this->assertClaimFails($employee, '2026-06-03 06:50:01', 'Fuera de horario');
+        $this->assertClaimFails($employee, '2026-06-03 06:51:00', 'Fuera de horario');
         $this->assertNotNull($this->claimAt($employee, '2026-06-03 06:50:00')->id);
     }
 
