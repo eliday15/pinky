@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Authorization;
 use App\Models\CompensationType;
+use App\Models\Employee;
 use App\Services\MaquilaBonusAuthorizationService;
 use App\Services\MaquilaBonusMetricsService;
 use App\Services\CompensationRateResolverService;
@@ -81,25 +82,39 @@ class MaquilaBonusController extends Controller
         );
     }
 
-    /** Guarda el nombre exacto de cortador2 (filtro) de un concepto. */
-    public function saveFilter(Request $request): RedirectResponse
+    /**
+     * Asigna qué cortador cobra un empleado en un concepto.
+     *
+     * Luis 2026-10-08: "cada quien cobra lo que cortó según la lista de
+     * cortadores". Antes había un solo nombre por concepto y su conteo se le
+     * pagaba COMPLETO a cada empleado asignado — con dos operadores, cada uno
+     * terminaba cobrando también las órdenes del otro.
+     */
+    public function saveCortador(Request $request): RedirectResponse
     {
         $this->authorizeAccess();
 
         $validated = $request->validate([
             'code' => ['required', Rule::in(MaquilaBonusMetricsService::cortador2FilteredCodes())],
-            'name' => ['nullable', 'string', 'max:300'],
+            'employee_id' => ['required', 'integer', 'exists:employees,id'],
+            'cortador' => ['nullable', 'string', 'max:300'],
             'month' => ['nullable', 'regex:/^\d{4}-\d{2}$/'],
         ]);
 
-        $this->metrics->setCortador2NameFor($validated['code'], (string) ($validated['name'] ?? ''));
+        $name = trim((string) ($validated['cortador'] ?? ''));
 
-        $name = trim((string) ($validated['name'] ?? ''));
+        $this->metrics->setCortadorForEmployee(
+            $validated['code'],
+            (int) $validated['employee_id'],
+            $name,
+        );
+
+        $employee = Employee::find($validated['employee_id']);
 
         return redirect()->route('maquila-bonuses.index', array_filter(['month' => $validated['month'] ?? null]))
             ->with('success', $name !== ''
-                ? "Filtro actualizado: sólo se cuentan las órdenes con cortador2 = «{$name}»."
-                : 'Filtro actualizado: se cuentan todas las órdenes con cortador2 con nombre.');
+                ? "{$employee?->full_name} cobra las órdenes de «{$name}»."
+                : "{$employee?->full_name} se quedó sin cortador asignado: no se le genera nada hasta que le asignes uno.");
     }
 
     private ?string $metricsError = null;
@@ -151,16 +166,41 @@ class MaquilaBonusController extends Controller
             $counts = $concept ? ($statusCounts->get($concept->id) ?? collect()) : collect();
             $supportsCortador2 = in_array($code, $cortador2Codes, true);
             $quantity = $quantities[$code] ?? null;
+            // En los conceptos por cortador cada empleado cobra SOLO lo que él
+            // cortó: su cantidad sale de su propio nombre en cortador2.
+            $cortadorMap = $supportsCortador2 ? $this->metrics->cortadorMapFor($code) : [];
+
             $employeeRates = $concept?->employees
-                ->map(function ($employee) use ($concept, $quantity) {
+                ->map(function ($employee) use ($concept, $quantity, $supportsCortador2, $cortadorMap, $month) {
                     $rate = $this->rateResolver->resolveRate($employee, $concept);
                     $unitRate = (float) ($rate['fixed_amount'] ?? 0);
+                    $cortador = $supportsCortador2 ? ($cortadorMap[$employee->id] ?? '') : '';
+                    $employeeQuantity = $quantity;
+
+                    if ($supportsCortador2) {
+                        $employeeQuantity = null;
+
+                        if ($cortador !== '') {
+                            try {
+                                $employeeQuantity = $this->metrics->quantityForCortador(
+                                    $concept->code,
+                                    (int) $month->year,
+                                    (int) $month->month,
+                                    $cortador,
+                                );
+                            } catch (\Throwable $e) {
+                                $this->metricsError ??= 'No se pudo consultar basemaquila (revisa el túnel): '.$e->getMessage();
+                            }
+                        }
+                    }
 
                     return [
                         'employee_id' => $employee->id,
                         'name' => $employee->full_name,
                         'unit_rate' => $unitRate,
-                        'estimated_payout' => $quantity === null ? null : round($unitRate * $quantity, 2),
+                        'cortador' => $cortador,
+                        'quantity' => $employeeQuantity,
+                        'estimated_payout' => $employeeQuantity === null ? null : round($unitRate * $employeeQuantity, 2),
                     ];
                 })
                 ->values() ?? collect();
@@ -184,7 +224,9 @@ class MaquilaBonusController extends Controller
                 'estimated_total' => $payouts->isEmpty() ? null : round((float) $payouts->sum(), 2),
                 'employee_payouts' => $employeeRates->all(),
                 'supports_cortador2_filter' => $supportsCortador2,
-                'cortador2_name' => $supportsCortador2 ? $this->metrics->cortador2NameFor($code) : null,
+                // Nombres que existen de verdad en cortador2: se eligen de una
+                // lista en vez de escribirlos (una letra de más = conteo en 0).
+                'available_cortadores' => $supportsCortador2 ? $this->availableCortadores($code) : [],
                 'authorizations' => [
                     'pending' => (int) $counts->firstWhere('status', Authorization::STATUS_PENDING)?->n,
                     'approved' => (int) $counts->firstWhere('status', Authorization::STATUS_APPROVED)?->n,
@@ -195,6 +237,23 @@ class MaquilaBonusController extends Controller
         }
 
         return $rows;
+    }
+
+    /**
+     * Nombres de cortador que existen en basemaquila, tolerando el túnel caído
+     * (la pantalla ya avisa del error y la lista sale vacía).
+     *
+     * @return list<string>
+     */
+    private function availableCortadores(string $code): array
+    {
+        try {
+            return $this->metrics->availableCortadores($code);
+        } catch (\Throwable $e) {
+            $this->metricsError ??= 'No se pudo consultar basemaquila (revisa el túnel): '.$e->getMessage();
+
+            return [];
+        }
     }
 
     private function resolveMonth(?string $raw): Carbon

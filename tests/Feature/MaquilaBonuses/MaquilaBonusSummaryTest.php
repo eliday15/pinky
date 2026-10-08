@@ -34,7 +34,11 @@ class MaquilaBonusSummaryTest extends FeatureTestCase
         $quantities[MaquilaBonusMetricsService::CODE_MAQUILA_MANDADA] = 210751;
         $this->mock(MaquilaBonusMetricsService::class, function (MockInterface $mock) use ($quantities) {
             $mock->shouldReceive('metricsForMonth')->once()->andReturn($quantities);
-            $mock->shouldReceive('cortador2NameFor')->andReturn('');
+            // Conceptos por cortador (Luis 2026-10-08): la pantalla pide el mapa
+            // empleado→cortador y la lista de nombres que existen.
+            $mock->shouldReceive('cortadorMapFor')->andReturn([]);
+            $mock->shouldReceive('availableCortadores')->andReturn([]);
+            $mock->shouldReceive('quantityForCortador')->andReturn(0);
         });
 
         $this->get(route('maquila-bonuses.index', ['month' => '2026-08']))

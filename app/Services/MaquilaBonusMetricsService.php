@@ -143,14 +143,14 @@ class MaquilaBonusMetricsService
         );
     }
 
-    private function ordenesFusion(int $year, int $month): int
+    private function ordenesFusion(int $year, int $month, ?string $cortador = null): int
     {
         // Sólo cuentan las órdenes de fusión que pasan el filtro de cortador2
         // ("esos son los que se pagan"); el conteo lo cobran los empleados que
         // el admin asigne al concepto.
         $sql = "SELECT COUNT(*) AS n FROM combinacion_alta WHERE noorden LIKE 'F%' AND tipo <> ?";
         $bindings = ['CANCELADO'];
-        $this->appendCortador2Filter(self::CODE_ORDENES_FUSION, $sql, $bindings);
+        $this->appendCortador2Filter(self::CODE_ORDENES_FUSION, $sql, $bindings, $cortador);
         $sql .= ' AND YEAR(fecha_alta) = ? AND MONTH(fecha_alta) = ?';
         $bindings[] = $year;
         $bindings[] = $month;
@@ -172,16 +172,151 @@ class MaquilaBonusMetricsService
      * con nombre ("esos son los que se pagan"). El conteo lo cobran los empleados
      * que el admin asigne al concepto.
      */
-    private function ordenesCortadas(int $year, int $month): int
+    private function ordenesCortadas(int $year, int $month, ?string $cortador = null): int
     {
         $sql = 'SELECT COUNT(*) AS n FROM corte_alta WHERE tipo <> ?';
         $bindings = ['CANCELADO'];
-        $this->appendCortador2Filter(self::CODE_ORDENES_CORTADAS, $sql, $bindings);
+        $this->appendCortador2Filter(self::CODE_ORDENES_CORTADAS, $sql, $bindings, $cortador);
         $sql .= ' AND YEAR(fecha_alta) = ? AND MONTH(fecha_alta) = ?';
         $bindings[] = $year;
         $bindings[] = $month;
 
         return (int) $this->scalar($sql, $bindings);
+    }
+
+    /**
+     * Cuántas órdenes del mes cortó una persona en concreto (Luis 2026-10-08:
+     * "cada quien cobra lo que cortó según la lista de cortadores").
+     *
+     * Devuelve 0 con el nombre vacío: sin cortador asignado no hay nada que
+     * cobrar — y la pantalla lo señala en vez de pagarle el conteo de todos.
+     */
+    public function quantityForCortador(string $code, int $year, int $month, string $cortador): int
+    {
+        $name = trim($cortador);
+
+        if ($name === '' || ! in_array($code, self::cortador2FilteredCodes(), true)) {
+            return 0;
+        }
+
+        return match ($code) {
+            self::CODE_ORDENES_FUSION => $this->ordenesFusion($year, $month, $name),
+            self::CODE_ORDENES_CORTADAS => $this->ordenesCortadas($year, $month, $name),
+            default => 0,
+        };
+    }
+
+    /**
+     * Nombres que REALMENTE existen en la columna `cortador2` del último año.
+     *
+     * Alimenta la lista del módulo: antes el nombre se escribía a mano y una
+     * letra o un espacio de más dejaba el conteo en cero sin avisar.
+     *
+     * @return list<string>
+     */
+    public function availableCortadores(string $code): array
+    {
+        $table = match ($code) {
+            self::CODE_ORDENES_FUSION => 'combinacion_alta',
+            self::CODE_ORDENES_CORTADAS => 'corte_alta',
+            default => null,
+        };
+
+        if ($table === null) {
+            return [];
+        }
+
+        $sql = "SELECT DISTINCT LTRIM(RTRIM(cortador2)) AS nombre
+                FROM {$table}
+                WHERE cortador2 IS NOT NULL AND LTRIM(RTRIM(cortador2)) <> ''
+                  AND fecha_alta >= ?
+                ORDER BY nombre";
+
+        $rows = DB::connection('basemaquila')->select($sql, [
+            now()->subYear()->startOfDay()->toDateTimeString(),
+        ]);
+
+        return collect($rows)
+            ->pluck('nombre')
+            ->map(fn ($name) => trim((string) $name))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /** Llave del mapa empleado → cortador de un concepto. */
+    public static function cortadorMapSettingKey(string $code): string
+    {
+        return 'maquila_bonus_cortador_map:'.$code;
+    }
+
+    /**
+     * Mapa empleado → nombre del cortador que cobra, para un concepto.
+     *
+     * @return array<int, string>
+     */
+    public function cortadorMapFor(string $code): array
+    {
+        $raw = (string) SystemSetting::get(self::cortadorMapSettingKey($code), '');
+
+        if (trim($raw) === '') {
+            return [];
+        }
+
+        $decoded = json_decode($raw, true);
+
+        if (! is_array($decoded)) {
+            return [];
+        }
+
+        $map = [];
+        foreach ($decoded as $employeeId => $name) {
+            $name = trim((string) $name);
+            if ((int) $employeeId > 0 && $name !== '') {
+                $map[(int) $employeeId] = $name;
+            }
+        }
+
+        return $map;
+    }
+
+    /** El cortador que cobra un empleado en un concepto (vacío = sin asignar). */
+    public function cortadorForEmployee(string $code, int $employeeId): string
+    {
+        return $this->cortadorMapFor($code)[$employeeId] ?? '';
+    }
+
+    /**
+     * Asigna (o quita, con nombre vacío) el cortador que cobra un empleado.
+     */
+    public function setCortadorForEmployee(string $code, int $employeeId, string $cortador): void
+    {
+        $map = $this->cortadorMapFor($code);
+        $name = trim($cortador);
+
+        if ($name === '') {
+            unset($map[$employeeId]);
+        } else {
+            $map[$employeeId] = $name;
+        }
+
+        ksort($map);
+
+        $key = self::cortadorMapSettingKey($code);
+
+        SystemSetting::firstOrCreate(
+            ['key' => $key],
+            [
+                'value' => '',
+                'type' => 'string',
+                'group' => SystemSetting::GROUP_PAYROLL,
+                'label' => "Cortador que cobra cada empleado en {$code}",
+                'description' => 'Mapa JSON empleado → nombre en cortador2: cada quien cobra solo las órdenes que cortó.',
+            ],
+        );
+
+        SystemSetting::set($key, $map === [] ? '' : json_encode($map));
     }
 
     /**
@@ -235,9 +370,11 @@ class MaquilaBonusMetricsService
      * Agrega al SQL el filtro de cortador2 según la config del concepto: nombre
      * exacto si está configurado, o "cualquier cortador2 con nombre" si vacío.
      */
-    private function appendCortador2Filter(string $code, string &$sql, array &$bindings): void
+    private function appendCortador2Filter(string $code, string &$sql, array &$bindings, ?string $cortador = null): void
     {
-        $name = $this->cortador2NameFor($code);
+        // Un cortador explícito (el que cobra ese empleado) manda sobre el
+        // filtro global del concepto.
+        $name = $cortador !== null ? trim($cortador) : $this->cortador2NameFor($code);
 
         if ($name !== '') {
             $sql .= ' AND LTRIM(RTRIM(cortador2)) = ?';

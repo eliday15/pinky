@@ -1,7 +1,7 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
-import { computed, reactive, ref } from 'vue';
+import { computed, ref } from 'vue';
 
 const props = defineProps({
     month: String,          // YYYY-MM
@@ -30,20 +30,22 @@ const generar = () => {
     });
 };
 
-// Filtro por cortador2 (nombre exacto configurable por concepto).
+// Cada quien cobra lo que cortó (Luis 2026-10-08): por concepto, a cada
+// empleado asignado se le elige SU cortador de la lista que existe en
+// basemaquila, y su cantidad del mes es la de ese cortador.
 const cortador2Concepts = computed(() => props.concepts.filter((c) => c.supports_cortador2_filter));
-const filterNames = reactive(
-    Object.fromEntries(
-        props.concepts.filter((c) => c.supports_cortador2_filter).map((c) => [c.code, c.cortador2_name || '']),
-    ),
-);
-const savingFilter = ref(null);
+const savingCortador = ref(null);
 
-const guardarFiltro = (code) => {
-    savingFilter.value = code;
-    router.post(route('maquila-bonuses.save-filter'), { code, name: filterNames[code], month: props.month }, {
+const asignarCortador = (code, employeeId, cortador) => {
+    savingCortador.value = `${code}:${employeeId}`;
+    router.post(route('maquila-bonuses.save-cortador'), {
+        code,
+        employee_id: employeeId,
+        cortador,
+        month: props.month,
+    }, {
         preserveScroll: true,
-        onFinish: () => { savingFilter.value = null; },
+        onFinish: () => { savingCortador.value = null; },
     });
 };
 
@@ -145,34 +147,54 @@ const anyConfigPending = computed(() =>
                 <Link :href="route('compensation-types.index')" class="underline">Conceptos</Link>.
             </div>
 
-            <!-- Filtro por cortador2 -->
+            <!-- Quién cobra qué: un cortador por empleado -->
             <div v-if="cortador2Concepts.length" class="bg-white rounded-lg shadow p-6 mb-6">
-                <h3 class="text-lg font-semibold text-gray-800 mb-1">Filtro por cortador2</h3>
+                <h3 class="text-lg font-semibold text-gray-800 mb-1">Cortadores: quién cobra qué</h3>
                 <p class="text-sm text-gray-500 mb-4">
-                    Para estos bonos se cuentan sólo las órdenes cuyo <code>cortador2</code> coincida con el nombre
-                    que pongas (ej. CARLOS). Déjalo vacío para contar todas las que tengan cualquier cortador2 con nombre.
+                    En estos bonos cada empleado cobra SOLO las órdenes que él cortó. Elige de la lista el cortador
+                    de cada quien: su cantidad del mes y su pago salen de ese nombre. Sin cortador asignado no se le
+                    genera nada.
                 </p>
-                <div v-for="c in cortador2Concepts" :key="c.code" class="flex flex-wrap items-end gap-3 mb-3">
-                    <div class="min-w-[200px]">
-                        <label class="block text-sm font-medium text-gray-700 mb-1">{{ c.name }}</label>
-                        <input
-                            v-model="filterNames[c.code]"
-                            type="text"
-                            placeholder="cualquier nombre"
-                            class="w-full rounded-md border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500"
-                        />
-                    </div>
-                    <button
-                        type="button"
-                        :disabled="savingFilter === c.code"
-                        class="inline-flex items-center rounded-md bg-gray-800 px-3 py-2 text-sm font-medium text-white hover:bg-gray-900 disabled:opacity-50"
-                        @click="guardarFiltro(c.code)"
+
+                <div v-for="c in cortador2Concepts" :key="c.code" class="mb-5 last:mb-0">
+                    <p class="text-sm font-medium text-gray-700 mb-2">{{ c.name }}</p>
+
+                    <p v-if="!c.employee_payouts.length" class="text-sm text-gray-500">
+                        Sin empleados asignados a este concepto.
+                    </p>
+
+                    <div
+                        v-for="e in c.employee_payouts"
+                        :key="e.employee_id"
+                        class="flex flex-wrap items-center gap-3 border-t border-gray-100 py-2 first:border-t-0"
                     >
-                        {{ savingFilter === c.code ? 'Guardando…' : 'Guardar' }}
-                    </button>
-                    <span class="pb-2 text-xs text-gray-500">
-                        actual: <strong>{{ c.cortador2_name || 'todas con cortador2' }}</strong>
-                    </span>
+                        <span class="min-w-[220px] text-sm text-gray-800">{{ e.name }}</span>
+
+                        <select
+                            :value="e.cortador"
+                            :disabled="savingCortador === `${c.code}:${e.employee_id}`"
+                            class="min-w-[200px] rounded-md border-gray-300 text-sm shadow-sm focus:border-pink-500 focus:ring-pink-500 disabled:opacity-50"
+                            @change="asignarCortador(c.code, e.employee_id, $event.target.value)"
+                        >
+                            <option value="">— sin cortador asignado —</option>
+                            <option
+                                v-for="nombre in c.available_cortadores"
+                                :key="nombre"
+                                :value="nombre"
+                            >{{ nombre }}</option>
+                            <option
+                                v-if="e.cortador && !c.available_cortadores.includes(e.cortador)"
+                                :value="e.cortador"
+                            >{{ e.cortador }} (sin órdenes este año)</option>
+                        </select>
+
+                        <span v-if="e.cortador" class="text-sm text-gray-600">
+                            {{ num(e.quantity) }} órdenes · {{ money(e.estimated_payout) }}
+                        </span>
+                        <span v-else class="text-sm text-amber-700">
+                            Sin cortador: no se le genera nada.
+                        </span>
+                    </div>
                 </div>
             </div>
 

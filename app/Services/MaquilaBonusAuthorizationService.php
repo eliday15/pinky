@@ -69,8 +69,13 @@ class MaquilaBonusAuthorizationService
             ->get()
             ->keyBy('code');
 
+        $perCortadorCodes = MaquilaBonusMetricsService::cortador2FilteredCodes();
+
         foreach ($quantities as $code => $quantity) {
             $concept = $concepts->get($code);
+            // Conceptos por cortador (Luis 2026-10-08): cada empleado cobra SOLO
+            // las órdenes que cortó, no el conteo global del concepto.
+            $perCortador = in_array($code, $perCortadorCodes, true);
 
             $row = [
                 'code' => $code,
@@ -80,6 +85,9 @@ class MaquilaBonusAuthorizationService
                 'created' => 0,
                 'updated' => 0,
                 'locked' => 0,
+                // Asignados sin cortador: no se les genera nada y se reportan
+                // por nombre, para que no se pierda el pago en silencio.
+                'without_cortador' => [],
             ];
 
             if ($concept === null) {
@@ -93,13 +101,35 @@ class MaquilaBonusAuthorizationService
             $row['assigned'] = $employees->count();
 
             // Nada que pagar (0 unidades) o sin empleados asignados: no se generan.
-            if ($quantity <= 0 || $employees->isEmpty()) {
+            // En los conceptos por cortador el conteo global puede ser 0 aunque
+            // un cortador tenga órdenes, así que ahí no se corta por $quantity.
+            if ((! $perCortador && $quantity <= 0) || $employees->isEmpty()) {
                 $summary[] = $row;
 
                 continue;
             }
 
             foreach ($employees as $employee) {
+                $cortador = $perCortador
+                    ? $this->metrics->cortadorForEmployee($code, $employee->id)
+                    : '';
+
+                $employeeQuantity = $quantity;
+
+                if ($perCortador) {
+                    if ($cortador === '') {
+                        $row['without_cortador'][] = $employee->full_name;
+
+                        continue;
+                    }
+
+                    $employeeQuantity = $this->metrics->quantityForCortador($code, $year, $month, $cortador);
+
+                    if ($employeeQuantity <= 0) {
+                        continue;
+                    }
+                }
+
                 $existing = Authorization::where('compensation_type_id', $concept->id)
                     ->where('employee_id', $employee->id)
                     ->where('bulk_group_id', $groupId)
@@ -118,14 +148,15 @@ class MaquilaBonusAuthorizationService
                 }
 
                 $reason = sprintf(
-                    'Bono de maquila — %s — %s — %s unidades (generado automáticamente desde basemaquila).',
+                    'Bono de maquila — %s — %s —%s %s unidades (generado automáticamente desde basemaquila).',
                     $concept->name,
                     $monthLabel,
-                    number_format($quantity),
+                    $cortador !== '' ? ' cortador '.$cortador.' —' : '',
+                    number_format($employeeQuantity),
                 );
 
                 if ($existing !== null) {
-                    $existing->update(['hours' => $quantity, 'reason' => $reason]);
+                    $existing->update(['hours' => $employeeQuantity, 'reason' => $reason]);
                     $row['updated']++;
 
                     continue;
@@ -137,7 +168,7 @@ class MaquilaBonusAuthorizationService
                     'type' => Authorization::TYPE_SPECIAL,
                     'compensation_type_id' => $concept->id,
                     'date' => $date,
-                    'hours' => $quantity,
+                    'hours' => $employeeQuantity,
                     'reason' => $reason,
                     'status' => Authorization::STATUS_PENDING,
                     'is_pre_authorization' => false,
