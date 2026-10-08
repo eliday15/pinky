@@ -144,8 +144,16 @@ class WeeklySummaryReportController extends Controller
         // deje de aparecer". La sección es la lista de FRT PENDIENTES: cada
         // incidencia FRT aprobada (el generador corre cada 10 min, así que los
         // cruces ya existen como incidencia) cuya fecha de cargo no cayó aún en
-        // un periodo semanal CERRADO con recibo del empleado. Sin proyecciones
-        // ni acumulados parciales; una falta perdonada (borrada) tampoco sale.
+        // una nómina semanal CON RECIBO del empleado. Sin proyecciones ni
+        // acumulados parciales; una falta perdonada (borrada) tampoco sale.
+        //
+        // "Descontada" = ya está en un recibo, sin esperar a que la nómina se
+        // apruebe o se pague (Luis 2026-10-08: "algunas faltas ya fueron
+        // aplicadas, solo muestra lo que sí corresponde"). Antes solo contaban
+        // los periodos aprobados/pagados, así que la falta de la semana en
+        // curso —ya descontada en su recibo, en revisión— seguía listada como
+        // pendiente. Si el periodo se borra o se recalcula sin ella, vuelve a
+        // aparecer sola.
         $frts = Incident::query()
             ->where('status', 'approved')
             ->whereNotNull('late_month')
@@ -156,10 +164,9 @@ class WeeklySummaryReportController extends Controller
 
         $retardos = [];
         if ($frts->isNotEmpty()) {
-            // Periodos semanales cerrados que podrían haber descontado alguna de
-            // estas FRT + los recibos que prueban que el empleado estuvo en ellos.
+            // Nóminas semanales que podrían haber descontado alguna de estas FRT
+            // + los recibos que prueban que el empleado estuvo en ellas.
             $closedPeriods = PayrollPeriod::where('type', 'weekly')
-                ->whereIn('status', ['approved', 'paid'])
                 ->where('end_date', '>=', $frts->min('start_date')->toDateString())
                 ->where('start_date', '<=', $toStr)
                 ->get(['id', 'start_date', 'end_date']);

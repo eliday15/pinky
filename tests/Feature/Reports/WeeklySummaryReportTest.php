@@ -193,6 +193,59 @@ class WeeklySummaryReportTest extends FeatureTestCase
             ->assertInertia(fn ($page) => $page->has('retardos', 0));
     }
 
+    public function test_frt_already_in_a_receipt_disappears_even_if_the_payroll_is_not_approved(): void
+    {
+        // Luis 2026-10-08: "algunas faltas ya fueron aplicadas, solo muestra lo
+        // que sí corresponde". La nómina de la semana en curso está EN REVISIÓN
+        // y su recibo ya trae el descuento: la falta no sigue pendiente.
+        $this->actingAsAdmin();
+        $this->type('FRT', 'late_accumulation', ['is_paid' => false, 'requires_approval' => false]);
+        $e = Employee::factory()->create(['status' => 'active', 'is_attendance_exempt' => false]);
+        foreach ([
+            '2026-06-01', '2026-06-02', '2026-06-03', '2026-06-04', '2026-06-05', '2026-06-08',
+        ] as $day) {
+            AttendanceRecord::factory()->create(['employee_id' => $e->id, 'work_date' => $day, 'status' => 'late']);
+        }
+        app(\App\Services\LateAbsenceService::class)->ensureMonthlyIncidentsGenerated($e);
+
+        $period = \App\Models\PayrollPeriod::factory()->weekly()->review()->create([
+            'start_date' => '2026-06-08',
+            'end_date' => '2026-06-14',
+        ]);
+        \App\Models\PayrollEntry::factory()->create([
+            'payroll_period_id' => $period->id,
+            'employee_id' => $e->id,
+        ]);
+
+        $this->get(route('reports.resumen', ['from' => '2026-06-08', 'to' => '2026-06-14']))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page->has('retardos', 0));
+    }
+
+    public function test_frt_without_a_receipt_in_that_cut_stays_pending(): void
+    {
+        // La nómina existe pero el empleado no tiene recibo en ella (entró
+        // después, otro alcance): su falta sigue pendiente de descontar.
+        $this->actingAsAdmin();
+        $this->type('FRT', 'late_accumulation', ['is_paid' => false, 'requires_approval' => false]);
+        $e = Employee::factory()->create(['status' => 'active', 'is_attendance_exempt' => false]);
+        foreach ([
+            '2026-06-01', '2026-06-02', '2026-06-03', '2026-06-04', '2026-06-05', '2026-06-08',
+        ] as $day) {
+            AttendanceRecord::factory()->create(['employee_id' => $e->id, 'work_date' => $day, 'status' => 'late']);
+        }
+        app(\App\Services\LateAbsenceService::class)->ensureMonthlyIncidentsGenerated($e);
+
+        \App\Models\PayrollPeriod::factory()->weekly()->review()->create([
+            'start_date' => '2026-06-08',
+            'end_date' => '2026-06-14',
+        ]);
+
+        $this->get(route('reports.resumen', ['from' => '2026-06-08', 'to' => '2026-06-14']))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page->has('retardos', 1));
+    }
+
     public function test_pardoned_frt_does_not_appear_as_pending(): void
     {
         // Una FRT borrada es un perdón humano: no está pendiente de nada.
