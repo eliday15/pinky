@@ -10,6 +10,7 @@ const props = defineProps({
     byEmployee: Array,
     summary: Object,
     includesAmounts: Boolean,
+    includePaid: Boolean,
 });
 
 const dateRange = ref({
@@ -18,6 +19,9 @@ const dateRange = ref({
 });
 
 const selectedMonth = ref(props.startDate.slice(0, 7));
+// Por omisión el reporte muestra solo lo PENDIENTE de pagar; el switch permite
+// volver a ver el acumulado completo (Luis 2026-10-08).
+const includePaid = ref(props.includePaid);
 const selectMonth = () => {
     if (!selectedMonth.value) return;
     const [year, month] = selectedMonth.value.split('-').map(Number);
@@ -28,13 +32,14 @@ const selectMonth = () => {
     applyFilter();
 };
 const exportUrl = () => route('reports.overtime', {
-    start_date: props.startDate, end_date: props.endDate, export: 'xlsx',
+    start_date: props.startDate, end_date: props.endDate, include_paid: props.includePaid, export: 'xlsx',
 });
 
 const applyFilter = () => {
     router.get(route('reports.overtime'), {
         start_date: dateRange.value.start,
         end_date: dateRange.value.end,
+        include_paid: includePaid.value,
     }, {
         preserveState: true,
         replace: true,
@@ -100,6 +105,15 @@ const formatCurrency = (amount) => {
                 >
                     Aplicar
                 </button>
+                <label class="flex items-center gap-2 text-sm text-gray-700">
+                    <input
+                        v-model="includePaid"
+                        type="checkbox"
+                        class="rounded border-gray-300 text-pink-600 focus:ring-pink-500"
+                        @change="applyFilter"
+                    />
+                    Incluir lo que ya se pagó
+                </label>
             </div>
             <a v-if="includesAmounts" :href="exportUrl()" class="inline-block mt-3 text-pink-600 font-medium">Descargar Excel del resultado</a>
             <p class="mt-2 text-sm text-gray-500">
@@ -107,7 +121,7 @@ const formatCurrency = (amount) => {
             </p>
         </div>
 
-        <p class="mb-4 text-sm text-gray-600">Acumulado de conceptos aprobados o pagados en las fechas seleccionadas, disponible antes del cierre. Incluye horas extra, veladas, cenas, comidas, fines de semana y otros conceptos autorizados. No incluye cálculo del sueldo base ni asignaciones recurrentes; los importes se estiman con las tarifas configuradas actualmente.</p>
+        <p class="mb-4 text-sm text-gray-600">{{ includePaid ? 'Acumulado de conceptos aprobados y ya pagados' : 'Conceptos aprobados PENDIENTES de pagar (lo ya pagado en nómina no aparece)' }} en las fechas seleccionadas, disponible antes del cierre. Incluye horas extra, veladas, cenas, comidas, fines de semana y otros conceptos autorizados. No incluye cálculo del sueldo base ni asignaciones recurrentes; los importes se estiman con las tarifas configuradas actualmente.</p>
 
         <p v-if="includesAmounts && summary.estimate_incomplete" class="mb-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">El total está incompleto: hay cantidades autorizadas sin importe calculable. Revisa las tarifas y conceptos asignados antes de pagar.</p>
         <!-- Summary Cards -->

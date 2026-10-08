@@ -21,7 +21,13 @@ class OvertimeSummaryReportService
         private readonly CompensationRateResolverService $resolver,
     ) {}
 
-    public function build(Collection $employeeIds, Carbon $start, Carbon $end): array
+    /**
+     * @param  bool  $includePaid  Incluir lo que la nómina YA pagó. Por omisión
+     *     NO: el reporte se usa para revisar lo que falta por pagar (Luis
+     *     2026-10-08: "quiero revisar el tiempo extra que va a pagar a fin de
+     *     mes y me aparecen conceptos que ya fueron pagados").
+     */
+    public function build(Collection $employeeIds, Carbon $start, Carbon $end, bool $includePaid = false): array
     {
         $from = $start->toDateString();
         $to = $end->toDateString();
@@ -36,7 +42,9 @@ class OvertimeSummaryReportService
         foreach ($employees as $employee) {
             $employeeRecords = $records->get($employee->id, collect());
             $employeeAuths = $auths->get($employee->id, collect());
-            $approved = $employeeAuths->whereIn('status', [Authorization::STATUS_APPROVED, Authorization::STATUS_PAID]);
+            $approved = $employeeAuths->whereIn('status', $includePaid
+                ? [Authorization::STATUS_APPROVED, Authorization::STATUS_PAID]
+                : [Authorization::STATUS_APPROVED]);
             $extraDates = $employeeRecords->toBase()->filter(fn ($r) => $r->overtime_hours > 0 || $r->overtime_authorized_hours > 0 || $r->velada_authorized_hours > 0)
                 ->map(fn ($r) => $r->work_date->toDateString())->merge($approved->map(fn ($a) => $a->date->toDateString()))->unique();
             if ($extraDates->isEmpty()) {

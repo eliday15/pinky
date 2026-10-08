@@ -308,6 +308,7 @@ class ReportController extends Controller implements HasMiddleware
             'start_date' => ['nullable', 'date'],
             'end_date' => ['nullable', 'date', 'after_or_equal:start_date'],
             'export' => ['nullable', 'in:xlsx'],
+            'include_paid' => ['nullable', 'boolean'],
         ]);
         $startDate = $request->start_date ? Carbon::parse($request->start_date) : Carbon::now()->startOfMonth();
         $endDate = $request->end_date ? Carbon::parse($request->end_date) : Carbon::now()->endOfMonth();
@@ -318,8 +319,12 @@ class ReportController extends Controller implements HasMiddleware
         if ($request->export === 'xlsx' && ! $includesAmounts) {
             abort(403);
         }
-        $report = app(OvertimeSummaryReportService::class)->build($this->scopedActiveEmployeeIds(), $startDate, $endDate);
+        // Por omisión se muestra solo lo PENDIENTE de pagar: el reporte sirve
+        // para revisar lo que se va a pagar a fin de mes (Luis 2026-10-08).
+        $includePaid = $request->boolean('include_paid');
+        $report = app(OvertimeSummaryReportService::class)->build($this->scopedActiveEmployeeIds(), $startDate, $endDate, $includePaid);
         $report['includesAmounts'] = $includesAmounts;
+        $report['includePaid'] = $includePaid;
         if (! $includesAmounts) {
             unset($report['summary']['total_estimated_cost'], $report['summary']['estimate_incomplete']);
             foreach ($report['summary']['concepts'] as &$concept) {
@@ -341,7 +346,7 @@ class ReportController extends Controller implements HasMiddleware
         if ($request->export === 'xlsx') {
             return \Maatwebsite\Excel\Facades\Excel::download(
                 new OvertimeSummaryExport($report),
-                'extras_'.$startDate->toDateString().'_'.$endDate->toDateString().'.xlsx',
+                'extras_'.($includePaid ? '' : 'pendientes_').$startDate->toDateString().'_'.$endDate->toDateString().'.xlsx',
             );
         }
 

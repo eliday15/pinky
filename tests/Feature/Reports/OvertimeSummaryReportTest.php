@@ -34,6 +34,13 @@ class OvertimeSummaryReportTest extends FeatureTestCase
 
     private function report(Employee ...$employees): array
     {
+        // Los casos existentes miran el acumulado completo (incluido lo pagado);
+        // lo pendiente-por-pagar tiene sus propios tests más abajo.
+        return app(OvertimeSummaryReportService::class)->build(collect($employees)->pluck('id'), Carbon::parse('2026-08-24'), Carbon::parse('2026-09-30'), includePaid: true);
+    }
+
+    private function pendingReport(Employee ...$employees): array
+    {
         return app(OvertimeSummaryReportService::class)->build(collect($employees)->pluck('id'), Carbon::parse('2026-08-24'), Carbon::parse('2026-09-30'));
     }
 
@@ -69,8 +76,12 @@ class OvertimeSummaryReportTest extends FeatureTestCase
         $export = (new OvertimeSummaryExport($report))->array();
         $this->assertSame(1670.0, end($export)[9]);
         $this->assertSame(1550.0, $rows[$employee->id]['estimated_cost']);
-        $this->get(route('reports.overtime', ['start_date' => '2026-08-24', 'end_date' => '2026-09-30']))
+        // El acumulado COMPLETO (con lo ya pagado) vive tras el switch; por
+        // omisión la pantalla muestra lo pendiente de pagar.
+        $this->get(route('reports.overtime', ['start_date' => '2026-08-24', 'end_date' => '2026-09-30', 'include_paid' => 1]))
             ->assertOk()->assertInertia(fn (Assert $page) => $page->where('summary.total_estimated_cost', 1670)->has('byEmployee', 2));
+        $this->get(route('reports.overtime', ['start_date' => '2026-08-24', 'end_date' => '2026-09-30']))
+            ->assertOk()->assertInertia(fn (Assert $page) => $page->where('summary.total_estimated_cost', 1370)->where('includePaid', false));
         $this->get(route('reports.overtime', ['start_date' => '2026-08-24', 'end_date' => '2026-09-30', 'export' => 'xlsx']))
             ->assertOk()->assertHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     }
@@ -164,6 +175,47 @@ class OvertimeSummaryReportTest extends FeatureTestCase
             'type' => 'overtime', 'date' => '2026-09-02', 'hours' => 4,
         ]);
         $this->assertTrue($this->report($employee)['summary']['estimate_incomplete']);
+    }
+
+    public function test_paid_concepts_are_hidden_by_default(): void
+    {
+        // Luis 2026-10-08: "quiero revisar el tiempo extra que va a pagar a fin
+        // de mes y me aparecen conceptos que ya fueron pagados". Lo que la
+        // nómina ya pagó no se vuelve a listar.
+        $employee = Employee::factory()->create(['status' => 'active']);
+        $cena = $this->concept('CENA_RPT', 50.0);
+        $this->authorize($employee, $cena, '2026-09-10', status: Authorization::STATUS_PAID);
+        $this->authorize($employee, $cena, '2026-09-28', status: Authorization::STATUS_APPROVED);
+
+        $pending = $this->pendingReport($employee);
+        $row = collect($pending['byEmployee'])->firstWhere('employee.id', $employee->id);
+
+        $this->assertNotNull($row, 'sigue apareciendo por lo que falta pagar');
+        $this->assertEqualsWithDelta(50.0, (float) $row['estimated_cost'], 0.01, 'solo la cena aprobada, no la pagada');
+    }
+
+    public function test_including_paid_brings_the_full_accrual_back(): void
+    {
+        $employee = Employee::factory()->create(['status' => 'active']);
+        $cena = $this->concept('CENA_RPT', 50.0);
+        $this->authorize($employee, $cena, '2026-09-10', status: Authorization::STATUS_PAID);
+        $this->authorize($employee, $cena, '2026-09-28', status: Authorization::STATUS_APPROVED);
+
+        $row = collect($this->report($employee)['byEmployee'])->firstWhere('employee.id', $employee->id);
+
+        $this->assertEqualsWithDelta(100.0, (float) $row['estimated_cost'], 0.01, 'con el switch prendido salen las dos');
+    }
+
+    public function test_an_employee_with_everything_already_paid_disappears(): void
+    {
+        $employee = Employee::factory()->create(['status' => 'active']);
+        $cena = $this->concept('CENA_RPT', 50.0);
+        $this->authorize($employee, $cena, '2026-09-10', status: Authorization::STATUS_PAID);
+
+        $this->assertNull(
+            collect($this->pendingReport($employee)['byEmployee'])->firstWhere('employee.id', $employee->id),
+            'sin nada pendiente, no ensucia la revisión de fin de mes',
+        );
     }
 
     public function test_reversed_range_is_rejected(): void
