@@ -313,12 +313,17 @@ class AttendanceReportController extends Controller implements HasMiddleware
                 'total_late_minutes' => $totalMinutes,
                 'avg_late_minutes' => $lateCount > 0 ? round($totalMinutes / $lateCount) : 0,
                 'generates_falta' => $lateCount >= $lateToAbsenceCount,
+                // Los días se listan EN ORDEN (Luis 2026-10-08): la consulta
+                // viene ordenada por minutos para el resto del reporte, y en el
+                // renglón se veían salteados (29 sep, 10 sep, 22 sep…), que no
+                // coincide con el recibo —que los lista por fecha— y hace dudar
+                // del conteo.
                 'dates' => array_map(fn ($r) => [
                     'date' => $r->work_date,
                     'minutes' => $r->late_minutes,
                     'check_in' => $r->check_in,
                     'expected_entry' => $this->entryTimeForDate($employees[$eid], $r->work_date),
-                ], $records),
+                ], collect($records)->sortBy('work_date')->values()->all()),
             ];
         })->filter(fn ($e) => $e['employee'] !== null)
             ->sortByDesc('late_count')

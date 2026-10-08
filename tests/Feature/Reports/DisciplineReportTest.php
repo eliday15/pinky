@@ -349,6 +349,36 @@ class DisciplineReportTest extends FeatureTestCase
                     ->etc()));
     }
 
+    public function test_retardos_lists_the_days_in_date_order(): void
+    {
+        // Luis 2026-10-08: los días salían salteados (29 sep, 10 sep, 22 sep…)
+        // porque la consulta ordena por minutos. En el renglón se leen como
+        // fechas, y el recibo los lista por día: tienen que coincidir.
+        $this->actingAsAdmin();
+        $employee = $this->weekdayEmployee();
+
+        AttendanceRecord::factory()->late()->create([
+            'employee_id' => $employee->id,
+            'work_date' => self::MONDAY,
+            'late_minutes' => 10,
+        ]);
+        AttendanceRecord::factory()->late()->create([
+            'employee_id' => $employee->id,
+            'work_date' => self::TUESDAY,
+            'late_minutes' => 30,
+        ]);
+
+        $this->get(route('reports.retardos', [
+            'start_date' => self::RANGE_START,
+            'end_date' => self::WEEK_END,
+        ]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('byEmployee.0.dates.0.date', self::MONDAY)
+                ->where('byEmployee.0.dates.1.date', self::TUESDAY)
+                ->etc());
+    }
+
     public function test_retardos_marks_generates_falta_at_threshold(): void
     {
         $this->actingAsAdmin();
