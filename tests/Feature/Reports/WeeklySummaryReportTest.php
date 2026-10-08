@@ -135,82 +135,100 @@ class WeeklySummaryReportTest extends FeatureTestCase
                 ->where('faltas.0.name', $falton->full_name));
     }
 
-    public function test_retardos_section_shows_the_running_accumulation(): void
+    public function test_retardos_below_threshold_never_appear(): void
     {
-        // Dani 2026-10-07: la sección muestra lo que SE VA ACUMULANDO al corte
-        // del rango. En la semana del 1-7 de junio ambos van acumulando (el 6º
-        // retardo del primero cae el día 8, fuera del rango).
+        // Dani 2026-10-07 (textual): "solo quiero que aparezcan las personas que
+        // ya cumplieron los 6 retardos". Acumulados parciales NO se listan.
         $this->actingAsAdmin();
-        $cerca = Employee::factory()->create(['status' => 'active', 'is_attendance_exempt' => false]);
-        $lejos = Employee::factory()->create(['status' => 'active', 'is_attendance_exempt' => false]);
-
-        foreach (['2026-06-01', '2026-06-02', '2026-06-03', '2026-06-04', '2026-06-05', '2026-06-08'] as $day) {
-            AttendanceRecord::factory()->create(['employee_id' => $cerca->id, 'work_date' => $day, 'status' => 'late']);
-        }
-        foreach (['2026-06-01', '2026-06-02'] as $day) {
-            AttendanceRecord::factory()->create(['employee_id' => $lejos->id, 'work_date' => $day, 'status' => 'late']);
+        $e = Employee::factory()->create(['status' => 'active', 'is_attendance_exempt' => false]);
+        foreach (['2026-06-01', '2026-06-02', '2026-06-03', '2026-06-04', '2026-06-05'] as $day) {
+            AttendanceRecord::factory()->create(['employee_id' => $e->id, 'work_date' => $day, 'status' => 'late']);
         }
 
         $this->get(route('reports.resumen', ['from' => self::FROM, 'to' => self::TO]))
             ->assertOk()
-            ->assertInertia(fn ($page) => $page
-                ->has('retardos', 2)
-                ->where('retardos.0.name', $cerca->full_name)
-                ->where('retardos.0.count', 5)
-                ->where('retardos.0.observaciones', '5 retardos acumulados — a los 6 se genera la falta')
-                ->where('retardos.1.name', $lejos->full_name)
-                ->where('retardos.1.count', 2));
+            ->assertInertia(fn ($page) => $page->has('retardos', 0));
     }
 
-    public function test_generated_falta_appears_only_in_its_cut_and_never_again(): void
+    public function test_frt_appears_while_pending_and_disappears_once_discounted(): void
     {
-        // Dani 2026-10-07: "que lo que el sistema ya autogeneró como falta deje
-        // de aparecer" — la falta sale UNA vez, en el corte donde se cumplió el
-        // 6º retardo, y las semanas siguientes solo muestran el residuo que se
-        // sigue acumulando (o nada, si no hay residuo).
+        // Dani 2026-10-07: la sección lista las faltas por retardo PENDIENTES de
+        // descontar; "una vez que ya se haya descontado, que deje de aparecer".
         $this->actingAsAdmin();
+        $this->type('FRT', 'late_accumulation', ['is_paid' => false, 'requires_approval' => false]);
         $e = Employee::factory()->create(['status' => 'active', 'is_attendance_exempt' => false]);
         foreach ([
-            '2026-06-01', '2026-06-02', '2026-06-03', '2026-06-04', '2026-06-05',
-            '2026-06-08', '2026-06-09', '2026-06-10',
+            '2026-06-01', '2026-06-02', '2026-06-03', '2026-06-04', '2026-06-05', '2026-06-08',
         ] as $day) {
             AttendanceRecord::factory()->create(['employee_id' => $e->id, 'work_date' => $day, 'status' => 'late']);
         }
         app(\App\Services\LateAbsenceService::class)->ensureMonthlyIncidentsGenerated($e);
 
-        // Semana del cruce (8-14 jun): la falta (6º retardo el 8) + el residuo (2).
+        // Pendiente: aparece en la semana del cruce (6º retardo el 8 de junio)…
         $this->get(route('reports.resumen', ['from' => '2026-06-08', 'to' => '2026-06-14']))
             ->assertOk()
             ->assertInertia(fn ($page) => $page
-                ->has('retardos', 2)
-                ->where('retardos.0.date', '08/06/2026')
-                ->where('retardos.0.observaciones', '1 falta por retardos aplicada en este corte (lleva 8 retardos en el mes)')
-                ->where('retardos.1.count', 2)
-                ->where('retardos.1.observaciones', '2 retardos acumulados — a los 6 se genera la falta'));
-
-        // Semana posterior (15-21 jun): la falta ya NO reaparece; solo el residuo.
-        $this->get(route('reports.resumen', ['from' => '2026-06-15', 'to' => '2026-06-21']))
-            ->assertOk()
-            ->assertInertia(fn ($page) => $page
                 ->has('retardos', 1)
-                ->where('retardos.0.count', 2)
-                ->where('retardos.0.observaciones', '2 retardos acumulados — a los 6 se genera la falta'));
+                ->where('retardos.0.date', '08/06/2026')
+                ->where('retardos.0.observaciones', '1 falta por retardos pendiente de descontar en nómina'));
+
+        // …y SIGUE apareciendo en semanas posteriores mientras no se descuente.
+        $this->get(route('reports.resumen', ['from' => '2026-06-22', 'to' => '2026-06-28']))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page->has('retardos', 1));
+
+        // Descontada: el periodo semanal que contiene el cargo se cierra con
+        // recibo del empleado → deja de aparecer en cualquier semana.
+        $period = \App\Models\PayrollPeriod::factory()->weekly()->approved()->create([
+            'start_date' => '2026-06-08',
+            'end_date' => '2026-06-14',
+        ]);
+        \App\Models\PayrollEntry::factory()->create([
+            'payroll_period_id' => $period->id,
+            'employee_id' => $e->id,
+        ]);
+
+        $this->get(route('reports.resumen', ['from' => '2026-06-22', 'to' => '2026-06-28']))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page->has('retardos', 0));
+    }
+
+    public function test_pardoned_frt_does_not_appear_as_pending(): void
+    {
+        // Una FRT borrada es un perdón humano: no está pendiente de nada.
+        $this->actingAsAdmin();
+        $this->type('FRT', 'late_accumulation', ['is_paid' => false, 'requires_approval' => false]);
+        $e = Employee::factory()->create(['status' => 'active', 'is_attendance_exempt' => false]);
+        foreach ([
+            '2026-06-01', '2026-06-02', '2026-06-03', '2026-06-04', '2026-06-05', '2026-06-08',
+        ] as $day) {
+            AttendanceRecord::factory()->create(['employee_id' => $e->id, 'work_date' => $day, 'status' => 'late']);
+        }
+        app(\App\Services\LateAbsenceService::class)->ensureMonthlyIncidentsGenerated($e);
+        Incident::where('employee_id', $e->id)->get()->each->delete();
+
+        $this->get(route('reports.resumen', ['from' => '2026-06-08', 'to' => '2026-06-14']))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page->has('retardos', 0));
     }
 
     public function test_faltas_and_retardos_coexist_without_clobbering(): void
     {
-        // Guard contra la colisión de variable: con faltas Y retardos-sobre-umbral
+        // Guard contra la colisión de variable: con faltas Y una FRT pendiente
         // a la vez, ambas secciones deben quedar como listas pobladas.
         $this->actingAsAdmin();
         $falton = Employee::factory()->create(['status' => 'active', 'is_attendance_exempt' => false]);
         $retardon = Employee::factory()->create(['status' => 'active', 'is_attendance_exempt' => false]);
 
+        $this->type('FRT', 'late_accumulation', ['is_paid' => false, 'requires_approval' => false]);
         AttendanceRecord::factory()->create(['employee_id' => $falton->id, 'work_date' => '2026-06-03', 'status' => 'absent']);
         foreach (['2026-06-01', '2026-06-02', '2026-06-03', '2026-06-04', '2026-06-05', '2026-06-08'] as $day) {
             AttendanceRecord::factory()->create(['employee_id' => $retardon->id, 'work_date' => $day, 'status' => 'late']);
         }
+        app(\App\Services\LateAbsenceService::class)->ensureMonthlyIncidentsGenerated($retardon);
 
-        $this->get(route('reports.resumen', ['from' => self::FROM, 'to' => self::TO]))
+        // Rango que incluye la falta (3 jun) y el cargo de la FRT (8 jun).
+        $this->get(route('reports.resumen', ['from' => self::FROM, 'to' => '2026-06-14']))
             ->assertOk()
             ->assertInertia(fn ($page) => $page
                 ->has('faltas', 1)

@@ -7,7 +7,8 @@ use App\Models\AttendanceRecord;
 use App\Models\Employee;
 use App\Models\Holiday;
 use App\Models\Incident;
-use App\Services\LateAbsenceService;
+use App\Models\PayrollEntry;
+use App\Models\PayrollPeriod;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -70,12 +71,12 @@ class WeeklySummaryReportController extends Controller
         $toStr = $to->toDateString();
 
         // Empleados activos (no exentos de checada para las faltas) + nombres.
-        // schedule/schedule_overrides viajan porque la regla de retardos
-        // (LateAbsenceService::lateDatesForMonth → isObligatoryWorkDay) los
-        // necesita: sin ellos todos los retardos se descartan en silencio.
+        // OJO si algún día esta vista vuelve a llamar LateAbsenceService con
+        // estos modelos: con un select parcial sin schedule_id/schedule_overrides
+        // isObligatoryWorkDay descarta TODOS los retardos en silencio.
         $employees = Employee::active()
-            ->with(['department:id,name', 'schedule'])
-            ->get(['id', 'full_name', 'employee_number', 'department_id', 'is_attendance_exempt', 'birth_date', 'schedule_id', 'schedule_overrides'])
+            ->with('department:id,name')
+            ->get(['id', 'full_name', 'employee_number', 'department_id', 'is_attendance_exempt', 'birth_date'])
             ->keyBy('id');
 
         $label = fn ($e) => [
@@ -137,81 +138,60 @@ class WeeklySummaryReportController extends Controller
             ->sortBy(fn ($row) => ($row['name'] ?? '').'|'.($row['date'] ?? ''))
             ->values()->all();
 
-        // ---- FALTAS POR RETARDO ---- Acumulación MENSUAL: N retardos = 1 falta
-        // (LateAbsenceService, única fuente de verdad). Dani 2026-10-07: cuando
-        // la falta ya se autogeneró, su desglose NO vuelve a aparecer en semanas
-        // posteriores. Cada falta sale UNA vez, en el corte que contiene el
-        // retardo que cruzó el umbral (reportDetails — el mismo criterio que
-        // Reports/Faltas y el reporte al contador), y aparte se lista lo que se
-        // VA ACUMULANDO: los retardos del mes aún sin consumir por una falta.
-        $lateService = app(LateAbsenceService::class);
-        $threshold = $lateService->threshold();
-        $ruleStart = $lateService->startMonth();
-        $months = [];
-        for ($c = $from->copy()->startOfMonth(); $c->lte($to); $c->addMonthNoOverflow()) {
-            $months[$c->format('Y-m')] = [$c->copy()->startOfMonth(), $c->copy()->endOfMonth()];
-        }
-
-        // Candidatos: con algún retardo en los meses que toca el rango (una
-        // falta cobrada en el rango siempre implica retardos en su mes).
-        $candidateIds = AttendanceRecord::whereBetween('work_date', [
-            $from->copy()->startOfMonth()->toDateString(),
-            $to->copy()->endOfMonth()->toDateString(),
-        ])
+        // ---- FALTAS POR RETARDO ---- Dani 2026-10-07 (textual): "solo quiero
+        // que aparezcan las personas que ya cumplieron los 6 retardos y cuya
+        // falta aún no se ha descontado. Una vez que ya se haya descontado, que
+        // deje de aparecer". La sección es la lista de FRT PENDIENTES: cada
+        // incidencia FRT aprobada (el generador corre cada 10 min, así que los
+        // cruces ya existen como incidencia) cuya fecha de cargo no cayó aún en
+        // un periodo semanal CERRADO con recibo del empleado. Sin proyecciones
+        // ni acumulados parciales; una falta perdonada (borrada) tampoco sale.
+        $frts = Incident::query()
+            ->where('status', 'approved')
+            ->whereNotNull('late_month')
+            ->where('start_date', '<=', $toStr)
             ->whereIn('employee_id', $nonExemptIds)
-            ->where('status', 'late')
-            ->distinct()
-            ->pluck('employee_id');
+            ->orderBy('start_date')
+            ->get();
 
         $retardos = [];
-        $accrualEnd = $to->copy()->min(Carbon::today());
-        foreach ($candidateIds as $eid) {
-            $employee = $employees->get($eid);
-            if (! $employee) {
-                continue;
-            }
+        if ($frts->isNotEmpty()) {
+            // Periodos semanales cerrados que podrían haber descontado alguna de
+            // estas FRT + los recibos que prueban que el empleado estuvo en ellos.
+            $closedPeriods = PayrollPeriod::where('type', 'weekly')
+                ->whereIn('status', ['approved', 'paid'])
+                ->where('end_date', '>=', $frts->min('start_date')->toDateString())
+                ->where('start_date', '<=', $toStr)
+                ->get(['id', 'start_date', 'end_date']);
+            $entryKeys = PayrollEntry::whereIn('payroll_period_id', $closedPeriods->pluck('id'))
+                ->whereIn('employee_id', $frts->pluck('employee_id')->unique())
+                ->get(['employee_id', 'payroll_period_id'])
+                ->map(fn ($e) => $e->employee_id.'|'.$e->payroll_period_id)
+                ->flip();
 
-            // Faltas cuyo cruce de umbral cae dentro del rango.
-            foreach ($lateService->reportDetails($employee, $from, $to) as $detail) {
-                $f = $detail['faltas'];
+            foreach ($frts as $frt) {
+                $employee = $employees->get($frt->employee_id);
+                if (! $employee) {
+                    continue;
+                }
+                $chargeDate = $frt->start_date->toDateString();
+                $discounted = $closedPeriods->contains(fn ($p) => $p->start_date->toDateString() <= $chargeDate
+                    && $p->end_date->toDateString() >= $chargeDate
+                    && isset($entryKeys[$frt->employee_id.'|'.$p->id]));
+                if ($discounted) {
+                    continue;
+                }
+                $f = max(1, (int) $frt->days_count);
                 $retardos[] = array_merge($label($employee), [
-                    'date' => Carbon::parse($detail['charged_on'])->format('d/m/Y'),
-                    'observaciones' => ($f === 1
-                        ? '1 falta por retardos aplicada en este corte'
-                        : $f.' faltas por retardos aplicadas en este corte')
-                        .' (lleva '.$detail['late_count'].' retardos en el mes)',
-                    'count' => (int) $detail['late_count'],
+                    'date' => $frt->start_date->format('d/m/Y'),
+                    'observaciones' => ($f === 1 ? '1 falta' : $f.' faltas')
+                        .' por retardos pendiente'.($f === 1 ? '' : 's')
+                        .' de descontar en nómina',
                 ]);
-            }
-
-            // Residuo acumulándose al corte del rango: retardos del mes que aún
-            // no completan la siguiente falta (los ya consumidos no reaparecen;
-            // una falta perdonada tampoco los libera).
-            foreach ($months as $ym => [$mStart, $mEnd]) {
-                if (! $ruleStart || $mStart->lt($ruleStart)) {
-                    continue;
-                }
-                $monthEnd = $accrualEnd->copy()->min($mEnd);
-                if ($monthEnd->lt($mStart)) {
-                    continue;
-                }
-                $dates = array_filter(
-                    $lateService->lateDatesForMonth($employee, $mStart),
-                    fn ($d) => $d <= $monthEnd->toDateString(),
-                );
-                $leftover = count($dates) % $threshold;
-                if ($leftover > 0) {
-                    $retardos[] = array_merge($label($employee), [
-                        'date' => ucfirst($mStart->locale('es')->isoFormat('MMMM YYYY')),
-                        'observaciones' => $leftover.' '.($leftover === 1 ? 'retardo acumulado' : 'retardos acumulados')
-                            .' — a los '.$threshold.' se genera la falta',
-                        'count' => $leftover,
-                    ]);
-                }
             }
         }
 
-        usort($retardos, fn ($a, $b) => $b['count'] <=> $a['count']);
+        usort($retardos, fn ($a, $b) => [$a['name'], $a['date']] <=> [$b['name'], $b['date']]);
 
         // ---- CUMPLEAÑOS ---- Colaboradores activos cuyo cumpleaños cae en el/los
         // mes(es) que toca el rango (Luis 2026-08-06). Fecha = nacimiento;
