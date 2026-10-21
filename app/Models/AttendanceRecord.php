@@ -173,6 +173,10 @@ class AttendanceRecord extends Model
      * medianoche si aplica. Null cuando la checada está incompleta. Es la
      * base de la regla de fin de semana (Dani 2026-07-08: "las 7 horas se
      * cuentan corridas, incluyendo el tiempo de comida").
+     *
+     * Se mide AL MINUTO, igual que se muestran las checadas (Dani 2026-10-21,
+     * caso Fernanda: 08:21:13 → 20:21:01 se ve como 12 h pero con segundos
+     * daba 11.9967 y el FIN no llegaba a las 2 unidades).
      */
     public function grossSpanHours(): ?float
     {
@@ -181,8 +185,8 @@ class AttendanceRecord extends Model
         }
 
         $date = \Carbon\Carbon::parse($this->work_date)->toDateString();
-        $in = \Carbon\Carbon::parse($date.' '.\Carbon\Carbon::parse($this->check_in)->format('H:i:s'));
-        $out = \Carbon\Carbon::parse($date.' '.\Carbon\Carbon::parse($this->check_out)->format('H:i:s'));
+        $in = \Carbon\Carbon::parse($date.' '.\Carbon\Carbon::parse($this->check_in)->format('H:i'));
+        $out = \Carbon\Carbon::parse($date.' '.\Carbon\Carbon::parse($this->check_out)->format('H:i'));
         if ($out->lt($in) || $this->outPunchCrossesMidnight()) {
             $out->addDay();
         }

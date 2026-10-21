@@ -101,6 +101,24 @@ class WeekendCapturedScheduleTest extends FeatureTestCase
         $this->assertSame(1, app(WeekendAuthorizationUnitService::class)->backedUnits($authorization));
     }
 
+    public function test_punch_span_is_measured_to_the_minute_so_displayed_twelve_hours_back_two_units(): void
+    {
+        $department = Department::factory()->create(['weekend_unit_hours' => 6]);
+        $employee = Employee::factory()->create(['department_id' => $department->id]);
+        // Caso Fernanda (2026-10-18): se ve 08:21 → 20:21, con segundos son 11:59:48.
+        $record = AttendanceRecord::factory()->create([
+            'employee_id' => $employee->id,
+            'work_date' => '2026-10-18',
+            'check_in' => '08:21:13',
+            'check_out' => '20:21:01',
+            'velada_hours' => 0,
+        ]);
+
+        $this->assertSame(12.0, $record->grossSpanHours());
+        $this->assertSame(2, app(WeekendAuthorizationUnitService::class)
+            ->backedUnitsFor($employee->load('department'), $record));
+    }
+
     public function test_normal_department_keeps_threshold_rule_for_captured_schedule(): void
     {
         $department = Department::factory()->create([
