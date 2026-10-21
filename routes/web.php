@@ -153,6 +153,7 @@ Route::middleware(['auth', 'password-changed', 'two-factor-setup'])->group(funct
     Route::post('/desayunos/kiosco/lookup', [BreakfastController::class, 'lookup'])->name('breakfasts.lookup');
     Route::post('/desayunos/kiosco/status', [BreakfastController::class, 'status'])->name('breakfasts.status');
     Route::get('/desayunos', [BreakfastController::class, 'index'])->name('breakfasts.index');
+    Route::get('/desayunos/exportar', [BreakfastController::class, 'export'])->name('breakfasts.export');
     Route::post('/desayunos', [BreakfastController::class, 'store'])->name('breakfasts.store');
 
     // Reports

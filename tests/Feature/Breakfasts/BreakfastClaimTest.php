@@ -410,6 +410,38 @@ class BreakfastClaimTest extends FeatureTestCase
         $this->get(route('breakfasts.index'))->assertForbidden();
     }
 
+    public function test_export_downloads_filtered_range_with_total_row(): void
+    {
+        $this->actingAsRrhh();
+        $employee = $this->makeEmployee(['full_name' => 'Sonia Reyes Perez']);
+        BreakfastClaim::factory()->for($employee)->onDate('2026-09-30')->withCost(20)->create();
+        BreakfastClaim::factory()->for($employee)->onDate('2026-09-15')->withCost(20)->create();
+        BreakfastClaim::factory()->for($employee)->onDate('2026-10-01')->withCost(20)->create();
+
+        $response = $this->get(route('breakfasts.export', [
+            'start_date' => '2026-09-01',
+            'end_date' => '2026-09-30',
+        ]))->assertOk()
+            ->assertDownload('desayunos_2026-09-01_2026-09-30.xlsx');
+
+        $rows = \PhpOffice\PhpSpreadsheet\IOFactory::load($response->baseResponse->getFile()->getPathname())
+            ->getActiveSheet()->toArray();
+
+        $this->assertSame('Empleado', $rows[0][3]);
+        $this->assertSame(['2026-09-30', '08:30', 'Sonia Reyes Perez'], [$rows[1][0], $rows[1][1], $rows[1][3]]);
+        $this->assertSame('2026-09-15', $rows[2][0]);
+        $this->assertSame('Total', $rows[4][0]);
+        $this->assertSame('2 desayunos', $rows[4][1]);
+        $this->assertStringContainsString('40.00', (string) $rows[4][5]);
+    }
+
+    public function test_export_requires_view_permission(): void
+    {
+        $this->actingAsEmployee();
+
+        $this->get(route('breakfasts.export'))->assertForbidden();
+    }
+
     public function test_lookup_finds_employees_by_partial_name(): void
     {
         $employee = $this->makeEmployee([

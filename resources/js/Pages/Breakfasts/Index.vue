@@ -66,6 +66,12 @@ const formatCurrency = (amount) => new Intl.NumberFormat('es-MX', {
             >
                 Aplicar
             </button>
+            <a
+                :href="route('breakfasts.export', { start_date: filters.start_date, end_date: filters.end_date })"
+                class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+            >
+                Exportar a Excel
+            </a>
         </div>
 
         <!-- Totales -->

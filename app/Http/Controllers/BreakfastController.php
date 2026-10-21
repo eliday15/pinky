@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Exports\BreakfastClaimsExport;
 use App\Models\BreakfastClaim;
 use App\Models\Employee;
 use App\Models\SystemSetting;
@@ -9,9 +10,12 @@ use App\Services\BreakfastClaimService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Storage;
 use Inertia\Inertia;
 use Inertia\Response;
+use Maatwebsite\Excel\Facades\Excel;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 /**
  * Kiosco y consulta del módulo de desayunos.
@@ -154,25 +158,48 @@ class BreakfastController extends Controller
     }
 
     /**
-     * List claimed breakfasts for a date range with vendor totals.
+     * Descarga a Excel los desayunos del rango filtrado (Luis 2026-10-21),
+     * con el total a pagar al vendedor al pie.
      */
-    public function index(Request $request): Response
+    public function export(Request $request): BinaryFileResponse
     {
         if (! auth()->user()->hasPermissionTo('breakfasts.view')) {
             abort(403);
         }
 
+        [$startDate, $endDate] = $this->resolveRange($request);
+
+        return Excel::download(
+            new BreakfastClaimsExport($this->claimsBetween($startDate, $endDate)),
+            "desayunos_{$startDate}_{$endDate}.xlsx"
+        );
+    }
+
+    /**
+     * Rango Desde/Hasta validado. Por defecto la semana en curso (lunes a
+     * domingo), igual que el periodo semanal de nómina que le paga al vendedor.
+     *
+     * @return array{0: string, 1: string}
+     */
+    private function resolveRange(Request $request): array
+    {
         $validated = $request->validate([
             'start_date' => ['nullable', 'date'],
             'end_date' => ['nullable', 'date', 'after_or_equal:start_date'],
         ]);
 
-        // Rango por defecto: la semana en curso (lunes a domingo), igual que
-        // el periodo semanal de nómina que le paga al vendedor.
-        $startDate = $validated['start_date'] ?? Carbon::now()->startOfWeek()->toDateString();
-        $endDate = $validated['end_date'] ?? Carbon::now()->endOfWeek()->toDateString();
+        return [
+            $validated['start_date'] ?? Carbon::now()->startOfWeek()->toDateString(),
+            $validated['end_date'] ?? Carbon::now()->endOfWeek()->toDateString(),
+        ];
+    }
 
-        $claims = BreakfastClaim::with([
+    /**
+     * Desayunos entregados en el rango, del más reciente al más antiguo.
+     */
+    private function claimsBetween(string $startDate, string $endDate): Collection
+    {
+        return BreakfastClaim::with([
             'employee:id,full_name,employee_number,department_id',
             'employee.department:id,name',
             'registeredBy:id,name',
@@ -196,6 +223,19 @@ class BreakfastController extends Controller
                     : null,
                 'registered_by' => $claim->registeredBy?->name,
             ]);
+    }
+
+    /**
+     * List claimed breakfasts for a date range with vendor totals.
+     */
+    public function index(Request $request): Response
+    {
+        if (! auth()->user()->hasPermissionTo('breakfasts.view')) {
+            abort(403);
+        }
+
+        [$startDate, $endDate] = $this->resolveRange($request);
+        $claims = $this->claimsBetween($startDate, $endDate);
 
         $vendorId = (int) SystemSetting::get('breakfast_vendor_employee_id', 0);
         $vendor = $vendorId > 0 ? Employee::find($vendorId) : null;
