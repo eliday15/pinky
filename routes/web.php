@@ -10,6 +10,7 @@ use App\Http\Controllers\CheckOmissionController;
 use App\Http\Controllers\MaquilaBonusController;
 use App\Http\Controllers\VacationHoursBankController;
 use App\Http\Controllers\BreakfastController;
+use App\Http\Controllers\BreakfastPayoutController;
 use App\Http\Controllers\CompensationTypeController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DecemberVacationController;
@@ -154,6 +155,8 @@ Route::middleware(['auth', 'password-changed', 'two-factor-setup'])->group(funct
     Route::post('/desayunos/kiosco/status', [BreakfastController::class, 'status'])->name('breakfasts.status');
     Route::get('/desayunos', [BreakfastController::class, 'index'])->name('breakfasts.index');
     Route::get('/desayunos/exportar', [BreakfastController::class, 'export'])->name('breakfasts.export');
+    Route::post('/desayunos/pagos', [BreakfastPayoutController::class, 'store'])->name('breakfasts.payouts.store');
+    Route::delete('/desayunos/pagos/{payout}', [BreakfastPayoutController::class, 'destroy'])->name('breakfasts.payouts.destroy');
     Route::post('/desayunos', [BreakfastController::class, 'store'])->name('breakfasts.store');
 
     // Reports

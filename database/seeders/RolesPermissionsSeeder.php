@@ -111,6 +111,7 @@ class RolesPermissionsSeeder extends Seeder
             // Desayunos
             'breakfasts.register',
             'breakfasts.view',
+            'breakfasts.pay',
 
             // Configuración
             'settings.view',

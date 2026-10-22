@@ -6,7 +6,9 @@ use App\Exports\BreakfastClaimsExport;
 use App\Models\BreakfastClaim;
 use App\Models\Employee;
 use App\Models\SystemSetting;
+use App\Models\BreakfastPayout;
 use App\Services\BreakfastClaimService;
+use App\Services\BreakfastPayoutService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -28,6 +30,7 @@ class BreakfastController extends Controller
 {
     public function __construct(
         private readonly BreakfastClaimService $service,
+        private readonly BreakfastPayoutService $payouts,
     ) {}
 
     /**
@@ -176,8 +179,9 @@ class BreakfastController extends Controller
     }
 
     /**
-     * Rango Desde/Hasta validado. Por defecto la semana en curso (lunes a
-     * domingo), igual que el periodo semanal de nómina que le paga al vendedor.
+     * Rango Desde/Hasta validado. Por defecto, lo pendiente de pagar al
+     * vendedor: del día siguiente al último corte hasta hoy. Sin cortes
+     * todavía, la semana en curso (lunes a domingo).
      *
      * @return array{0: string, 1: string}
      */
@@ -188,9 +192,12 @@ class BreakfastController extends Controller
             'end_date' => ['nullable', 'date', 'after_or_equal:start_date'],
         ]);
 
+        $nextStart = $this->payouts->nextStartDate();
+
         return [
-            $validated['start_date'] ?? Carbon::now()->startOfWeek()->toDateString(),
-            $validated['end_date'] ?? Carbon::now()->endOfWeek()->toDateString(),
+            $validated['start_date'] ?? $nextStart ?? Carbon::now()->startOfWeek()->toDateString(),
+            // Pagado hasta hoy: el rango queda en el día siguiente (vacío).
+            $validated['end_date'] ?? ($nextStart ? max($nextStart, Carbon::today()->toDateString()) : Carbon::now()->endOfWeek()->toDateString()),
         ];
     }
 
@@ -222,6 +229,7 @@ class BreakfastController extends Controller
                     ? Storage::url($claim->evidence_photo_path)
                     : null,
                 'registered_by' => $claim->registeredBy?->name,
+                'paid' => $claim->breakfast_payout_id !== null,
             ]);
     }
 
@@ -249,7 +257,24 @@ class BreakfastController extends Controller
             'totals' => [
                 'count' => $claims->count(),
                 'amount' => round($claims->sum('unit_cost'), 2),
+                'pending_count' => $claims->where('paid', false)->count(),
+                'pending_amount' => round($claims->where('paid', false)->sum('unit_cost'), 2),
             ],
+            'nextPayoutStart' => $this->payouts->nextStartDate(),
+            'payouts' => BreakfastPayout::with('paidBy:id,name')
+                ->orderByDesc('end_date')
+                ->limit(10)
+                ->get()
+                ->map(fn (BreakfastPayout $payout) => [
+                    'id' => $payout->id,
+                    'start_date' => $payout->start_date->format('Y-m-d'),
+                    'end_date' => $payout->end_date->format('Y-m-d'),
+                    'claims_count' => $payout->claims_count,
+                    'amount' => (float) $payout->amount,
+                    'paid_by' => $payout->paidBy?->name,
+                    'paid_at' => $payout->created_at?->format('Y-m-d H:i'),
+                ]),
+            'canPay' => auth()->user()->hasPermissionTo('breakfasts.pay'),
             'vendor' => $vendor ? [
                 'full_name' => $vendor->full_name,
                 'employee_number' => $vendor->employee_number,

@@ -51,6 +51,7 @@ class BreakfastClaim extends Model
         'face_match_distance',
         'evidence_photo_path',
         'registered_by',
+        'breakfast_payout_id',
     ];
 
     protected $casts = [
@@ -74,6 +75,14 @@ class BreakfastClaim extends Model
     public function registeredBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'registered_by');
+    }
+
+    /**
+     * Corte de pago en el que se le pagó este desayuno al vendedor (null = sin pagar).
+     */
+    public function payout(): BelongsTo
+    {
+        return $this->belongsTo(BreakfastPayout::class, 'breakfast_payout_id');
     }
 
     /**
