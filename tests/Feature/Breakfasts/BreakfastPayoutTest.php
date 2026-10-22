@@ -5,6 +5,8 @@ namespace Tests\Feature\Breakfasts;
 use App\Models\BreakfastClaim;
 use App\Models\BreakfastPayout;
 use App\Models\Employee;
+use App\Models\PayrollEntry;
+use App\Models\PayrollPeriod;
 use App\Models\SystemSetting;
 use Carbon\Carbon;
 use Tests\FeatureTestCase;
@@ -24,6 +26,7 @@ class BreakfastPayoutTest extends FeatureTestCase
     protected function tearDown(): void
     {
         Carbon::setTestNow();
+        SystemSetting::set('breakfast_vendor_employee_id', 0);
         parent::tearDown();
     }
 
@@ -141,5 +144,46 @@ class BreakfastPayoutTest extends FeatureTestCase
 
         $this->post(route('breakfasts.payouts.store'), ['start_date' => '2026-10-20', 'end_date' => '2026-10-20'])
             ->assertForbidden();
+    }
+
+    public function test_payout_goes_into_open_weekly_payroll_and_vendor_receipt_is_recalculated(): void
+    {
+        $this->actingAsAdmin();
+        $vendor = Employee::factory()->create(['status' => 'active', 'daily_salary' => 0, 'hourly_rate' => 0, 'hire_date' => '2025-01-01']);
+        SystemSetting::set('breakfast_vendor_employee_id', (string) $vendor->id);
+        $period = PayrollPeriod::factory()->weekly()->create([
+            'start_date' => '2026-10-14', 'end_date' => '2026-10-20', 'status' => 'review',
+        ]);
+        $this->claimOn('2026-10-19');
+        $this->claimOn('2026-10-22');
+
+        $this->post(route('breakfasts.payouts.store'), ['start_date' => '2026-10-19', 'end_date' => '2026-10-22'])
+            ->assertSessionHasNoErrors();
+
+        $payout = BreakfastPayout::sole();
+        $this->assertSame($period->id, $payout->payroll_period_id);
+        $entry = PayrollEntry::where('payroll_period_id', $period->id)->where('employee_id', $vendor->id)->sole();
+        $this->assertEqualsWithDelta(40.00, (float) $entry->net_pay, 0.01);
+
+        // Deshacer mientras la nómina sigue abierta: el recibo se rehace sin el corte.
+        $this->delete(route('breakfasts.payouts.destroy', $payout))->assertSessionHasNoErrors();
+        $this->assertEqualsWithDelta(0.00, (float) $entry->fresh()->net_pay, 0.01);
+    }
+
+    public function test_payout_in_approved_payroll_cannot_be_undone(): void
+    {
+        $this->actingAsAdmin();
+        $vendor = Employee::factory()->create();
+        SystemSetting::set('breakfast_vendor_employee_id', (string) $vendor->id);
+        $period = PayrollPeriod::factory()->weekly()->create([
+            'start_date' => '2026-10-14', 'end_date' => '2026-10-20', 'status' => 'review',
+        ]);
+        $this->claimOn('2026-10-19');
+        $this->post(route('breakfasts.payouts.store'), ['start_date' => '2026-10-19', 'end_date' => '2026-10-22']);
+        $period->update(['status' => 'approved']);
+
+        $this->delete(route('breakfasts.payouts.destroy', BreakfastPayout::sole()))
+            ->assertSessionHasErrors('payout');
+        $this->assertSame(1, BreakfastPayout::count());
     }
 }

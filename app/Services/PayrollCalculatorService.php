@@ -4,7 +4,7 @@ namespace App\Services;
 
 use App\Models\AttendanceRecord;
 use App\Models\Authorization;
-use App\Models\BreakfastClaim;
+use App\Models\BreakfastPayout;
 use App\Models\CompensationType;
 use App\Models\Employee;
 use App\Models\Holiday;
@@ -898,33 +898,44 @@ class PayrollCalculatorService
         $dinnerAllowance = $useCompTypes ? 0.0 : $nightShiftMetrics['dinner_allowance'];
         $nightShiftBonusPay = $useCompTypes ? 0.0 : $nightShiftMetrics['night_shift_bonus'];
 
-        // ---- Desayunos (vendedor, solo informativo) ----
-        // El total de desayunos entregados en el kiosco durante el periodo se
-        // muestra en la nómina del VENDEDOR configurado, en el periodo que paga
-        // BASE (semanal). Se calcula desde los snapshots de breakfast_claims —
-        // cada claim congeló su precio — pero NO se suma a ningún bucket de
-        // pago: other_compensation_pay, bruto, neto, efectivo y transferencia
-        // permanecen intactos. El marcador informational evita que las vistas
-        // de pago lo interpreten como una percepción.
+        // ---- Desayunos (vendedor) ----
+        // Se le PAGAN al vendedor configurado, en el periodo que paga BASE
+        // (semanal), los CORTES de desayunos asignados a esta nómina (Luis
+        // 2026-10-22, "opción 1"; antes, del 2-sep al 22-oct, solo se mostraban
+        // como dato). El corte lo registra quien paga en Desayunos eligiendo
+        // las fechas, así que el periodo de la nómina y el del corte no tienen
+        // que coincidir. Un corte sin nómina lo toma la primera nómina abierta
+        // que se calcule; desde ahí queda amarrado a ella y no se paga dos
+        // veces. Los montos vienen congelados en el corte: recalcular es
+        // idempotente.
         $breakfastCount = 0;
         $breakfastPay = 0.0;
         $breakfastVendorId = (int) SystemSetting::get('breakfast_vendor_employee_id', 0);
         if ($payBase && $breakfastVendorId > 0 && $employee->id === $breakfastVendorId) {
-            $breakfastClaims = BreakfastClaim::whereBetween('claim_date', [$startDateStr, $endDateStr])->get();
-            $breakfastCount = $breakfastClaims->count();
-            $breakfastPay = round((float) $breakfastClaims->sum('unit_cost'), 2);
+            // La vista de cálculo (pago unificado) no trae cash_closed_at: se
+            // consulta el periodo real.
+            if (in_array($period->status, ['draft', 'calculating', 'review'], true)
+                && PayrollPeriod::whereKey($period->id)->whereNull('cash_closed_at')->exists()) {
+                BreakfastPayout::whereNull('payroll_period_id')->update(['payroll_period_id' => $period->id]);
+            }
+
+            $breakfastPayouts = BreakfastPayout::where('payroll_period_id', $period->id)->orderBy('start_date')->get();
+            $breakfastCount = (int) $breakfastPayouts->sum('claims_count');
+            $breakfastPay = round((float) $breakfastPayouts->sum('amount'), 2);
 
             if ($breakfastPay > 0) {
+                $otherCompensationPay += $breakfastPay;
                 $compensationConcepts[] = [
                     'code' => 'DES',
-                    'name' => 'Desayunos',
+                    'name' => 'Desayunos ('.$breakfastPayouts
+                        ->map(fn (BreakfastPayout $payout) => $payout->start_date->format('d/m').'–'.$payout->end_date->format('d/m'))
+                        ->implode(', ').')',
                     'hours' => 0,
                     'days' => 0,
                     'quantity' => $breakfastCount,
                     'rate' => ['percentage' => null, 'fixed_amount' => 0.0],
                     'amount' => $breakfastPay,
-                    'source' => 'breakfast_claims',
-                    'informational' => true,
+                    'source' => 'breakfast_payouts',
                 ];
             }
         }

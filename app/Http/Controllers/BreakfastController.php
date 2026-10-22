@@ -261,7 +261,7 @@ class BreakfastController extends Controller
                 'pending_amount' => round($claims->where('paid', false)->sum('unit_cost'), 2),
             ],
             'nextPayoutStart' => $this->payouts->nextStartDate(),
-            'payouts' => BreakfastPayout::with('paidBy:id,name')
+            'payouts' => BreakfastPayout::with(['paidBy:id,name', 'payrollPeriod:id,name,status,cash_closed_at'])
                 ->orderByDesc('end_date')
                 ->limit(10)
                 ->get()
@@ -273,6 +273,8 @@ class BreakfastController extends Controller
                     'amount' => (float) $payout->amount,
                     'paid_by' => $payout->paidBy?->name,
                     'paid_at' => $payout->created_at?->format('Y-m-d H:i'),
+                    'payroll' => $payout->payrollPeriod?->name,
+                    'locked' => $payout->isLockedByPayroll(),
                 ]),
             'canPay' => auth()->user()->hasPermissionTo('breakfasts.pay'),
             'vendor' => $vendor ? [

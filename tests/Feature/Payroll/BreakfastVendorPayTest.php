@@ -3,7 +3,7 @@
 namespace Tests\Feature\Payroll;
 
 use App\Models\BreakfastClaim;
-use App\Models\CompensationType;
+use App\Models\BreakfastPayout;
 use App\Models\Employee;
 use App\Models\PayrollPeriod;
 use App\Models\SystemSetting;
@@ -11,11 +11,10 @@ use App\Services\PayrollCalculatorService;
 use Tests\FeatureTestCase;
 
 /**
- * Feature tests for the informational breakfast total in the weekly payroll.
- *
- * All breakfasts claimed at the kiosk during the period are shown to the ONE
- * configured vendor employee, in the period that pays BASE (weekly), summing
- * the frozen unit_cost snapshots without changing any payable amount.
+ * Los CORTES de desayunos se le pagan al vendedor dentro de su nómina semanal
+ * (Luis 2026-10-22, "opción 1"). La nómina paga los cortes asignados a ella y
+ * toma los que no tienen nómina; nunca paga un corte dos veces ni suma
+ * desayunos sin corte.
  */
 class BreakfastVendorPayTest extends FeatureTestCase
 {
@@ -27,28 +26,40 @@ class BreakfastVendorPayTest extends FeatureTestCase
     /**
      * Vendor who "solo cobra los desayunos": zero salary, zero hourly rate.
      */
-    private function makeVendor(): Employee
+    private function makeVendor(array $attributes = []): Employee
     {
         // hire_date fijo: el factory lo pone aleatorio y si cae dentro del
         // periodo prorratea la base (paidCalendarDays), causando un flake en el
         // assert de regular_pay = SD × 7.
-        $vendor = Employee::factory()->create([
+        $vendor = Employee::factory()->create(array_merge([
             'status' => 'active',
             'daily_salary' => 0,
             'hourly_rate' => 0,
             'hire_date' => '2025-01-01',
-        ]);
+        ], $attributes));
 
         SystemSetting::set('breakfast_vendor_employee_id', $vendor->id);
 
         return $vendor;
     }
 
-    private function weeklyPeriod(): PayrollPeriod
+    private function weeklyPeriod(array $attributes = []): PayrollPeriod
     {
-        return PayrollPeriod::factory()->weekly()->create([
-            'start_date' => '2026-06-01',
-            'end_date' => '2026-06-07',
+        return PayrollPeriod::factory()->weekly()->create(array_merge([
+            'start_date' => '2026-06-03',
+            'end_date' => '2026-06-09',
+            'status' => 'review',
+        ], $attributes));
+    }
+
+    private function payout(string $start, string $end, int $count, float $amount, ?PayrollPeriod $period = null): BreakfastPayout
+    {
+        return BreakfastPayout::create([
+            'start_date' => $start,
+            'end_date' => $end,
+            'claims_count' => $count,
+            'amount' => $amount,
+            'payroll_period_id' => $period?->id,
         ]);
     }
 
@@ -61,137 +72,112 @@ class BreakfastVendorPayTest extends FeatureTestCase
         parent::tearDown();
     }
 
-    public function test_weekly_period_shows_claim_sum_without_paying_vendor(): void
+    public function test_weekly_period_pays_unassigned_payout_even_if_its_dates_go_past_the_period(): void
     {
         $vendor = $this->makeVendor();
-        $vendor->update(['is_imss_enrolled' => true]);
+        $period = $this->weeklyPeriod();
+        // Caso Luis: nómina mié→mar, corte lun→jue.
+        $payout = $this->payout('2026-06-08', '2026-06-11', 90, 1800);
 
-        // Aun si el catálogo reutiliza DES como concepto transferible, el
-        // desayuno informativo nunca debe entrar al banco.
-        CompensationType::factory()->fixed(1)->create([
-            'code' => 'DES',
-            'pays_via_transfer' => true,
-        ]);
+        $entry = $this->calculator()->calculateEmployeePayroll($period, $vendor);
 
-        // 3 desayunos de distintos empleados dentro de la semana.
-        BreakfastClaim::factory()->onDate('2026-06-02')->withCost(30)->create();
-        BreakfastClaim::factory()->onDate('2026-06-03')->withCost(30)->create();
-        BreakfastClaim::factory()->onDate('2026-06-05')->withCost(35)->create();
+        $this->assertSame($period->id, $payout->fresh()->payroll_period_id);
+        $this->assertEqualsWithDelta(1800.00, (float) $entry->other_compensation_pay, 0.01);
+        $this->assertEqualsWithDelta(1800.00, (float) $entry->net_pay, 0.01);
+        $this->assertEqualsWithDelta(1800.00, (float) $entry->cash_amount, 0.01);
 
-        $entry = $this->calculator()->calculateEmployeePayroll($this->weeklyPeriod(), $vendor);
-
-        $this->assertEqualsWithDelta(0.00, (float) $entry->other_compensation_pay, 0.01);
-        $this->assertEqualsWithDelta(0.00, (float) $entry->regular_pay, 0.01, 'vendor has no base salary');
-        $this->assertEqualsWithDelta(0.00, (float) $entry->gross_pay, 0.01);
-        $this->assertEqualsWithDelta(0.00, (float) $entry->net_pay, 0.01);
-        $this->assertEqualsWithDelta(0.00, (float) $entry->cash_amount, 0.01);
-        $this->assertEqualsWithDelta(0.00, (float) $entry->bank_amount, 0.01);
-
-        $concepts = collect($entry->calculation_breakdown['compensation_concepts']);
-        $des = $concepts->firstWhere('code', 'DES');
-        $this->assertNotNull($des, 'DES concept present in breakdown');
-        $this->assertSame(3, $des['quantity']);
-        $this->assertEqualsWithDelta(95.00, $des['amount'], 0.01);
-        $this->assertTrue($des['informational']);
+        $des = collect($entry->calculation_breakdown['compensation_concepts'])->firstWhere('code', 'DES');
+        $this->assertSame(90, $des['quantity']);
+        $this->assertSame('Desayunos (08/06–11/06)', $des['name']);
+        $this->assertArrayNotHasKey('informational', $des);
     }
 
-    public function test_claims_outside_the_period_are_not_paid(): void
+    public function test_claims_without_payout_are_not_paid(): void
     {
         $vendor = $this->makeVendor();
-
-        BreakfastClaim::factory()->onDate('2026-05-31')->withCost(30)->create();
-        BreakfastClaim::factory()->onDate('2026-06-08')->withCost(30)->create();
         BreakfastClaim::factory()->onDate('2026-06-04')->withCost(30)->create();
 
         $entry = $this->calculator()->calculateEmployeePayroll($this->weeklyPeriod(), $vendor);
 
+        $this->assertEqualsWithDelta(0.00, (float) $entry->net_pay, 0.01);
+        $this->assertNull(collect($entry->calculation_breakdown['compensation_concepts'] ?? [])->firstWhere('code', 'DES'));
+    }
+
+    public function test_payout_assigned_to_another_period_is_never_paid_twice(): void
+    {
+        $vendor = $this->makeVendor();
+        $previous = $this->weeklyPeriod(['start_date' => '2026-05-27', 'end_date' => '2026-06-02', 'status' => 'paid']);
+        $this->payout('2026-05-25', '2026-05-28', 50, 1000, $previous);
+        $this->payout('2026-05-29', '2026-06-04', 60, 1200);
+
+        $entry = $this->calculator()->calculateEmployeePayroll($this->weeklyPeriod(), $vendor);
+
+        $this->assertEqualsWithDelta(1200.00, (float) $entry->other_compensation_pay, 0.01);
+    }
+
+    public function test_approved_period_does_not_take_unassigned_payouts(): void
+    {
+        $vendor = $this->makeVendor();
+        $payout = $this->payout('2026-06-03', '2026-06-04', 10, 200);
+
+        $entry = $this->calculator()->calculateEmployeePayroll($this->weeklyPeriod(['status' => 'approved']), $vendor);
+
+        $this->assertNull($payout->fresh()->payroll_period_id);
         $this->assertEqualsWithDelta(0.00, (float) $entry->other_compensation_pay, 0.01);
-        $des = collect($entry->calculation_breakdown['compensation_concepts'])->firstWhere('code', 'DES');
-        $this->assertSame(1, $des['quantity']);
-        $this->assertEqualsWithDelta(30.00, $des['amount'], 0.01);
     }
 
     public function test_monthly_period_does_not_pay_breakfasts(): void
     {
         $vendor = $this->makeVendor();
-        BreakfastClaim::factory()->onDate('2026-06-03')->withCost(30)->create();
-
+        $payout = $this->payout('2026-06-03', '2026-06-04', 10, 200);
         $period = PayrollPeriod::factory()->monthly()->create([
             'start_date' => '2026-06-01',
             'end_date' => '2026-06-30',
+            'status' => 'review',
         ]);
 
         $entry = $this->calculator()->calculateEmployeePayroll($period, $vendor);
 
-        $this->assertEqualsWithDelta(0.00, (float) $entry->other_compensation_pay, 0.01);
+        $this->assertNull($payout->fresh()->payroll_period_id);
         $this->assertEqualsWithDelta(0.00, (float) $entry->net_pay, 0.01);
     }
 
     public function test_recalculation_is_idempotent(): void
     {
         $vendor = $this->makeVendor();
-        BreakfastClaim::factory()->onDate('2026-06-03')->withCost(30)->create();
+        $this->payout('2026-06-03', '2026-06-04', 10, 200);
         $period = $this->weeklyPeriod();
 
         $first = $this->calculator()->calculateEmployeePayroll($period, $vendor);
         $second = $this->calculator()->calculateEmployeePayroll($period, $vendor);
 
         $this->assertSame($first->id, $second->id, 'same entry updated, not duplicated');
-        $this->assertEqualsWithDelta(0.00, (float) $second->other_compensation_pay, 0.01);
+        $this->assertEqualsWithDelta(200.00, (float) $second->other_compensation_pay, 0.01);
         $this->assertEqualsWithDelta((float) $first->net_pay, (float) $second->net_pay, 0.001);
     }
 
     public function test_non_vendor_employee_is_not_paid_breakfasts(): void
     {
         $this->makeVendor();
-        BreakfastClaim::factory()->onDate('2026-06-03')->withCost(30)->create();
-
-        $other = Employee::factory()->create([
-            'status' => 'active',
-            'daily_salary' => 200,
-        ]);
+        $payout = $this->payout('2026-06-03', '2026-06-04', 10, 200);
+        $other = Employee::factory()->create(['status' => 'active', 'daily_salary' => 200]);
 
         $entry = $this->calculator()->calculateEmployeePayroll($this->weeklyPeriod(), $other);
 
-        $this->assertEqualsWithDelta(0.00, (float) $entry->other_compensation_pay, 0.01);
-        $concepts = collect($entry->calculation_breakdown['compensation_concepts'] ?? []);
-        $this->assertNull($concepts->firstWhere('code', 'DES'));
+        $this->assertNull($payout->fresh()->payroll_period_id);
+        $this->assertNull(collect($entry->calculation_breakdown['compensation_concepts'] ?? [])->firstWhere('code', 'DES'));
     }
 
-    public function test_without_configured_vendor_nobody_is_paid(): void
+    public function test_vendor_with_salary_gets_payout_on_top_of_base(): void
     {
-        SystemSetting::set('breakfast_vendor_employee_id', 0);
-        BreakfastClaim::factory()->onDate('2026-06-03')->withCost(30)->create();
-
-        $employee = Employee::factory()->create([
-            'status' => 'active',
-            'daily_salary' => 0,
-            'hourly_rate' => 0,
-        ]);
-
-        $entry = $this->calculator()->calculateEmployeePayroll($this->weeklyPeriod(), $employee);
-
-        $this->assertEqualsWithDelta(0.00, (float) $entry->other_compensation_pay, 0.01);
-    }
-
-    public function test_vendor_with_salary_sees_breakfasts_without_changing_pay(): void
-    {
-        $vendor = $this->makeVendor();
-        $vendor->update(['daily_salary' => 100]);
-
-        BreakfastClaim::factory()->onDate('2026-06-03')->withCost(30)->create();
-        BreakfastClaim::factory()->onDate('2026-06-04')->withCost(30)->create();
+        $vendor = $this->makeVendor(['daily_salary' => 100]);
+        $this->payout('2026-06-03', '2026-06-04', 2, 60);
 
         $entry = $this->calculator()->calculateEmployeePayroll($this->weeklyPeriod(), $vendor);
 
-        // Base 100 × 7; los $60 de desayunos son solo informativos.
+        // Base 100 × 7 + $60 del corte.
         $this->assertEqualsWithDelta(700.00, (float) $entry->regular_pay, 0.01);
-        $this->assertEqualsWithDelta(0.00, (float) $entry->other_compensation_pay, 0.01);
-        $this->assertEqualsWithDelta(700.00, (float) $entry->gross_pay, 0.01);
-        $this->assertEqualsWithDelta(700.00, (float) $entry->net_pay, 0.01);
-
-        $des = collect($entry->calculation_breakdown['compensation_concepts'])->firstWhere('code', 'DES');
-        $this->assertEqualsWithDelta(60.00, $des['amount'], 0.01);
-        $this->assertTrue($des['informational']);
+        $this->assertEqualsWithDelta(60.00, (float) $entry->other_compensation_pay, 0.01);
+        $this->assertEqualsWithDelta(760.00, (float) $entry->gross_pay, 0.01);
     }
 }

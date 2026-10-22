@@ -140,7 +140,7 @@ const formatCurrency = (amount) => new Intl.NumberFormat('es-MX', {
                     <p class="text-sm text-gray-500">
                         <template v-if="paidThrough">Pagado hasta el {{ formatDate(paidThrough) }}. El siguiente pago empieza el {{ formatDate(nextPayoutStart) }}.</template>
                         <template v-else>Todavía no hay pagos registrados.</template>
-                        Elige Desde/Hasta arriba (puedes cortar antes por descansos o festivos), dale Aplicar y registra el pago.
+                        Elige Desde/Hasta arriba (puedes cortar antes por descansos o festivos), dale Aplicar y registra el pago: se le suma al vendedor en su nómina semanal abierta.
                     </p>
                 </div>
                 <button
@@ -163,6 +163,7 @@ const formatCurrency = (amount) => new Intl.NumberFormat('es-MX', {
                         <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Al</th>
                         <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Desayunos</th>
                         <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Monto</th>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Se paga en</th>
                         <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Registró</th>
                         <th class="px-3 py-2"></th>
                     </tr>
@@ -173,10 +174,14 @@ const formatCurrency = (amount) => new Intl.NumberFormat('es-MX', {
                         <td class="px-3 py-2 text-sm text-gray-700">{{ formatDate(payout.end_date) }}</td>
                         <td class="px-3 py-2 text-sm text-gray-800 text-right">{{ payout.claims_count }}</td>
                         <td class="px-3 py-2 text-sm text-gray-800 text-right">{{ formatCurrency(payout.amount) }}</td>
+                        <td class="px-3 py-2 text-sm text-gray-700">
+                            <span v-if="payout.payroll">{{ payout.payroll }}</span>
+                            <span v-else class="text-amber-600">La próxima nómina semanal</span>
+                        </td>
                         <td class="px-3 py-2 text-sm text-gray-500">{{ payout.paid_by || '—' }} · {{ payout.paid_at }}</td>
                         <td class="px-3 py-2 text-right">
                             <button
-                                v-if="index === 0"
+                                v-if="index === 0 && !payout.locked"
                                 type="button"
                                 class="text-sm text-red-600 hover:text-red-800"
                                 @click="undoingPayout = payout"

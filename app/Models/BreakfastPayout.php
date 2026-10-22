@@ -11,7 +11,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * BreakfastPayout: corte de pago al vendedor de desayunos.
  *
  * Cubre un rango de fechas consecutivo al corte anterior y congela los
- * desayunos que pagó (breakfast_claims.breakfast_payout_id).
+ * desayunos que pagó (breakfast_claims.breakfast_payout_id). Se le paga al
+ * vendedor dentro de su nómina semanal (payroll_period_id).
  */
 class BreakfastPayout extends Model
 {
@@ -34,6 +35,7 @@ class BreakfastPayout extends Model
         'amount',
         'vendor_employee_id',
         'paid_by',
+        'payroll_period_id',
     ];
 
     protected $casts = [
@@ -66,6 +68,26 @@ class BreakfastPayout extends Model
     public function vendor(): BelongsTo
     {
         return $this->belongsTo(Employee::class, 'vendor_employee_id');
+    }
+
+    /**
+     * Nómina semanal del vendedor que paga este corte.
+     */
+    public function payrollPeriod(): BelongsTo
+    {
+        return $this->belongsTo(PayrollPeriod::class);
+    }
+
+    /**
+     * ¿La nómina que lo paga ya está cerrada (aprobada, pagada o con el
+     * efectivo preparado)? Entonces el corte ya no se puede deshacer.
+     */
+    public function isLockedByPayroll(): bool
+    {
+        $period = $this->payrollPeriod;
+
+        return $period !== null
+            && (in_array($period->status, ['approved', 'paid'], true) || $period->cash_closed_at !== null);
     }
 
     /**
