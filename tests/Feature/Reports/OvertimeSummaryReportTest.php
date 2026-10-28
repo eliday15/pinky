@@ -82,6 +82,11 @@ class OvertimeSummaryReportTest extends FeatureTestCase
             ->assertOk()->assertInertia(fn (Assert $page) => $page->where('summary.total_estimated_cost', 1670)->has('byEmployee', 2));
         $this->get(route('reports.overtime', ['start_date' => '2026-08-24', 'end_date' => '2026-09-30']))
             ->assertOk()->assertInertia(fn (Assert $page) => $page->where('summary.total_estimated_cost', 1370)->where('includePaid', false));
+        // La pantalla manda "true"/"false" en la URL: deben respetar las fechas (Luis 2026-10-28).
+        $this->get(route('reports.overtime', ['start_date' => '2026-08-24', 'end_date' => '2026-09-30', 'include_paid' => 'false']))
+            ->assertOk()->assertInertia(fn (Assert $page) => $page->where('startDate', '2026-08-24')->where('summary.total_estimated_cost', 1370));
+        $this->get(route('reports.overtime', ['start_date' => '2026-08-24', 'end_date' => '2026-09-30', 'include_paid' => 'true']))
+            ->assertOk()->assertInertia(fn (Assert $page) => $page->where('includePaid', true)->where('summary.total_estimated_cost', 1670));
         $this->get(route('reports.overtime', ['start_date' => '2026-08-24', 'end_date' => '2026-09-30', 'export' => 'xlsx']))
             ->assertOk()->assertHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     }

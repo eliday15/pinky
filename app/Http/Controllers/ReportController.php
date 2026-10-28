@@ -308,7 +308,9 @@ class ReportController extends Controller implements HasMiddleware
             'start_date' => ['nullable', 'date'],
             'end_date' => ['nullable', 'date', 'after_or_equal:start_date'],
             'export' => ['nullable', 'in:xlsx'],
-            'include_paid' => ['nullable', 'boolean'],
+            // La pantalla manda "true"/"false" en la URL; la regla boolean los
+            // rechazaba y el filtro de fechas nunca se aplicaba (Luis 2026-10-28).
+            'include_paid' => ['nullable', 'in:0,1,true,false'],
         ]);
         $startDate = $request->start_date ? Carbon::parse($request->start_date) : Carbon::now()->startOfMonth();
         $endDate = $request->end_date ? Carbon::parse($request->end_date) : Carbon::now()->endOfMonth();
