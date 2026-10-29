@@ -19,6 +19,7 @@ class OvertimeSummaryReportService
         private readonly ApprovedAuthorizationQuantityService $quantities,
         private readonly WeekendAuthorizationUnitService $weekendUnits,
         private readonly CompensationRateResolverService $resolver,
+        private readonly PaidAuthorizationResolver $paidResolver,
     ) {}
 
     /**
@@ -37,6 +38,11 @@ class OvertimeSummaryReportService
         $auths = Authorization::with(['compensationType.positions', 'compensationType.departments'])->whereIn('employee_id', $employeeIds)
             ->whereBetween('date', [$from, $to])->orderBy('id')->get()->groupBy('employee_id');
         $holidays = Holiday::whereBetween('date', [$from, $to])->pluck('date')->map(fn ($d) => Carbon::parse($d)->toDateString())->all();
+        // Lo que una nómina cerrada ya pagó no es pendiente aunque su status
+        // siga en "aprobada" (Luis 2026-10-28).
+        $paidIds = $includePaid ? [] : $this->paidResolver->paidIds(
+            $auths->flatten(1)->where('status', Authorization::STATUS_APPROVED)->values(), $from, $to,
+        );
         $rows = collect();
 
         foreach ($employees as $employee) {
@@ -44,7 +50,8 @@ class OvertimeSummaryReportService
             $employeeAuths = $auths->get($employee->id, collect());
             $approved = $employeeAuths->whereIn('status', $includePaid
                 ? [Authorization::STATUS_APPROVED, Authorization::STATUS_PAID]
-                : [Authorization::STATUS_APPROVED]);
+                : [Authorization::STATUS_APPROVED])
+                ->reject(fn ($auth) => isset($paidIds[$auth->id]));
             $extraDates = $employeeRecords->toBase()->filter(fn ($r) => $r->overtime_hours > 0 || $r->overtime_authorized_hours > 0 || $r->velada_authorized_hours > 0)
                 ->map(fn ($r) => $r->work_date->toDateString())->merge($approved->map(fn ($a) => $a->date->toDateString()))->unique();
             if ($extraDates->isEmpty()) {

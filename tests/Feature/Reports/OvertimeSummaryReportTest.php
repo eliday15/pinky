@@ -7,6 +7,8 @@ use App\Models\AttendanceRecord;
 use App\Models\Authorization;
 use App\Models\CompensationType;
 use App\Models\Employee;
+use App\Models\PayrollEntry;
+use App\Models\PayrollPeriod;
 use App\Services\Reports\OvertimeSummaryReportService;
 use Carbon\Carbon;
 use Inertia\Testing\AssertableInertia as Assert;
@@ -197,6 +199,50 @@ class OvertimeSummaryReportTest extends FeatureTestCase
 
         $this->assertNotNull($row, 'sigue apareciendo por lo que falta pagar');
         $this->assertEqualsWithDelta(50.0, (float) $row['estimated_cost'], 0.01, 'solo la cena aprobada, no la pagada');
+    }
+
+    public function test_concepts_paid_by_a_closed_payroll_are_hidden_even_if_still_approved(): void
+    {
+        // Luis 2026-10-28: la nómina no cambia el status a "pagada", así que la
+        // Producción de Adriana ya cobrada seguía saliendo como pendiente.
+        $employee = Employee::factory()->create(['status' => 'active']);
+        $other = Employee::factory()->create(['status' => 'active']);
+        $prod = $this->concept('P_RPT', 100.0);
+        $cena = $this->concept('CENA_RPT', 50.0);
+        $closed = PayrollPeriod::factory()->weekly()->create([
+            'start_date' => '2026-09-23', 'end_date' => '2026-09-29', 'status' => 'paid', 'cash_closed_at' => '2026-10-02 11:00:00',
+        ]);
+        PayrollEntry::factory()->create(['payroll_period_id' => $closed->id, 'employee_id' => $employee->id,
+            'calculation_breakdown' => ['compensation_concepts' => [['code' => 'P_RPT', 'amount' => 100]]]]);
+        $paid = $this->authorize($employee, $prod, '2026-09-29');
+        $paid->forceFill(['approved_at' => '2026-09-30 10:00:00'])->save();
+        // Mismo empleado, concepto que el recibo NO trae: sigue pendiente.
+        $this->authorize($employee, $cena, '2026-09-28')->forceFill(['approved_at' => '2026-09-30 10:00:00'])->save();
+        // Aprobada después de cerrar el efectivo: no alcanzó a pagarse.
+        $this->authorize($employee, $prod, '2026-09-25')->forceFill(['approved_at' => '2026-10-05 10:00:00'])->save();
+        // Otro empleado sin recibo en esa nómina: pendiente.
+        $this->authorize($other, $prod, '2026-09-29')->forceFill(['approved_at' => '2026-09-30 10:00:00'])->save();
+
+        $rows = collect($this->pendingReport($employee, $other)['byEmployee'])->keyBy('employee.id');
+
+        $this->assertEqualsWithDelta(150.0, (float) $rows[$employee->id]['estimated_cost'], 0.01, 'cena + producción tardía, sin la ya pagada');
+        $this->assertEqualsWithDelta(100.0, (float) $rows[$other->id]['estimated_cost'], 0.01);
+        $full = collect($this->report($employee)['byEmployee'])->firstWhere('employee.id', $employee->id);
+        $this->assertEqualsWithDelta(250.0, (float) $full['estimated_cost'], 0.01, 'el switch trae también lo pagado');
+    }
+
+    public function test_open_payroll_does_not_hide_concepts(): void
+    {
+        $employee = Employee::factory()->create(['status' => 'active']);
+        $prod = $this->concept('P_RPT', 100.0);
+        $open = PayrollPeriod::factory()->weekly()->create(['start_date' => '2026-09-23', 'end_date' => '2026-09-29', 'status' => 'review']);
+        PayrollEntry::factory()->create(['payroll_period_id' => $open->id, 'employee_id' => $employee->id,
+            'calculation_breakdown' => ['compensation_concepts' => [['code' => 'P_RPT', 'amount' => 100]]]]);
+        $this->authorize($employee, $prod, '2026-09-29');
+
+        $row = collect($this->pendingReport($employee)['byEmployee'])->firstWhere('employee.id', $employee->id);
+
+        $this->assertEqualsWithDelta(100.0, (float) $row['estimated_cost'], 0.01);
     }
 
     public function test_including_paid_brings_the_full_accrual_back(): void
