@@ -356,6 +356,10 @@ class AuthorizationController extends Controller
             'anomaly_id' => ['nullable', 'exists:attendance_anomalies,id'],
         ]);
 
+        $this->assertUnitPriceQuantityCaptured($validated['compensation_type_id'] ?? null, [
+            [$validated['employee_id'], $validated['hours'] ?? null, 'hours'],
+        ]);
+
         $anomalyId = $validated['anomaly_id'] ?? null;
         unset($validated['anomaly_id']);
 
@@ -521,6 +525,17 @@ class AuthorizationController extends Controller
             'end_time' => ['nullable', 'date_format:H:i'],
             'hours' => $hoursRules,
         ]);
+
+        $this->assertUnitPriceQuantityCaptured(
+            $validated['compensation_type_id'] ?? null,
+            ! empty($validated['entries'])
+                ? array_map(
+                    fn (array $entry, int $i) => [$entry['employee_id'], $entry['hours'] ?? null, "entries.{$i}"],
+                    $validated['entries'],
+                    array_keys($validated['entries']),
+                )
+                : array_map(fn ($employeeId) => [$employeeId, $validated['hours'] ?? null, 'hours'], $validated['employee_ids']),
+        );
 
         $bulkGroupId = 'bulk_'.now()->format('YmdHis').'_'.Auth::id();
         $count = 0;
@@ -1082,6 +1097,10 @@ class AuthorizationController extends Controller
             'end_time' => ['nullable', 'date_format:H:i'],
             'hours' => $this->hoursRules($request->input('compensation_type_id'), $request->input('type')),
             'reason' => ['required', 'string', 'max:1000'],
+        ]);
+
+        $this->assertUnitPriceQuantityCaptured($validated['compensation_type_id'] ?? null, [
+            [$validated['employee_id'], $validated['hours'] ?? null, 'hours'],
         ]);
 
         // Calculate hours if start and end time provided (midnight-aware so a
@@ -3546,6 +3565,60 @@ class AuthorizationController extends Controller
         $min = $applicationMode === CompensationType::APPLICATION_ONE_TIME ? '-999999.99' : '0';
 
         return ['nullable', 'numeric', 'min:'.$min, 'max:'.($isPerHour ? '24' : '999999.99')];
+    }
+
+    /**
+     * Exige la cantidad en un concepto de monto único cuyo precio por unidad
+     * es de $1 o menos para ese empleado: ahí la cantidad ES el monto ("500
+     * bonos × $1"), y dejarla en blanco pagaba $1 en silencio (Luis
+     * 2026-10-29: 22 bonos por carga de trabajo del 27/10 sin monto). Los de
+     * monto propio (p. ej. Bono Diseño a $300 por empleado) siguen aceptando
+     * la cantidad en blanco = una vez su monto.
+     *
+     * Args:
+     *     compensationTypeId: Concepto capturado (null = sin concepto).
+     *     rows: Filas [employee_id, hours, clave de error].
+     *
+     * Raises:
+     *     ValidationException: Si alguna fila deja la cantidad vacía.
+     */
+    private function assertUnitPriceQuantityCaptured($compensationTypeId, array $rows): void
+    {
+        $compType = $compensationTypeId ? CompensationType::find($compensationTypeId) : null;
+        if (! $compType
+            || $compType->application_mode !== CompensationType::APPLICATION_ONE_TIME
+            || $compType->calculation_type !== 'fixed'
+        ) {
+            return;
+        }
+
+        $blankRows = array_filter($rows, fn (array $row) => abs((float) ($row[1] ?? 0)) == 0.0);
+        if ($blankRows === []) {
+            return;
+        }
+
+        $resolver = app(CompensationRateResolverService::class);
+        $employees = Employee::with('compensationTypes')
+            ->whereIn('id', array_unique(array_column($blankRows, 0)))
+            ->get()->keyBy('id');
+
+        $errors = [];
+        foreach ($blankRows as [$employeeId, , $errorKey]) {
+            $employee = $employees->get($employeeId);
+            if (! $employee) {
+                continue;
+            }
+            $unitPrice = (float) ($resolver->resolveRate($employee, $compType)['fixed_amount'] ?? 0);
+            if ($unitPrice <= 1) {
+                $errors[$errorKey] = "Captura la cantidad de {$compType->name} para {$employee->full_name}: "
+                    .'este concepto paga $'.rtrim(rtrim(number_format($unitPrice, 4), '0'), '.')
+                    .' por unidad, así que la cantidad es el monto (por ejemplo 500 = $500).';
+            }
+        }
+
+        if ($errors !== []) {
+            throw \Illuminate\Validation\ValidationException::withMessages($errors);
+        }
     }
 
     /**
