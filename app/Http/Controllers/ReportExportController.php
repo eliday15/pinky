@@ -675,9 +675,9 @@ class ReportExportController extends Controller implements HasMiddleware
             ->orderBy('employee_id')
             ->get();
 
-        // Retardos justificados por incidencia aprobada no se exportan — la
-        // misma regla que exportFaltas, el reporte web y la nómina (#3).
-        $justifiedDates = Incident::justifiedDatesByEmployee(
+        // Retardos justificados por incidencia de día completo no se exportan
+        // — misma regla que el reporte web de Retardos (#3).
+        $justifiedDates = Incident::lateExcusedDatesByEmployee(
             $activeEmployeeIds,
             Carbon::parse($startDate)->toDateString(),
             Carbon::parse($endDate)->toDateString()

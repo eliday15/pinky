@@ -439,9 +439,9 @@ class ReportController extends Controller implements HasMiddleware
             ->orderBy('late_minutes', 'desc')
             ->get();
 
-        // Retardos cubiertos por una incidencia aprobada que justifica no se
-        // reportan — la misma regla que faltas/retardos y nómina (auditoría #3).
-        $justifiedDates = Incident::justifiedDatesByEmployee(
+        // Retardos cubiertos por una incidencia de día completo que justifica
+        // no se reportan — misma regla que el reporte de Retardos (#3).
+        $justifiedDates = Incident::lateExcusedDatesByEmployee(
             $activeEmployeeIds,
             $startDate->toDateString(),
             $endDate->toDateString()

@@ -272,11 +272,11 @@ class AttendanceReportController extends Controller implements HasMiddleware
         $employees = $this->getEmployeeLookup($activeEmployeeIds);
         $holidayDates = $this->getHolidayDates($startDate, $endDate);
 
-        // Retardos cubiertos por una incidencia aprobada que justifica (FJU,
-        // vacación, incapacidad…) no se reportan — la misma regla que faltas
-        // y nómina (auditoría #3). PEN ya revierte el status en el recálculo;
-        // esto cubre las justificaciones de día completo que no lo tocan.
-        $justifiedDates = Incident::justifiedDatesByEmployee(
+        // Retardos cubiertos por una incidencia de DÍA COMPLETO que justifica
+        // (FJU, vacación, incapacidad…) no se reportan (auditoría #3). Un
+        // permiso con horario o una vacación HxV no borran el retardo: ver
+        // Incident::lateExcusedDatesByEmployee. PEN ya revierte el status.
+        $justifiedDates = Incident::lateExcusedDatesByEmployee(
             $activeEmployeeIds,
             $startDate->toDateString(),
             $endDate->toDateString()

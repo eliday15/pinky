@@ -231,6 +231,29 @@ class Incident extends Model
      */
     public static function justifiedDatesByEmployee(iterable $employeeIds, string $startDate, string $endDate): array
     {
+        return self::coveredDatesByEmployee($employeeIds, $startDate, $endDate, false);
+    }
+
+    /**
+     * Fechas en las que un RETARDO queda justificado, por empleado — la regla
+     * de los reportes de retardos (web, CSV y "llegadas tarde").
+     *
+     * Más estricta que justifiedDatesByEmployee: solo cuenta la incidencia de
+     * DÍA COMPLETO (sin horario) que no sea "a cuenta de horas" (HxV). Un
+     * permiso con horario (PDJ de mediodía, PSA de salida) no tiene que ver
+     * con la hora de entrada, y una vacación HxV solo manda horas a la bolsa:
+     * el empleado sí trabajó. Antes esos días borraban el retardo del reporte
+     * mientras la nómina sí lo contaba para la falta por retardos (Luis
+     * 2026-10-28, Lorenzo Tapia: 8 retardos en octubre, el reporte decía 3).
+     * El permiso de entrada (PEN) ya lo resuelve el sync quitando el retardo.
+     */
+    public static function lateExcusedDatesByEmployee(iterable $employeeIds, string $startDate, string $endDate): array
+    {
+        return self::coveredDatesByEmployee($employeeIds, $startDate, $endDate, true);
+    }
+
+    private static function coveredDatesByEmployee(iterable $employeeIds, string $startDate, string $endDate, bool $fullDayOnly): array
+    {
         $incidents = self::query()
             ->where('status', 'approved')
             ->whereIn('employee_id', collect($employeeIds)->all())
@@ -243,6 +266,9 @@ class Incident extends Model
 
         foreach ($incidents as $incident) {
             if (! $incident->incidentType || ! self::typeJustifiesAbsence($incident->incidentType)) {
+                continue;
+            }
+            if ($fullDayOnly && ($incident->start_time !== null || $incident->converts_to_vacation_hours)) {
                 continue;
             }
 

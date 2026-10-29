@@ -301,4 +301,53 @@ class JustifiedReportsTest extends FeatureTestCase
             ->where('summary.faltas_generated', 2)
         );
     }
+
+    /**
+     * Luis 2026-10-28 (Lorenzo Tapia): un permiso CON HORARIO (PDJ de
+     * mediodía, PSA de salida) o una vacación "a cuenta de horas" (HxV) no
+     * tienen que ver con la llegada: el retardo sigue en los tres reportes,
+     * igual que la nómina lo cuenta para la falta por retardos.
+     */
+    public function test_partial_permissions_and_hxv_vacation_do_not_hide_lates(): void
+    {
+        $pdj = $this->typeWithCode('PDJ', ['category' => 'permission', 'is_paid' => true, 'requires_approval' => true]);
+        $vac = $this->typeWithCode('VAC', ['category' => 'vacation', 'is_paid' => true, 'requires_approval' => true]);
+        $employee = $this->employee();
+
+        $cases = [
+            '2026-06-02' => ['incident_type_id' => $pdj->id, 'start_time' => '13:00', 'end_time' => '14:00'],
+            '2026-06-03' => ['incident_type_id' => $this->psaType()->id, 'start_time' => '17:30', 'end_time' => '17:30'],
+            '2026-06-04' => ['incident_type_id' => $vac->id, 'converts_to_vacation_hours' => true],
+        ];
+        foreach ($cases as $date => $attributes) {
+            $this->lateRecord($employee, $date);
+            Incident::factory()->approved()->create(array_merge([
+                'employee_id' => $employee->id,
+                'start_date' => $date,
+                'end_date' => $date,
+                'days_count' => 1,
+            ], $attributes));
+        }
+        // Control: la falta justificada de día completo sí lo cubre.
+        $this->lateRecord($employee, '2026-06-05');
+        $this->justifyDate($employee, '2026-06-05');
+
+        $this->actingAsAdmin();
+        $range = ['start_date' => '2026-06-01', 'end_date' => '2026-06-30'];
+
+        $this->get(route('reports.retardos', $range))->assertInertia(fn (Assert $page) => $page
+            ->where('byEmployee.0.employee.id', $employee->id)
+            ->where('byEmployee.0.late_count', 3)
+            ->where('summary.total_retardos', 3)
+        );
+        $this->get(route('reports.lateArrivals', $range))->assertInertia(fn (Assert $page) => $page
+            ->where('summary.total_late_records', 3)
+        );
+
+        $content = $this->get(route('reports.export.retardos', $range))->streamedContent();
+        foreach (array_keys($cases) as $date) {
+            $this->assertStringContainsString($date, $content);
+        }
+        $this->assertStringNotContainsString('2026-06-05', $content);
+    }
 }
