@@ -311,6 +311,10 @@ const efectivoLines = computed(() => {
 // base (personal en periodo de prueba). Se listan para que se vea por qué.
 const suppressedSalaryConcepts = computed(() => breakdown.suppressed_base_salary_concepts ?? []);
 
+// Autorizaciones aprobadas que no se pagan aquí porque ya las pagó otra nómina
+// cerrada (Luis 2026-10-29: ALM pagado en la semana y otra vez en el mes).
+const alreadyPaidAuthorizations = computed(() => breakdown.already_paid_authorizations ?? []);
+
 // Capturado y aprobado, pero pagó $0 porque el concepto no tiene monto: se
 // muestra para que no se pierda en silencio (caso Descuento Infonavit).
 const unpaidZeroAmountConcepts = computed(() => breakdown.unpaid_zero_amount_concepts ?? []);
@@ -702,6 +706,13 @@ const roundingIsCents = computed(() => Math.abs(pesoRounding.value) < 1);
                             <tr v-if="suppressedVacationPremium" class="text-xs text-gray-400">
                                 <td class="py-1">
                                     Prima vacacional automática — no se suma: {{ suppressedVacationPremium.reason }}
+                                </td>
+                                <td class="py-1 text-right">{{ formatCurrency(0) }}</td>
+                            </tr>
+                            <!-- Ya pagado en otra nómina cerrada: no se paga dos veces -->
+                            <tr v-for="a in alreadyPaidAuthorizations" :key="`p-${a.id}`" class="text-xs text-gray-400">
+                                <td class="py-1">
+                                    {{ a.name }} del {{ formatDate(a.date) }} — no se paga aquí: ya se pagó en «{{ a.paid_in }}»
                                 </td>
                                 <td class="py-1 text-right">{{ formatCurrency(0) }}</td>
                             </tr>

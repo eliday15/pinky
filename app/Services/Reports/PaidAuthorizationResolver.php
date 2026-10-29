@@ -23,9 +23,10 @@ class PaidAuthorizationResolver
 {
     /**
      * @param  Collection<int, Authorization>  $authorizations  Aprobadas, con compensationType cargado.
-     * @return array<int, true> Ids de las que ya se pagaron.
+     * @param  int|null  $excludePeriodId  Periodo que se está calculando: lo que él mismo pagó no cuenta.
+     * @return array<int, PayrollPeriod> id de autorización → nómina cerrada que ya la pagó.
      */
-    public function paidIds(Collection $authorizations, string $from, string $to): array
+    public function paidIds(Collection $authorizations, string $from, string $to, ?int $excludePeriodId = null): array
     {
         if ($authorizations->isEmpty()) {
             return [];
@@ -33,6 +34,7 @@ class PaidAuthorizationResolver
 
         $periods = PayrollPeriod::query()
             ->where(fn ($q) => $q->whereIn('status', ['approved', 'paid'])->orWhereNotNull('cash_closed_at'))
+            ->when($excludePeriodId !== null, fn ($q) => $q->whereKeyNot($excludePeriodId))
             ->where(fn ($q) => $q
                 ->where(fn ($r) => $r->where('start_date', '<=', $to)->where('end_date', '>=', $from))
                 ->orWhere(fn ($r) => $r->where('extras_start_date', '<=', $to)->where('extras_end_date', '>=', $from)))
@@ -62,7 +64,7 @@ class PaidAuthorizationResolver
             $date = $auth->date->toDateString();
             foreach ($paidConcepts->get($auth->employee_id, []) as ['period' => $period, 'codes' => $codes]) {
                 if (in_array($code, $codes, true) && $this->covers($period, $date) && $this->approvedBeforeClose($auth, $period)) {
-                    $paid[$auth->id] = true;
+                    $paid[$auth->id] = $period;
                     break;
                 }
             }

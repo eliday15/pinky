@@ -63,6 +63,7 @@ class PayrollCalculatorService
         private \App\Services\Fiscal\EmployerQuotaCalculatorService $employerQuotas,
         private ApprovedAuthorizationQuantityService $approvedQuantities,
         private WeekendAuthorizationUnitService $weekendAuthorizationUnits,
+        private \App\Services\Reports\PaidAuthorizationResolver $paidAuthorizations,
     ) {
         $this->resolver = $resolver;
         $this->lateAbsences = $lateAbsences;
@@ -197,6 +198,46 @@ class PayrollCalculatorService
     }
 
     /**
+     * Autorizaciones que ya pagó OTRA nómina cerrada (la regla de
+     * PaidAuthorizationResolver: nómina aprobada/pagada/con efectivo cerrado
+     * que cubre la fecha y cuyo recibo del empleado trae ese concepto).
+     *
+     * @param  Collection<int, Authorization>  $authorizations  Con compensationType cargado.
+     * @return array<int, array{id:int, employee_id:int, code:string, name:string, date:string, quantity:float, paid_in:string}>
+     */
+    private function alreadyPaidElsewhere(Collection $authorizations, PayrollPeriod $period): array
+    {
+        if ($authorizations->isEmpty()) {
+            return [];
+        }
+
+        $paidIn = $this->paidAuthorizations->paidIds(
+            $authorizations,
+            $authorizations->min('date')->toDateString(),
+            $authorizations->max('date')->toDateString(),
+            $period->id,
+        );
+
+        $rows = [];
+        foreach ($authorizations as $auth) {
+            if (! isset($paidIn[$auth->id])) {
+                continue;
+            }
+            $rows[$auth->id] = [
+                'id' => $auth->id,
+                'employee_id' => $auth->employee_id,
+                'code' => (string) $auth->compensationType?->code,
+                'name' => (string) ($auth->compensationType?->name ?? $auth->type),
+                'date' => $auth->date->toDateString(),
+                'quantity' => (float) $auth->hours,
+                'paid_in' => (string) $paidIn[$auth->id]->name,
+            ];
+        }
+
+        return $rows;
+    }
+
+    /**
      * Precarga en 4 consultas lo que el cálculo necesita de TODOS los
      * empleados del periodo (asistencia, incidencias aprobadas, autorizaciones
      * aprobadas/pagadas y festivos), agrupado por empleado. Las condiciones
@@ -251,6 +292,10 @@ class PayrollCalculatorService
             ->get()
             ->groupBy('employee_id');
 
+        $alreadyPaid = $this->alreadyPaidElsewhere($authorizationsByEmployee->flatten(1), $period);
+        $alreadyPaidByEmployee = collect($alreadyPaid)->groupBy('employee_id', preserveKeys: true)
+            ->map(fn (Collection $rows) => $rows->all());
+
         $modernAuthorizationTypesByEmployee = Authorization::whereIn('employee_id', $employeeIds)
             ->whereBetween('date', [$startDate, $endDate])
             ->get(['employee_id', 'type'])
@@ -264,6 +309,7 @@ class PayrollCalculatorService
             attendanceByEmployee: $attendanceByEmployee,
             incidentsByEmployee: $incidentsByEmployee,
             authorizationsByEmployee: $authorizationsByEmployee,
+            alreadyPaidByEmployee: $alreadyPaidByEmployee,
             modernAuthorizationTypesByEmployee: $modernAuthorizationTypesByEmployee,
             holidays: $holidays,
             monthlyIncidentsEnsured: true,
@@ -392,6 +438,19 @@ class PayrollCalculatorService
                 ->whereIn('status', [Authorization::STATUS_APPROVED, Authorization::STATUS_PAID])
                 ->with('compensationType')
                 ->get();
+        }
+
+        // Lo que una nómina CERRADA ya pagó no se vuelve a pagar (Luis
+        // 2026-10-29): un concepto que cambió de semanal a mensual y de regreso
+        // (ALM, 1→8 oct) dejaba lo ya cobrado en la semana dentro del rango de
+        // extras del mes, y la mensual lo pagaba otra vez. Se lista en el recibo.
+        $alreadyPaid = $ctx
+            ? $ctx->alreadyPaidByEmployee->get($employee->id, [])
+            : $this->alreadyPaidElsewhere($approvedAuthorizations, $period);
+        if ($alreadyPaid !== []) {
+            $approvedAuthorizations = $approvedAuthorizations
+                ->reject(fn (Authorization $a) => isset($alreadyPaid[$a->id]))
+                ->values();
         }
 
         $holidayDates = $holidays->pluck('date')->map(fn ($d) => Carbon::parse($d)->toDateString())->toArray();
@@ -1251,6 +1310,9 @@ class PayrollCalculatorService
             // Conceptos "es sueldo" que NO se pagaron porque el periodo ya le
             // pagó el sueldo base (evita el doble sueldo del personal de prueba).
             'suppressed_base_salary_concepts' => $suppressedSalaryConcepts,
+            // Autorizaciones aprobadas que NO se pagan aquí porque ya las pagó
+            // otra nómina cerrada (evita el pago doble).
+            'already_paid_authorizations' => array_values($alreadyPaid),
             // Conceptos capturados y aprobados que pagaron $0 porque el concepto
             // no tiene monto configurado: hay que corregir el catálogo.
             'unpaid_zero_amount_concepts' => $unpaidZeroAmountConcepts,
@@ -1444,6 +1506,10 @@ class PayrollCalculatorService
         $merged['suppressed_base_salary_concepts'] = array_merge(
             $base['suppressed_base_salary_concepts'] ?? [],
             $extras['suppressed_base_salary_concepts'] ?? [],
+        );
+        $merged['already_paid_authorizations'] = array_merge(
+            $base['already_paid_authorizations'] ?? [],
+            $extras['already_paid_authorizations'] ?? [],
         );
         $merged['suppressed_vacation_premium'] = $extras['suppressed_vacation_premium']
             ?? $base['suppressed_vacation_premium']

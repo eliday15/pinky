@@ -21,6 +21,7 @@ final class PayrollPeriodCalculationContext
      * @param  Collection  $attendanceByEmployee  employee_id => Collection<AttendanceRecord>
      * @param  Collection  $incidentsByEmployee  employee_id => Collection<Incident> (aprobadas, con incidentType)
      * @param  Collection  $authorizationsByEmployee  employee_id => Collection<Authorization> (aprobadas/pagadas, con compensationType)
+     * @param  Collection  $alreadyPaidByEmployee  employee_id => [authorization_id => fila] ya pagadas por otra nómina cerrada
      * @param  Collection  $holidays  Festivos dentro del periodo
      * @param  bool  $monthlyIncidentsEnsured  Las FRT mensuales ya se generaron en lote para todos
      * @param  string|null  $scope  Alcance del pago unificado ('base'|'extras'); null = periodo normal
@@ -30,6 +31,7 @@ final class PayrollPeriodCalculationContext
         public readonly Collection $attendanceByEmployee,
         public readonly Collection $incidentsByEmployee,
         public readonly Collection $authorizationsByEmployee,
+        public readonly Collection $alreadyPaidByEmployee,
         public readonly Collection $modernAuthorizationTypesByEmployee,
         public readonly Collection $holidays,
         public readonly bool $monthlyIncidentsEnsured,
