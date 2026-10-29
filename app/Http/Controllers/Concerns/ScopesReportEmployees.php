@@ -42,10 +42,33 @@ trait ScopesReportEmployees
      */
     protected function scopedActiveEmployeeIds(): Collection
     {
+        return $this->scopedEmployeeIds(fn () => Employee::active());
+    }
+
+    /**
+     * Como scopedActiveEmployeeIds, más las BAJAS con fecha de baja dentro o
+     * después del inicio del rango: trabajaron en él y lo que se les autorizó
+     * sigue pendiente de pago (Luis 2026-10-28: Yazmín Cristóbal, baja 6/10,
+     * con $608.50 de extras de septiembre que el reporte no mostraba).
+     */
+    protected function scopedEmployeeIdsWorkingSince(string $startDate): Collection
+    {
+        return $this->scopedEmployeeIds(fn () => Employee::query()->where(fn ($q) => $q
+            ->where('status', 'active')
+            ->orWhere(fn ($t) => $t->where('status', 'terminated')
+                ->whereNotNull('termination_date')
+                ->where('termination_date', '>=', $startDate))));
+    }
+
+    /**
+     * @param  callable(): \Illuminate\Database\Eloquent\Builder  $base
+     */
+    private function scopedEmployeeIds(callable $base): Collection
+    {
         $user = Auth::user();
 
         if ($user?->hasPermissionTo('reports.view_all')) {
-            return Employee::active()->pluck('id');
+            return $base()->pluck('id');
         }
 
         if ($user?->hasPermissionTo('reports.view_team')) {
@@ -54,7 +77,7 @@ trait ScopesReportEmployees
                 return collect();
             }
 
-            return Employee::active()
+            return $base()
                 ->whereIn('id', $userEmployee->allSubordinateIds())
                 ->pluck('id');
         }
@@ -63,7 +86,7 @@ trait ScopesReportEmployees
             $ownId = $user->employee?->id;
 
             return $ownId
-                ? Employee::active()->where('id', $ownId)->pluck('id')
+                ? $base()->where('id', $ownId)->pluck('id')
                 : collect();
         }
 

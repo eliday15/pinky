@@ -324,7 +324,7 @@ class ReportController extends Controller implements HasMiddleware
         // Por omisión se muestra solo lo PENDIENTE de pagar: el reporte sirve
         // para revisar lo que se va a pagar a fin de mes (Luis 2026-10-08).
         $includePaid = $request->boolean('include_paid');
-        $report = app(OvertimeSummaryReportService::class)->build($this->scopedActiveEmployeeIds(), $startDate, $endDate, $includePaid);
+        $report = app(OvertimeSummaryReportService::class)->build($this->scopedEmployeeIdsWorkingSince($startDate->toDateString()), $startDate, $endDate, $includePaid);
         $report['includesAmounts'] = $includesAmounts;
         $report['includePaid'] = $includePaid;
         if (! $includesAmounts) {

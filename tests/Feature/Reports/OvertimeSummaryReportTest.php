@@ -274,4 +274,25 @@ class OvertimeSummaryReportTest extends FeatureTestCase
         $this->actingAsAdmin();
         $this->get(route('reports.overtime', ['start_date' => '2026-09-30', 'end_date' => '2026-09-01']))->assertSessionHasErrors('end_date');
     }
+
+    /**
+     * Luis 2026-10-28: Yazmín Cristóbal (baja 6/10) tenía $608.50 de extras de
+     * septiembre sin pagar y el reporte —solo activos— no la mostraba. Una baja
+     * con fecha dentro o después del inicio del rango sí sale; una vieja no.
+     */
+    public function test_recent_termination_with_pending_extras_is_listed(): void
+    {
+        $this->actingAsAdmin();
+        $he = $this->concept('HE', 100, 'per_hour', 'overtime');
+        $recent = Employee::factory()->create(['status' => 'terminated', 'termination_date' => '2026-09-10']);
+        $old = Employee::factory()->create(['status' => 'terminated', 'termination_date' => '2026-08-01']);
+        $this->authorize($recent, $he, '2026-09-05', 2);
+        $this->authorize($old, $he, '2026-09-05', 2);
+
+        $this->get(route('reports.overtime', ['start_date' => '2026-08-24', 'end_date' => '2026-09-30']))
+            ->assertOk()->assertInertia(fn (Assert $page) => $page
+                ->has('byEmployee', 1)
+                ->where('byEmployee.0.employee.id', $recent->id)
+                ->where('summary.total_estimated_cost', 200));
+    }
 }
