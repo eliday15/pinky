@@ -867,10 +867,19 @@ class IncidentController extends Controller
                 // saldo respalde (descontando lo ya comprometido en la bolsa).
                 $convertible = $this->convertibleDays($employee);
                 if ($incident->days_count > $convertible) {
-                    $label = rtrim(rtrim(number_format($convertible, 2), '0'), '.');
+                    // Dani 2026-10-28 (Lorena): "tiene 1 día y no me deja". El
+                    // mensaje viejo no decía que la solicitud lleva la casilla
+                    // HxV ni que la bolsa ya tenía horas sin usar.
+                    $fmt = fn (float $n): string => rtrim(rtrim(number_format($n, 2), '0'), '.');
+                    $unspentHours = max(0.0, (float) $employee->vacation_hours_credited - (float) $employee->vacation_hours_used);
+                    $bank = $unspentHours > 0
+                        ? " Ya tiene {$fmt($unspentHours)} h sin usar en su bolsa de horas, que cuentan contra ese saldo."
+                        : '';
 
                     return redirect()->back()->withErrors([
-                        'saldo' => "Saldo insuficiente de vacaciones para convertir a horas. Disponibles: {$label} dias, solicitados: {$incident->days_count} dias.",
+                        'saldo' => 'Esta solicitud tiene marcada la casilla "A cuenta de horas (HxV)": manda días a la bolsa de horas en lugar de darlos como vacación, '
+                            ."y no alcanza. Puede convertir {$fmt($convertible)} día(s) y la solicitud pide {$fmt((float) $incident->days_count)}.{$bank} "
+                            .'Si es una vacación normal, rechaza esta solicitud y captúrala de nuevo sin la casilla HxV.',
                     ]);
                 }
             } else {

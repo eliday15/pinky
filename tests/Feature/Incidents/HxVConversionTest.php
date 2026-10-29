@@ -159,6 +159,38 @@ class HxVConversionTest extends FeatureTestCase
         $this->assertEqualsWithDelta(0.0, (float) $emp->fresh()->vacation_hours_credited, 0.01);
     }
 
+    /**
+     * Dani 2026-10-28 (Lorena): con 1 día disponible y 16 h ya en la bolsa,
+     * el aviso debe decir que la solicitud lleva HxV, cuántas horas hay sin
+     * usar y qué hacer — no solo "saldo insuficiente".
+     */
+    public function test_insufficient_conversion_message_explains_hxv_and_the_bank(): void
+    {
+        $admin = $this->actingAsAdmin();
+        $emp = $this->employee(entitled: 3);
+        $emp->update(['vacation_hours_credited' => 16]); // 2 días ya comprometidos
+        $type = $this->vacType();
+
+        $this->post(route('incidents.store'), [
+            'employee_id' => $emp->id,
+            'incident_type_id' => $type->id,
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-02',
+            'converts_to_vacation_hours' => true,
+        ])->assertRedirect(route('incidents.index'));
+
+        $incident = Incident::firstWhere('employee_id', $emp->id);
+        $code = $this->attachRealTwoFactor($admin);
+        $this->post(route('incidents.approve', $incident), ['two_factor_code' => $code])
+            ->assertSessionHasErrors('saldo');
+
+        $message = session('errors')->first('saldo');
+        $this->assertStringContainsString('A cuenta de horas (HxV)', $message);
+        $this->assertStringContainsString('16 h sin usar', $message);
+        $this->assertStringContainsString('Puede convertir 1 día(s) y la solicitud pide 2', $message);
+        $this->assertStringContainsString('sin la casilla HxV', $message);
+    }
+
     public function test_deleting_a_converting_incident_refunds_the_bank(): void
     {
         $admin = $this->actingAsAdmin();
