@@ -469,9 +469,9 @@ class WeeklyOvertimeReportService
             // 4.5 de velada = 9.5 → 1 unidad). Igual que la nómina
             // (calculateWeekendUnits). Sin checada completa cae al neto.
             'weekend_worked_hours' => $approvedByCode->has(self::WEEKEND_CODE)
-                ? round(max(0, ($record->grossSpanHours()
-                    ?? (float) ($record->worked_hours ?? 0) + (float) ($record->overtime_hours ?? 0))
-                    - (float) ($record->velada_hours ?? 0)), 2)
+                ? round($record->weekendBaseHours()
+                    ?? max(0, (float) ($record->worked_hours ?? 0) + (float) ($record->overtime_hours ?? 0)
+                        - (float) ($record->velada_hours ?? 0)), 2)
                 : 0.0,
             // Sin checada completa no hay horas que medir: la autorización
             // aprobada es la evidencia y valen sus unidades capturadas.

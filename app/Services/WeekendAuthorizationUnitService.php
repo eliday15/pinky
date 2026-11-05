@@ -93,12 +93,11 @@ class WeekendAuthorizationUnitService
 
     public function backedUnitsFor(Employee $employee, ?AttendanceRecord $record): ?int
     {
-        $gross = $record?->grossSpanHours();
-        if ($gross === null) {
+        $base = $record?->weekendBaseHours();
+        if ($base === null) {
             return null;
         }
 
-        $base = max(0.0, (float) $gross - (float) ($record->velada_hours ?? 0));
         $unitHours = $employee->department?->weekend_unit_hours;
         if ($unitHours !== null && (int) $unitHours > 0) {
             return max(1, (int) floor($base / (int) $unitHours));

@@ -947,6 +947,7 @@ class AuthorizationController extends Controller
         $weekendUnits = null;
         $totalWeekendHours = 0.0;
         $weekendVeladaHours = 0.0;
+        $weekendAwayHours = 0.0;
         $weekendFromCapture = false;
         $isWeekendPull = $pullRule === CompensationType::PULL_RULE_WEEKEND;
         $isComidaPull = $pullRule === CompensationType::PULL_RULE_COMIDA;
@@ -958,7 +959,8 @@ class AuthorizationController extends Controller
                     $weekendUnits = max(1, (int) round((float) $authorization->hours));
                 } else {
                     $weekendVeladaHours = (float) ($record->velada_hours ?? 0);
-                    $totalWeekendHours = max(0.0, (float) $gross - $weekendVeladaHours);
+                    $weekendAwayHours = $record->veladaReturnGapHours();
+                    $totalWeekendHours = (float) $record->weekendBaseHours();
                     $weekendUnits = (int) floor($totalWeekendHours / $unitHours);
                 }
             } elseif ($isComidaPull) {
@@ -970,7 +972,8 @@ class AuthorizationController extends Controller
                 $weekendUnits = max(1, (int) round((float) $authorization->hours));
             } else {
                 $weekendVeladaHours = (float) ($record->velada_hours ?? 0);
-                $totalWeekendHours = max(0.0, (float) $gross - $weekendVeladaHours);
+                $weekendAwayHours = $record->veladaReturnGapHours();
+                $totalWeekendHours = (float) $record->weekendBaseHours();
                 $weekendUnits = $authorization->employee->weekendUnitsForGrossHours($totalWeekendHours);
             }
         }
@@ -1026,6 +1029,7 @@ class AuthorizationController extends Controller
                 'double_at' => Employee::WEEKEND_DOUBLE_THRESHOLD_HOURS,
                 'worked_hours' => round($totalWeekendHours, 2),
                 'velada_hours' => round($weekendVeladaHours, 2),
+                'away_hours' => round($weekendAwayHours, 2),
                 'from_capture' => $weekendFromCapture,
                 'label' => $pullRule === CompensationType::PULL_RULE_COMIDA ? 'comida(s)' : 'fin(es) de semana',
             ],

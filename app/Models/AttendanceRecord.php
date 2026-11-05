@@ -13,7 +13,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  */
 class AttendanceRecord extends Model
 {
-    use HasFactory, Auditable;
+    use Auditable, HasFactory;
 
     /**
      * The module name for audit logging.
@@ -34,8 +34,8 @@ class AttendanceRecord extends Model
         $date = $this->auditDate($this->work_date);
 
         return trim('Asistencia'
-            . ($employee ? " de {$employee}" : '')
-            . ($date ? " ({$date})" : ''));
+            .($employee ? " de {$employee}" : '')
+            .($date ? " ({$date})" : ''));
     }
 
     protected $fillable = [
@@ -192,6 +192,58 @@ class AttendanceRecord extends Model
         }
 
         return round(abs($in->diffInMinutes($out)) / 60, 4);
+    }
+
+    /** Hueco mínimo entre huellas para leerlo como "se fue y regresó a velar". */
+    public const VELADA_RETURN_GAP_MIN_HOURS = 2.0;
+
+    /**
+     * Horas que cuentan para el FIN: corridas de entrada a salida, menos la
+     * velada (se paga aparte) y menos el tiempo que estuvo FUERA cuando salió
+     * y regresó a velar (Dani 2026-11-04, caso Policarpo dom 1/11: 7:48–15:00,
+     * regresó 21:30 a la velada hasta 5:02; las 6.5 h fuera contaban como
+     * fin y le daban 2 unidades en vez de 1). La comida no es un hueco así
+     * (menos de VELADA_RETURN_GAP_MIN_HOURS) y sigue contando corrida.
+     *
+     * Returns:
+     *     Horas base del fin de semana, o null si la checada está incompleta.
+     */
+    public function weekendBaseHours(): ?float
+    {
+        $gross = $this->grossSpanHours();
+        if ($gross === null) {
+            return null;
+        }
+
+        return round(max(0.0, $gross - (float) ($this->velada_hours ?? 0) - $this->veladaReturnGapHours()), 4);
+    }
+
+    /**
+     * Tiempo FUERA antes de regresar a velar: el hueco más largo entre dos
+     * huellas consecutivas (al minuto), si el día tiene velada y el hueco dura
+     * al menos VELADA_RETURN_GAP_MIN_HOURS. 0 en cualquier otro caso.
+     */
+    public function veladaReturnGapHours(): float
+    {
+        if ((float) ($this->velada_hours ?? 0) <= 0) {
+            return 0.0;
+        }
+
+        $times = collect($this->raw_punches ?? [])
+            ->filter(fn ($p) => ! empty($p['date']) && ! empty($p['time']))
+            ->map(fn ($p) => \Carbon\Carbon::parse($p['date'].' '.substr($p['time'], 0, 5)))
+            ->sort()
+            ->values();
+
+        // Solo cuentan los pares salida → regreso INTERMEDIOS (huella 2→3,
+        // 4→5…): de la entrada a la primera salida y de la última huella a la
+        // salida final sí estuvo trabajando.
+        $largest = 0.0;
+        for ($i = 1; $i + 1 < $times->count() - 1; $i += 2) {
+            $largest = max($largest, $times[$i]->diffInMinutes($times[$i + 1]) / 60);
+        }
+
+        return $largest >= self::VELADA_RETURN_GAP_MIN_HOURS ? $largest : 0.0;
     }
 
     /**
