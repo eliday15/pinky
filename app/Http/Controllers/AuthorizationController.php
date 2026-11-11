@@ -15,6 +15,7 @@ use App\Models\SystemSetting;
 use App\Services\CompanionConceptService;
 use App\Services\CompensationRateResolverService;
 use App\Services\OvertimeRoundingService;
+use App\Services\OvertimeSplitWithdrawalService;
 use App\Services\PayrollInvalidationService;
 use App\Services\WeekendAuthorizationUnitService;
 use App\Services\WeekendHolidayAutoApprovalService;
@@ -1013,8 +1014,18 @@ class AuthorizationController extends Controller
             ]);
         }
 
+        // Excedente de un TE partido: la otra parte de la misma captura ya está
+        // aprobada; mostrarlo y ofrecer retirarla junto (Dani 2026-11-11).
+        $splitService = app(OvertimeSplitWithdrawalService::class);
+        $backedPart = $splitService->backedPartOf($authorization);
+
         return Inertia::render('Authorizations/Show', [
             'authorization' => $authorization,
+            'splitBackedPart' => $backedPart === null ? null : [
+                'id' => $backedPart->id,
+                'label' => $splitService->describe($backedPart),
+                'can_withdraw' => $splitService->canWithdraw($user, $backedPart),
+            ],
             'approvedOmission' => $approvedOmission === null ? null : [
                 'reason_label' => $approvedOmission->reasonLabel(),
                 'comments' => $approvedOmission->comments,
@@ -1163,10 +1174,51 @@ class AuthorizationController extends Controller
             return redirect()->back()->with('error', 'Solo se pueden eliminar autorizaciones pendientes.');
         }
 
+        $withdraw = request()->boolean('withdraw_backed_part');
+        $backedPart = app(OvertimeSplitWithdrawalService::class)->backedPartOf($authorization);
+
         $authorization->delete();
 
-        return redirect()->route('authorizations.index')
-            ->with('success', 'Autorizacion eliminada.');
+        [$key, $message] = $this->afterExcessRemoved($backedPart, $withdraw, 'Autorizacion eliminada.', 'se borró')
+            ?? ['success', 'Autorizacion eliminada.'];
+
+        return redirect()->route('authorizations.index')->with($key, $message);
+    }
+
+    /**
+     * Tras borrar o rechazar el excedente de un TE partido: retirar también la
+     * parte aprobada de la misma captura si se pidió, o avisar que sigue viva
+     * (caso Dani 2026-11-11, Luis Ortega #11994). Devuelve [tipo, mensaje]
+     * para el flash, o null cuando no hay parte aprobada ligada.
+     */
+    private function afterExcessRemoved(?Authorization $backedPart, bool $withdraw, string $done, string $verb): ?array
+    {
+        if (! $backedPart) {
+            return null;
+        }
+
+        $service = app(OvertimeSplitWithdrawalService::class);
+        $label = $service->describe($backedPart);
+
+        if ($withdraw && $service->canWithdraw(Auth::user(), $backedPart)) {
+            $reason = 'Captura retirada: '.$verb.' la parte fuera de checada de la misma captura.';
+            $backedPart->reject(Auth::user(), $reason);
+            $backedPart->loadMissing('employee');
+            $backedPart->recordAuditEvent(
+                action: AuditLog::ACTION_REJECT,
+                description: 'Rechazo Hora Extra de '.($backedPart->employee?->full_name ?? 'empleado').' del '
+                    .Carbon::parse($backedPart->date)->format('d/m/Y').'. Motivo: '.$reason,
+                metadata: ['motivo' => $reason, 'estatus_anterior' => Authorization::STATUS_APPROVED],
+                oldValues: ['status' => Authorization::STATUS_APPROVED],
+                newValues: ['status' => $backedPart->status],
+            );
+            $this->revertApprovalEffects($backedPart, app(ZktecoSyncService::class));
+
+            return ['success', $done.' También se rechazó la parte aprobada de esa captura: '.$label.'.'];
+        }
+
+        return ['warning', $done.' Ojo: la parte que respalda la checada sigue aprobada ('.$label.'). '
+            .'Si toda la captura estaba mal, recházala también.'];
     }
 
     /**
@@ -1553,7 +1605,11 @@ class AuthorizationController extends Controller
             $this->revertApprovalEffects($authorization, app(ZktecoSyncService::class));
         }
 
-        return redirect()->back()->with('success', 'Autorizacion rechazada.');
+        $backedPart = app(OvertimeSplitWithdrawalService::class)->backedPartOf($authorization);
+        [$key, $message] = $this->afterExcessRemoved($backedPart, $request->boolean('withdraw_backed_part'), 'Autorizacion rechazada.', 'se rechazó')
+            ?? ['success', 'Autorizacion rechazada.'];
+
+        return redirect()->back()->with($key, $message);
     }
 
     /**

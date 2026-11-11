@@ -16,8 +16,21 @@ const props = defineProps({
     approvedOmission: { type: Object, default: null },
     // Server only provides this sensitive payroll value to superadmins.
     estimatedBonusAmount: { type: Number, default: null },
+    // Excedente de un TE partido: la otra parte de la misma captura ya está
+    // aprobada. { id, label, can_withdraw } o null.
+    splitBackedPart: { type: Object, default: null },
     can: Object,
 });
+
+/** Al borrar o rechazar este excedente, retirar también la parte aprobada. */
+const withdrawBackedPart = ref(false);
+
+const deleteForm = useForm({ withdraw_backed_part: false });
+const submitDelete = () => {
+    if (!confirm('¿Seguro que quieres eliminar esta autorización?')) return;
+    deleteForm.withdraw_backed_part = withdrawBackedPart.value;
+    deleteForm.delete(route('authorizations.destroy', props.authorization.id));
+};
 
 const formatCurrency = (amount) => new Intl.NumberFormat('es-MX', {
     style: 'currency',
@@ -111,11 +124,13 @@ const typeLabels = {
 const rejectForm = useForm({
     rejection_reason: '',
     two_factor_code: '',
+    withdraw_backed_part: false,
 });
 
 const showRejectModal = ref(false);
 
 const submitReject = () => {
+    rejectForm.withdraw_backed_part = withdrawBackedPart.value;
     rejectForm.post(route('authorizations.reject', props.authorization.id), {
         onSuccess: () => {
             showRejectModal.value = false;
@@ -166,9 +181,24 @@ const submitReject = () => {
                             es autorizar el pago de tiempo extra no respaldado por checada.
                         </p>
                         <p class="mt-1">
-                            Este registro lo genera el sistema y no se puede editar:
-                            apruébalo (puedes ajustar las horas al aprobar) o recházalo.
+                            Es el pedazo de una captura que el reloj no respalda; el sistema
+                            lo separó y no se puede editar: apruébalo (puedes ajustar las
+                            horas al aprobar) o recházalo.
                         </p>
+                        <template v-if="splitBackedPart">
+                            <p class="mt-2">
+                                La otra parte de esta misma captura ya está aprobada:
+                                <Link :href="route('authorizations.show', splitBackedPart.id)" class="font-semibold underline">
+                                    {{ splitBackedPart.label }}
+                                </Link>.
+                                Si borras o rechazas este pedazo, esa parte sigue aprobada.
+                            </p>
+                            <label v-if="splitBackedPart.can_withdraw && (can.delete || can.reject)" class="mt-2 flex items-start gap-2">
+                                <input v-model="withdrawBackedPart" type="checkbox" class="mt-0.5 rounded border-orange-300 text-pink-600 focus:ring-pink-500" />
+                                <span>Toda la captura estaba mal: al borrar o rechazar este pedazo, rechazar también la parte aprobada.</span>
+                            </label>
+                            <p v-else class="mt-2">Si toda la captura estaba mal, pide a RRHH que rechace también esa parte.</p>
+                        </template>
                     </div>
                 </div>
 
@@ -379,16 +409,15 @@ const submitReject = () => {
                         >
                             Editar
                         </Link>
-                        <Link
+                        <button
                             v-if="can.delete"
-                            :href="route('authorizations.destroy', authorization.id)"
-                            method="delete"
-                            as="button"
-                            class="px-4 py-2 border border-red-300 text-red-700 rounded-lg hover:bg-red-50"
-                            onclick="return confirm('Esta seguro de eliminar esta autorizacion?')"
+                            type="button"
+                            :disabled="deleteForm.processing"
+                            @click="submitDelete"
+                            class="px-4 py-2 border border-red-300 text-red-700 rounded-lg hover:bg-red-50 disabled:opacity-50"
                         >
                             Eliminar
-                        </Link>
+                        </button>
                     </div>
                     <div class="space-x-2">
                         <button
@@ -524,6 +553,9 @@ const submitReject = () => {
                     <h3 class="text-lg font-semibold text-gray-900 mb-4">
                         Rechazar Autorizacion
                     </h3>
+                    <p v-if="splitBackedPart && withdrawBackedPart" class="text-sm text-amber-700 mb-4">
+                        También se rechazará la parte aprobada de esta captura: {{ splitBackedPart.label }}.
+                    </p>
                     <p v-if="isAlreadyApproved" class="text-sm text-amber-600 mb-4">
                         Esta autorización ya estaba aprobada. Al rechazarla se revertirá:
                         se recalcula la asistencia, se reabren las anomalías vinculadas y
