@@ -554,7 +554,27 @@ class Employee extends Model
             return null;
         }
 
-        return $grossHours >= self::WEEKEND_DOUBLE_THRESHOLD_HOURS ? 2 : 1;
+        return round($grossHours + self::weekendToleranceHours(), 2) >= self::WEEKEND_DOUBLE_THRESHOLD_HOURS ? 2 : 1;
+    }
+
+    /**
+     * Unidades FIN en un depto por bloques (Almacén PT): cada bloque completo
+     * de $unitHours horas, mínimo 1, con la misma tolerancia.
+     */
+    public static function weekendBlockUnits(float $hours, int $unitHours): int
+    {
+        return max(1, (int) floor(round($hours + self::weekendToleranceHours(), 2) / $unitHours));
+    }
+
+    /**
+     * Tolerancia para completar las horas de un fin de semana (Dani 2026-11-11:
+     * "si le falta incluso un minuto para completar las 12 horas pierde el
+     * segundo fin; manejar una tolerancia de 10 minutos"). Se edita en
+     * Configuración → Nómina; 0 = sin tolerancia.
+     */
+    public static function weekendToleranceHours(): float
+    {
+        return max(0, (int) SystemSetting::get('weekend_hours_tolerance_minutes', 0)) / 60;
     }
 
     /**

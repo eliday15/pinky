@@ -962,7 +962,7 @@ class AuthorizationController extends Controller
                     $weekendVeladaHours = (float) ($record->velada_hours ?? 0);
                     $weekendAwayHours = $record->veladaReturnGapHours();
                     $totalWeekendHours = (float) $record->weekendBaseHours();
-                    $weekendUnits = (int) floor($totalWeekendHours / $unitHours);
+                    $weekendUnits = Employee::weekendBlockUnits($totalWeekendHours, (int) $unitHours);
                 }
             } elseif ($isComidaPull) {
                 // Comida en depto de umbral: vale su cantidad capturada.
@@ -1038,6 +1038,7 @@ class AuthorizationController extends Controller
                 'mode' => $unitHours ? 'blocks' : 'threshold',
                 'threshold' => $unitHours ? null : $authorization->employee->weekendUnitThreshold(),
                 'double_at' => Employee::WEEKEND_DOUBLE_THRESHOLD_HOURS,
+                'tolerance_minutes' => (int) round(Employee::weekendToleranceHours() * 60),
                 'worked_hours' => round($totalWeekendHours, 2),
                 'velada_hours' => round($weekendVeladaHours, 2),
                 'away_hours' => round($weekendAwayHours, 2),

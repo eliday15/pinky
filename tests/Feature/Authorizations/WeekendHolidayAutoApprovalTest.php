@@ -173,7 +173,7 @@ class WeekendHolidayAutoApprovalTest extends FeatureTestCase
         $employee = Employee::factory()->create();
         $this->weekendRecord($employee, [
             'check_in' => '06:17:26',
-            'check_out' => '18:11:36', // 11 h 54 min: respalda 1, no 2
+            'check_out' => '18:06:36', // 11 h 49 min: fuera de los 10 min de tolerancia, respalda 1
         ]);
         $auth = $this->pendingAuth($employee, [
             'hours' => 2,

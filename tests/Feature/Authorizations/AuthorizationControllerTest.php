@@ -1793,7 +1793,7 @@ class AuthorizationControllerTest extends FeatureTestCase
             'employee_id' => $employee->id,
             'work_date' => '2026-08-29',
             'check_in' => '06:17:26',
-            'check_out' => '18:11:36',
+            'check_out' => '18:06:36',
             'is_weekend_work' => true,
             'velada_hours' => 0,
         ]);

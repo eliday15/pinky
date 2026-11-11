@@ -100,7 +100,7 @@ class WeekendAuthorizationUnitService
 
         $unitHours = $employee->department?->weekend_unit_hours;
         if ($unitHours !== null && (int) $unitHours > 0) {
-            return max(1, (int) floor($base / (int) $unitHours));
+            return Employee::weekendBlockUnits($base, (int) $unitHours);
         }
 
         return (int) ($employee->weekendUnitsForGrossHours($base) ?? 0);
@@ -131,7 +131,7 @@ class WeekendAuthorizationUnitService
 
         $unitHours = $employee->department?->weekend_unit_hours;
         if ($unitHours !== null && (int) $unitHours > 0) {
-            return max(1, (int) floor($grossHours / (int) $unitHours));
+            return Employee::weekendBlockUnits($grossHours, (int) $unitHours);
         }
 
         return (int) ($employee->weekendUnitsForGrossHours($grossHours) ?? 0);
