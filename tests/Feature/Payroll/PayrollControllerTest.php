@@ -411,6 +411,7 @@ class PayrollControllerTest extends FeatureTestCase
                     ->has('average_pay')
                     ->has('by_department'))
                 ->has('can', fn (Assert $can) => $can
+                    ->where('viewMoney', true)
                     ->where('viewComplete', true)
                     ->where('calculate', true)
                     ->where('approve', true)

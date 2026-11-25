@@ -1,6 +1,7 @@
 <script setup>
+import { computed } from 'vue';
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { Head, Link } from '@inertiajs/vue3';
+import { Head, Link, usePage } from '@inertiajs/vue3';
 
 const props = defineProps({
     position: Object,
@@ -21,6 +22,8 @@ const positionTypeColors = {
 };
 
 const formatCurrency = (amount) => {
+    // Sin money.view el servidor no manda la tarifa: «—», no $NaN.
+    if (amount === null || amount === undefined) return '—';
     return new Intl.NumberFormat('es-MX', {
         style: 'currency',
         currency: 'MXN',
@@ -38,6 +41,9 @@ const statusLabels = {
     inactive: 'Inactivo',
     terminated: 'Baja',
 };
+
+// Solo quien administra el catálogo ve crear/editar/eliminar (el semiadmin lo consulta).
+const canManage = computed(() => (usePage().props.auth?.permissions ?? []).includes('positions.manage'));
 </script>
 
 <template>
@@ -55,7 +61,7 @@ const statusLabels = {
             <Link :href="route('positions.index')" class="text-pink-600 hover:text-pink-800">
                 &larr; Volver a puestos
             </Link>
-            <Link
+            <Link v-if="canManage"
                 :href="route('positions.edit', position.id)"
                 class="px-4 py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700 transition-colors"
             >
@@ -110,8 +116,8 @@ const statusLabels = {
                     </div>
                 </div>
 
-                <!-- Compensation Rates -->
-                <div class="bg-white rounded-lg shadow p-6">
+                <!-- Compensation Rates (solo quien ve dinero; al semiadmin no le llegan) -->
+                <div v-if="position.base_hourly_rate !== undefined" class="bg-white rounded-lg shadow p-6">
                     <h3 class="text-lg font-semibold text-gray-800 mb-4">Tarifas de Compensacion</h3>
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                         <div class="text-center p-4 bg-gray-50 rounded-lg">
@@ -156,7 +162,8 @@ const statusLabels = {
                                         </span>
                                     </td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                        <template v-if="ct.calculation_type === 'fixed'">${{ Number(ct.fixed_amount).toFixed(2) }}</template>
+                                        <template v-if="ct.fixed_amount === undefined && ct.percentage_value === undefined">—</template>
+                                        <template v-else-if="ct.calculation_type === 'fixed'">${{ Number(ct.fixed_amount).toFixed(2) }}</template>
                                         <template v-else>{{ Number(ct.percentage_value).toFixed(2) }}%</template>
                                     </td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">

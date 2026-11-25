@@ -196,4 +196,37 @@ class PayrollEntry extends Model
             + $this->holiday_hours
             + $this->weekend_hours;
     }
+
+    /**
+     * Lo que SÍ ve quien no tiene money.view (semiadmin, Luis 2026-11-25):
+     * identificadores, horas y días. Lista de permitidos —no de prohibidos—
+     * para que una columna de dinero nueva nunca se cuele por omisión.
+     */
+    public const NON_MONEY_ATTRIBUTES = [
+        'id', 'payroll_period_id', 'employee_id',
+        'regular_hours', 'overtime_hours', 'holiday_hours', 'weekend_hours', 'night_shift_hours',
+        'velada_hours', 'velada_authorized_hours', 'overtime_authorized_hours',
+        'days_worked', 'days_absent', 'days_late', 'punctuality_days', 'night_shift_days',
+        'late_absences_generated', 'vacation_days_paid', 'sick_leave_days', 'velada_days', 'extra_days',
+        'created_at', 'updated_at',
+    ];
+
+    public function toArray()
+    {
+        $array = parent::toArray();
+
+        if (! app(\App\Support\MoneyVisibility::class)->hidden()) {
+            return $array;
+        }
+
+        $kept = array_intersect_key($array, array_flip(self::NON_MONEY_ATTRIBUTES));
+        foreach (array_keys($this->getRelations()) as $relation) {
+            $key = \Illuminate\Support\Str::snake($relation);
+            if (array_key_exists($key, $array)) {
+                $kept[$key] = $array[$key];
+            }
+        }
+
+        return $kept;
+    }
 }

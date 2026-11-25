@@ -30,7 +30,7 @@ class IncidentTypeController extends Controller
     public function index(Request $request): Response
     {
         $user = Auth::user();
-        if (! $user->hasPermissionTo('incident_types.manage')) {
+        if (! $user->hasAnyPermission(['incident_types.manage', 'catalogs.view'])) {
             abort(403);
         }
 

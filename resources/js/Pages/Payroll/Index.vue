@@ -2,12 +2,15 @@
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import { computed } from 'vue';
+import { useCanSeeMoney } from '@/composables/useCanSeeMoney';
 import { formatDate as fmtDate } from '@/utils/date';
 import { periodInfo } from '@/utils/payrollPeriodType';
 
 const props = defineProps({
     periods: Object,
 });
+
+const canSeeMoney = useCanSeeMoney();
 
 // Solo admin puede eliminar periodos ya calculados/aprobados (para poder
 // borrar y recalcular en pruebas); los borradores se eliminan como siempre.
@@ -88,7 +91,7 @@ const deletePeriod = (period) => {
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Tipo</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Fecha Pago</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Empleados</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total Neto</th>
+                        <th v-if="canSeeMoney" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total Neto</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Estado</th>
                         <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Acciones</th>
                     </tr>
@@ -132,7 +135,7 @@ const deletePeriod = (period) => {
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">
                             {{ period.entries_count || 0 }}
                         </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">
+                        <td v-if="canSeeMoney" class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">
                             {{ formatCurrency(period.entries_sum_net_pay) }}
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap">

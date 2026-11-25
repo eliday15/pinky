@@ -26,7 +26,7 @@ class CompensationTypeController extends Controller
     public function index(Request $request): Response
     {
         $user = Auth::user();
-        if (! $user->hasPermissionTo('compensation_types.manage')) {
+        if (! $user->hasAnyPermission(['compensation_types.manage', 'catalogs.view'])) {
             abort(403);
         }
 

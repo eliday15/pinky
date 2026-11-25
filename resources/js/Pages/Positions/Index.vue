@@ -1,7 +1,7 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { Head, Link, router } from '@inertiajs/vue3';
-import { ref, watch } from 'vue';
+import { Head, Link, router, usePage } from '@inertiajs/vue3';
+import { ref, watch, computed } from 'vue';
 import debounce from 'lodash/debounce';
 
 const props = defineProps({
@@ -42,6 +42,8 @@ const applyFilters = debounce(() => {
 watch([search, department, status], applyFilters);
 
 const formatCurrency = (amount) => {
+    // Sin money.view el servidor no manda la tarifa: «—», no $NaN.
+    if (amount === null || amount === undefined) return '—';
     return new Intl.NumberFormat('es-MX', {
         style: 'currency',
         currency: 'MXN',
@@ -53,6 +55,9 @@ const deletePosition = (position) => {
         router.delete(route('positions.destroy', position.id));
     }
 };
+
+// Solo quien administra el catálogo ve crear/editar/eliminar (el semiadmin lo consulta).
+const canManage = computed(() => (usePage().props.auth?.permissions ?? []).includes('positions.manage'));
 </script>
 
 <template>
@@ -71,7 +76,7 @@ const deletePosition = (position) => {
                 <h1 class="text-2xl font-bold text-gray-800">Gestion de Puestos</h1>
                 <p class="text-gray-600">{{ positions.total }} puestos registrados</p>
             </div>
-            <Link
+            <Link v-if="canManage"
                 :href="route('positions.create')"
                 class="inline-flex items-center px-4 py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700 transition-colors"
             >
@@ -186,13 +191,13 @@ const deletePosition = (position) => {
                             >
                                 Ver
                             </Link>
-                            <Link
+                            <Link v-if="canManage"
                                 :href="route('positions.edit', pos.id)"
                                 class="text-pink-600 hover:text-pink-900 mr-3"
                             >
                                 Editar
                             </Link>
-                            <button
+                            <button v-if="canManage"
                                 @click="deletePosition(pos)"
                                 class="text-red-600 hover:text-red-900"
                             >

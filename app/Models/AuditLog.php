@@ -583,4 +583,30 @@ class AuditLog extends Model
             default => 'gray',
         };
     }
+
+    /**
+     * Sin money.view (semiadmin): la bitácora se ve completa, menos el dinero.
+     */
+    public function toArray()
+    {
+        $array = parent::toArray();
+
+        if (! app(\App\Support\MoneyVisibility::class)->hidden()) {
+            return $array;
+        }
+
+        foreach (['old_values', 'new_values', 'metadata'] as $key) {
+            if (array_key_exists($key, $array) && is_array($array[$key])) {
+                $array[$key] = \App\Support\MoneyRedactor::redactArray($array[$key], $this->auditable_type);
+            }
+        }
+        // Todo texto (descripción, resumen calculado, etiqueta…) se enmascara.
+        foreach ($array as $key => $value) {
+            if (is_string($value)) {
+                $array[$key] = \App\Support\MoneyRedactor::redactText($value);
+            }
+        }
+
+        return $array;
+    }
 }

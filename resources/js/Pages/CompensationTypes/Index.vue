@@ -1,7 +1,7 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { Head, Link, router } from '@inertiajs/vue3';
-import { ref, watch } from 'vue';
+import { Head, Link, router, usePage } from '@inertiajs/vue3';
+import { ref, watch, computed } from 'vue';
 import debounce from 'lodash/debounce';
 
 const props = defineProps({
@@ -31,6 +31,10 @@ const deleteCompensationType = (compensationType) => {
 };
 
 const formatValue = (ct) => {
+    // Sin money.view el servidor no manda montos ni porcentajes.
+    if (ct.fixed_amount === undefined && ct.percentage_value === undefined) {
+        return '—';
+    }
     if (ct.calculation_type === 'fixed') {
         return `$${Number(ct.fixed_amount).toFixed(2)}`;
     }
@@ -48,6 +52,9 @@ const applicationModeColors = {
     per_day: 'bg-green-100 text-green-800',
     one_time: 'bg-purple-100 text-purple-800',
 };
+
+// Solo quien administra el catálogo ve crear/editar/eliminar (el semiadmin lo consulta).
+const canManage = computed(() => (usePage().props.auth?.permissions ?? []).includes('compensation_types.manage'));
 </script>
 
 <template>
@@ -66,7 +73,7 @@ const applicationModeColors = {
                 <h1 class="text-2xl font-bold text-gray-800">Gestion de Conceptos de Compensacion</h1>
                 <p class="text-gray-600">{{ compensationTypes.total }} conceptos registrados</p>
             </div>
-            <Link
+            <Link v-if="canManage"
                 :href="route('compensation-types.create')"
                 class="inline-flex items-center px-4 py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700 transition-colors"
             >
@@ -188,13 +195,13 @@ const applicationModeColors = {
                             {{ ct.departments_count }}
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                            <Link
+                            <Link v-if="canManage"
                                 :href="route('compensation-types.edit', ct.id)"
                                 class="text-pink-600 hover:text-pink-900 mr-3"
                             >
                                 Editar
                             </Link>
-                            <button
+                            <button v-if="canManage"
                                 @click="deleteCompensationType(ct)"
                                 class="text-red-600 hover:text-red-900"
                             >

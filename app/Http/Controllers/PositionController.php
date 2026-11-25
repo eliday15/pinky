@@ -26,7 +26,7 @@ class PositionController extends Controller
     public function index(Request $request): Response
     {
         $user = Auth::user();
-        if (! $user->hasPermissionTo('positions.manage')) {
+        if (! $user->hasAnyPermission(['positions.manage', 'catalogs.view'])) {
             abort(403);
         }
 
@@ -136,7 +136,7 @@ class PositionController extends Controller
     public function show(Position $position): Response
     {
         $user = Auth::user();
-        if (! $user->hasPermissionTo('positions.manage')) {
+        if (! $user->hasAnyPermission(['positions.manage', 'catalogs.view'])) {
             abort(403);
         }
 

@@ -21,7 +21,7 @@ class DepartmentController extends Controller
     public function index(Request $request): Response
     {
         $user = Auth::user();
-        if (! $user->hasPermissionTo('departments.manage')) {
+        if (! $user->hasAnyPermission(['departments.manage', 'catalogs.view'])) {
             abort(403);
         }
 
@@ -101,7 +101,7 @@ class DepartmentController extends Controller
     public function show(Department $department): Response
     {
         $user = Auth::user();
-        if (! $user->hasPermissionTo('departments.manage')) {
+        if (! $user->hasAnyPermission(['departments.manage', 'catalogs.view'])) {
             abort(403);
         }
 

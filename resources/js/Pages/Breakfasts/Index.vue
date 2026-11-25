@@ -8,6 +8,7 @@ import { computed, ref } from 'vue';
 // pendiente de pagar: del día siguiente al último corte hasta hoy), totales,
 // evidencia fotográfica y cortes de pago al vendedor (Luis 2026-10-22).
 const props = defineProps({
+    canSeeMoney: { type: Boolean, default: true },
     claims: Array,
     filters: Object,
     totals: Object,
@@ -63,7 +64,8 @@ const applyFilters = () => {
     }, { preserveState: true, preserveScroll: true });
 };
 
-const formatCurrency = (amount) => new Intl.NumberFormat('es-MX', {
+// Sin money.view el servidor manda los importes en null: se ve «—», no $0.
+const formatCurrency = (amount) => (amount === null || amount === undefined) ? '—' : new Intl.NumberFormat('es-MX', {
     style: 'currency',
     currency: 'MXN',
 }).format(amount || 0);
@@ -104,6 +106,7 @@ const formatCurrency = (amount) => new Intl.NumberFormat('es-MX', {
                 Aplicar
             </button>
             <a
+                v-if="canSeeMoney !== false"
                 :href="route('breakfasts.export', { start_date: filters.start_date, end_date: filters.end_date })"
                 class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
             >

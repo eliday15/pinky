@@ -174,4 +174,23 @@ class SystemSetting extends Model
     {
         return $query->where('group', $group);
     }
+
+    /** Ajustes que son pesos: el semiadmin los ve sin valor (Luis 2026-11-25). */
+    public const MONEY_KEYS = [
+        'punctuality_bonus_amount', 'dinner_allowance_amount', 'night_shift_bonus',
+        'weekly_bonus_amount', 'monthly_bonus_amount', 'breakfast_cost',
+        'fiscal_uma_daily', 'fiscal_minimum_wage_daily',
+    ];
+
+    public function toArray()
+    {
+        $array = parent::toArray();
+
+        if (in_array($this->key, self::MONEY_KEYS, true) && app(\App\Support\MoneyVisibility::class)->hidden()) {
+            $array['value'] = null;
+            $array['value_hidden'] = true;
+        }
+
+        return $array;
+    }
 }

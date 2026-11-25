@@ -111,6 +111,12 @@ class User extends Authenticatable
      */
     public function canSeeMoney(): bool
     {
+        // El semiadmin nunca ve dinero, aunque otro rol suyo (p. ej. vendedor
+        // de desayunos) traiga money.view.
+        if ($this->hasRole('semiadmin')) {
+            return false;
+        }
+
         try {
             return $this->hasPermissionTo('money.view');
         } catch (\Spatie\Permission\Exceptions\PermissionDoesNotExist) {

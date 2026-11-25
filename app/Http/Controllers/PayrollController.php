@@ -586,6 +586,15 @@ class PayrollController extends Controller
             ->get();
 
         $summary = $this->calculator->getPeriodSummary($payroll);
+        $hideMoney = app(\App\Support\MoneyVisibility::class)->hidden();
+        if ($hideMoney) {
+            // Semiadmin: cuántos y de qué depto, sin un solo total.
+            $summary = [
+                'employee_count' => $summary['employee_count'] ?? $entries->count(),
+                'by_department' => collect($summary['by_department'] ?? [])
+                    ->map(fn ($d) => ['count' => $d['count'] ?? 0])->all(),
+            ];
+        }
 
         // Estatus del timbrado CFDI (solo informativo; el botón aparece para
         // quien puede aprobar y con nómina aprobada).
@@ -600,13 +609,13 @@ class PayrollController extends Controller
         // silenciosamente incompleto (caso Descuento Infonavit, Elias
         // 2026-08-26). Ahora la nómina lo avisa arriba, con nombre y apellido.
         $zeroAmountAlerts = $entries
-            ->flatMap(function (PayrollEntry $entry) {
+            ->flatMap(function (PayrollEntry $entry) use ($hideMoney) {
                 $rows = $entry->calculation_breakdown['unpaid_zero_amount_concepts'] ?? [];
 
                 return collect($rows)->map(fn ($row) => [
                     'employee' => $entry->employee?->full_name,
                     'concept' => $row['name'] ?? $row['code'] ?? 'Concepto',
-                    'quantity' => $row['quantity'] ?? null,
+                    'quantity' => $hideMoney ? null : ($row['quantity'] ?? null),
                     'date' => $row['date'] ?? null,
                 ]);
             })
@@ -650,6 +659,7 @@ class PayrollController extends Controller
             'unpaidAuthorizationAlerts' => $unpaidAuthorizations,
             'hireDateAlerts' => $hireDateAlerts,
             'can' => [
+                'viewMoney' => ! $hideMoney,
                 'viewComplete' => $user->hasPermissionTo('payroll.view_complete'),
                 'calculate' => $user->hasPermissionTo('payroll.calculate'),
                 'approve' => $user->hasPermissionTo('payroll.approve'),
@@ -1668,6 +1678,8 @@ class PayrollController extends Controller
         if (! $user->hasPermissionTo('payroll.view_basic') && ! $user->hasPermissionTo('payroll.view_complete')) {
             abort(403);
         }
+        // El detalle ES el recibo (pesos por renglón): quien no ve dinero no entra.
+        abort_if(app(\App\Support\MoneyVisibility::class)->hidden(), 403);
 
         $entry->load(['employee.department', 'employee.position', 'employee.schedule', 'payrollPeriod']);
 

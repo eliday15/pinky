@@ -139,6 +139,7 @@ class RolesPermissionsSeeder extends Seeder
             // Ver dinero (sueldos, tarifas, montos de conceptos). Lo tienen
             // todos los roles salvo el semiadmin, que autoriza lo humano sin
             // ver números (Luis 2026-11-25).
+            'catalogs.view',
             'money.view',
         ];
 
@@ -241,6 +242,8 @@ class RolesPermissionsSeeder extends Seeder
             'check_omissions.view_all', 'check_omissions.create', 'check_omissions.approve',
             'reports.view_all',
             'payroll.preview',
+            // Ve TODO sin montos (Elías 2026-11-25): lectura, nunca *.manage.
+            'catalogs.view', 'payroll.view_basic', 'settings.view', 'logs.view', 'breakfasts.view', 'users.view',
         ]);
 
         // Create Employee role - Read-only: own attendance and own reports (faltas, asistencias, retardos, horas extra)

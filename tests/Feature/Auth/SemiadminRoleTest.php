@@ -192,7 +192,8 @@ class SemiadminRoleTest extends FeatureTestCase
         $this->get(route('payroll.prenomina', ['week_start' => '2026-08-17', 'week_end' => '2026-08-23', 'without_extras' => 1]))
             ->assertOk()
             ->assertInertia(fn ($page) => $page->where('withAmounts', false));
-        $this->get(route('payroll.index'))->assertForbidden();
+        // Ve TODO sin montos (Elías): los periodos de nómina sí abren.
+        $this->get(route('payroll.index'))->assertOk();
     }
 
     public function test_query_string_cannot_sneak_money_in(): void

@@ -1,7 +1,7 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { Head, Link, router } from '@inertiajs/vue3';
-import { ref, watch } from 'vue';
+import { Head, Link, router, usePage } from '@inertiajs/vue3';
+import { ref, watch, computed } from 'vue';
 import debounce from 'lodash/debounce';
 
 const props = defineProps({
@@ -35,6 +35,9 @@ const toggleActive = (schedule) => {
         router.delete(route('schedules.destroy', schedule.id));
     }
 };
+
+// Solo quien administra el catálogo ve crear/editar/eliminar (el semiadmin lo consulta).
+const canManage = computed(() => (usePage().props.auth?.permissions ?? []).includes('schedules.manage'));
 </script>
 
 <template>
@@ -54,7 +57,7 @@ const toggleActive = (schedule) => {
                 <p class="text-gray-600">{{ schedules.total }} horarios registrados</p>
             </div>
             <div class="flex gap-2">
-                <Link
+                <Link v-if="canManage"
                     :href="route('schedules.create')"
                     class="inline-flex items-center px-4 py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700 transition-colors"
                 >
@@ -179,7 +182,7 @@ const toggleActive = (schedule) => {
                             >
                                 Ver
                             </Link>
-                            <Link
+                            <Link v-if="canManage"
                                 :href="route('schedules.edit', schedule.id)"
                                 class="text-pink-600 hover:text-pink-900 mr-3"
                             >

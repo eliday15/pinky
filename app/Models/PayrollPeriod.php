@@ -10,7 +10,10 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class PayrollPeriod extends Model
 {
-    use Auditable, HasFactory;
+    use Auditable, HasFactory, \App\Models\Concerns\HidesMoneyAttributes;
+
+    /** Sumas de dinero del periodo: el semiadmin no las recibe. */
+    public const MONEY_ATTRIBUTES = ['entries_sum_net_pay', 'cash_return_amount'];
 
     /**
      * Module name for audit logging.

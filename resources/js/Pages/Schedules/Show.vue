@@ -1,6 +1,6 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { Head, Link } from '@inertiajs/vue3';
+import { Head, Link, usePage } from '@inertiajs/vue3';
 import { computed } from 'vue';
 
 const props = defineProps({
@@ -55,6 +55,9 @@ const statusLabels = {
     inactive: 'Inactivo',
     terminated: 'Baja',
 };
+
+// Solo quien administra el catálogo ve crear/editar/eliminar (el semiadmin lo consulta).
+const canManage = computed(() => (usePage().props.auth?.permissions ?? []).includes('schedules.manage'));
 </script>
 
 <template>
@@ -72,7 +75,7 @@ const statusLabels = {
             <Link :href="route('schedules.index')" class="text-pink-600 hover:text-pink-800">
                 &larr; Volver a horarios
             </Link>
-            <Link
+            <Link v-if="canManage"
                 :href="route('schedules.edit', schedule.id)"
                 class="px-4 py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700 transition-colors"
             >

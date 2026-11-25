@@ -21,7 +21,7 @@ class ScheduleController extends Controller
     public function index(Request $request): Response
     {
         $user = Auth::user();
-        if (! $user->hasPermissionTo('schedules.manage')) {
+        if (! $user->hasAnyPermission(['schedules.manage', 'catalogs.view'])) {
             abort(403);
         }
 
@@ -118,7 +118,7 @@ class ScheduleController extends Controller
     public function show(Schedule $schedule): Response
     {
         $user = Auth::user();
-        if (! $user->hasPermissionTo('schedules.manage')) {
+        if (! $user->hasAnyPermission(['schedules.manage', 'catalogs.view'])) {
             abort(403);
         }
 

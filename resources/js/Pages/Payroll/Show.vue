@@ -87,6 +87,9 @@ const formatDate = (date) => fmtDate(date, {
     year: 'numeric',
 });
 
+// Semiadmin (sin money.view): ve la nómina sin un solo importe.
+const money = computed(() => props.can?.viewMoney !== false);
+
 const formatCurrency = (amount) => {
     return new Intl.NumberFormat('es-MX', {
         style: 'currency',
@@ -505,7 +508,7 @@ const closeCash = () => {
 
         <!-- Reparto del pago: efectivo y transferencia. Cada tarjeta filtra la
              tabla de abajo a solo ese canal (clic de nuevo para quitar el filtro). -->
-        <div v-if="entries.length > 0" class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+        <div v-if="money && entries.length > 0" class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             <button
                 type="button"
                 @click="toggleChannel('efectivo')"
@@ -547,7 +550,7 @@ const closeCash = () => {
         </div>
 
         <!-- Costo patronal (informativo/provisión: IMSS empresa, SAR, Infonavit, ISN) -->
-        <div v-if="can?.viewComplete && Number(summary.total_employer_cost) > 0" class="bg-white rounded-lg shadow border-l-4 border-amber-500 p-5 mb-6">
+        <div v-if="money && can?.viewComplete && Number(summary.total_employer_cost) > 0" class="bg-white rounded-lg shadow border-l-4 border-amber-500 p-5 mb-6">
             <div class="flex items-center justify-between">
                 <div>
                     <p class="text-sm font-medium text-gray-500">Costo patronal (no se descuenta al empleado)</p>
@@ -570,15 +573,15 @@ const closeCash = () => {
                 <p class="text-2xl font-bold text-gray-800">{{ summary.employee_count }}</p>
                 <p class="text-sm text-gray-500">Empleados</p>
             </div>
-            <div class="bg-white rounded-lg shadow p-4 text-center">
+            <div v-if="money" class="bg-white rounded-lg shadow p-4 text-center">
                 <p class="text-2xl font-bold text-gray-800">{{ formatCurrency(summary.total_gross) }}</p>
                 <p class="text-sm text-gray-500">Total Bruto</p>
             </div>
-            <div class="bg-white rounded-lg shadow p-4 text-center">
+            <div v-if="money" class="bg-white rounded-lg shadow p-4 text-center">
                 <p class="text-2xl font-bold text-red-600">{{ formatCurrency(summary.total_deductions) }}</p>
                 <p class="text-sm text-gray-500">Deducciones</p>
             </div>
-            <div class="bg-white rounded-lg shadow p-4 text-center">
+            <div v-if="money" class="bg-white rounded-lg shadow p-4 text-center">
                 <p class="text-2xl font-bold text-green-600">{{ formatCurrency(summary.total_net) }}</p>
                 <p class="text-sm text-gray-500">Total Neto</p>
             </div>
@@ -632,11 +635,11 @@ const closeCash = () => {
                         <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Faltas</th>
                         <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Retardos</th>
                         <th v-if="can?.viewComplete" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Bruto</th>
-                        <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Deducciones</th>
-                        <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Neto</th>
-                        <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Efectivo</th>
-                        <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Transfer.</th>
-                        <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Detalle</th>
+                        <th v-if="money" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Deducciones</th>
+                        <th v-if="money" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Neto</th>
+                        <th v-if="money" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Efectivo</th>
+                        <th v-if="money" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Transfer.</th>
+                        <th v-if="money" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Detalle</th>
                     </tr>
                 </thead>
                 <tbody class="bg-white divide-y divide-gray-200">
@@ -678,23 +681,23 @@ const closeCash = () => {
                         <td v-if="can?.viewComplete" class="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900">
                             {{ formatCurrency(entry.gross_pay) }}
                         </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm text-red-600">
+                        <td v-if="money" class="px-6 py-4 whitespace-nowrap text-right text-sm text-red-600">
                             {{ entry.deductions > 0 ? '-' + formatCurrency(entry.deductions) : '-' }}
                         </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium text-gray-900">
+                        <td v-if="money" class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium text-gray-900">
                             {{ formatCurrency(entry.net_pay) }}
                         </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm">
+                        <td v-if="money" class="px-6 py-4 whitespace-nowrap text-right text-sm">
                             <span :class="entry.cash_amount > 0 ? 'text-pink-600 font-medium' : 'text-gray-400'">
                                 {{ entry.cash_amount > 0 ? formatCurrency(entry.cash_amount) : '-' }}
                             </span>
                         </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm">
+                        <td v-if="money" class="px-6 py-4 whitespace-nowrap text-right text-sm">
                             <span :class="entry.bank_amount > 0 ? 'text-indigo-600 font-medium' : 'text-gray-400'">
                                 {{ entry.bank_amount > 0 ? formatCurrency(entry.bank_amount) : '-' }}
                             </span>
                         </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm">
+                        <td v-if="money" class="px-6 py-4 whitespace-nowrap text-right text-sm">
                             <Link
                                 :href="channelFilter ? route('payroll.entry', { entry: entry.id, canal: channelFilter }) : route('payroll.entry', entry.id)"
                                 class="text-pink-600 hover:text-pink-900"
@@ -731,16 +734,16 @@ const closeCash = () => {
                         <p class="text-gray-600">
                             <span class="font-medium">{{ data.count }}</span> empleados
                         </p>
-                        <p class="text-gray-600">
+                        <p v-if="money" class="text-gray-600">
                             Bruto: <span class="font-medium">{{ formatCurrency(data.total_gross) }}</span>
                         </p>
-                        <p class="text-green-600">
+                        <p v-if="money" class="text-green-600">
                             Neto: <span class="font-medium">{{ formatCurrency(data.total_net) }}</span>
                         </p>
-                        <p class="text-pink-600">
+                        <p v-if="money" class="text-pink-600">
                             Efectivo: <span class="font-medium">{{ formatCurrency(data.total_cash) }}</span>
                         </p>
-                        <p class="text-indigo-600">
+                        <p v-if="money" class="text-indigo-600">
                             Transferencia: <span class="font-medium">{{ formatCurrency(data.total_transfer) }}</span>
                         </p>
                     </div>

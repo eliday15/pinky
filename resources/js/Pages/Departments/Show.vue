@@ -1,10 +1,14 @@
 <script setup>
+import { computed } from 'vue';
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { Head, Link } from '@inertiajs/vue3';
+import { Head, Link, usePage } from '@inertiajs/vue3';
 
 const props = defineProps({
     department: Object,
 });
+
+// Solo quien administra el catálogo ve crear/editar/eliminar (el semiadmin lo consulta).
+const canManage = computed(() => (usePage().props.auth?.permissions ?? []).includes('departments.manage'));
 </script>
 
 <template>
@@ -22,7 +26,7 @@ const props = defineProps({
             <Link :href="route('departments.index')" class="text-pink-600 hover:text-pink-800">
                 &larr; Volver a departamentos
             </Link>
-            <Link
+            <Link v-if="canManage"
                 :href="route('departments.edit', department.id)"
                 class="px-4 py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700 transition-colors"
             >

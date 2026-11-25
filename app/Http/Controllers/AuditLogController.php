@@ -10,6 +10,8 @@ use App\Support\AuditFieldLabels;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Inertia\Inertia;
+use App\Support\MoneyRedactor;
+use App\Support\MoneyVisibility;
 use Inertia\Response;
 
 /**
@@ -72,13 +74,21 @@ class AuditLogController extends Controller
         $this->authorizeAccess();
 
         $auditLog->load(['user:id,name', 'employee:id,full_name,employee_number']);
+        $hideMoney = app(MoneyVisibility::class)->hidden();
 
         return Inertia::render('AuditLogs/Show', [
             'log' => $auditLog,
             'changes' => $this->resolveReferenceNames(
-                AuditFieldLabels::diff($auditLog->old_values, $auditLog->new_values)
+                $hideMoney
+                    ? AuditFieldLabels::diff(
+                        MoneyRedactor::redactArray($auditLog->old_values, $auditLog->auditable_type),
+                        MoneyRedactor::redactArray($auditLog->new_values, $auditLog->auditable_type),
+                    )
+                    : AuditFieldLabels::diff($auditLog->old_values, $auditLog->new_values)
             ),
-            'metadata' => $this->labelledMetadata($auditLog->metadata),
+            'metadata' => $this->labelledMetadata(
+                $hideMoney ? MoneyRedactor::redactArray($auditLog->metadata, $auditLog->auditable_type) : $auditLog->metadata
+            ),
             // Nearby activity on the same record, so an approval can be read in
             // the context of what happened to that record before and after.
             'related' => $auditLog->auditable_type

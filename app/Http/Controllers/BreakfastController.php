@@ -169,6 +169,8 @@ class BreakfastController extends Controller
         if (! auth()->user()->hasPermissionTo('breakfasts.view')) {
             abort(403);
         }
+        // La hoja lleva costo y total al vendedor: quien no ve dinero no la baja.
+        abort_if(app(\App\Support\MoneyVisibility::class)->hidden(), 403);
 
         [$startDate, $endDate] = $this->resolveRange($request);
 
@@ -247,8 +249,14 @@ class BreakfastController extends Controller
 
         $vendorId = (int) SystemSetting::get('breakfast_vendor_employee_id', 0);
         $vendor = $vendorId > 0 ? Employee::find($vendorId) : null;
+        // Semiadmin: cuántos, quién y cuándo; los pesos van en null.
+        $hideMoney = app(\App\Support\MoneyVisibility::class)->hidden();
+        if ($hideMoney) {
+            $claims = $claims->map(fn (array $c) => array_merge($c, ['unit_cost' => null]));
+        }
 
         return Inertia::render('Breakfasts/Index', [
+            'canSeeMoney' => ! $hideMoney,
             'claims' => $claims,
             'filters' => [
                 'start_date' => $startDate,
@@ -256,9 +264,9 @@ class BreakfastController extends Controller
             ],
             'totals' => [
                 'count' => $claims->count(),
-                'amount' => round($claims->sum('unit_cost'), 2),
+                'amount' => $hideMoney ? null : round($claims->sum('unit_cost'), 2),
                 'pending_count' => $claims->where('paid', false)->count(),
-                'pending_amount' => round($claims->where('paid', false)->sum('unit_cost'), 2),
+                'pending_amount' => $hideMoney ? null : round($claims->where('paid', false)->sum('unit_cost'), 2),
             ],
             'nextPayoutStart' => $this->payouts->nextStartDate(),
             'payouts' => BreakfastPayout::with(['paidBy:id,name', 'payrollPeriod:id,name,status,cash_closed_at'])
@@ -270,7 +278,7 @@ class BreakfastController extends Controller
                     'start_date' => $payout->start_date->format('Y-m-d'),
                     'end_date' => $payout->end_date->format('Y-m-d'),
                     'claims_count' => $payout->claims_count,
-                    'amount' => (float) $payout->amount,
+                    'amount' => $hideMoney ? null : (float) $payout->amount,
                     'paid_by' => $payout->paidBy?->name,
                     'paid_at' => $payout->created_at?->format('Y-m-d H:i'),
                     'payroll' => $payout->payrollPeriod?->name,
