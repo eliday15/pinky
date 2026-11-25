@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\HidesMoneyAttributes;
+
 use App\Traits\Auditable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -18,6 +20,11 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  */
 class Position extends Model
 {
+    use HidesMoneyAttributes;
+
+    /** Tarifas del puesto: no viajan al navegador sin money.view. */
+    public const MONEY_ATTRIBUTES = ['base_hourly_rate', 'default_overtime_rate', 'default_holiday_rate'];
+
     use HasFactory, Auditable;
 
     /**

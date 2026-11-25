@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\HidesMoneyAttributes;
+
 use App\Traits\Auditable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -16,6 +18,11 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
  */
 class CompensationType extends Model
 {
+    use HidesMoneyAttributes;
+
+    /** Montos del concepto: no viajan al navegador sin money.view. */
+    public const MONEY_ATTRIBUTES = ['fixed_amount', 'percentage_value'];
+
     use Auditable, HasFactory;
 
     /**
@@ -325,5 +332,14 @@ class CompensationType extends Model
     public function paidMonthly(): bool
     {
         return $this->payment_period !== self::PAYMENT_PERIOD_WEEKLY;
+    }
+
+    /**
+     * application_mode de un concepto sin hidratar el modelo (solo se usa al
+     * serializar para quien no ve dinero).
+     */
+    public static function modeFor(int $id): ?string
+    {
+        return static::whereKey($id)->value('application_mode');
     }
 }

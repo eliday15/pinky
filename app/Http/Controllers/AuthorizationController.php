@@ -338,6 +338,7 @@ class AuthorizationController extends Controller
     public function store(Request $request): RedirectResponse
     {
         $this->authorize('create', Authorization::class);
+        $this->abortIfMoneyConceptWithoutAccess($request->integer('compensation_type_id') ?: null);
 
         $validated = $request->validate([
             'employee_id' => ['required', 'exists:employees,id'],
@@ -496,6 +497,7 @@ class AuthorizationController extends Controller
     public function storeBulk(Request $request): RedirectResponse
     {
         $this->authorize('create', Authorization::class);
+        $this->abortIfMoneyConceptWithoutAccess($request->integer('compensation_type_id') ?: null);
 
         $hoursRules = $this->hoursRules($request->input('compensation_type_id'), $request->input('type'));
 
@@ -769,6 +771,23 @@ class AuthorizationController extends Controller
         }
 
         return redirect()->route('authorizations.index')->with('success', $msg);
+    }
+
+    /**
+     * Semiadmin (sin money.view, Luis 2026-11-25): no captura conceptos de
+     * monto único (bonos, premios, descuentos). Lo humano sí.
+     */
+    private function abortIfMoneyConceptWithoutAccess(?int $compensationTypeId): void
+    {
+        if (! $compensationTypeId || ! app(\App\Support\MoneyVisibility::class)->hidden()) {
+            return;
+        }
+
+        if (CompensationType::whereKey($compensationTypeId)->value('application_mode') === CompensationType::APPLICATION_ONE_TIME) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'compensation_type_id' => 'Este concepto es de dinero (monto único): lo captura el administrador.',
+            ]);
+        }
     }
 
     /**
@@ -1094,6 +1113,9 @@ class AuthorizationController extends Controller
     public function update(Request $request, Authorization $authorization): RedirectResponse
     {
         $this->authorize('update', $authorization);
+        // La que ya existe Y la que se pide: no se puede convertir un bono en otra cosa.
+        $this->abortIfMoneyConceptWithoutAccess($authorization->compensation_type_id);
+        $this->abortIfMoneyConceptWithoutAccess($request->integer('compensation_type_id') ?: null);
 
         if (! $authorization->isPending()) {
             return redirect()->back()->with('error', 'Solo se pueden editar autorizaciones pendientes.');
@@ -3726,6 +3748,8 @@ class AuthorizationController extends Controller
         // the type validation rule and still appear in the dropdown.
         $compTypes = CompensationType::active()
             ->orderBy('priority')
+            // Semiadmin (sin money.view): no captura conceptos de monto único.
+            ->when(app(\App\Support\MoneyVisibility::class)->hidden(), fn ($q) => $q->where('application_mode', '!=', CompensationType::APPLICATION_ONE_TIME))
             ->get(['id', 'name', 'code', 'authorization_type', 'application_mode', 'attendance_pull_rule']);
 
         $types = $compTypes->map(fn (CompensationType $ct) => [

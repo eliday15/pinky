@@ -105,6 +105,27 @@ class Authorization extends Model
     ];
 
     /**
+     * En un concepto de MONTO ÚNICO la cantidad es dinero (600 bonos × $1 =
+     * $600): quien no ve dinero (semiadmin) no la recibe. Lo demás (horas de
+     * TE, días, unidades de fin) sí, porque es lo humano que autoriza.
+     */
+    public function toArray()
+    {
+        $array = parent::toArray();
+
+        if (app(\App\Support\MoneyVisibility::class)->hidden()
+            && $this->compensation_type_id
+            && ($this->relationLoaded('compensationType')
+                ? $this->compensationType?->application_mode
+                : CompensationType::modeFor($this->compensation_type_id)) === CompensationType::APPLICATION_ONE_TIME) {
+            $array['hours'] = null;
+            $array['amount_hidden'] = true;
+        }
+
+        return $array;
+    }
+
+    /**
      * Get the employee for this authorization.
      */
     public function employee(): BelongsTo

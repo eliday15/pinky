@@ -4,6 +4,7 @@ import SearchableSelect from '@/Components/SearchableSelect.vue';
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
 import { computed, ref, watch } from 'vue';
+import { useCanSeeMoney } from '@/composables/useCanSeeMoney';
 import { todayLocal } from '@/utils/date';
 
 const props = defineProps({
@@ -15,6 +16,9 @@ const props = defineProps({
     vacationTable: Array,
     canEditAll: { type: Boolean, default: true },
 });
+
+// Semiadmin: da de alta sin capturar sueldo ni conceptos; los completa el administrador.
+const canSeeMoney = useCanSeeMoney();
 
 const zktecoConflict = ref(null);
 const showZktecoModal = ref(false);
@@ -844,11 +848,11 @@ watch(() => form.hire_date, onHireDateChange);
                             <label class="block text-sm font-medium text-gray-700 mb-1">CURP</label>
                             <input v-model="form.curp" type="text" maxlength="18" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 uppercase" placeholder="Para el recibo CFDI timbrado" />
                         </div>
-                        <div v-if="canEditAll">
+                        <div v-if="canEditAll && canSeeMoney">
                             <label class="block text-sm font-medium text-gray-700 mb-1">CLABE</label>
                             <input v-model="form.clabe" type="text" maxlength="18" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" placeholder="18 dígitos (transferencia)" />
                         </div>
-                        <div v-if="canEditAll">
+                        <div v-if="canEditAll && canSeeMoney">
                             <label class="block text-sm font-medium text-gray-700 mb-1">Banco (clave SAT)</label>
                             <input v-model="form.bank_code" type="text" maxlength="3" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" placeholder="012 = BBVA, 014 = Santander…" />
                         </div>
@@ -871,7 +875,7 @@ watch(() => form.hire_date, onHireDateChange);
                     </div>
 
                     <!-- Contraseña de cobro en efectivo (solo admin) -->
-                    <div v-if="canEditAll" class="mt-6 border-t border-gray-200 pt-6">
+                    <div v-if="canEditAll && canSeeMoney" class="mt-6 border-t border-gray-200 pt-6">
                         <h4 class="text-sm font-semibold text-gray-800 mb-1">Contraseña de cobro</h4>
                         <p class="text-xs text-gray-500 mb-4">Contraseña personal que el empleado usa para cobrar su efectivo y su desayuno en el kiosco. Puede incluir letras, números y símbolos; es opcional al dar de alta.</p>
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -1144,7 +1148,7 @@ watch(() => form.hire_date, onHireDateChange);
                 </div>
 
                 <!-- Compensation -->
-                <div v-if="canEditAll" class="bg-white rounded-lg shadow p-6">
+                <div v-if="canEditAll && canSeeMoney" class="bg-white rounded-lg shadow p-6">
                     <h3 class="text-lg font-semibold text-gray-800 mb-4">Compensacion y Tarifas</h3>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div>
@@ -1234,7 +1238,7 @@ watch(() => form.hire_date, onHireDateChange);
                 </div>
 
                 <!-- Monthly Bonus -->
-                <div v-if="canEditAll" class="bg-white rounded-lg shadow p-6">
+                <div v-if="canEditAll && canSeeMoney" class="bg-white rounded-lg shadow p-6">
                     <h3 class="text-lg font-semibold text-gray-800 mb-4">Bonos Mensuales</h3>
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                         <div>

@@ -32,7 +32,7 @@ class DashboardController extends Controller
         $today = now()->toDateString();
 
         // Get role-specific data
-        if ($user->hasRole('superadmin') || $user->hasRole('admin') || $user->hasRole('rrhh')) {
+        if ($user->hasAnyRole(['superadmin', 'admin', 'semiadmin', 'rrhh'])) {
             return $this->adminDashboard($today);
         }
 

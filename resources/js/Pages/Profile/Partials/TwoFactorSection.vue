@@ -7,7 +7,7 @@ const page = usePage();
 const hasTwoFactor = computed(() => page.props.auth.has_two_factor);
 const roles = computed(() => page.props.auth.roles || []);
 const requiresTwoFactor = computed(() => {
-    return roles.value.some(r => ['admin', 'rrhh', 'supervisor'].includes(r));
+    return roles.value.some(r => ['superadmin', 'admin', 'semiadmin', 'rrhh', 'supervisor'].includes(r));
 });
 </script>
 

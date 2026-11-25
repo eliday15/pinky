@@ -2,6 +2,7 @@
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head, Link } from '@inertiajs/vue3';
 import { computed, ref } from 'vue';
+import { useCanSeeMoney } from '@/composables/useCanSeeMoney';
 
 const props = defineProps({
     scope: { type: String, default: 'all' },
@@ -59,8 +60,8 @@ const allReports = [
         icon: 'money',
         color: 'emerald',
         items: [
-            { name: 'Nomina', description: 'Detalle por periodo', route: 'reports.payroll', icon: 'payroll' },
-            { name: 'Tendencias', description: 'Historico de pago', route: 'reports.payrollTrends', icon: 'trends' },
+            { name: 'Nomina', description: 'Detalle por periodo', route: 'reports.payroll', icon: 'payroll', money: true },
+            { name: 'Tendencias', description: 'Historico de pago', route: 'reports.payrollTrends', icon: 'trends', money: true },
             { name: 'Al Contador', description: 'Resumen semanal por empresa', route: 'reports.accountant', icon: 'payroll' },
         ],
     },
@@ -85,17 +86,17 @@ const allReports = [
     },
 ];
 
-const reports = computed(() => {
-    if (props.scope !== 'own') {
-        return allReports;
-    }
-    return allReports
-        .map(section => ({
-            ...section,
-            items: section.items.filter(item => ownAllowedRoutes.has(item.route)),
-        }))
-        .filter(section => section.items.length > 0);
-});
+const canSeeMoney = useCanSeeMoney();
+
+const reports = computed(() => allReports
+    .map(section => ({
+        ...section,
+        items: section.items.filter(item =>
+            (props.scope !== 'own' || ownAllowedRoutes.has(item.route))
+            // Los reportes de dinero no se ofrecen a quien no ve montos.
+            && (!item.money || canSeeMoney.value)),
+    }))
+    .filter(section => section.items.length > 0));
 
 const colorClasses = {
     blue: { bg: 'bg-blue-500', light: 'bg-blue-50', text: 'text-blue-600', hover: 'hover:bg-blue-100', border: 'border-blue-200' },

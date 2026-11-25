@@ -81,6 +81,10 @@ class AuthorizationPolicy
      */
     public function update(User $user, Authorization $authorization): bool
     {
+        if ($this->isMoneyDecisionWithoutMoneyAccess($user, $authorization)) {
+            return false;
+        }
+
         if ($authorization->status !== Authorization::STATUS_PENDING) {
             return false;
         }
@@ -108,6 +112,10 @@ class AuthorizationPolicy
      */
     public function delete(User $user, Authorization $authorization): bool
     {
+        if ($this->isMoneyDecisionWithoutMoneyAccess($user, $authorization)) {
+            return false;
+        }
+
         if ($authorization->status !== Authorization::STATUS_PENDING) {
             return false;
         }
@@ -124,6 +132,10 @@ class AuthorizationPolicy
      */
     public function approve(User $user, Authorization $authorization): bool
     {
+        if ($this->isMoneyDecisionWithoutMoneyAccess($user, $authorization)) {
+            return false;
+        }
+
         $gate = $this->conceptApproverGate($user, $authorization);
 
         if ($gate === self::GATE_DENIED) {
@@ -171,6 +183,10 @@ class AuthorizationPolicy
      */
     public function reject(User $user, Authorization $authorization): bool
     {
+        if ($this->isMoneyDecisionWithoutMoneyAccess($user, $authorization)) {
+            return false;
+        }
+
         // El candado de aprobadores aplica igual al rechazo: quien no puede
         // aprobar un concepto restringido tampoco decide rechazarlo.
         $gate = $this->conceptApproverGate($user, $authorization);
@@ -208,6 +224,21 @@ class AuthorizationPolicy
         }
 
         return $authorization->isPending();
+    }
+
+    /**
+     * Semiadmin (sin money.view, Luis 2026-11-25): autoriza lo humano —tiempo
+     * extra, velada, fin, comida, festivo, falta justificada— pero no decide
+     * conceptos de MONTO ÚNICO (bonos, premios, descuentos): eso es dinero.
+     */
+    private function isMoneyDecisionWithoutMoneyAccess(User $user, Authorization $authorization): bool
+    {
+        if (! $authorization->compensationType
+            || $authorization->compensationType->application_mode !== \App\Models\CompensationType::APPLICATION_ONE_TIME) {
+            return false;
+        }
+
+        return ! $user->canSeeMoney();
     }
 
     /**

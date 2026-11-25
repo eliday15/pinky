@@ -230,7 +230,7 @@ class OvertimeReportController extends Controller implements HasMiddleware
 
     private function isAdmin(Request $request): bool
     {
-        return $request->user()->hasAnyRole(['superadmin', 'admin']);
+        return $request->user()->hasAnyRole(['superadmin', 'admin', 'semiadmin']);
     }
 
     private function canViewAmounts(Request $request): bool

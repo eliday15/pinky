@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\HidesMoneyAttributes;
+
 use App\Traits\Auditable;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -17,6 +19,18 @@ use Illuminate\Support\Facades\Hash;
  */
 class Employee extends Model
 {
+    use HidesMoneyAttributes;
+
+    /**
+     * Dinero y datos bancarios: no viajan al navegador sin money.view.
+     */
+    public const MONEY_ATTRIBUTES = [
+        'daily_salary', 'hourly_rate', 'overtime_rate', 'holiday_rate',
+        'monthly_bonus_type', 'monthly_bonus_amount', 'finiquito_amount',
+        'sdi', 'sbc', 'infonavit_credit_type', 'infonavit_credit_value',
+        'clabe', 'bank_code',
+    ];
+
     use Auditable, HasFactory, SoftDeletes;
 
     /**

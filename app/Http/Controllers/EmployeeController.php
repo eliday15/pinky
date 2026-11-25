@@ -98,6 +98,7 @@ class EmployeeController extends Controller
     public function store(Request $request): RedirectResponse
     {
         $this->authorize('create', Employee::class);
+        $this->keepMoneyOutOfRequest($request, null);
 
         // RRHH (employees.edit_personal) sólo captura datos personales — el alta queda con
         // valores mínimos en los campos laborales para que admin los complete después.
@@ -270,7 +271,8 @@ class EmployeeController extends Controller
         }
 
         // Sync compensation types
-        if ($request->has('compensation_type_ids') && ! empty($request->compensation_type_ids)) {
+        if (! app(\App\Support\MoneyVisibility::class)->hidden()
+            && $request->has('compensation_type_ids') && ! empty($request->compensation_type_ids)) {
             $ctTypes = CompensationType::whereIn('id', $request->compensation_type_ids)
                 ->pluck('calculation_type', 'id');
             $syncData = [];
@@ -325,19 +327,25 @@ class EmployeeController extends Controller
             ->mapWithKeys(fn ($sub) => [$sub->id => $user->can('update', $sub)])
             ->all();
 
+        $hideMoney = app(\App\Support\MoneyVisibility::class)->hidden();
         $auditHistory = AuditLog::where('auditable_type', Employee::class)
             ->where('auditable_id', $employee->id)
             ->with('user')
             ->orderBy('created_at', 'desc')
             ->limit(20)
             ->get()
-            ->map(function ($log) {
+            ->map(function ($log) use ($hideMoney) {
+                // Sin money.view, los cambios de sueldo/bono no se enseñan.
+                $strip = fn ($values) => is_array($values) && $hideMoney
+                    ? array_diff_key($values, array_flip(Employee::MONEY_ATTRIBUTES))
+                    : $values;
+
                 return [
                     'id' => $log->id,
                     'action' => $log->action,
                     'user_name' => $log->user?->name ?? 'Sistema',
-                    'old_values' => $log->old_values,
-                    'new_values' => $log->new_values,
+                    'old_values' => $strip($log->old_values),
+                    'new_values' => $strip($log->new_values),
                     'description' => $log->description,
                     'created_at' => $log->created_at->format('Y-m-d H:i'),
                 ];
@@ -402,11 +410,39 @@ class EmployeeController extends Controller
     }
 
     /**
+     * Quien no ve dinero (semiadmin) puede dar de alta, de baja y editar, pero
+     * NUNCA cambiar sueldo, bono, finiquito, datos bancarios, NIP de cobro ni
+     * conceptos (Luis 2026-11-25). Lo que mande en esos campos se descarta: en
+     * una edición se conserva lo que ya tenía; en un alta entra en cero para
+     * que el administrador lo complete.
+     */
+    private function keepMoneyOutOfRequest(Request $request, ?Employee $employee): void
+    {
+        if (! app(\App\Support\MoneyVisibility::class)->hidden()) {
+            return;
+        }
+
+        // Cuerpo Y query string: validate() lee los dos.
+        foreach ([...Employee::MONEY_ATTRIBUTES, 'cash_pin', 'cash_pin_confirmation',
+            'compensation_type_ids', 'compensation_type_overrides'] as $field) {
+            $request->request->remove($field);
+            $request->query->remove($field);
+        }
+
+        $request->merge([
+            'daily_salary' => $employee?->daily_salary ?? 0,
+            'monthly_bonus_type' => $employee?->monthly_bonus_type ?? 'none',
+            'monthly_bonus_amount' => $employee?->monthly_bonus_amount ?? 0,
+        ]);
+    }
+
+    /**
      * Update the specified employee.
      */
     public function update(Request $request, Employee $employee): RedirectResponse
     {
         $this->authorize('update', $employee);
+        $this->keepMoneyOutOfRequest($request, $employee);
 
         // RRHH (sólo employees.edit_personal) tiene un flujo recortado: valida sólo
         // los campos personales/contacto/domicilio/credenciales/IMSS y omite el resto.
@@ -430,7 +466,8 @@ class EmployeeController extends Controller
             ->sort()
             ->values()
             ->all();
-        $compensationChanging = $currentCompIds !== $newCompIds;
+        $compensationChanging = $currentCompIds !== $newCompIds
+            && ! app(\App\Support\MoneyVisibility::class)->hidden();
 
         // Sensitive changes require a 2FA code from the user's authenticator
         // app. No-op for users without 2FA enabled.
@@ -622,8 +659,11 @@ class EmployeeController extends Controller
             $employee->emergencyContacts()->createMany($emergencyContacts);
         }
 
-        // Sync compensation types
-        if ($request->has('compensation_type_ids')) {
+        // Sync compensation types (quien no ve dinero no toca los conceptos:
+        // sin esto, no mandarlos los borraría todos).
+        if (app(\App\Support\MoneyVisibility::class)->hidden()) {
+            // conceptos intactos
+        } elseif ($request->has('compensation_type_ids')) {
             $ctTypes = CompensationType::whereIn('id', $request->compensation_type_ids)
                 ->pluck('calculation_type', 'id');
             $syncData = [];

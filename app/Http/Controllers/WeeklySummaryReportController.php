@@ -230,7 +230,8 @@ class WeeklySummaryReportController extends Controller
                 'date' => Carbon::parse($e->termination_date)->format('d/m/Y'),
                 // El importe capturado en la ficha (Dani 2026-08-12) sale
                 // impreso; sin captura, en blanco para anotarse a pluma.
-                'observaciones' => $e->finiquito_amount !== null
+                // Sin money.view (semiadmin) el importe no sale: en blanco.
+                'observaciones' => $e->finiquito_amount !== null && app(\App\Support\MoneyVisibility::class)->visible()
                     ? '$'.number_format((float) $e->finiquito_amount, 2)
                     : '',
             ]))->values()->all();

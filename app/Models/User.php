@@ -106,11 +106,24 @@ class User extends Authenticatable
     }
 
     /**
+     * ¿Puede ver dinero? (permiso money.view; el semiadmin no lo tiene). Si el
+     * permiso todavía no existe —antes de su migración— nadie pierde acceso.
+     */
+    public function canSeeMoney(): bool
+    {
+        try {
+            return $this->hasPermissionTo('money.view');
+        } catch (\Spatie\Permission\Exceptions\PermissionDoesNotExist) {
+            return true;
+        }
+    }
+
+    /**
      * Check if 2FA is mandatory for this user's role.
      */
     public function requiresTwoFactor(): bool
     {
-        return $this->hasAnyRole(['superadmin', 'admin', 'rrhh', 'supervisor']);
+        return $this->hasAnyRole(['superadmin', 'admin', 'semiadmin', 'rrhh', 'supervisor']);
     }
 
     /**

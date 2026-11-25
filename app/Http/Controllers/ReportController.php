@@ -256,6 +256,9 @@ class ReportController extends Controller implements HasMiddleware
      */
     public function payroll(Request $request): Response
     {
+        // Reporte de dinero: el semiadmin (sin money.view) no entra.
+        abort_unless(app(\App\Support\MoneyVisibility::class)->visible(), 403);
+
         $periodId = $request->period;
 
         // Solo periodos cerrados (aprobados/pagados): un periodo en borrador o
@@ -736,6 +739,9 @@ class ReportController extends Controller implements HasMiddleware
      */
     public function payrollTrends(Request $request): Response
     {
+        // Reporte de dinero: el semiadmin (sin money.view) no entra.
+        abort_unless(app(\App\Support\MoneyVisibility::class)->visible(), 403);
+
         $activeEmployeeIds = $this->scopedActiveEmployeeIds();
 
         $periods = PayrollPeriod::with(['entries' => function ($q) use ($activeEmployeeIds) {

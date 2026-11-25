@@ -2,12 +2,15 @@
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { Head, Link } from '@inertiajs/vue3';
 import { formatDate as fmtDate, formatDateTime } from '@/utils/date';
+import { useCanSeeMoney } from '@/composables/useCanSeeMoney';
 
 const props = defineProps({
     employee: Object,
     auditHistory: Array,
     can: Object,
 });
+
+const canSeeMoney = useCanSeeMoney();
 
 const statusColors = {
     active: 'bg-green-100 text-green-800',
@@ -235,7 +238,7 @@ const supervisorIsAutoResolved = props.employee.position?.supervisor_position_id
                         </div>
                     </div>
 
-                    <div class="bg-white rounded-lg shadow p-6">
+                    <div v-if="canSeeMoney" class="bg-white rounded-lg shadow p-6">
                         <h3 class="text-lg font-semibold text-gray-800 mb-4">Compensacion</h3>
                         <div class="space-y-3">
                             <div class="flex justify-between">
@@ -268,7 +271,7 @@ const supervisorIsAutoResolved = props.employee.position?.supervisor_position_id
                             class="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
                         >
                             <span class="text-sm font-medium text-gray-700">{{ ct.name }}</span>
-                            <span class="text-sm text-gray-500">
+                            <span v-if="canSeeMoney" class="text-sm text-gray-500">
                                 <template v-if="ct.calculation_type === 'fixed'">
                                     Monto: ${{ Number(ct.pivot?.custom_fixed_amount || ct.fixed_amount || 0).toFixed(2) }}
                                 </template>

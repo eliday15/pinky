@@ -39,6 +39,8 @@ class AppServiceProvider extends ServiceProvider
         // PAC de timbrado CFDI: driver intercambiable por config. 'fake' es un
         // singleton para que los tests puedan inspeccionar las llamadas.
         $this->app->singleton(\App\Services\Cfdi\FakePacDriver::class);
+        // Una resolución de "¿puede ver dinero?" por petición.
+        $this->app->scoped(\App\Support\MoneyVisibility::class);
         $this->app->bind(\App\Services\Cfdi\PacProviderInterface::class, function ($app) {
             return config('services.cfdi.driver') === 'facturama'
                 ? $app->make(\App\Services\Cfdi\FacturamaDriver::class)

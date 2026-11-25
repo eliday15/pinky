@@ -186,7 +186,7 @@ const submit = () => {
                     <!-- Info box -->
                     <div class="p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-700">
                         El usuario debera cambiar su contraseña en el primer inicio de sesion.
-                        <span v-if="['admin', 'rrhh', 'supervisor'].includes(form.role)">
+                        <span v-if="['superadmin', 'admin', 'semiadmin', 'rrhh', 'supervisor'].includes(form.role)">
                             Ademas, debera configurar la autenticacion de dos factores (2FA).
                         </span>
                     </div>

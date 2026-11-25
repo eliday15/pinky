@@ -5,6 +5,7 @@ import InputError from '@/Components/InputError.vue';
 import SearchableSelect from '@/Components/SearchableSelect.vue';
 import { Head, Link, useForm, usePage } from '@inertiajs/vue3';
 import { computed, ref, watch } from 'vue';
+import { useCanSeeMoney } from '@/composables/useCanSeeMoney';
 
 const hasTwoFactor = computed(() => usePage().props.auth?.has_two_factor ?? false);
 
@@ -21,6 +22,9 @@ const props = defineProps({
     subordinateIds: Array,
     canEditAll: { type: Boolean, default: true },
 });
+
+// Semiadmin: edita y da de baja, pero sin ver ni tocar dinero.
+const canSeeMoney = useCanSeeMoney();
 
 // User account creation form
 const userForm = useForm({
@@ -835,10 +839,12 @@ watch(() => form.hire_date, onHireDateChange);
                             <label class="block text-sm font-medium text-gray-700 mb-1">Fecha de Baja</label>
                             <input v-model="form.termination_date" type="date" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.termination_date }" />
                             <p v-if="form.errors.termination_date" class="mt-1 text-sm text-red-600">{{ form.errors.termination_date }}</p>
+                            <template v-if="canSeeMoney">
                             <label class="block text-sm font-medium text-gray-700 mb-1 mt-3">Importe de Finiquito</label>
                             <input v-model="form.finiquito_amount" type="number" step="0.01" min="0" placeholder="0.00" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" :class="{ 'border-red-500': form.errors.finiquito_amount }" />
                             <p class="mt-1 text-xs text-gray-400">Se captura a mano (el sistema no lo calcula) y sale impreso en la sección Finiquito del Resumen semanal.</p>
                             <p v-if="form.errors.finiquito_amount" class="mt-1 text-sm text-red-600">{{ form.errors.finiquito_amount }}</p>
+                            </template>
                         </div>
                         <!-- Photo Upload -->
                         <div class="md:col-span-2">
@@ -1011,11 +1017,11 @@ watch(() => form.hire_date, onHireDateChange);
                             <label class="block text-sm font-medium text-gray-700 mb-1">CURP</label>
                             <input v-model="form.curp" type="text" maxlength="18" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500 uppercase" placeholder="Para el recibo CFDI timbrado" />
                         </div>
-                        <div v-if="canEditAll">
+                        <div v-if="canEditAll && canSeeMoney">
                             <label class="block text-sm font-medium text-gray-700 mb-1">CLABE</label>
                             <input v-model="form.clabe" type="text" maxlength="18" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" placeholder="18 dígitos (transferencia)" />
                         </div>
-                        <div v-if="canEditAll">
+                        <div v-if="canEditAll && canSeeMoney">
                             <label class="block text-sm font-medium text-gray-700 mb-1">Banco (clave SAT)</label>
                             <input v-model="form.bank_code" type="text" maxlength="3" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-pink-500 focus:ring-pink-500" placeholder="012 = BBVA, 014 = Santander…" />
                         </div>
@@ -1038,7 +1044,7 @@ watch(() => form.hire_date, onHireDateChange);
                     </div>
 
                     <!-- Contraseña de cobro en efectivo (solo admin) -->
-                    <div v-if="canEditAll" class="mt-6 border-t border-gray-200 pt-6">
+                    <div v-if="canEditAll && canSeeMoney" class="mt-6 border-t border-gray-200 pt-6">
                         <h4 class="text-sm font-semibold text-gray-800 mb-1">Contraseña de cobro</h4>
                         <p class="text-xs text-gray-500 mb-4">Contraseña personal que el empleado usa para cobrar su efectivo y su desayuno en el kiosco. Puede incluir letras, números y símbolos; déjala en blanco para no cambiarla.</p>
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -1255,7 +1261,7 @@ watch(() => form.hire_date, onHireDateChange);
                                 <ul class="mt-1 space-y-1 text-yellow-600">
                                     <li>Depto: {{ departments.find(d => d.id === employee.department_id)?.name || '-' }}</li>
                                     <li>Horario: {{ schedules.find(s => s.id === employee.schedule_id)?.name || '-' }}</li>
-                                    <li>Tarifa: ${{ employee.hourly_rate }}/hr</li>
+                                    <li v-if="canSeeMoney">Tarifa: ${{ employee.hourly_rate }}/hr</li>
                                 </ul>
                             </div>
                             <div>
@@ -1263,7 +1269,7 @@ watch(() => form.hire_date, onHireDateChange);
                                 <ul class="mt-1 space-y-1 text-yellow-600">
                                     <li>Depto: {{ positionTemplateValues.department }}</li>
                                     <li>Horario: {{ positionTemplateValues.schedule }}</li>
-                                    <li>Tarifa: ${{ positionTemplateValues.hourly_rate }}/hr</li>
+                                    <li v-if="canSeeMoney">Tarifa: ${{ positionTemplateValues.hourly_rate }}/hr</li>
                                 </ul>
                             </div>
                         </div>
@@ -1294,7 +1300,7 @@ watch(() => form.hire_date, onHireDateChange);
                 </div>
 
                 <!-- Compensation -->
-                <div v-if="canEditAll" class="bg-white rounded-lg shadow p-6">
+                <div v-if="canEditAll && canSeeMoney" class="bg-white rounded-lg shadow p-6">
                     <h3 class="text-lg font-semibold text-gray-800 mb-4">Compensacion y Tarifas</h3>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div>
@@ -1382,7 +1388,7 @@ watch(() => form.hire_date, onHireDateChange);
                 </div>
 
                 <!-- Monthly Bonus -->
-                <div v-if="canEditAll" class="bg-white rounded-lg shadow p-6">
+                <div v-if="canEditAll && canSeeMoney" class="bg-white rounded-lg shadow p-6">
                     <h3 class="text-lg font-semibold text-gray-800 mb-4">Bonos Mensuales</h3>
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                         <div>
@@ -1606,7 +1612,7 @@ watch(() => form.hire_date, onHireDateChange);
 
                     <div class="p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-700">
                         El usuario debera cambiar su contraseña en el primer inicio de sesion.
-                        <span v-if="['admin', 'rrhh', 'supervisor'].includes(userForm.role)">
+                        <span v-if="['superadmin', 'admin', 'semiadmin', 'rrhh', 'supervisor'].includes(userForm.role)">
                             Ademas, debera configurar la autenticacion de dos factores (2FA).
                         </span>
                     </div>

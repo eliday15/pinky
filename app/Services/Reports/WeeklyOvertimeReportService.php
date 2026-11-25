@@ -632,7 +632,11 @@ class WeeklyOvertimeReportService
             $name = $type->name ?: ($this->normalizeCode($type->code) ?: 'Concepto');
             $extra[$name] ??= ['name' => $name, 'count' => 0, 'hours' => 0.0];
             $extra[$name]['count']++;
-            $extra[$name]['hours'] += (float) $auth->hours;
+            // En monto único la cantidad ES dinero: sin money.view no se suma.
+            if ($type->application_mode !== CompensationType::APPLICATION_ONE_TIME
+                || app(\App\Support\MoneyVisibility::class)->visible()) {
+                $extra[$name]['hours'] += (float) $auth->hours;
+            }
             if ($includeAmounts) {
                 $extra[$name]['amount'] = ($extra[$name]['amount'] ?? 0.0) + ($employee
                     ? $this->authorizationConceptAmount($employee, $type, (float) $auth->hours, $hourlyRate, $dailySalary)

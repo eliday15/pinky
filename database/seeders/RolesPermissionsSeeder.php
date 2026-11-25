@@ -135,6 +135,11 @@ class RolesPermissionsSeeder extends Seeder
 
             // Logs/Auditoría
             'logs.view',
+
+            // Ver dinero (sueldos, tarifas, montos de conceptos). Lo tienen
+            // todos los roles salvo el semiadmin, que autoriza lo humano sin
+            // ver números (Luis 2026-11-25).
+            'money.view',
         ];
 
         // Create permissions
@@ -164,6 +169,7 @@ class RolesPermissionsSeeder extends Seeder
             $cobrador->syncPermissions([
                 'payroll.cash.collect',
                 'payroll.cash.close',
+                'money.view',
             ]);
         }
 
@@ -186,6 +192,7 @@ class RolesPermissionsSeeder extends Seeder
             // Desayunos - kiosco y consulta
             'breakfasts.register',
             'breakfasts.view',
+            'money.view',
         ]);
 
         // Rol secundario administrado por la configuración del vendedor. Da
@@ -194,7 +201,7 @@ class RolesPermissionsSeeder extends Seeder
             'name' => BreakfastVendorAccessService::ROLE,
             'guard_name' => 'web',
         ]);
-        $breakfastVendor->syncPermissions(['breakfasts.register']);
+        $breakfastVendor->syncPermissions(['breakfasts.register', 'money.view']);
 
         // Create Supervisor role - Read-only employee access, attendance view, can create incidents/authorizations
         $supervisor = Role::firstOrCreate(['name' => 'supervisor']);
@@ -217,6 +224,23 @@ class RolesPermissionsSeeder extends Seeder
             // Reportes - team-scoped (own direct reports): attendance/discipline/
             // overtime/payroll reports limited to subordinates via ScopesReportEmployees.
             'reports.view_team',
+            'money.view',
+        ]);
+
+        // SEMIADMIN (Luis 2026-11-25): debajo del admin. Altas y bajas de
+        // empleados y autoriza lo humano, pero NADA de dinero (sin money.view).
+        $semiadmin = Role::firstOrCreate(['name' => 'semiadmin']);
+        $semiadmin->syncPermissions([
+            'employees.view_all', 'employees.create', 'employees.edit', 'employees.edit_personal',
+            'attendance.view_all', 'attendance.edit', 'attendance.sync', 'attendance.approve_corrections',
+            'incidents.view_all', 'incidents.create', 'incidents.approve', 'incidents.reject',
+            'vacation_hours.manage', 'deliveries.manage',
+            'authorizations.view_all', 'authorizations.create', 'authorizations.approve', 'authorizations.reject',
+            'authorizations.suggest_from_checadas',
+            'anomalies.view_all', 'anomalies.resolve', 'anomalies.dismiss',
+            'check_omissions.view_all', 'check_omissions.create', 'check_omissions.approve',
+            'reports.view_all',
+            'payroll.preview',
         ]);
 
         // Create Employee role - Read-only: own attendance and own reports (faltas, asistencias, retardos, horas extra)
@@ -226,6 +250,7 @@ class RolesPermissionsSeeder extends Seeder
             'attendance.view_own',
             // Reportes - own only (faltas, asistencias, retardos, horas extra)
             'reports.view_own',
+            'money.view',
         ]);
     }
 }
