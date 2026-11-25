@@ -613,6 +613,21 @@ class PayrollController extends Controller
             ->values()
             ->all();
 
+        // Mismo concepto dos veces el mismo día (regla Luis 2026-11-25): la
+        // nómina pagó solo uno y aquí se enseña el que se quedó fuera para que
+        // alguien rechace el sobrante.
+        $duplicateConceptAlerts = $entries
+            ->flatMap(fn (PayrollEntry $entry) => collect($entry->calculation_breakdown['duplicate_concepts'] ?? [])
+                ->map(fn ($row) => [
+                    'employee' => $entry->employee?->full_name,
+                    'concept' => $row['name'] ?? $row['code'] ?? 'Concepto',
+                    'date' => $row['date'] ?? null,
+                    'authorization_id' => $row['authorization_id'] ?? null,
+                    'paid_authorization_id' => $row['paid_authorization_id'] ?? null,
+                ]))
+            ->values()
+            ->all();
+
         // Autorizaciones APROBADAS que ninguna nómina paga (falta el periodo del
         // alcance que les toca). El agujero por el que Taller se quedó sin sus
         // conceptos mensuales al dejar de llevar mensual.
@@ -631,6 +646,7 @@ class PayrollController extends Controller
             'cfdi' => $cfdiStatus,
             'unifiableWeek' => $unifiableWeek?->only(['id', 'name']),
             'zeroAmountAlerts' => $zeroAmountAlerts,
+            'duplicateConceptAlerts' => $duplicateConceptAlerts,
             'unpaidAuthorizationAlerts' => $unpaidAuthorizations,
             'hireDateAlerts' => $hireDateAlerts,
             'can' => [

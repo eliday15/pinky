@@ -318,6 +318,7 @@ const alreadyPaidAuthorizations = computed(() => breakdown.already_paid_authoriz
 // Capturado y aprobado, pero pagó $0 porque el concepto no tiene monto: se
 // muestra para que no se pierda en silencio (caso Descuento Infonavit).
 const unpaidZeroAmountConcepts = computed(() => breakdown.unpaid_zero_amount_concepts ?? []);
+const duplicateConcepts = computed(() => breakdown.duplicate_concepts ?? []);
 
 // Prima vacacional automática que NO se sumó porque hay una capturada a mano
 // (aprobada, en $0 o rechazada) en el rango — se explica para que no parezca
@@ -699,6 +700,13 @@ const roundingIsCents = computed(() => Math.abs(pesoRounding.value) < 1);
                                     ⚠ {{ z.name }}
                                     <span v-if="z.quantity"> ({{ z.quantity }})</span>
                                     — capturado pero NO pagado: {{ z.reason }}
+                                </td>
+                                <td class="py-1 text-right">{{ formatCurrency(0) }}</td>
+                            </tr>
+                            <!-- Mismo concepto dos veces el mismo día: la repetida no se paga -->
+                            <tr v-for="(d, di) in duplicateConcepts" :key="`d-${di}`" class="text-xs text-amber-700 bg-amber-50">
+                                <td class="py-1">
+                                    ⚠ {{ d.name }} del {{ formatDate(d.date) }} (#{{ d.authorization_id }}) — NO se paga: {{ d.reason }}
                                 </td>
                                 <td class="py-1 text-right">{{ formatCurrency(0) }}</td>
                             </tr>

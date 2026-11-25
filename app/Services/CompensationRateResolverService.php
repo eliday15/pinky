@@ -415,6 +415,7 @@ class CompensationRateResolverService
         }
         $total += $generic['total'];
         $zeroAmount = $generic['zero_amount'] ?? [];
+        $duplicates = $generic['duplicates'] ?? [];
 
         // Fin de semana por unidades (Almacén PT): el # de unidades lo calcula la
         // nómina por cada día de fin de semana autorizado (al menos 1 por día,
@@ -467,6 +468,7 @@ class CompensationRateResolverService
             // Capturados que NO pagaron nada (concepto sin monto): la nómina los
             // enseña en vez de tragárselos.
             'zero_amount' => $zeroAmount,
+            'duplicates' => $duplicates,
         ];
     }
 
@@ -631,6 +633,9 @@ class CompensationRateResolverService
         $concepts = [];
         $total = 0.0;
         $zeroAmount = [];
+        $duplicates = [];
+        // (concepto|fecha) => id de la autorización que ya cobró ese día.
+        $paidConceptDays = [];
         $holidaySet = array_flip($holidayDates);
 
         foreach ($authorizations as $auth) {
@@ -755,6 +760,30 @@ class CompensationRateResolverService
                 continue;
             }
 
+            // REGLA (Luis 2026-11-25): nadie cobra el MISMO concepto dos veces
+            // el mismo día. La captura ya lo bloquea; esto es la red de la
+            // nómina para lo que entró por otro lado (filas viejas, ediciones
+            // de fecha). Se paga la primera y la otra se avisa en ámbar. Los
+            // descuentos (monto negativo) no son cobro y no se tocan.
+            $conceptDayKey = $compType->id.'|'.Carbon::parse($auth->date)->toDateString();
+            if ($amount > 0 && isset($paidConceptDays[$conceptDayKey])) {
+                $duplicates[] = [
+                    'code' => $compType->code,
+                    'name' => $compType->name,
+                    'quantity' => round($quantity, 2),
+                    'amount' => $amount,
+                    'date' => Carbon::parse($auth->date)->toDateString(),
+                    'authorization_id' => $auth->id,
+                    'paid_authorization_id' => $paidConceptDays[$conceptDayKey],
+                    'reason' => 'Ya cobra este concepto ese día (#'.$paidConceptDays[$conceptDayKey].')',
+                ];
+
+                continue;
+            }
+            if ($amount > 0) {
+                $paidConceptDays[$conceptDayKey] = $auth->id;
+            }
+
             $concepts[] = [
                 'code' => $compType->code,
                 'name' => $compType->name,
@@ -780,6 +809,8 @@ class CompensationRateResolverService
             'concepts' => $concepts,
             'total' => round($total, 2),
             'zero_amount' => $zeroAmount,
+            // Segunda fila del mismo concepto el mismo día: no se pagó.
+            'duplicates' => $duplicates,
         ];
     }
 

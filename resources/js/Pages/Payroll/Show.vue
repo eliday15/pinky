@@ -18,6 +18,7 @@ const props = defineProps({
     // Conceptos capturados y aprobados que pagaron $0 porque el concepto no
     // tiene monto configurado. [{ employee, concept, quantity, date }]
     zeroAmountAlerts: { type: Array, default: () => [] },
+    duplicateConceptAlerts: { type: Array, default: () => [] },
     // Autorizaciones aprobadas que ninguna nómina paga (falta el periodo del
     // alcance que les toca). [{ employee, concept, date, kind, reason }]
     unpaidAuthorizationAlerts: { type: Array, default: () => [] },
@@ -400,6 +401,29 @@ const closeCash = () => {
                     <span class="font-medium">{{ a.employee }}</span> — {{ a.concept }}
                     <span v-if="a.quantity"> (cantidad capturada: {{ a.quantity }})</span>
                     <span v-if="a.date" class="text-amber-600"> · {{ formatDate(a.date) }}</span>
+                </li>
+            </ul>
+        </div>
+
+        <!-- Mismo concepto dos veces el mismo día: se pagó solo uno -->
+        <div v-if="duplicateConceptAlerts.length" class="border border-amber-300 bg-amber-50 rounded-lg p-4 mb-6">
+            <p class="text-sm font-semibold text-amber-800">
+                {{ duplicateConceptAlerts.length }} concepto(s) capturado(s) dos veces el mismo día: se pagó solo uno
+            </p>
+            <p class="mt-1 text-sm text-amber-700">
+                Nadie cobra el mismo concepto dos veces el mismo día. La nómina pagó la primera captura y dejó fuera la repetida.
+                Rechaza la repetida en Autorizaciones para que deje de salir este aviso.
+            </p>
+            <ul class="mt-2 space-y-1">
+                <li v-for="(a, idx) in duplicateConceptAlerts" :key="idx" class="text-sm text-amber-800">
+                    <span class="font-medium">{{ a.employee }}</span> — {{ a.concept }}
+                    <span v-if="a.date" class="text-amber-600"> · {{ formatDate(a.date) }}</span>
+                    <span v-if="a.authorization_id"> · no se pagó
+                        <Link :href="route('authorizations.show', a.authorization_id)" class="underline">#{{ a.authorization_id }}</Link>
+                    </span>
+                    <span v-if="a.paid_authorization_id"> (se pagó
+                        <Link :href="route('authorizations.show', a.paid_authorization_id)" class="underline">#{{ a.paid_authorization_id }}</Link>)
+                    </span>
                 </li>
             </ul>
         </div>

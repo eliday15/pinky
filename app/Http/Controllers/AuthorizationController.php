@@ -1253,6 +1253,24 @@ class AuthorizationController extends Controller
             ? (float) $validated['hours']
             : null;
 
+        // Nadie cobra el MISMO concepto dos veces el mismo día (Luis
+        // 2026-11-25). El alta ya lo bloquea; esto cubre filas repetidas que
+        // entraron antes de la regla o por otro camino. El TE tiene su propio
+        // control de horarios encimados más abajo.
+        if ($authorization->type !== Authorization::TYPE_OVERTIME
+            && $authorization->compensation_type_id
+            && $this->activeDuplicateExists(
+                (int) $authorization->employee_id,
+                Carbon::parse($authorization->date)->toDateString(),
+                $authorization->type,
+                $authorization->compensation_type_id,
+                null,
+                null,
+                $authorization->id,
+            )) {
+            return redirect()->back()->with('error', 'Este empleado ya tiene este concepto ese mismo día en otra autorización. Nadie cobra el mismo concepto dos veces el mismo día: rechaza la repetida.');
+        }
+
         // FIN se valida contra la checada ANTES de aprobar. Una vez aprobado,
         // reporte y nómina respetan esa cantidad sin volverla a recortar.
         $weekendUnits = app(\App\Services\WeekendAuthorizationUnitService::class);
@@ -1800,6 +1818,20 @@ class AuthorizationController extends Controller
 
         if ($oldDate === $newDate) {
             return redirect()->back()->with('success', 'La fecha no cambió.');
+        }
+
+        // Mover la fecha no puede dejar el mismo concepto dos veces el mismo
+        // día (regla Luis 2026-11-25): el alta y la edición ya lo bloquean.
+        if ($this->activeDuplicateExists(
+            (int) $authorization->employee_id,
+            $newDate,
+            $authorization->type,
+            $authorization->compensation_type_id,
+            $authorization->start_time?->format('H:i'),
+            $authorization->end_time?->format('H:i'),
+            $authorization->id,
+        )) {
+            return redirect()->back()->with('error', 'No se cambió la fecha: ese día el empleado ya tiene este concepto (o un horario que se encima). Nadie cobra el mismo concepto dos veces el mismo día.');
         }
 
         $authorization->update(['date' => $newDate]);

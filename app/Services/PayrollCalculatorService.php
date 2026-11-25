@@ -634,6 +634,7 @@ class PayrollCalculatorService
         // (caso Descuento Infonavit 2026-08-26): se reportan en el recibo en vez
         // de desaparecer sin avisar.
         $unpaidZeroAmountConcepts = [];
+        $duplicateConcepts = [];
         // Fines de semana autorizados que no llegaron al umbral (se explican en
         // el recibo en vez de dejar la pregunta "¿por qué solo aparece uno?").
         $weekendUnits = 0;
@@ -763,6 +764,7 @@ class PayrollCalculatorService
 
             $compensationConcepts = $dropSalaryConcepts($compensationPayments['concepts']);
             $unpaidZeroAmountConcepts = $compensationPayments['zero_amount'] ?? [];
+            $duplicateConcepts = $compensationPayments['duplicates'] ?? [];
 
             // Route each concept to its stored pay bucket. Overtime/velada
             // match by code; holiday/weekend/special match by the comp
@@ -1316,6 +1318,9 @@ class PayrollCalculatorService
             // Conceptos capturados y aprobados que pagaron $0 porque el concepto
             // no tiene monto configurado: hay que corregir el catálogo.
             'unpaid_zero_amount_concepts' => $unpaidZeroAmountConcepts,
+            // Mismo concepto dos veces el mismo día: la segunda no se pagó
+            // (regla Luis 2026-11-25).
+            'duplicate_concepts' => $duplicateConcepts,
             // Prima automática por vacaciones NO sumada porque hay una prima
             // capturada a mano en el rango (Luis 2026-08-28).
             'suppressed_vacation_premium' => $suppressedVacationPremium,
@@ -1517,6 +1522,10 @@ class PayrollCalculatorService
         $merged['unpaid_zero_amount_concepts'] = array_merge(
             $base['unpaid_zero_amount_concepts'] ?? [],
             $extras['unpaid_zero_amount_concepts'] ?? [],
+        );
+        $merged['duplicate_concepts'] = array_merge(
+            $base['duplicate_concepts'] ?? [],
+            $extras['duplicate_concepts'] ?? [],
         );
 
         // Dinero: las dos pasadas suman.
