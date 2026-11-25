@@ -91,6 +91,9 @@ class RolesPermissionsSeeder extends Seeder
             'payroll.approve',
             'payroll.pay_cash',
             'payroll.export',
+            // Prenómina: lo que va a cobrar cada quien antes de generar la
+            // nómina. Los importes además piden payroll.view_complete.
+            'payroll.preview',
             // Efectivo con segregación de funciones: el super admin ENTREGA el
             // efectivo (paso 1) y RECIBE la devolución del sobrante; el cobrador
             // solo COBRA (paso 2) y CIERRA su nómina. deliver/receive son

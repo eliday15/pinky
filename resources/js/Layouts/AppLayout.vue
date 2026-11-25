@@ -119,6 +119,14 @@ const navigation = computed(() => [
         show: canAny(['payroll.view_basic', 'payroll.view_complete']),
     },
     {
+        // Lo que va a cobrar cada quien ANTES de generar la nómina.
+        name: 'Prenómina',
+        href: 'payroll.prenomina',
+        group: 'Nomina',
+        icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4',
+        show: can('payroll.preview'),
+    },
+    {
         // Landing del cobrador: solo cobra (paso 2) y cierra su nómina. Los
         // admins entran al efectivo desde Nomina, no necesitan este item.
         name: 'Cobro de efectivo',

@@ -23,6 +23,7 @@ use App\Http\Controllers\IncidentTypeController;
 use App\Http\Controllers\OvertimeReportController;
 use App\Http\Controllers\PayrollController;
 use App\Http\Controllers\PositionController;
+use App\Http\Controllers\PrenominaController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\ReportExportController;
@@ -119,6 +120,7 @@ Route::middleware(['auth', 'password-changed', 'two-factor-setup'])->group(funct
     // Payroll
     Route::get('/payroll', [PayrollController::class, 'index'])->name('payroll.index');
     Route::get('/payroll/create', [PayrollController::class, 'create'])->name('payroll.create');
+    Route::get('/payroll/prenomina', [PrenominaController::class, 'index'])->name('payroll.prenomina');
     Route::post('/payroll', [PayrollController::class, 'store'])->name('payroll.store');
     Route::get('/payroll/{payroll}', [PayrollController::class, 'show'])->name('payroll.show');
     Route::post('/payroll/{payroll}/calculate', [PayrollController::class, 'calculate'])->name('payroll.calculate');
