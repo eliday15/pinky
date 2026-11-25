@@ -81,7 +81,8 @@ class PrenominaTest extends FeatureTestCase
             ->assertInertia(fn ($page) => $page
                 ->component('Payroll/Prenomina')
                 ->where('withAmounts', true)
-                ->where('rows', function ($rows) use ($employee) {
+                ->missing('result')
+                ->loadDeferredProps(fn ($reload) => $reload->where('result.rows', function ($rows) use ($employee) {
                     $row = collect($rows)->firstWhere('employee_id', $employee->id);
                     $premio = collect($row['weekly']['lines'])->firstWhere('label', 'Premio');
 
@@ -89,7 +90,7 @@ class PrenominaTest extends FeatureTestCase
                         && abs($premio['amount'] - 500) < 0.01
                         && $premio['detail'] === '500 unidades'
                         && $row['total'] > 500;
-                }));
+                })));
 
         $this->assertSame($periodsBefore, PayrollPeriod::count(), 'la prenómina no deja periodos');
         $this->assertSame(0, PayrollEntry::count(), 'ni recibos');
@@ -102,20 +103,28 @@ class PrenominaTest extends FeatureTestCase
         $user->givePermissionTo(Permission::firstOrCreate(['name' => 'payroll.preview', 'guard_name' => 'web']));
         $this->actingAs($user);
 
-        $response = $this->get(route('payroll.prenomina', $this->query()))->assertOk();
+        $this->get(route('payroll.prenomina', $this->query()))->assertOk()
+            ->assertInertia(fn ($page) => $page->where('withAmounts', false));
 
-        $response->assertInertia(fn ($page) => $page
-            ->where('withAmounts', false)
-            ->where('totals', null)
-            ->where('rows', function ($rows) use ($employee) {
-                $row = collect($rows)->firstWhere('employee_id', $employee->id);
-                $premio = collect($row['weekly']['lines'])->firstWhere('label', 'Premio');
+        // La prop diferida se pide como lo hace el navegador (recarga parcial).
+        $version = app(\App\Http\Middleware\HandleInertiaRequests::class)->version(request());
+        $response = $this->get(route('payroll.prenomina', $this->query()), [
+            'X-Inertia' => 'true',
+            'X-Inertia-Version' => (string) $version,
+            'X-Inertia-Partial-Component' => 'Payroll/Prenomina',
+            'X-Inertia-Partial-Data' => 'result',
+        ])->assertOk();
+        $result = $response->json('props.result');
 
-                return $premio !== null && ! array_key_exists('amount', $premio) && ! array_key_exists('total', $row);
-            }));
+        $this->assertNull($result['totals']);
+        $row = collect($result['rows'])->firstWhere('employee_id', $employee->id);
+        $premio = collect($row['weekly']['lines'])->firstWhere('label', 'Premio');
+        $this->assertNotNull($premio);
+        $this->assertArrayNotHasKey('amount', $premio);
+        $this->assertArrayNotHasKey('total', $row);
 
         // Ningún importe viaja a la pantalla: ni el monto del bono ni el sueldo.
-        $props = json_encode($response->viewData('page')['props']['rows']);
+        $props = json_encode($result['rows']);
         $this->assertStringNotContainsString('500', str_replace('500 unidades', '', $props));
         $this->assertStringNotContainsString('"net"', $props);
         $this->assertStringNotContainsString('"cash"', $props);
@@ -137,13 +146,13 @@ class PrenominaTest extends FeatureTestCase
         $this->actingAsAdmin();
 
         $this->get(route('payroll.prenomina', $this->query()))
-            ->assertInertia(fn ($page) => $page->where('rows', function ($rows) use ($employee) {
+            ->assertInertia(fn ($page) => $page->loadDeferredProps(fn ($reload) => $reload->where('result.rows', function ($rows) use ($employee) {
                 $row = collect($rows)->firstWhere('employee_id', $employee->id);
                 $premio = collect($row['weekly']['lines'])->where('label', 'Premio');
 
                 return $premio->count() === 1
                     && str_contains(implode(' ', $row['alerts']), 'capturado dos veces');
-            }));
+            })));
     }
 
     public function test_supervisor_cannot_open_prenomina(): void

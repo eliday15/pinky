@@ -45,7 +45,6 @@ class PrenominaController extends Controller
         $extrasEnd = $hasExtras ? ($validated['extras_end'] ?? $defaults['extras_end']) : null;
 
         $withAmounts = $user->hasPermissionTo('payroll.view_complete');
-        $result = $this->prenomina->build($scopeId, $weekStart, $weekEnd, $extrasStart, $extrasEnd, $withAmounts);
 
         return Inertia::render('Payroll/Prenomina', [
             'scopes' => collect([['id' => null, 'name' => 'General']])
@@ -60,8 +59,9 @@ class PrenominaController extends Controller
                 'can_have_extras' => $defaults['extras_start'] !== null,
             ],
             'departments' => Department::orderBy('name')->get(['id', 'name']),
-            'rows' => $result['rows'],
-            'totals' => $result['totals'],
+            // El cálculo tarda (~25 s con toda la plantilla): la pantalla se
+            // pinta de inmediato y el resultado llega después.
+            'result' => Inertia::defer(fn () => $this->prenomina->build($scopeId, $weekStart, $weekEnd, $extrasStart, $extrasEnd, $withAmounts)),
             'withAmounts' => $withAmounts,
         ]);
     }
